@@ -1,6 +1,6 @@
 //! Cross-domain adapter for agent-authored goal mutations.
 
-use meld_execution::goals::{GoalCommandMetadata, SatisfyGoalCommand};
+use meld_execution::goals::{GoalCommandMetadata, ReopenGoalCommand, SatisfyGoalCommand};
 use meld_world_model::{AgentGoalMutationCommand, AgentGoalMutationKind};
 
 /// Request to map one agent-authored mutation into an execution command.
@@ -18,27 +18,61 @@ pub enum GoalMutationError {
     InvalidCommand(String),
 }
 
-/// Map an agent-authored satisfaction mutation into execution's public command.
-pub fn satisfy_request_from_agent_mutation(
+/// Execution command mapped from one agent-authored goal mutation.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ExecutionGoalMutation {
+    /// Mark a goal satisfied under the epoch the review observed.
+    Satisfy(SatisfyGoalCommand),
+    /// Reopen a satisfied goal in place after belief drift.
+    Reopen(ReopenGoalCommand),
+}
+
+/// Map an agent-authored mutation into execution's public command surface.
+pub fn execution_mutation_from_agent_command(
     request: GoalMutationRequest,
-) -> Result<SatisfyGoalCommand, GoalMutationError> {
+) -> Result<ExecutionGoalMutation, GoalMutationError> {
     let command = request.command;
     command
         .validate()
         .map_err(|err| GoalMutationError::InvalidCommand(err.to_string()))?;
+    let metadata = GoalCommandMetadata {
+        command_id: command.command_id,
+        source_identity: Some(command.dedupe_key.index_key()),
+        seq: command.review_seq,
+    };
     match command.kind {
-        AgentGoalMutationKind::Satisfy { at_seq } => Ok(SatisfyGoalCommand {
-            metadata: GoalCommandMetadata {
-                command_id: command.command_id,
-                source_identity: Some(command.dedupe_key.index_key()),
-                seq: command.review_seq,
-            },
+        AgentGoalMutationKind::Satisfy {
+            at_seq,
+            lifecycle_epoch,
+        } => Ok(ExecutionGoalMutation::Satisfy(SatisfyGoalCommand {
+            metadata,
             goal_id: command.goal_id,
             at_seq,
-            // The agent mutation contract does not carry the observed epoch
-            // yet; every current record is epoch zero. The agent-convergence
-            // workstream threads the observed epoch through this adapter.
-            lifecycle_epoch: 0,
-        }),
+            lifecycle_epoch,
+        })),
+        AgentGoalMutationKind::Reopen {
+            triggering_belief_revision_id,
+            ..
+        } => Ok(ExecutionGoalMutation::Reopen(ReopenGoalCommand {
+            metadata,
+            goal_id: command.goal_id,
+            triggering_belief_revision_id,
+        })),
+    }
+}
+
+/// Map an agent-authored satisfaction mutation into execution's public command.
+///
+/// Compatibility entry for satisfy-only callers; a reopen mutation is a
+/// contract violation here and maps through
+/// [`execution_mutation_from_agent_command`] instead.
+pub fn satisfy_request_from_agent_mutation(
+    request: GoalMutationRequest,
+) -> Result<SatisfyGoalCommand, GoalMutationError> {
+    match execution_mutation_from_agent_command(request)? {
+        ExecutionGoalMutation::Satisfy(command) => Ok(command),
+        ExecutionGoalMutation::Reopen(_) => Err(GoalMutationError::InvalidCommand(
+            "reopen mutation is not a satisfaction command".to_string(),
+        )),
     }
 }

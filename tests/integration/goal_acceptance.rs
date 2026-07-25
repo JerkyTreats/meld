@@ -266,7 +266,10 @@ fn satisfaction_input_for_goal(
         subscription: input.subscription,
         review_seq,
         planner_projection: input.planner_projection,
-        active_goals: ActiveGoalSummary { goals: vec![goal] },
+        active_goals: ActiveGoalSummary {
+            goals: vec![goal],
+            lifecycle_epochs: std::collections::BTreeMap::new(),
+        },
         input_refs: input.input_refs,
     }
 }
@@ -424,6 +427,8 @@ fn agent_satisfaction_curation_marks_goal_satisfied_only_after_world_state_match
             &planner_query,
             ActiveGoalSummary {
                 goals: vec![active_goal.clone()],
+
+                lifecycle_epochs: std::collections::BTreeMap::new(),
             },
         )
         .unwrap();
@@ -447,6 +452,8 @@ fn agent_satisfaction_curation_marks_goal_satisfied_only_after_world_state_match
             &planner_query,
             ActiveGoalSummary {
                 goals: vec![active_goal.clone()],
+
+                lifecycle_epochs: std::collections::BTreeMap::new(),
             },
         )
         .unwrap();
@@ -475,6 +482,8 @@ fn agent_satisfaction_curation_marks_goal_satisfied_only_after_world_state_match
             &planner_query,
             ActiveGoalSummary {
                 goals: vec![active_goal],
+
+                lifecycle_epochs: std::collections::BTreeMap::new(),
             },
         )
         .unwrap();

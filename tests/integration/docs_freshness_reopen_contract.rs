@@ -220,7 +220,7 @@ fn minimal_runtime_flywheel_turn_persists_and_satisfies_goal() {
         stores
             .goal_store
             .active_goals()
-            .map(|goals| ActiveGoalSummary { goals })
+            .map(ActiveGoalSummary::from_goals)
             .map_err(|error| AgentActiveGoalQueryError::retryable(error.to_string()))
     };
     let mut mutation_sink = |command: &AgentGoalMutationCommand| match ports
@@ -464,7 +464,7 @@ fn docs_freshness_reopens_after_publication_append_before_satisfaction() {
         stores
             .goal_store
             .active_goals()
-            .map(|goals| ActiveGoalSummary { goals })
+            .map(ActiveGoalSummary::from_goals)
             .map_err(|error| AgentActiveGoalQueryError::retryable(error.to_string()))
     };
     let mut mutation_sink = |command: &AgentGoalMutationCommand| match ports
@@ -586,7 +586,7 @@ fn setup_reopened_active_goal(harness: &ReopenHarness) -> OpenReopenProduct {
         stores
             .goal_store
             .active_goals()
-            .map(|goals| ActiveGoalSummary { goals })
+            .map(ActiveGoalSummary::from_goals)
             .map_err(|error| AgentActiveGoalQueryError::retryable(error.to_string()))
     };
     let report = AgentGoalCurationRuntime::new(stores.agent_store.as_ref())

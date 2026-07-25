@@ -32,7 +32,9 @@ use meld_world_model::{BranchScope, TraversalQuery};
 
 use crate::context::frame::FrameStorage;
 use crate::control::projection::ExecutionProjectionReplaySource;
-use crate::execution::goal_mutation::{satisfy_request_from_agent_mutation, GoalMutationRequest};
+use crate::execution::goal_mutation::{
+    execution_mutation_from_agent_command, ExecutionGoalMutation, GoalMutationRequest,
+};
 use crate::execution::{build_docs_task_success_evidence, DocsTaskSuccessEvidenceRequest};
 use crate::prompt_context::PromptContextArtifactStorage;
 use crate::runtime::error::{RuntimeAssemblyError, RuntimePortError};
@@ -602,17 +604,26 @@ impl ExecutionGoalMutationPort {
         Self { store }
     }
 
-    /// Apply a world-model satisfaction mutation through execution-owned APIs.
+    /// Apply a world-model goal mutation through execution-owned APIs.
+    ///
+    /// Routes both satisfaction and reopen mutations; the historical name is
+    /// kept for existing callers.
     pub fn satisfy_agent_goal_mutation(
         &self,
         command: AgentGoalMutationCommand,
     ) -> Result<GoalCommandOutcome, RuntimePortError> {
-        let command = satisfy_request_from_agent_mutation(GoalMutationRequest { command })
+        let mutation = execution_mutation_from_agent_command(GoalMutationRequest { command })
             .map_err(|error| RuntimePortError::InvalidRequest(error.to_string()))?;
         let mut store = self.store.as_ref().clone();
-        GoalSetApi::new(&mut store)
-            .satisfy_goal(command)
-            .map_err(|error| RuntimePortError::Storage(error.to_string()))
+        let mut api = GoalSetApi::new(&mut store);
+        match mutation {
+            ExecutionGoalMutation::Satisfy(command) => api
+                .satisfy_goal(command)
+                .map_err(|error| RuntimePortError::Storage(error.to_string())),
+            ExecutionGoalMutation::Reopen(command) => api
+                .reopen_goal(command)
+                .map_err(|error| RuntimePortError::Storage(error.to_string())),
+        }
     }
 }
 

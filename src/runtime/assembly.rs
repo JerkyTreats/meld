@@ -1678,7 +1678,10 @@ mod tests {
             command_id: "mutation-a".to_string(),
             agent_id: "agent-a".to_string(),
             goal_id,
-            kind: meld_world_model::AgentGoalMutationKind::Satisfy { at_seq: review_seq },
+            kind: meld_world_model::AgentGoalMutationKind::Satisfy {
+                at_seq: review_seq,
+                lifecycle_epoch: 0,
+            },
             dedupe_key,
             review_seq,
             projection_version: "world_model.planner.v1".to_string(),
