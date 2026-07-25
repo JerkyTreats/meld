@@ -284,7 +284,7 @@ fn satisfaction_input(confidence: f64, review_seq: u64) -> AgentGoalSatisfaction
         subscription: input.subscription,
         review_seq,
         planner_projection: input.planner_projection,
-        active_goals: ActiveGoalSummary { goals: vec![goal] },
+        active_goals: ActiveGoalSummary::from_goals(vec![goal]),
         input_refs: input.input_refs,
     }
 }
@@ -521,7 +521,10 @@ fn agent_goal_mutation_command_validate_rejects_invalid_fields() {
             command.dedupe_key.agent_id = "other-agent".to_string();
         }),
         invalid_goal_mutation_command(|command| {
-            command.kind = AgentGoalMutationKind::Satisfy { at_seq: 21 };
+            command.kind = AgentGoalMutationKind::Satisfy {
+                at_seq: 21,
+                lifecycle_epoch: 0,
+            };
         }),
     ];
 
@@ -582,7 +585,13 @@ fn agent_satisfaction_curation_emits_mutation_for_satisfied_goal() {
         AgentDecisionKind::GoalMutationCommand
     );
     let command = outcome.goal_mutation_command.unwrap();
-    assert_eq!(command.kind, AgentGoalMutationKind::Satisfy { at_seq: 22 });
+    assert_eq!(
+        command.kind,
+        AgentGoalMutationKind::Satisfy {
+            at_seq: 22,
+            lifecycle_epoch: 0,
+        }
+    );
     assert_eq!(
         command.command_id,
         expected_deterministic_id("goal-mutation-command", &decision_key)
@@ -636,24 +645,15 @@ fn active_goal_summary_requires_active_matching_goal_from_same_agent() {
         &rule_config(),
     );
     let matching = matching_active_goal_for(&dedupe);
-    assert!(ActiveGoalSummary {
-        goals: vec![matching.clone()]
-    }
-    .has_matching_goal(&dedupe));
+    assert!(ActiveGoalSummary::from_goals(vec![matching.clone()]).has_matching_goal(&dedupe));
 
     let mut satisfied = matching.clone();
     satisfied.lifecycle = GoalLifecycle::Satisfied { at_seq: 9 };
-    assert!(!ActiveGoalSummary {
-        goals: vec![satisfied]
-    }
-    .has_matching_goal(&dedupe));
+    assert!(!ActiveGoalSummary::from_goals(vec![satisfied]).has_matching_goal(&dedupe));
 
     let mut other_agent = matching.clone();
     other_agent.agent_id = "other-agent".to_string();
-    assert!(!ActiveGoalSummary {
-        goals: vec![other_agent]
-    }
-    .has_matching_goal(&dedupe));
+    assert!(!ActiveGoalSummary::from_goals(vec![other_agent]).has_matching_goal(&dedupe));
 
     let mut other_subject = matching.clone();
     other_subject.target = Proposition::Holds {
@@ -661,10 +661,7 @@ fn active_goal_summary_requires_active_matching_goal_from_same_agent() {
         dimension: Term::Dimension(DIMENSION_ID.to_string()),
         condition: Condition::Above(Term::Literal(Literal::Number(THRESHOLD))),
     };
-    assert!(!ActiveGoalSummary {
-        goals: vec![other_subject]
-    }
-    .has_matching_goal(&dedupe));
+    assert!(!ActiveGoalSummary::from_goals(vec![other_subject]).has_matching_goal(&dedupe));
 
     let mut other_dimension = matching.clone();
     other_dimension.target = Proposition::Holds {
@@ -672,10 +669,7 @@ fn active_goal_summary_requires_active_matching_goal_from_same_agent() {
         dimension: Term::Dimension("other_dimension".to_string()),
         condition: Condition::Above(Term::Literal(Literal::Number(THRESHOLD))),
     };
-    assert!(!ActiveGoalSummary {
-        goals: vec![other_dimension]
-    }
-    .has_matching_goal(&dedupe));
+    assert!(!ActiveGoalSummary::from_goals(vec![other_dimension]).has_matching_goal(&dedupe));
 
     let mut other_condition = matching;
     other_condition.target = Proposition::Holds {
@@ -683,10 +677,7 @@ fn active_goal_summary_requires_active_matching_goal_from_same_agent() {
         dimension: Term::Dimension(DIMENSION_ID.to_string()),
         condition: Condition::Above(Term::Literal(Literal::Number(0.9))),
     };
-    assert!(!ActiveGoalSummary {
-        goals: vec![other_condition]
-    }
-    .has_matching_goal(&dedupe));
+    assert!(!ActiveGoalSummary::from_goals(vec![other_condition]).has_matching_goal(&dedupe));
 }
 
 #[test]
@@ -936,7 +927,7 @@ fn agent_matching_active_goal_absorbs() {
         },
         lifecycle: GoalLifecycle::Active,
     };
-    input.active_goals = ActiveGoalSummary { goals: vec![goal] };
+    input.active_goals = ActiveGoalSummary::from_goals(vec![goal]);
     let outcome = curate_threshold_rule(input).unwrap();
     assert_eq!(outcome.decision.decision, AgentDecisionKind::Absorbed);
     assert!(outcome.goal_command.is_none());
@@ -1207,9 +1198,7 @@ fn agent_goal_runtime_recovers_receipt_from_visible_execution_goal() {
         delivery,
         &belief_query,
         &planner_query,
-        ActiveGoalSummary {
-            goals: vec![active_goal.clone()],
-        },
+        ActiveGoalSummary::from_goals(vec![active_goal.clone()]),
         rule_config(),
         &mut sink,
     );
@@ -1275,7 +1264,7 @@ fn agent_satisfaction_review_persists_decision_before_returning_mutation() {
                 review.clone(),
                 &belief_query,
                 &planner_query,
-                ActiveGoalSummary { goals: vec![goal] },
+                ActiveGoalSummary::from_goals(vec![goal]),
             )
             .unwrap();
 
@@ -1327,9 +1316,7 @@ fn agent_satisfaction_review_replays_by_review_identity() {
     );
     let mut goal = low_confidence_goal_command().goal;
     goal.lifecycle = GoalLifecycle::Active;
-    let active_goals = ActiveGoalSummary {
-        goals: vec![goal.clone()],
-    };
+    let active_goals = ActiveGoalSummary::from_goals(vec![goal.clone()]);
     let review = satisfaction_review(&subscription, 22);
     let curation = AgentCuration::new(&agent_store);
 
@@ -1402,9 +1389,7 @@ fn agent_satisfaction_runtime_reuses_durable_sink_receipt_on_replay() {
         review.clone(),
         &belief_query,
         &planner_query,
-        ActiveGoalSummary {
-            goals: vec![goal.clone()],
-        },
+        ActiveGoalSummary::from_goals(vec![goal.clone()]),
         &mut sink,
     );
     goal.lifecycle = GoalLifecycle::Satisfied { at_seq: 22 };
@@ -1412,7 +1397,7 @@ fn agent_satisfaction_runtime_reuses_durable_sink_receipt_on_replay() {
         review.clone(),
         &belief_query,
         &planner_query,
-        ActiveGoalSummary { goals: vec![goal] },
+        ActiveGoalSummary::from_goals(vec![goal]),
         &mut sink,
     );
 
@@ -1468,7 +1453,7 @@ fn agent_satisfaction_runtime_rejects_not_found_sink_submission() {
         review,
         &belief_query,
         &planner_query,
-        ActiveGoalSummary { goals: vec![goal] },
+        ActiveGoalSummary::from_goals(vec![goal]),
         &mut sink,
     );
 
@@ -1505,7 +1490,7 @@ fn agent_satisfaction_review_uses_review_seq_not_belief_revision_for_dedupe() {
     );
     let mut goal = low_confidence_goal_command().goal;
     goal.lifecycle = GoalLifecycle::Active;
-    let active_goals = ActiveGoalSummary { goals: vec![goal] };
+    let active_goals = ActiveGoalSummary::from_goals(vec![goal]);
     let curation = AgentCuration::new(&agent_store);
 
     let first = curation
@@ -1560,7 +1545,7 @@ fn agent_satisfaction_review_persists_absorbed_without_mutation() {
             review.clone(),
             &belief_query,
             &planner_query,
-            ActiveGoalSummary { goals: vec![goal] },
+            ActiveGoalSummary::from_goals(vec![goal]),
         )
         .unwrap();
 
