@@ -101,8 +101,11 @@ impl BeliefRuntime {
         .with_theory_revision(theory_revision)
     }
 
-    /// Stamp an installed theory revision into committed revision lineage.
-    pub fn with_theory_revision(mut self, theory_revision: TheoryRevisionRef) -> Self {
+    // Private on purpose: durable lineage may cite only installed registry
+    // revisions, so the sole entry point is `from_family_revision`, which
+    // derives the reference from a `BeliefFamilyRevision`. A public stamp
+    // would let callers invent never-installed theory references.
+    fn with_theory_revision(mut self, theory_revision: TheoryRevisionRef) -> Self {
         self.theory_revision = Some(theory_revision);
         self
     }
@@ -238,6 +241,17 @@ impl BeliefRuntime {
             return Ok(None);
         };
         let prior = self.belief_store.current_revision(key)?;
+        // A committed revision may already cover the dirty window, for
+        // example after a replayed dirty mark. Clearing here keeps absorbed
+        // keys out of bounded selection instead of re-committing the same
+        // window forever.
+        if let Some(prior_revision) = &prior {
+            if prior_revision.source_cursor_end >= dirty.latest_seq {
+                self.belief_store.clear_dirty(key)?;
+                self.belief_store.flush()?;
+                return Ok(None);
+            }
+        }
         let source_cursor_start = prior
             .as_ref()
             .map(|revision| revision.source_cursor_end.saturating_add(1))
