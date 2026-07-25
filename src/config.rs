@@ -502,6 +502,21 @@ provider_name = "test-ollama"
         }
     }
 
+    // Restores the process working directory when dropped.
+    struct CwdRestore(PathBuf);
+
+    impl CwdRestore {
+        fn new() -> Self {
+            Self(std::env::current_dir().unwrap())
+        }
+    }
+
+    impl Drop for CwdRestore {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.0);
+        }
+    }
+
     fn write_global_config(home: &Path, body: &str) -> PathBuf {
         let config_dir = home.join(".config").join("meld");
         std::fs::create_dir_all(&config_dir).unwrap();
@@ -585,10 +600,45 @@ endpoint = "http://localhost:11434"
         std::env::set_var("HOME", mock_home.canonicalize().unwrap());
         std::env::set_var("XDG_CONFIG_HOME", xdg_home.canonicalize().unwrap());
 
-        let config = ConfigLoader::load(temp_dir.path()).unwrap();
+        let config = ConfigLoader::load_global().unwrap();
 
         let provider = config.providers.get("shared-provider").unwrap();
         assert_eq!(provider.model, "xdg-model");
+    }
+
+    #[test]
+    fn workspace_config_is_absent_unless_explicitly_selected() {
+        let _sandbox = EnvSandbox::new();
+        let temp_dir = TempDir::new().unwrap();
+        let mock_home = temp_dir.path().join("mock_home");
+        std::fs::create_dir_all(&mock_home).unwrap();
+        std::env::set_var("HOME", mock_home.canonicalize().unwrap());
+
+        let workspace_root = temp_dir.path().join("workspace");
+        let workspace_config_dir = workspace_root.join("config");
+        std::fs::create_dir_all(&workspace_config_dir).unwrap();
+        std::fs::write(
+            workspace_config_dir.join("config.toml"),
+            r#"
+[providers.workspace-only-provider]
+provider_type = "ollama"
+model = "workspace-model"
+endpoint = "http://localhost:11434"
+"#,
+        )
+        .unwrap();
+
+        // Even from inside the workspace, nothing is discovered from the
+        // working directory: participation requires explicit selection.
+        let _cwd = CwdRestore::new();
+        std::env::set_current_dir(&workspace_root).unwrap();
+        let global_only = ConfigLoader::load_global().unwrap();
+        assert!(!global_only
+            .providers
+            .contains_key("workspace-only-provider"));
+
+        let selected = ConfigLoader::load(&workspace_root).unwrap();
+        assert!(selected.providers.contains_key("workspace-only-provider"));
     }
 
     #[test]
@@ -615,7 +665,7 @@ endpoint = "http://localhost:11434"
         )
         .unwrap();
 
-        // The workspace config wins over the global file.
+        // The explicitly selected workspace config wins over the global file.
         let config = ConfigLoader::load(workspace_root).unwrap();
         let provider = config.providers.get("xdg-provider").unwrap();
         assert_eq!(provider.model, "workspace-model");

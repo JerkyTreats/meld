@@ -1,6 +1,6 @@
 //! ConfigLoader facade delegating to merge service.
 
-use super::merge::service::MergeService;
+use super::merge::service::{MergeService, WorkspaceParticipation};
 use super::MerkleConfig;
 use config::ConfigError;
 use std::path::Path;
@@ -17,7 +17,17 @@ impl ConfigLoader {
         super::sources::global_file::global_config_path()
     }
 
-    /// Load configuration from files and environment.
+    /// Load configuration without any workspace-local source.
+    ///
+    /// Workspace config participates only through explicit selection via
+    /// [`ConfigLoader::load`]; nothing is discovered from the process
+    /// working directory.
+    pub fn load_global() -> Result<MerkleConfig, ConfigError> {
+        MergeService::load_with(WorkspaceParticipation::Absent)
+    }
+
+    /// Load configuration with the given workspace root explicitly
+    /// selected as a config source.
     pub fn load(workspace_root: &Path) -> Result<MerkleConfig, ConfigError> {
         MergeService::load(workspace_root)
     }

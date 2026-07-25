@@ -7,20 +7,43 @@ use std::path::Path;
 
 use super::merge_policy;
 
+/// Whether a workspace-local config participates in the merge.
+///
+/// Workspace config is absent unless a caller explicitly selects a
+/// workspace root; no source is ever discovered from the process working
+/// directory.
+#[derive(Debug, Clone, Copy)]
+pub enum WorkspaceParticipation<'a> {
+    /// No workspace-local config source is consulted.
+    Absent,
+    /// The workspace at this root explicitly contributes its config files.
+    Selected(&'a Path),
+}
+
 /// Merge service for config composition.
 pub struct MergeService;
 
 impl MergeService {
-    /// Load config from workspace and standard sources.
+    /// Load config with explicit workspace participation.
     /// Precedence: global file (lowest) -> workspace base -> workspace env -> environment (highest).
-    pub fn load(workspace_root: &Path) -> Result<MerkleConfig, ConfigError> {
+    pub fn load_with(participation: WorkspaceParticipation) -> Result<MerkleConfig, ConfigError> {
         let builder = merge_policy::builder_with_defaults()?;
         let builder = global_file::add_to_builder(builder)?;
-        let builder = workspace_file::add_to_builder(builder, workspace_root)?;
+        let builder = match participation {
+            WorkspaceParticipation::Absent => builder,
+            WorkspaceParticipation::Selected(workspace_root) => {
+                workspace_file::add_to_builder(builder, workspace_root)?
+            }
+        };
         let builder = environment::add_to_builder(builder)?;
 
         let config = builder.build()?;
         config.try_deserialize()
+    }
+
+    /// Load config with the given workspace root explicitly selected.
+    pub fn load(workspace_root: &Path) -> Result<MerkleConfig, ConfigError> {
+        Self::load_with(WorkspaceParticipation::Selected(workspace_root))
     }
 
     /// Load config from a specific file with environment overlay.
