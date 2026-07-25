@@ -10,10 +10,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use meld_world_model::belief::{
-    configured_belief_key, BeliefAssessmentActor, BeliefAssessmentRequest,
+    configured_belief_key, AssessmentLease, BeliefAssessmentActor, BeliefAssessmentRequest,
     BeliefEvidenceNormalizer, BeliefFamilyRegistry, BeliefFamilyRegistryStore,
-    BeliefFamilyRevision, BeliefQuery, BeliefRuntime, BeliefStore, BeliefSubjectBinding,
-    BranchScope, PromotedEvidenceRecord, TheoryInstallDisposition,
+    BeliefFamilyRevision, BeliefKey, BeliefQuery, BeliefRuntime, BeliefStore, BeliefSubjectBinding,
+    BranchScope, LeaseStatus, PromotedEvidenceRecord, TheoryInstallDisposition,
 };
 use meld_world_model::events::{DomainObjectRef, EventRelation};
 use meld_world_model::planner::PlannerQuery;
@@ -674,6 +674,142 @@ fn second_evidence_revision_flows_to_planner_projection_with_theory_ref() {
     );
 }
 
+fn lease(
+    key: &BeliefKey,
+    lease_id: &str,
+    status: LeaseStatus,
+    expires_at_seq: u64,
+) -> AssessmentLease {
+    AssessmentLease {
+        lease_id: lease_id.to_string(),
+        belief_key: key.clone(),
+        epoch: 1,
+        owner_id: "worker-test".to_string(),
+        input_cursor_start: 1,
+        input_cursor_end: 1,
+        started_at_seq: 1,
+        expires_at_seq,
+        comparator_engine_id: "weighted_bayesian".to_string(),
+        config_snapshot_hash: "hash".to_string(),
+        status,
+    }
+}
+
+#[test]
+fn lease_recovery_reads_only_the_active_lease_index() {
+    let fixture = fixture(&["node-a"]);
+    let key = configured_belief_key(
+        &fixture.revision,
+        &fixture.subjects[0],
+        &default_perspective(),
+        &BranchScope::main(),
+    );
+
+    // A deep audit history of completed leases must stay untouched.
+    for index in 0..50 {
+        fixture
+            .belief
+            .put_lease(&lease(
+                &key,
+                &format!("lease-done-{index}"),
+                LeaseStatus::Completed,
+                5,
+            ))
+            .unwrap();
+    }
+    // A historical Leased-status record with no active-index entry is audit
+    // data, not in-flight work; index-driven recovery must not resurrect it.
+    fixture
+        .belief
+        .put_lease(&lease(&key, "lease-ghost", LeaseStatus::Leased, 5))
+        .unwrap();
+    let active = fixture
+        .belief
+        .acquire_lease(lease(&key, "lease-live", LeaseStatus::Queued, 5))
+        .unwrap();
+
+    let recovered = fixture.belief.recover_expired_leases(100).unwrap();
+
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].lease_id, active.lease_id);
+    assert_eq!(
+        fixture
+            .belief
+            .get_lease(&active.lease_id)
+            .unwrap()
+            .unwrap()
+            .status,
+        LeaseStatus::Abandoned
+    );
+    assert_eq!(
+        fixture
+            .belief
+            .get_lease("lease-ghost")
+            .unwrap()
+            .unwrap()
+            .status,
+        LeaseStatus::Leased
+    );
+    assert_eq!(
+        fixture
+            .belief
+            .get_lease("lease-done-7")
+            .unwrap()
+            .unwrap()
+            .status,
+        LeaseStatus::Completed
+    );
+    assert!(fixture.belief.dirty_state(&key).unwrap().is_some());
+    // A second pass over the now-empty active index recovers nothing.
+    assert!(fixture
+        .belief
+        .recover_expired_leases(100)
+        .unwrap()
+        .is_empty());
+}
+
+#[test]
+fn absorbed_dirty_window_clears_without_a_new_revision() {
+    let fixture = fixture(&["node-a"]);
+    let mut actor = actor(&fixture);
+    let key = configured_belief_key(
+        &fixture.revision,
+        &fixture.subjects[0],
+        &default_perspective(),
+        &BranchScope::main(),
+    );
+
+    let initial = actor.bounded_step(&BeliefAssessmentRequest {
+        sequence: 10,
+        max_items: 2,
+    });
+    // Replay marks the key dirty at a sequence the committed revision
+    // already covers.
+    fixture.belief.mark_dirty(&key, 1).unwrap();
+    let absorbed = actor.bounded_step(&BeliefAssessmentRequest {
+        sequence: 11,
+        max_items: 2,
+    });
+    let quiescent = actor.bounded_step(&BeliefAssessmentRequest {
+        sequence: 12,
+        max_items: 2,
+    });
+
+    assert_eq!(initial.items_committed, 1);
+    assert_eq!(absorbed.items_attempted, 1);
+    assert_eq!(absorbed.items_committed, 0);
+    assert!(absorbed.retryable_errors.is_empty());
+    assert!(fixture.belief.dirty_state(&key).unwrap().is_none());
+    assert_eq!(quiescent.items_attempted, 0);
+    assert_eq!(
+        BeliefQuery::new(fixture.belief.as_ref())
+            .revision_history(&key)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
 #[test]
 fn stored_records_without_theory_revision_still_load() {
     let fixture = fixture(&["node-a"]);
@@ -709,4 +845,22 @@ fn stored_records_without_theory_revision_still_load() {
     assert_eq!(legacy_revision.theory_revision, None);
     assert_eq!(legacy_view.theory_revision, None);
     assert_eq!(legacy_revision.revision_id, revision.revision_id);
+
+    // Planner projection outputs recorded before the lineage field existed
+    // must also load, with the field defaulting to None.
+    let projection = PlannerQuery::new(
+        BeliefQuery::new(fixture.belief.as_ref()),
+        TraversalQuery::new(fixture.graph.as_ref()),
+    )
+    .project_world_state_for_key(&key)
+    .unwrap();
+    let mut projection_json = serde_json::to_value(&projection).unwrap();
+    projection_json
+        .as_object_mut()
+        .unwrap()
+        .remove("theory_revision");
+    let legacy_projection: meld_world_model::PlannerProjectionOutput =
+        serde_json::from_value(projection_json).unwrap();
+    assert_eq!(legacy_projection.theory_revision, None);
+    assert_eq!(legacy_projection.source_refs, projection.source_refs);
 }
