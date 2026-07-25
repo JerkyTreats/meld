@@ -1,6 +1,7 @@
 //! MergeService: orchestrates sources, applies merge policy, deserializes to MerkleConfig.
 
 use crate::config::sources::{environment, global_file, workspace_file};
+use crate::config::stewardship::selection::SelectionOrigins;
 use crate::config::MerkleConfig;
 use config::ConfigError;
 use std::path::Path;
@@ -37,8 +38,7 @@ impl MergeService {
         };
         let builder = environment::add_to_builder(builder)?;
 
-        let config = builder.build()?;
-        config.try_deserialize()
+        finish(builder.build()?)
     }
 
     /// Load config with the given workspace root explicitly selected.
@@ -59,7 +59,27 @@ impl MergeService {
                 .try_parsing(true),
         );
 
-        let config = builder.build()?;
-        config.try_deserialize()
+        finish(builder.build()?)
     }
+}
+
+/// Deserialize the merged config and run source-aware docs freshness
+/// validation, so an invalid docs field names its config source and field.
+fn finish(config: config::Config) -> Result<MerkleConfig, ConfigError> {
+    // Origins must be captured before deserialization consumes the tree.
+    let origins = SelectionOrigins::from_source(&config);
+    let merkle: MerkleConfig = config.try_deserialize()?;
+    if let Some(selection) = &merkle.stewardship.docs_freshness {
+        selection.validate_sourced(&origins).map_err(|errors| {
+            let joined = errors
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; ");
+            ConfigError::Message(format!(
+                "invalid docs freshness stewardship selection: {joined}"
+            ))
+        })?;
+    }
+    Ok(merkle)
 }

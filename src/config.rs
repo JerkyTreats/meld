@@ -27,9 +27,15 @@ mod facade;
 mod merge;
 mod paths;
 mod sources;
+mod stewardship;
 mod workspace;
 
 pub use facade::ConfigLoader;
+pub use stewardship::binding::{PhysicalBinding, SelectedStewardshipPackage};
+pub use stewardship::selection::{
+    DocsFreshnessSelection, SelectionFieldError, SelectionOrigins, StewardshipConfig,
+    TheorySelection,
+};
 pub use workspace::StorageConfig;
 
 /// Backward-compatible re-export of XDG path helpers
@@ -62,6 +68,11 @@ pub struct MerkleConfig {
     /// Workflow profile loading configuration
     #[serde(default)]
     pub workflows: WorkflowConfig,
+
+    /// Stewardship expression selections. Identity references only:
+    /// theory bodies live in their owning domains.
+    #[serde(default, skip_serializing_if = "StewardshipConfig::is_empty")]
+    pub stewardship: StewardshipConfig,
 }
 
 /// System-wide configuration
@@ -131,6 +142,8 @@ pub enum ValidationError {
     Agent(String, String),
     System(String),
     Workflow(String),
+    /// A docs freshness stewardship selection field, with its source.
+    Stewardship(SelectionFieldError),
 }
 
 impl std::fmt::Display for ValidationError {
@@ -147,6 +160,9 @@ impl std::fmt::Display for ValidationError {
             }
             ValidationError::Workflow(msg) => {
                 write!(f, "Workflow: {}", msg)
+            }
+            ValidationError::Stewardship(error) => {
+                write!(f, "Stewardship: {}", error)
             }
         }
     }
@@ -199,6 +215,16 @@ impl MerkleConfig {
         // Validate workflow config
         if let Err(e) = self.workflows.validate() {
             errors.push(ValidationError::Workflow(e));
+        }
+
+        // Load paths validate the docs selection with real source origins;
+        // this direct-validation path can only attribute the merged value.
+        if let Some(selection) = &self.stewardship.docs_freshness {
+            if let Err(field_errors) =
+                selection.validate_sourced(&SelectionOrigins::uniform("merged configuration"))
+            {
+                errors.extend(field_errors.into_iter().map(ValidationError::Stewardship));
+            }
         }
 
         // Check for duplicate agent IDs
@@ -702,5 +728,110 @@ endpoint = "http://localhost:11434"
         let config = ConfigLoader::load(workspace_root).unwrap();
         assert_eq!(config.providers.len(), 0);
         assert_eq!(config.agents.len(), 0);
+    }
+
+    fn docs_selection_global_config(target_root: &Path, subject: &str) -> String {
+        format!(
+            r#"
+[providers.main-provider]
+provider_type = "ollama"
+model = "test-model"
+endpoint = "http://localhost:11434"
+
+[stewardship.docs_freshness]
+expression = "docs_freshness"
+target_root = "{}"
+subject = "{}"
+agent_id = "docs-steward"
+provider_id = "main-provider"
+
+[stewardship.docs_freshness.theory]
+belief_family_id = "docs-freshness-family"
+evidence_mapping_id = "publication-to-freshness"
+curation_rule_id = "docs-curation"
+"#,
+            target_root.display(),
+            subject
+        )
+    }
+
+    #[test]
+    fn invalid_docs_field_identifies_source_and_field() {
+        let _sandbox = EnvSandbox::new();
+        let temp_dir = TempDir::new().unwrap();
+        let target = temp_dir.path().join("target");
+        std::fs::create_dir_all(&target).unwrap();
+        let mock_home = temp_dir.path().join("mock_home");
+        std::fs::create_dir_all(&mock_home).unwrap();
+        std::env::set_var("HOME", mock_home.canonicalize().unwrap());
+        // Empty subject is the invalid field.
+        let config_file =
+            write_global_config(&mock_home, &docs_selection_global_config(&target, ""));
+
+        let error = ConfigLoader::load_global().unwrap_err();
+
+        let message = error.to_string();
+        assert!(
+            message.contains("stewardship.docs_freshness.subject"),
+            "error should name the invalid field, got: {message}"
+        );
+        let canonical_source = config_file.canonicalize().unwrap();
+        assert!(
+            message.contains(canonical_source.to_str().unwrap()),
+            "error should name the config source {}, got: {message}",
+            canonical_source.display()
+        );
+    }
+
+    #[test]
+    fn valid_docs_selection_loads_and_creates_no_state() {
+        let _sandbox = EnvSandbox::new();
+        let temp_dir = TempDir::new().unwrap();
+        let target = temp_dir.path().join("target");
+        std::fs::create_dir_all(&target).unwrap();
+        let mock_home = temp_dir.path().join("mock_home");
+        std::fs::create_dir_all(&mock_home).unwrap();
+        std::env::set_var("HOME", mock_home.canonicalize().unwrap());
+        write_global_config(&mock_home, &docs_selection_global_config(&target, "docs"));
+
+        let config = ConfigLoader::load_global().unwrap();
+        assert!(config.validate().is_ok());
+
+        let selection = config.stewardship.docs_freshness.as_ref().unwrap();
+        assert_eq!(selection.expression, "docs_freshness");
+        assert_eq!(selection.subject, "docs");
+        assert_eq!(selection.theory.belief_family_id, "docs-freshness-family");
+        // Loading and validation are stage 0: no state under the target.
+        assert_eq!(std::fs::read_dir(&target).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn default_source_resolution_is_identical_across_working_directories() {
+        let _sandbox = EnvSandbox::new();
+        let temp_dir = TempDir::new().unwrap();
+        let target = temp_dir.path().join("target");
+        std::fs::create_dir_all(&target).unwrap();
+        let mock_home = temp_dir.path().join("mock_home");
+        std::fs::create_dir_all(&mock_home).unwrap();
+        std::env::set_var("HOME", mock_home.canonicalize().unwrap());
+        write_global_config(&mock_home, &docs_selection_global_config(&target, "docs"));
+        let cwd_a = temp_dir.path().join("cwd_a");
+        let cwd_b = temp_dir.path().join("cwd_b");
+        std::fs::create_dir_all(&cwd_a).unwrap();
+        std::fs::create_dir_all(&cwd_b).unwrap();
+
+        let _cwd = CwdRestore::new();
+        std::env::set_current_dir(&cwd_a).unwrap();
+        let path_a = ConfigLoader::xdg_config_path();
+        let config_a = ConfigLoader::load_global().unwrap();
+        std::env::set_current_dir(&cwd_b).unwrap();
+        let path_b = ConfigLoader::xdg_config_path();
+        let config_b = ConfigLoader::load_global().unwrap();
+
+        assert_eq!(path_a, path_b);
+        assert_eq!(
+            serde_json::to_value(&config_a).unwrap(),
+            serde_json::to_value(&config_b).unwrap()
+        );
     }
 }
