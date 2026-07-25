@@ -85,6 +85,8 @@ Every observable state is read through the domain query facades. Rationale: the 
 
 After each step, the session reports what moved: the tick report with checkpoint movement plus the domain records created or revised since the prior step. Rationale: "what changed" is the primary debugger question and must not require manual store diffing. Ground: reports exist but are collapsed today; preservation is a Workstream Five criterion.
 
+Observed evidence from the isolate exit test `crates/meld-world-model/tests/goal_belief_isolate.rs`: belief assessment commits inline during evidence ingestion, so the revision diff appears on the ingestion step while the assessment step truthfully reports zero attempts. Step diffing must attribute records to whichever actor committed them, or the ingestion and assessment responsibilities must later separate if per-actor causality granularity matters.
+
 ### DBG-006 Machine-readable everything
 
 Every session command emits stable JSON whose schemas are the existing serialized contract types. Rationale: the primary operator is a model; prose output is lossy. Ground: all contract types already derive serialization.

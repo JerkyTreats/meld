@@ -152,6 +152,18 @@ Deferred findings carried into packet lanes:
 - Workstream One sequencing: the root minimal-selection and physical-binding skeleton is that lane's head deliverable and must exist before dependent lane work starts.
 - Release note: the belief config hash shift from the observationality field causes a one-time global view reassessment on upgrade of an existing world.
 
+### Wave Dispositions
+
+The Foundation Wave closed 2026-07-24, merged at `71ba0f9`: stewardship selection with the pure physical binding resolver, the bounded package-step contract with its durable resumable first implementor, and belief selection with the registry store and exact-key planner causality. Each lane passed fresh review; the package-step and belief lanes each corrected blocking findings confirmed by their original reviewers.
+
+The Domain Convergence Wave closed 2026-07-24, merged at `6da87ac`: durable evidence-consumer cursor with config-driven outcome mapping and the bounded ingestion actor; agent convergence with delivery and satisfaction eligibility, the rule's durable home, the named-port actors, and the drift-epoch mutations; execution planning driven by the active-goal query with frame-identity plan causality, docs package route selection, and the goal-store epoch fence. The Goal-and-Belief isolate exit evidence is `crates/meld-world-model/tests/goal_belief_isolate.rs`, executing the debugger worked scenario end to end over one temporary root.
+
+Findings carried to later lanes:
+
+- Runtime actor binding: derive the ingestion actor's mapping identity from the configured mapping itself so a selected-versus-installed mismatch is unconstructible; populate the active-goal snapshot's lifecycle epochs from execution goal records; supply a durably monotonic injected sequence to the satisfaction actor across restarts.
+- Dispatch: dedupe the package-route handoff on its deterministic plan identity; the handoff carries no durable record by design.
+- Debugger requirements register: belief assessment commits inline during evidence ingestion, so per-step revision diffs attribute to the committing actor rather than the nominally responsible one; see DBG-005.
+
 ## Workstream One Stewardship Expression And Physical Binding
 
 Owner: root config and product assembly adapters
