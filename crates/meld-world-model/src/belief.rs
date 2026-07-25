@@ -68,6 +68,7 @@ pub mod ingestion;
 pub mod outcome_mapping;
 pub mod query;
 pub mod registry;
+pub mod registry_store;
 pub mod runtime;
 pub mod store;
 
@@ -89,5 +90,6 @@ pub use query::BeliefQuery;
 pub use registry::{
     BeliefFamilyRegistry, BeliefFamilyRevision, TheoryInstallDisposition, TheoryRevisionRef,
 };
+pub use registry_store::BeliefFamilyRegistryStore;
 pub use runtime::{BeliefRuntime, RuntimeAssessmentResult};
 pub use store::BeliefStore;
