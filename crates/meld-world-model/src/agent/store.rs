@@ -7,8 +7,8 @@ use sled::{Db, Tree};
 
 use crate::agent::contracts::{
     AgentActivationRecord, AgentCurationDecision, AgentCurationDedupeKey, AgentRecord,
-    AgentSatisfactionReview, AgentSinkReceipt, AgentStatus, AgentSubscriptionRecord,
-    AgentSubscriptionStatus,
+    AgentSatisfactionCheckpoint, AgentSatisfactionReview, AgentSinkReceipt, AgentStatus,
+    AgentSubscriptionRecord, AgentSubscriptionStatus,
 };
 use crate::error::StorageError;
 
@@ -24,6 +24,7 @@ const TREE_DECISIONS_BY_AGENT: &str = "agent_decisions_by_agent";
 const TREE_DECISIONS_BY_DEDUPE: &str = "agent_decisions_by_dedupe";
 const TREE_DECISIONS_BY_REVISION: &str = "agent_decisions_by_revision";
 const TREE_SATISFACTION_DECISIONS_BY_REVIEW: &str = "agent_satisfaction_decisions_by_review";
+const TREE_SATISFACTION_CHECKPOINTS: &str = "agent_satisfaction_checkpoints";
 const TREE_SINK_RECEIPTS: &str = "agent_sink_receipts";
 const TREE_SINK_RECEIPTS_BY_COMMAND: &str = "agent_sink_receipts_by_command";
 const KEY_PAD: usize = 20;
@@ -44,6 +45,7 @@ pub struct AgentStore {
     decisions_by_dedupe: Tree,
     decisions_by_revision: Tree,
     satisfaction_decisions_by_review: Tree,
+    satisfaction_checkpoints: Tree,
     sink_receipts: Tree,
     sink_receipts_by_command: Tree,
 }
@@ -77,6 +79,9 @@ impl AgentStore {
                 .map_err(to_storage_io)?,
             satisfaction_decisions_by_review: db
                 .open_tree(TREE_SATISFACTION_DECISIONS_BY_REVIEW)
+                .map_err(to_storage_io)?,
+            satisfaction_checkpoints: db
+                .open_tree(TREE_SATISFACTION_CHECKPOINTS)
                 .map_err(to_storage_io)?,
             sink_receipts: db.open_tree(TREE_SINK_RECEIPTS).map_err(to_storage_io)?,
             sink_receipts_by_command: db
@@ -454,6 +459,41 @@ impl AgentStore {
         };
         let decision_id = String::from_utf8(raw.to_vec()).map_err(to_storage_utf8)?;
         self.get_decision(&decision_id)
+    }
+
+    /// Persist the satisfaction trigger claim for one agent and subscription.
+    ///
+    /// The claim must be durable before its review runs so crash replay
+    /// resumes the same review identity instead of inventing a new sequence.
+    pub fn put_satisfaction_checkpoint(
+        &self,
+        checkpoint: &AgentSatisfactionCheckpoint,
+    ) -> Result<(), StorageError> {
+        checkpoint.validate()?;
+        self.satisfaction_checkpoints
+            .insert(
+                AgentSatisfactionCheckpoint::natural_key(
+                    &checkpoint.agent_id,
+                    &checkpoint.subscription_id,
+                )
+                .as_bytes(),
+                serde_json::to_vec(checkpoint).map_err(to_storage_data)?,
+            )
+            .map_err(to_storage_io)?;
+        Ok(())
+    }
+
+    /// Read the satisfaction trigger claim for one agent and subscription.
+    pub fn get_satisfaction_checkpoint(
+        &self,
+        agent_id: &str,
+        subscription_id: &str,
+    ) -> Result<Option<AgentSatisfactionCheckpoint>, StorageError> {
+        decode_optional(
+            self.satisfaction_checkpoints
+                .get(AgentSatisfactionCheckpoint::natural_key(agent_id, subscription_id).as_bytes())
+                .map_err(to_storage_io)?,
+        )
     }
 
     /// Persist a sink receipt unless the decision already has one.

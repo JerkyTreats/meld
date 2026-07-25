@@ -197,6 +197,10 @@ impl<'a> AgentGoalCurationRuntime<'a> {
     ///
     /// The decision is flushed before the sink is invoked. The subscription
     /// cursor advances only after no sink is required or the sink succeeds.
+    ///
+    /// The caller-supplied `rule_config` is the explicit compatibility entry
+    /// for assemblies that predate the durable rule home. The bounded actor
+    /// path resolves the rule from the agent record instead.
     pub fn handle_delivery<S>(
         &self,
         delivery: AgentDelivery,
