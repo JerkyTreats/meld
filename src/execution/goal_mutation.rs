@@ -35,6 +35,10 @@ pub fn satisfy_request_from_agent_mutation(
             },
             goal_id: command.goal_id,
             at_seq,
+            // The agent mutation contract does not carry the observed epoch
+            // yet; every current record is epoch zero. The agent-convergence
+            // workstream threads the observed epoch through this adapter.
+            lifecycle_epoch: 0,
         }),
     }
 }
