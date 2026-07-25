@@ -44,6 +44,8 @@ pub mod runtime;
 pub mod state;
 /// In memory and sled-backed command stores.
 pub mod store;
+/// Package-route terminal outcome recording over the command boundary.
+pub mod terminal_recording;
 
 pub use aggregate::{
     AggregatePackageOutcome, AggregatePackageStatus, FolderPublicationResult,
@@ -86,3 +88,9 @@ pub use state::{
     UpstreamArtifactInitSource,
 };
 pub use store::{InMemoryTaskNetworkStore, SledTaskNetworkStore};
+pub use terminal_recording::{
+    load_package_run_artifact_records, package_route_task_lineage,
+    package_run_id_for_task_instance, package_run_task_instance_id, package_run_terminal_outcome,
+    record_package_run_terminal_outcome, PackageRunRecording, PackageRunTerminalOutcome,
+    PackageRunTerminalRecording, TerminalRecordingError, PACKAGE_RUN_TASK_INSTANCE_PREFIX,
+};
