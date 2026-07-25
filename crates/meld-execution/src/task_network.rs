@@ -14,6 +14,8 @@
 
 /// Canonical aggregate package outcome contract.
 pub mod aggregate;
+/// Aggregate package outcome production and publication.
+pub mod aggregate_publication;
 /// Serialized command boundary for task network writers.
 pub mod command;
 /// Shared identity and hashing helpers for task network records.
@@ -45,6 +47,13 @@ pub use aggregate::{
     AggregatePackageOutcome, AggregatePackageStatus, FolderPublicationResult,
     AGGREGATE_OUTCOME_CONTRACT_ID, AGGREGATE_PACKAGE_COMPLETED_EVENT_TYPE,
     AGGREGATE_PACKAGE_FAILED_EVENT_TYPE,
+};
+pub use aggregate_publication::{
+    aggregate_event_record_id, build_aggregate_envelope, check_aggregate_completion,
+    expected_folder_units, load_aggregate_completion, produce_aggregate_outcome, publish_aggregate,
+    publish_aggregate_for_run, AggregateCompletionCheck, AggregateProduction, AggregatePublication,
+    AggregatePublicationError, AggregatePublicationState, AggregatePublicationStore,
+    AggregatePublishResult, AggregateRunBinding, AggregateSkipReason, PublishAggregateRequest,
 };
 pub use command::{Command, Request as CommandRequest, Response};
 pub use dispatch::{Claim, Outcome, OutcomeStatus, Request as DispatchRequest};
