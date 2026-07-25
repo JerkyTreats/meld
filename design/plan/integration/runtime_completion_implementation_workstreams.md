@@ -1,6 +1,6 @@
 # Runtime Completion Implementation Workstreams
 
-Status: operational-parity rebaseline; requirements gate closed 2026-07-24; pending coordinated contract freeze and fresh review
+Status: operational-parity rebaseline; requirements gate closed 2026-07-24; coordinated contract gate closed 2026-07-24 after two-lane fresh review; Foundation Wave unblocked
 
 Evidence date: 2026-07-16
 
@@ -137,6 +137,20 @@ One integration owner coordinates and freezes these skeletons before parallel im
 - Root owns runtime result and end-to-end fixture coordination.
 
 Owning domains may expose domain-specific actor reports. Root translates those reports into the shared supervisor shape. Domain crates must not depend on root runtime contracts merely to satisfy supervision.
+
+### Gate Disposition
+
+The gate closed 2026-07-24. The frozen skeletons are commits `ad89d74`, `fb4af4f`, `32adf7f`, and `44f2aca` on `runtime-completion`, corrected by `b65655c`, `9971e74`, `d8f0ce5`, and `22d3bce`. Both fresh review lanes passed: architecture and boundary fitness, and durability with Strategy continuity. All blocking findings were corrected and confirmed by their original reviewers.
+
+Deferred findings carried into packet lanes:
+
+- Goal-set lane: enforce the satisfy epoch-mismatch stale no-op in both goal stores.
+- Agent-convergence lane: thread the observed epoch through the satisfy adapter, and bind curation through the named port at composition so the seam is enforced rather than documentary.
+- Evidence lane: implement `DurableConsumerCursor` on the existing consumer registry capability, reconcile its state record with the existing cursor position shape, and validate genesis identity segments carry no delimiter.
+- Dispatch lane: adopt explicit edge origins in fixtures once origin validation lands, and consider a per-folder terminal status on the aggregate outcome.
+- Initialization lane: normalize stage selection to pipeline order without duplicates, and offer a time-parameterized epistemic genesis constructor for injected-time isolate boots.
+- Workstream One sequencing: the root minimal-selection and physical-binding skeleton is that lane's head deliverable and must exist before dependent lane work starts.
+- Release note: the belief config hash shift from the observationality field causes a one-time global view reassessment on upgrade of an existing world.
 
 ## Workstream One Stewardship Expression And Physical Binding
 
