@@ -51,6 +51,7 @@ mod workspace_commands;
 mod workspace_isolation;
 mod workspace_scan_capability;
 mod workspace_traversal;
+mod world_init_pipeline;
 mod world_state_graph;
 mod xdg_config;
 
