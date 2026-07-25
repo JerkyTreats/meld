@@ -1,5 +1,7 @@
 //! Public agent records and command contracts.
 
+use std::collections::BTreeMap;
+
 use meld_lang::{Condition, Goal, GoalLifecycle, Literal, Proposition, Term};
 use serde::{Deserialize, Serialize};
 
@@ -140,7 +142,26 @@ impl AgentRecord {
         require_non_empty("observation scope", &self.observation_scope)?;
         require_non_empty("directive", &self.directive)?;
         require_non_empty("seed provenance", &self.seed_provenance)?;
+        if let Some(binding) = &self.curation_rule {
+            binding.validate()?;
+        }
         Ok(())
+    }
+
+    /// Resolve the curation rule installed on this record.
+    ///
+    /// The record is the durable home for the rule: the actor path resolves
+    /// it here instead of accepting caller-supplied rule configuration, and
+    /// fails truthfully when genesis never installed one.
+    pub fn installed_curation_rule(&self) -> Result<&AgentCurationRuleConfig, StorageError> {
+        let binding = self.curation_rule.as_ref().ok_or_else(|| {
+            StorageError::InvalidPath(format!(
+                "agent '{}' has no installed curation rule",
+                self.agent_id
+            ))
+        })?;
+        binding.validate()?;
+        Ok(&binding.rule)
     }
 }
 
@@ -320,10 +341,32 @@ pub struct AgentCurationRuleBinding {
 }
 
 impl AgentCurationRuleBinding {
-    /// Validate the bound rule and revision hash.
+    /// Build a binding whose content hash pins the exact rule revision.
+    pub fn for_rule(rule: AgentCurationRuleConfig) -> Result<Self, StorageError> {
+        rule.validate()?;
+        let content_hash = Self::content_hash_for(&rule)?;
+        Ok(Self { rule, content_hash })
+    }
+
+    /// Compute the canonical content hash for a rule configuration.
+    ///
+    /// Uses the crate's stable-hash path over the serialized rule so the
+    /// same rule content always yields the same revision identity.
+    pub fn content_hash_for(rule: &AgentCurationRuleConfig) -> Result<String, StorageError> {
+        let bytes =
+            serde_json::to_vec(rule).map_err(|err| StorageError::InvalidPath(err.to_string()))?;
+        Ok(stable_hash_hex(&bytes))
+    }
+
+    /// Validate the bound rule and verify hash integrity against its content.
     pub fn validate(&self) -> Result<(), StorageError> {
         self.rule.validate()?;
         require_non_empty("curation rule content hash", &self.content_hash)?;
+        if self.content_hash != Self::content_hash_for(&self.rule)? {
+            return Err(StorageError::InvalidPath(
+                "curation rule content hash does not match rule content".to_string(),
+            ));
+        }
         Ok(())
     }
 }
@@ -502,7 +545,7 @@ pub struct SeedAgentRegistration {
 }
 
 impl SeedAgentRegistration {
-    /// Validate required seed registration fields.
+    /// Validate required seed registration fields and any rule binding.
     pub fn validate(&self) -> Result<(), StorageError> {
         require_non_empty("agent id", &self.agent_id)?;
         self.perspective_key.validate()?;
@@ -511,6 +554,9 @@ impl SeedAgentRegistration {
         require_non_empty("observation scope", &self.observation_scope)?;
         require_non_empty("directive", &self.directive)?;
         require_non_empty("seed provenance", &self.seed_provenance)?;
+        if let Some(binding) = &self.curation_rule {
+            binding.validate()?;
+        }
         Ok(())
     }
 }
@@ -606,6 +652,25 @@ pub enum AgentGoalMutationKind {
     Satisfy {
         /// Sequence where the agent established satisfaction.
         at_seq: u64,
+        /// Lifecycle epoch of the goal identity the review observed.
+        ///
+        /// Satisfaction evidence binds the epoch it was produced under per
+        /// the frozen future-drift rule. Additive: commands stored before
+        /// epochs existed deserialize to zero.
+        #[serde(default)]
+        lifecycle_epoch: u64,
+    },
+    /// Reopen a satisfied goal in place after later belief drift.
+    ///
+    /// The same goal identity transitions from satisfied to active with the
+    /// lifecycle epoch advanced by execution. Provenance cites the belief
+    /// revision whose drift triggered the reopen.
+    Reopen {
+        /// Belief revision whose drift triggered the reopen.
+        triggering_belief_revision_id: String,
+        /// Lifecycle epoch of the satisfied goal the review observed.
+        #[serde(default)]
+        observed_lifecycle_epoch: u64,
     },
 }
 
@@ -654,10 +719,17 @@ impl AgentGoalMutationCommand {
             ));
         }
         match &self.kind {
-            AgentGoalMutationKind::Satisfy { at_seq } if *at_seq == self.review_seq => Ok(()),
+            AgentGoalMutationKind::Satisfy { at_seq, .. } if *at_seq == self.review_seq => Ok(()),
             AgentGoalMutationKind::Satisfy { .. } => Err(StorageError::InvalidPath(
                 "satisfy at seq must equal review seq".to_string(),
             )),
+            AgentGoalMutationKind::Reopen {
+                triggering_belief_revision_id,
+                ..
+            } => require_non_empty(
+                "reopen triggering belief revision id",
+                triggering_belief_revision_id,
+            ),
         }
     }
 }
@@ -667,9 +739,34 @@ impl AgentGoalMutationCommand {
 pub struct ActiveGoalSummary {
     /// Active or proposed goals supplied by the execution boundary.
     pub goals: Vec<Goal>,
+    /// Lifecycle epoch by goal id as observed at the execution boundary.
+    ///
+    /// Execution owns the authoritative epoch; this map only carries what
+    /// the boundary showed the review, so satisfaction and reopen commands
+    /// can bind the epoch they observed. Additive: snapshots stored before
+    /// epochs existed deserialize to an empty map and read as epoch zero.
+    #[serde(default)]
+    pub lifecycle_epochs: BTreeMap<String, u64>,
 }
 
 impl ActiveGoalSummary {
+    /// Build a snapshot without epoch observations.
+    ///
+    /// Every goal reads as epoch zero, matching execution records that
+    /// predate epochs.
+    pub fn from_goals(goals: Vec<Goal>) -> Self {
+        Self {
+            goals,
+            lifecycle_epochs: BTreeMap::new(),
+        }
+    }
+
+    /// Return the observed lifecycle epoch for one goal id.
+    ///
+    /// Zero when the boundary reported no epoch for the goal.
+    pub fn lifecycle_epoch(&self, goal_id: &str) -> u64 {
+        self.lifecycle_epochs.get(goal_id).copied().unwrap_or(0)
+    }
     /// Return the first active or proposed goal that matches the dedupe key.
     pub fn first_open_matching_goal(&self, dedupe_key: &AgentCurationDedupeKey) -> Option<&Goal> {
         self.goals.iter().find(|goal| {
@@ -766,6 +863,58 @@ impl AgentSatisfactionReview {
             "{}::{}::{}",
             self.agent_id, self.subscription_id, self.review_seq
         )
+    }
+}
+
+/// Durable claim that one satisfaction review inspects one belief revision.
+///
+/// This is the smallest satisfaction eligibility checkpoint. It pins the
+/// review sequence claimed for the current revision of one subscription so
+/// crash replay reuses the same review identity instead of inventing a new
+/// sequence, and it lets eligibility distinguish an unchanged absorbed
+/// revision (ineligible) from a newly arrived revision (eligible) without
+/// scanning decision history. One record per agent and subscription; a new
+/// claim replaces the previous one only after its trigger is complete.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentSatisfactionCheckpoint {
+    /// Agent that owns the satisfaction trigger.
+    pub agent_id: AgentId,
+    /// Subscription anchoring the trigger to one belief stream.
+    pub subscription_id: AgentSubscriptionId,
+    /// Belief revision claimed for review.
+    pub belief_revision_id: String,
+    /// Review sequence claimed for the revision, reused on replay.
+    pub review_seq: u64,
+    /// Injected sequence at which the claim was recorded.
+    pub claimed_at_seq: u64,
+}
+
+impl AgentSatisfactionCheckpoint {
+    /// Validate identifiers and the claimed review sequence.
+    pub fn validate(&self) -> Result<(), StorageError> {
+        require_non_empty("agent id", &self.agent_id)?;
+        require_non_empty("subscription id", &self.subscription_id)?;
+        require_non_empty("belief revision id", &self.belief_revision_id)?;
+        if self.review_seq == 0 {
+            return Err(StorageError::InvalidPath(
+                "review seq must be greater than zero".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Build the storage key for one agent and subscription pair.
+    pub fn natural_key(agent_id: &str, subscription_id: &str) -> String {
+        format!("{agent_id}::{subscription_id}")
+    }
+
+    /// Return the review identity this checkpoint claims.
+    pub fn review(&self) -> AgentSatisfactionReview {
+        AgentSatisfactionReview {
+            agent_id: self.agent_id.clone(),
+            subscription_id: self.subscription_id.clone(),
+            review_seq: self.review_seq,
+        }
     }
 }
 
