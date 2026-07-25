@@ -12,12 +12,13 @@
 //! may supply an explicit set to compose any actor subset. Store and port
 //! opening is scoped to the composed set.
 //!
-//! This module carries no implementation. The supervisor-truth and actor
-//! binding workstreams bind classification and factories.
+//! The supervisor-truth workstream binds classification and lifecycle
+//! projection here; factory binding stays with the actor-binding workstream.
 
 use serde::{Deserialize, Serialize};
 
 use crate::runtime::assembly::RuntimeResource;
+use crate::runtime::contracts::WorkerTickReport;
 
 /// What kind of runtime participant a registration binds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,6 +52,20 @@ pub struct RegistrationSet {
     pub registrations: Vec<RuntimeRegistration>,
 }
 
+impl RegistrationSet {
+    /// Return the registration for one runtime id when the set names it.
+    pub fn get(&self, runtime_id: &str) -> Option<&RuntimeRegistration> {
+        self.registrations
+            .iter()
+            .find(|registration| registration.runtime_id == runtime_id)
+    }
+
+    /// Return the declared kind for one runtime id when the set names it.
+    pub fn kind_of(&self, runtime_id: &str) -> Option<RegistrationKind> {
+        self.get(runtime_id).map(|registration| registration.kind)
+    }
+}
+
 /// Truthful lifecycle projection for one registration.
 ///
 /// Projected by root from domain-owned reports; domains never depend on
@@ -70,4 +85,118 @@ pub enum RegistrationLifecycle {
     Unhealthy,
     /// The participant stopped and holds no lease.
     Stopped,
+}
+
+impl RegistrationLifecycle {
+    /// Project one bounded tick report onto the registration lifecycle.
+    ///
+    /// The projection mirrors the operator-facing outcome classification in
+    /// `RuntimeActionOutcome::from_worker_tick`: fatal issues dominate, any
+    /// retryable issue or durable progress is active work, and only a clean
+    /// zero-work report is truthful active idle.
+    pub fn from_worker_tick(report: &WorkerTickReport) -> Self {
+        if !report.fatal_errors.is_empty() {
+            Self::Unhealthy
+        } else if !report.retryable_errors.is_empty() || report.made_progress() {
+            Self::ActiveWorking
+        } else {
+            Self::ActiveIdle
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::contracts::{WorkerCheckpoint, WorkerScope, WorkerTickIssue};
+
+    fn zero_work_report() -> WorkerTickReport {
+        WorkerTickReport {
+            actor_id: "events.append".to_string(),
+            scope: WorkerScope {
+                domain_id: "events".to_string(),
+                stream_id: None,
+                work_key: None,
+                agent_id: None,
+                perspective_key: None,
+                branch_id: None,
+                subject_key: None,
+            },
+            input_checkpoint: WorkerCheckpoint {
+                name: "event_commit_watermark".to_string(),
+                value: 5,
+            },
+            output_checkpoint: WorkerCheckpoint {
+                name: "event_commit_watermark".to_string(),
+                value: 5,
+            },
+            items_attempted: 0,
+            items_committed: 0,
+            retryable_errors: Vec::new(),
+            fatal_errors: Vec::new(),
+            budget_exhausted: false,
+        }
+    }
+
+    #[test]
+    fn zero_work_report_projects_active_idle() {
+        assert_eq!(
+            RegistrationLifecycle::from_worker_tick(&zero_work_report()),
+            RegistrationLifecycle::ActiveIdle
+        );
+    }
+
+    #[test]
+    fn progress_and_retryable_issues_project_active_working() {
+        let mut progressed = zero_work_report();
+        progressed.output_checkpoint.value = 6;
+        assert_eq!(
+            RegistrationLifecycle::from_worker_tick(&progressed),
+            RegistrationLifecycle::ActiveWorking
+        );
+
+        let mut retryable = zero_work_report();
+        retryable.retryable_errors.push(WorkerTickIssue {
+            item_id: None,
+            code: "retryable_io".to_string(),
+            message: "retryable io".to_string(),
+        });
+        assert_eq!(
+            RegistrationLifecycle::from_worker_tick(&retryable),
+            RegistrationLifecycle::ActiveWorking
+        );
+    }
+
+    #[test]
+    fn fatal_report_projects_unhealthy_even_with_progress() {
+        let mut fatal = zero_work_report();
+        fatal.output_checkpoint.value = 6;
+        fatal.fatal_errors.push(WorkerTickIssue {
+            item_id: None,
+            code: "fatal".to_string(),
+            message: "fatal failure".to_string(),
+        });
+        assert_eq!(
+            RegistrationLifecycle::from_worker_tick(&fatal),
+            RegistrationLifecycle::Unhealthy
+        );
+    }
+
+    #[test]
+    fn registration_set_lookups_return_declared_kind() {
+        let set = RegistrationSet {
+            registrations: vec![RuntimeRegistration {
+                registration_id: "registration-a".to_string(),
+                runtime_id: "execution.task_network_command".to_string(),
+                kind: RegistrationKind::PassiveService,
+                required_resources: Vec::new(),
+            }],
+        };
+
+        assert_eq!(
+            set.kind_of("execution.task_network_command"),
+            Some(RegistrationKind::PassiveService)
+        );
+        assert!(set.get("event.append").is_none());
+    }
 }

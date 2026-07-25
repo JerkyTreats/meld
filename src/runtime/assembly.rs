@@ -750,6 +750,15 @@ impl RuntimeHandleFactory {
         &self.descriptor.runtime_id
     }
 
+    /// Return whether built handles carry a concrete semantic body.
+    ///
+    /// Catalog-only descriptors build body-less handles; the supervisor uses
+    /// this distinction to classify active actors truthfully instead of
+    /// leasing and health-reporting inert placeholders.
+    pub fn has_semantic_body(&self) -> bool {
+        !matches!(self.semantic, RuntimeSemanticHandleFactory::None)
+    }
+
     /// Build an inert runtime handle.
     pub fn build_handle(&self) -> InertRuntimeHandle {
         InertRuntimeHandle {
@@ -775,6 +784,14 @@ impl InertRuntimeHandle {
     /// Return whether the supervisor has started this handle.
     pub fn is_started(&self) -> bool {
         self.started
+    }
+
+    /// Return whether this handle carries a concrete semantic body.
+    ///
+    /// A body-less handle can never produce a tick report and must never be
+    /// projected as a healthy active actor.
+    pub fn has_semantic_body(&self) -> bool {
+        !matches!(self.semantic, RuntimeSemanticHandle::None)
     }
 
     /// Run one bounded semantic tick when this handle owns concrete work.
