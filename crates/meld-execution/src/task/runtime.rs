@@ -357,7 +357,9 @@ fn payload_path(payload: &crate::capability::CapabilityInvocationPayload) -> Opt
         .map(ToString::to_string)
 }
 
-fn failure_artifact(
+// Shared with the bounded package stepper so failure artifacts keep one
+// identity shape across the completion and bounded execution paths.
+pub(crate) fn failure_artifact(
     task_id: String,
     capability_instance_id: String,
     invocation_id: String,

@@ -11,7 +11,32 @@ use crate::task::init::{validate_task_initialization, TaskInitializationPayload}
 use crate::task::invocation::assemble_invocation_payload;
 use crate::task::readiness::compute_ready_capability_instances;
 use crate::task::TaskArtifactRepo;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashSet};
+
+/// Durable progress snapshot for one live task executor.
+///
+/// The task domain owns this record. It carries the expanded compiled task,
+/// the run initialization payload, invocation records, expansion records, and
+/// completed instance ids intact so a reopened executor resumes exactly where
+/// the last quiesced step stopped. Artifact truth is not duplicated here: it
+/// stays in the durable task artifact repository the snapshot is reopened
+/// with, and readiness is recomputed from that repository plus this record.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TaskExecutorSnapshot {
+    /// Compiled task graph including every applied expansion delta.
+    pub compiled_task: CompiledTaskRecord,
+    /// Initialization payload that created the task run.
+    pub init_payload: TaskInitializationPayload,
+    /// Capability invocation records accumulated by the run.
+    pub invocation_records: Vec<CapabilityInvocationRecord>,
+    /// Expansion records applied by the run, in application order.
+    pub expansion_records: Vec<TaskExpansionRecord>,
+    /// Capability instance ids completed durably, in sorted order.
+    pub completed_instance_ids: Vec<String>,
+    /// True when the run already emitted its started transition.
+    pub started: bool,
+}
 
 /// Single task-local execution agent for one live task instance.
 #[derive(Debug, Clone)]
@@ -121,6 +146,110 @@ impl TaskExecutor {
         })
     }
 
+    /// Captures the durable progress snapshot at a quiesced step boundary.
+    ///
+    /// Snapshots are only meaningful when no invocation is in flight, because
+    /// released-but-unresolved work has no durable resume semantics. Callers
+    /// must resolve every released invocation before persisting progress.
+    pub fn snapshot(&self) -> Result<TaskExecutorSnapshot, ApiError> {
+        if !self.in_flight_instances.is_empty() {
+            return Err(ApiError::ConfigError(format!(
+                "Task executor for '{}' cannot snapshot with {} invocations in flight",
+                self.compiled_task.task_id,
+                self.in_flight_instances.len()
+            )));
+        }
+
+        let mut completed_instance_ids =
+            self.completed_instances.iter().cloned().collect::<Vec<_>>();
+        completed_instance_ids.sort();
+
+        Ok(TaskExecutorSnapshot {
+            compiled_task: self.compiled_task.clone(),
+            init_payload: self.init_payload.clone(),
+            invocation_records: self.invocation_records.clone(),
+            expansion_records: self.expansion_records.clone(),
+            completed_instance_ids,
+            started: self.started,
+        })
+    }
+
+    /// Reopens a live task executor from a durable snapshot and its artifact repo.
+    ///
+    /// The repo must be the same durable repository the snapshot progressed
+    /// against: init artifacts are not re-seeded and every emitted artifact
+    /// referenced by an invocation record must already exist. Resumed runs do
+    /// not repeat the requested or started transitions.
+    pub fn from_snapshot(
+        snapshot: TaskExecutorSnapshot,
+        artifact_repo: TaskArtifactRepo,
+    ) -> Result<Self, ApiError> {
+        if snapshot.init_payload.task_id != snapshot.compiled_task.task_id {
+            return Err(ApiError::ConfigError(format!(
+                "Task executor snapshot init payload targets '{}' but compiled task is '{}'",
+                snapshot.init_payload.task_id, snapshot.compiled_task.task_id
+            )));
+        }
+
+        let instance_ids = snapshot
+            .compiled_task
+            .capability_instances
+            .iter()
+            .map(|instance| instance.capability_instance_id.as_str())
+            .collect::<HashSet<_>>();
+        for completed_id in &snapshot.completed_instance_ids {
+            if !instance_ids.contains(completed_id.as_str()) {
+                return Err(ApiError::ConfigError(format!(
+                    "Task executor snapshot completed unknown capability instance '{}'",
+                    completed_id
+                )));
+            }
+        }
+        for record in &snapshot.invocation_records {
+            if !instance_ids.contains(record.capability_instance_id.as_str()) {
+                return Err(ApiError::ConfigError(format!(
+                    "Task executor snapshot invocation '{}' names unknown capability instance '{}'",
+                    record.invocation_id, record.capability_instance_id
+                )));
+            }
+            for artifact_id in &record.emitted_artifacts {
+                // Progress and artifact stores must describe the same run;
+                // a missing emitted artifact means the stores diverged.
+                if artifact_repo.get_artifact(artifact_id).is_none() {
+                    return Err(ApiError::ConfigError(format!(
+                        "Task executor snapshot invocation '{}' references artifact '{}' missing from repo '{}'",
+                        record.invocation_id,
+                        artifact_id,
+                        artifact_repo.record().repo_id
+                    )));
+                }
+            }
+        }
+
+        let mut applied_expansion_ids = HashSet::new();
+        for record in &snapshot.expansion_records {
+            if !applied_expansion_ids.insert(record.expansion_id.clone()) {
+                return Err(ApiError::ConfigError(format!(
+                    "Task executor snapshot contains duplicate expansion '{}'",
+                    record.expansion_id
+                )));
+            }
+        }
+
+        Ok(Self {
+            compiled_task: snapshot.compiled_task,
+            init_payload: snapshot.init_payload,
+            artifact_repo,
+            invocation_records: snapshot.invocation_records,
+            events: Vec::new(),
+            expansion_records: snapshot.expansion_records,
+            applied_expansion_ids,
+            completed_instances: snapshot.completed_instance_ids.into_iter().collect(),
+            in_flight_instances: HashSet::new(),
+            started: snapshot.started,
+        })
+    }
+
     /// Returns the current task artifact repo.
     pub fn artifact_repo(&self) -> &TaskArtifactRepo {
         &self.artifact_repo
@@ -176,7 +305,25 @@ impl TaskExecutor {
         &mut self,
         execution_context: CapabilityExecutionContext,
     ) -> Result<Vec<CapabilityInvocationPayload>, ApiError> {
-        let ready = self.ready_capability_instances();
+        self.release_ready_invocations_bounded(usize::MAX, execution_context)
+    }
+
+    /// Releases at most `max_invocations` currently ready capability invocations.
+    ///
+    /// Ready order follows compiled instance order, so truncation under a
+    /// budget is deterministic. A zero budget releases nothing and records no
+    /// lifecycle events, leaving state untouched for the caller's report.
+    pub fn release_ready_invocations_bounded(
+        &mut self,
+        max_invocations: usize,
+        execution_context: CapabilityExecutionContext,
+    ) -> Result<Vec<CapabilityInvocationPayload>, ApiError> {
+        if max_invocations == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut ready = self.ready_capability_instances();
+        ready.truncate(max_invocations);
         if !self.started {
             self.started = true;
             self.events.push(self.new_task_event("task_started"));
@@ -1055,6 +1202,148 @@ mod tests {
             .events()
             .iter()
             .any(|event| event.event_type == "task_expansion_applied"));
+    }
+
+    fn bare_instance(capability_instance_id: &str) -> BoundCapabilityInstance {
+        BoundCapabilityInstance {
+            capability_instance_id: capability_instance_id.to_string(),
+            capability_type_id: "test_capability".to_string(),
+            capability_version: 1,
+            scope_ref: "node_a".to_string(),
+            scope_kind: "node".to_string(),
+            binding_values: vec![],
+            input_wiring: vec![],
+        }
+    }
+
+    fn sibling_task() -> CompiledTaskRecord {
+        CompiledTaskRecord {
+            task_id: "task_docs_writer".to_string(),
+            task_version: 1,
+            init_slots: vec![],
+            capability_instances: vec![
+                bare_instance("capinst_s1"),
+                bare_instance("capinst_s2"),
+                bare_instance("capinst_s3"),
+            ],
+            dependency_edges: vec![],
+        }
+    }
+
+    fn empty_init_payload() -> TaskInitializationPayload {
+        TaskInitializationPayload {
+            init_artifacts: vec![],
+            ..init_payload()
+        }
+    }
+
+    #[test]
+    fn executor_bounded_release_truncates_ready_order_deterministically() {
+        let mut executor =
+            TaskExecutor::new(sibling_task(), empty_init_payload(), "repo_docs_writer").unwrap();
+
+        let zero = executor
+            .release_ready_invocations_bounded(0, CapabilityExecutionContext::default())
+            .unwrap();
+        assert!(zero.is_empty());
+        assert_eq!(executor.events().len(), 1, "zero budget records no events");
+
+        let first = executor
+            .release_ready_invocations_bounded(2, CapabilityExecutionContext::default())
+            .unwrap();
+        let second = executor
+            .release_ready_invocations_bounded(2, CapabilityExecutionContext::default())
+            .unwrap();
+
+        assert_eq!(
+            first
+                .iter()
+                .map(|payload| payload.capability_instance_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["capinst_s1", "capinst_s2"]
+        );
+        assert_eq!(second[0].capability_instance_id, "capinst_s3");
+        assert_eq!(executor.invocation_records().len(), 3);
+    }
+
+    #[test]
+    fn executor_snapshot_rejects_in_flight_invocations() {
+        let mut executor =
+            TaskExecutor::new(compiled_task(), init_payload(), "repo_docs_writer").unwrap();
+        let _ = executor
+            .release_ready_invocations(CapabilityExecutionContext::default())
+            .unwrap();
+
+        let error = executor.snapshot().unwrap_err();
+
+        assert!(error.to_string().contains("in flight"));
+    }
+
+    #[test]
+    fn executor_snapshot_round_trip_resumes_exactly() {
+        let mut executor =
+            TaskExecutor::new(compiled_task(), init_payload(), "repo_docs_writer").unwrap();
+        let payloads = executor
+            .release_ready_invocations(CapabilityExecutionContext::default())
+            .unwrap();
+        executor
+            .record_success(
+                &payloads[0].invocation_id,
+                vec![emitted_artifact(
+                    "artifact_resolved_node",
+                    "capinst_resolve",
+                    &payloads[0].invocation_id,
+                    "resolved_node_ref",
+                )],
+            )
+            .unwrap();
+
+        let snapshot = executor.snapshot().unwrap();
+        let mut resumed =
+            TaskExecutor::from_snapshot(snapshot, executor.artifact_repo().clone()).unwrap();
+
+        assert_eq!(resumed.completed_count(), 1);
+        assert!(resumed.events().is_empty());
+        assert_eq!(
+            resumed.ready_capability_instances(),
+            vec!["capinst_traversal".to_string()]
+        );
+
+        let next = resumed
+            .release_ready_invocations(CapabilityExecutionContext::default())
+            .unwrap();
+        assert_eq!(next[0].invocation_id, "capinst_traversal::attempt::1");
+        // The resumed run must not repeat requested or started transitions.
+        assert!(resumed
+            .events()
+            .iter()
+            .all(|event| event.event_type == "task_progressed"));
+    }
+
+    #[test]
+    fn executor_from_snapshot_rejects_artifact_repo_divergence() {
+        let mut executor =
+            TaskExecutor::new(compiled_task(), init_payload(), "repo_docs_writer").unwrap();
+        let payloads = executor
+            .release_ready_invocations(CapabilityExecutionContext::default())
+            .unwrap();
+        executor
+            .record_success(
+                &payloads[0].invocation_id,
+                vec![emitted_artifact(
+                    "artifact_resolved_node",
+                    "capinst_resolve",
+                    &payloads[0].invocation_id,
+                    "resolved_node_ref",
+                )],
+            )
+            .unwrap();
+        let snapshot = executor.snapshot().unwrap();
+
+        let error =
+            TaskExecutor::from_snapshot(snapshot, TaskArtifactRepo::new("repo_other")).unwrap_err();
+
+        assert!(error.to_string().contains("missing from repo"));
     }
 
     #[test]
