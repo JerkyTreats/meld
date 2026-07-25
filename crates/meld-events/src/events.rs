@@ -44,6 +44,8 @@ use serde_json::Value;
 pub mod authority;
 /// Compatibility aliases for pre-extraction event callers.
 pub mod compat;
+/// Durable consumer cursor contract owned by the events domain.
+pub mod consumer;
 /// Domain object and relation records carried by event envelopes.
 pub mod contracts;
 /// Durable ledger identity contract.
@@ -78,6 +80,7 @@ pub use authority::{
     LedgerCursor, ReplayRequest, SubscriptionPollRequest, MAX_REPLAY_LIMIT,
     MAX_SUBSCRIPTION_TIMEOUT_MS,
 };
+pub use consumer::{ConsumerCursorError, ConsumerCursorState, DurableConsumerCursor};
 pub use contracts::{DomainObjectRef, EventRelation};
 pub use identity::LedgerIdentity;
 pub use migration::{
@@ -98,6 +101,15 @@ pub use remote::{
     BestEffortAppendRequest, DurableAppendRequest, EventAuthorityContract, FlowRequest,
     HealthRequest, SessionRequest, TraceRequest, WatermarkRequest,
 };
+
+/// Frozen record identity for an epistemic genesis fact.
+///
+/// Jointly owned with the appending domain: events owns this format, the
+/// domain owns the scope key and payload meaning. Identity is per scope so
+/// re-seeding the same scope re-records nothing.
+pub fn epistemic_genesis_record_id(domain_id: &str, stream_id: &str, scope_key: &str) -> String {
+    format!("genesis::{domain_id}::{stream_id}::{scope_key}")
+}
 
 /// Persisted event record in the global event ledger.
 ///
@@ -274,6 +286,30 @@ impl EventEnvelope {
         let stream_id = stream_id.into();
         let event_type = format!("{domain_id}.genesis");
         let record_id = format!("genesis::{domain_id}::{stream_id}::{basis_seq}");
+        Self::with_now_domain(session, domain_id, stream_id, event_type, None, data)
+            .with_record_id(record_id)
+    }
+
+    /// Creates an epistemic genesis fact seeding first knowledge in an
+    /// empty world.
+    ///
+    /// Unlike [`EventEnvelope::genesis_domain`], which marks a projection
+    /// rebuilt from a snapshot at a basis sequence, an epistemic genesis
+    /// fact declares initial world knowledge for a scope. Identity is
+    /// per-scope rather than per-basis so re-seeding the same scope is
+    /// idempotent. The payload meaning is owned by the appending domain;
+    /// this constructor owns only the identity format.
+    pub fn epistemic_genesis(
+        session: impl Into<String>,
+        domain_id: impl Into<String>,
+        stream_id: impl Into<String>,
+        scope_key: &str,
+        event_type: impl Into<String>,
+        data: Value,
+    ) -> Self {
+        let domain_id = domain_id.into();
+        let stream_id = stream_id.into();
+        let record_id = epistemic_genesis_record_id(&domain_id, &stream_id, scope_key);
         Self::with_now_domain(session, domain_id, stream_id, event_type, None, data)
             .with_record_id(record_id)
     }
