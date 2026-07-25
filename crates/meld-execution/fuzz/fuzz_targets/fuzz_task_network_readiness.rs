@@ -65,7 +65,6 @@ fuzz_target!(|data: &[u8]| {
                 from: format!("task-{}", index - 1),
                 to: format!("task-{index}"),
                 kind: DependencyKind::Ordering,
-            
                 origin: DependencyEdgeOrigin::Unrecorded,
             });
         }

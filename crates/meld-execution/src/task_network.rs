@@ -12,9 +12,9 @@
 //! provider transport, goal lifecycle mutation, or world model belief revision.
 //! Those domains adapt through explicit contracts.
 
-/// Serialized command boundary for task network writers.
 /// Canonical aggregate package outcome contract.
 pub mod aggregate;
+/// Serialized command boundary for task network writers.
 pub mod command;
 /// Shared identity and hashing helpers for task network records.
 pub mod contracts;
