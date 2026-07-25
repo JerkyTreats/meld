@@ -8,6 +8,7 @@ use meld_events::EventAuthority;
 #[cfg(test)]
 use meld_events::EventAuthorityOpenOptions;
 use meld_world_model::world_state::graph::runtime::{GraphCatchUpBudget, GraphRuntime};
+use serde::{Deserialize, Serialize};
 
 use crate::config::MerkleConfig;
 use crate::runtime::contracts::{WorkBudget, WorkerTickReport};
@@ -112,7 +113,7 @@ pub struct RuntimeFactoryDescriptor {
 }
 
 /// Resource requirement advertised by a runtime factory descriptor.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum RuntimeResource {
     /// Event append port.
     EventAppend,

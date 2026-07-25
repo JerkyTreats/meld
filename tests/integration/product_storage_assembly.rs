@@ -242,6 +242,7 @@ fn agent_record(subject: &DomainObjectRef) -> AgentRecord {
         directive: "watch docs".to_string(),
         seed_provenance: "test".to_string(),
         status: AgentStatus::Operational,
+        curation_rule: None,
         created_at_seq: 1,
         updated_at_seq: 1,
     }

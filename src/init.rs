@@ -10,6 +10,7 @@ use crate::error::ApiError;
 
 pub mod summary;
 pub mod tooling;
+pub mod world;
 
 /// Default prompts embedded in binary at compile time
 pub const DEFAULT_PROMPTS: &[(&str, &str)] = &[

@@ -59,6 +59,35 @@ pub struct WorkerTickIssue {
     pub message: String,
 }
 
+/// Failure surface for one bounded actor step.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActorBoundedStepError {
+    /// Human-readable failure description.
+    pub message: String,
+    /// Whether the supervisor may retry the same step unchanged.
+    pub retryable: bool,
+}
+
+/// The public bounded-step contract every active actor handle implements.
+///
+/// One step is one bounded unit of work under injected time and an
+/// explicit budget — no wall clock inside the actor. A step always
+/// returns a report: a truthful zero-work report projects to active
+/// idle, and the absence of a report is never projected as health.
+/// Domain-owned reports adapt behind this contract; domain crates do not
+/// depend on it.
+pub trait ActorBoundedStep {
+    /// Stable actor identity carried in reports.
+    fn actor_id(&self) -> &str;
+
+    /// Run one bounded step at the injected time.
+    fn bounded_step(
+        &mut self,
+        now_ms: u64,
+        budget: &WorkBudget,
+    ) -> Result<WorkerTickReport, ActorBoundedStepError>;
+}
+
 /// Supervisor-facing report from one bounded worker tick.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkerTickReport {
