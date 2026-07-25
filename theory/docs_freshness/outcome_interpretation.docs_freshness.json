@@ -1,0 +1,104 @@
+{
+  "mapping_id": "docs_freshness_outcome_interpretation_v1",
+  "rules": [
+    {
+      "mapping_id": "docs_folder_task_success_v1",
+      "source_kind": "execution_folder_task_outcome",
+      "match_domain_id": "execution",
+      "match_event_type": "execution.task.succeeded",
+      "match_content": [
+        {
+          "rule": "field_equals",
+          "pointer": "/status",
+          "equals": "Succeeded"
+        }
+      ],
+      "subject": {
+        "object_kind": "node",
+        "domain_id": "workspace_fs",
+        "from": {
+          "source": "payload_object_id",
+          "pointer": "/task_events/0/target_node_id"
+        }
+      },
+      "evidence_fields": [
+        {
+          "field": "tree_stale_signal",
+          "source": {
+            "source": "constant",
+            "value": 0.5
+          }
+        },
+        {
+          "field": "selected_scope",
+          "source": {
+            "source": "constant_object",
+            "domain_id": "workspace_fs",
+            "object_kind": "node",
+            "object_id": "root"
+          }
+        }
+      ]
+    },
+    {
+      "mapping_id": "docs_package_completed_v1",
+      "source_kind": "execution_package_aggregate",
+      "match_domain_id": "execution",
+      "match_event_type": "execution.package.completed",
+      "match_content": [
+        {
+          "rule": "field_equals",
+          "pointer": "/status",
+          "equals": "Completed"
+        }
+      ],
+      "subject": {
+        "object_kind": "node",
+        "domain_id": "workspace_fs",
+        "from": {
+          "source": "payload_object",
+          "pointer": "/selected_scope"
+        }
+      },
+      "evidence_fields": [
+        {
+          "field": "tree_stale_signal",
+          "source": {
+            "source": "constant",
+            "value": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "mapping_id": "docs_package_failed_v1",
+      "source_kind": "execution_package_aggregate",
+      "match_domain_id": "execution",
+      "match_event_type": "execution.package.failed",
+      "match_content": [
+        {
+          "rule": "field_equals",
+          "pointer": "/status",
+          "equals": "Failed"
+        }
+      ],
+      "subject": {
+        "object_kind": "node",
+        "domain_id": "workspace_fs",
+        "from": {
+          "source": "payload_object",
+          "pointer": "/selected_scope"
+        }
+      },
+      "evidence_fields": [
+        {
+          "field": "tree_stale_signal",
+          "source": {
+            "source": "constant",
+            "value": 0.75
+          }
+        }
+      ]
+    }
+  ]
+}
