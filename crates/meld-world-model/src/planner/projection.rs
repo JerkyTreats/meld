@@ -73,12 +73,20 @@ pub fn project_world_state(
     warnings.sort();
     warnings.dedup();
 
+    // Theory lineage rides the belief view unchanged; projection never
+    // manufactures or rewrites revision identity.
+    let theory_revision = input
+        .belief_view
+        .as_ref()
+        .and_then(|view| view.theory_revision.clone());
+
     Ok(PlannerProjectionOutput {
         world_state: WorldState::new(propositions)?,
         projection_version: input.context.projection_version,
         source_refs,
         hydration_refs,
         warnings,
+        theory_revision,
     })
 }
 

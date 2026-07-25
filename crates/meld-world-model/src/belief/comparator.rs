@@ -227,6 +227,9 @@ impl BayesianComparator {
             status,
             observation,
             provenance: provenance.clone(),
+            // The comparator assesses evidence only; the runtime stamps the
+            // installed theory revision before commit.
+            theory_revision: None,
         };
         Ok(ComparatorOutput {
             view_hydration: HydrationRefs {
@@ -298,6 +301,7 @@ fn missing_assessment(input: ComparatorInput) -> Result<ComparatorOutput, Storag
         status: BeliefStatus::NeedsAssessment,
         observation: Some(observation),
         provenance: BeliefProvenanceSummary::empty(),
+        theory_revision: None,
     };
     Ok(ComparatorOutput {
         view_hydration: HydrationRefs {

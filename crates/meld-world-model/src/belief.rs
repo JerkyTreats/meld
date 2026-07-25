@@ -59,6 +59,7 @@
 //! assert_eq!(snapshot.config.family_id, "docs_freshness");
 //! ```
 
+pub mod assessment;
 pub mod comparator;
 pub mod config;
 pub mod contracts;
@@ -68,9 +69,14 @@ pub mod ingestion;
 pub mod outcome_mapping;
 pub mod query;
 pub mod registry;
+pub mod registry_store;
 pub mod runtime;
+pub mod selection;
 pub mod store;
 
+pub use assessment::{
+    BeliefAssessmentActor, BeliefAssessmentIssue, BeliefAssessmentReport, BeliefAssessmentRequest,
+};
 pub use comparator::{BayesianComparator, ComparatorInput, ComparatorOutput};
 pub use config::{BeliefConfigLoader, ConfigSnapshot};
 pub use contracts::*;
@@ -89,5 +95,10 @@ pub use query::BeliefQuery;
 pub use registry::{
     BeliefFamilyRegistry, BeliefFamilyRevision, TheoryInstallDisposition, TheoryRevisionRef,
 };
+pub use registry_store::BeliefFamilyRegistryStore;
 pub use runtime::{BeliefRuntime, RuntimeAssessmentResult};
+pub use selection::{
+    configured_belief_key, BeliefSubjectBinding, BeliefWorkItem, BeliefWorkKind,
+    BeliefWorkSelection, BeliefWorkSelector,
+};
 pub use store::BeliefStore;

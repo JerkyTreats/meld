@@ -181,6 +181,7 @@ fn test_view(dimension_id: &str, confidence: f64, stale: bool, observation: bool
             graph_anchor_ids: vec!["anchor-a".to_string()],
             revision_id: Some("revision-a".to_string()),
         },
+        theory_revision: None,
     }
 }
 

@@ -1804,6 +1804,7 @@ fn test_revision(view: &meld_world_model::BeliefView, start: u64, end: u64) -> B
         status: BeliefStatus::Settled,
         observation: None,
         provenance: BeliefProvenanceSummary::empty(),
+        theory_revision: None,
     }
 }
 

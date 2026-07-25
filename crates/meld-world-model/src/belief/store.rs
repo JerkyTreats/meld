@@ -312,30 +312,38 @@ impl BeliefStore {
     }
 
     /// Abandon expired leases and mark their keys dirty for recovery.
+    ///
+    /// Recovery iterates the active-lease index, which holds exactly the
+    /// in-flight keys and shrinks on completion and abandonment. The
+    /// append-forever leases tree stays an audit record and is never scanned,
+    /// so recovery cost is bounded by concurrent work, not history.
     pub fn recover_expired_leases(
         &self,
         current_seq: u64,
     ) -> Result<Vec<AssessmentLease>, StorageError> {
         let mut recovered = Vec::new();
-        for item in self.leases.iter() {
-            let (_, value) = item.map_err(to_storage_io)?;
-            let mut lease: AssessmentLease =
-                serde_json::from_slice(&value).map_err(to_storage_data)?;
-            if lease.status == LeaseStatus::Leased && lease.expires_at_seq <= current_seq {
-                lease.status = LeaseStatus::Abandoned;
-                self.put_lease(&lease)?;
-                self.active_lease
-                    .remove(lease.belief_key.index_key().as_bytes())
-                    .map_err(to_storage_io)?;
-                self.mark_dirty_with_reason(
-                    &lease.belief_key,
-                    lease.input_cursor_end,
-                    lease.input_cursor_end,
-                    Some(lease.lease_id.clone()),
-                    DirtyReason::LeaseExpired,
-                )?;
-                recovered.push(lease);
+        for item in self.active_lease.iter() {
+            let (index_key, lease_id) = item.map_err(to_storage_io)?;
+            let lease_id = String::from_utf8(lease_id.to_vec()).map_err(to_storage_utf8)?;
+            // A missing or non-Leased record is a stale index entry left by a
+            // failed acquisition path; expiry recovery only owns Leased work.
+            let Some(mut lease) = self.get_lease(&lease_id)? else {
+                continue;
+            };
+            if lease.status != LeaseStatus::Leased || lease.expires_at_seq > current_seq {
+                continue;
             }
+            lease.status = LeaseStatus::Abandoned;
+            self.put_lease(&lease)?;
+            self.active_lease.remove(index_key).map_err(to_storage_io)?;
+            self.mark_dirty_with_reason(
+                &lease.belief_key,
+                lease.input_cursor_end,
+                lease.input_cursor_end,
+                Some(lease.lease_id.clone()),
+                DirtyReason::LeaseExpired,
+            )?;
+            recovered.push(lease);
         }
         Ok(recovered)
     }
@@ -641,6 +649,27 @@ impl BeliefStore {
         Ok(out)
     }
 
+    /// Read up to `max_items` durable dirty records plus a remainder flag.
+    ///
+    /// The dirty tree is keyed by [`BeliefKey::index_key`], so iterating the
+    /// index yields deterministic key order without decoding the whole tree.
+    pub fn dirty_key_states_bounded(
+        &self,
+        max_items: usize,
+    ) -> Result<(Vec<DirtyKeyState>, bool), StorageError> {
+        let mut out = Vec::new();
+        let mut more_available = false;
+        for item in self.dirty_keys.iter() {
+            let (_, value) = item.map_err(to_storage_io)?;
+            if out.len() == max_items {
+                more_available = true;
+                break;
+            }
+            out.push(decode_dirty_state(&value)?);
+        }
+        Ok((out, more_available))
+    }
+
     /// Read durable dirty state for one belief key.
     pub fn dirty_state(&self, key: &BeliefKey) -> Result<Option<DirtyKeyState>, StorageError> {
         let Some(raw) = self
@@ -781,6 +810,7 @@ impl BeliefStore {
             },
             provenance: revision.provenance.clone(),
             hydration,
+            theory_revision: revision.theory_revision.clone(),
         }
     }
 

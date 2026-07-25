@@ -5,7 +5,7 @@ use std::fmt;
 use meld_lang::{world_state::GroundingError, WorldState};
 use serde::{Deserialize, Serialize};
 
-use crate::belief::{BeliefView, BranchScope};
+use crate::belief::{BeliefView, BranchScope, TheoryRevisionRef};
 use crate::error::StorageError;
 use crate::events::DomainObjectRef;
 use crate::world_state::graph::{AnchorId, PerspectiveKey};
@@ -111,6 +111,12 @@ pub struct PlannerProjectionOutput {
     pub source_refs: Vec<PlannerSourceRef>,
     pub hydration_refs: PlannerHydrationRefs,
     pub warnings: Vec<PlannerProjectionWarning>,
+    /// Installed theory revision cited by the projected belief view.
+    ///
+    /// Additive lineage field carried from the belief revision so planning
+    /// records can answer which theory produced the consumed belief.
+    #[serde(default)]
+    pub theory_revision: Option<TheoryRevisionRef>,
 }
 
 /// Traceable origin of one projection input or rule.

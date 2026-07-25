@@ -26,6 +26,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+use crate::belief::registry::TheoryRevisionRef;
 use crate::error::StorageError;
 use crate::events::{DomainObjectRef, EventRelation};
 use crate::world_state::graph::{AnchorId, PerspectiveKey};
@@ -330,6 +331,12 @@ pub struct BeliefRevision {
     pub status: BeliefStatus,
     pub observation: Option<ObservationOpportunity>,
     pub provenance: BeliefProvenanceSummary,
+    /// Installed theory revision that produced this revision.
+    ///
+    /// Additive lineage field: revisions committed before theory registries
+    /// existed deserialize to `None` and stay loadable.
+    #[serde(default)]
+    pub theory_revision: Option<TheoryRevisionRef>,
 }
 
 /// High-level settlement state for a revision or view.
@@ -476,6 +483,12 @@ pub struct BeliefView {
     pub advisory_posture: String,
     pub provenance: BeliefProvenanceSummary,
     pub hydration: HydrationRefs,
+    /// Installed theory revision that produced the projected revision.
+    ///
+    /// Additive lineage field mirroring [`BeliefRevision::theory_revision`];
+    /// views stored before theory registries existed deserialize to `None`.
+    #[serde(default)]
+    pub theory_revision: Option<TheoryRevisionRef>,
 }
 
 /// Compact provenance and hydration summary for belief records.
