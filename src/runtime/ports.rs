@@ -1,5 +1,6 @@
 //! Thin direct handoff ports built by product runtime assembly.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -63,6 +64,7 @@ use crate::execution::goal_mutation::{
 };
 use crate::execution::{build_docs_task_success_evidence, DocsTaskSuccessEvidenceRequest};
 use crate::prompt_context::PromptContextArtifactStorage;
+use crate::provider::ProviderExecutionBinding;
 use crate::runtime::error::{RuntimeAssemblyError, RuntimePortError};
 use crate::runtime::storage::{OpenProductStores, ScopedResource};
 use crate::store::SledNodeRecordStore;
@@ -1126,6 +1128,219 @@ fn render_source_ref(source: &PlannerSourceRef) -> String {
         }
         PlannerSourceRef::GraphAnchor { anchor_id } => format!("graph_anchor::{anchor_id:?}"),
         PlannerSourceRef::ProjectionRule { rule_id } => format!("projection_rule::{rule_id}"),
+    }
+}
+
+/// Shared composition core for the production dispatch route ports.
+///
+/// Owner: root runtime composition. The three production ports execute plan
+/// handoffs over the same machinery the registered workflow route uses: the
+/// root api facade, the registered workflow package surface, the workflow
+/// task-path capability set, and the provider registry the api carries. The
+/// ports never invent execution semantics — they delegate to the public
+/// preparation, capability, and task execution surfaces.
+pub struct ProductionDispatchRouteContext {
+    /// Root api facade the workflow task path executes through.
+    pub api: Arc<crate::api::ContextApi>,
+    /// Registered workflow profiles resolving each plan's workflow id.
+    pub workflow_registry: Arc<parking_lot::RwLock<crate::workflow::WorkflowRegistry>>,
+    /// Canonical workspace root of the stewarded subject.
+    pub workspace_root: PathBuf,
+    /// Workspace-relative subject path the package route triggers on.
+    pub subject_path: PathBuf,
+    /// Durable agent identity driving the workflow.
+    pub agent_id: String,
+    /// Validated provider binding from the stewardship selection.
+    pub provider: ProviderExecutionBinding,
+    /// Frame type the docs route publishes under.
+    pub frame_type: String,
+    /// Ledger session partition recorded on prepared runs.
+    pub session_id: Option<String>,
+    /// Production capability catalog: the workflow task-path set.
+    pub catalog: crate::capability::CapabilityCatalog,
+    /// Production capability executor registry matching the catalog.
+    pub registry: crate::capability::CapabilityExecutorRegistry,
+}
+
+impl ProductionDispatchRouteContext {
+    /// Build the three shared production route ports over one core.
+    pub fn into_route_ports(
+        self,
+    ) -> (
+        SharedPackageRunPreparer,
+        SharedPackageStepInvoker,
+        SharedClaimedTaskInvoker,
+    ) {
+        let core = Arc::new(self);
+        (
+            SharedPackageRunPreparer(Arc::new(WorkflowPackageRunPreparer {
+                core: Arc::clone(&core),
+            })),
+            SharedPackageStepInvoker(Arc::new(RootCapabilityStepInvoker {
+                core: Arc::clone(&core),
+            })),
+            SharedClaimedTaskInvoker(Arc::new(CompiledTaskClaimInvoker { core })),
+        )
+    }
+}
+
+/// Production package-run preparer over the registered workflow surface.
+///
+/// One plan handoff resolves through `prepare_registered_workflow_task_run`
+/// — the same preparation the registered workflow route runs — so the
+/// compiled task, seeds, and prompts are the production artifacts, not a
+/// parallel formula. The prepared run context carries the actor-derived
+/// task run id so durable dedupe and progress stay keyed by plan identity.
+struct WorkflowPackageRunPreparer {
+    core: Arc<ProductionDispatchRouteContext>,
+}
+
+impl PackageRunPreparer for WorkflowPackageRunPreparer {
+    fn prepare_package_run(
+        &self,
+        plan: &TaskPackageRoutePlan,
+        task_run_id: &str,
+    ) -> Result<PreparedPackageRun, DispatchPortError> {
+        // A plan naming an unregistered workflow cannot succeed without
+        // operator action: fatal, recorded through the command boundary.
+        let registered_profile = self
+            .core
+            .workflow_registry
+            .read()
+            .get(&plan.workflow_id)
+            .cloned()
+            .ok_or_else(|| {
+                DispatchPortError::fatal(format!(
+                    "plan '{}' names unregistered workflow '{}'",
+                    plan.plan_id, plan.workflow_id
+                ))
+            })?;
+        let request = crate::task::WorkflowPackageTriggerRequest {
+            package_id: plan.package_id.clone(),
+            workflow_id: plan.workflow_id.clone(),
+            node_id: None,
+            path: Some(self.core.subject_path.clone()),
+            agent_id: self.core.agent_id.clone(),
+            provider: self.core.provider.clone(),
+            frame_type: self.core.frame_type.clone(),
+            force: true,
+            session_id: self.core.session_id.clone(),
+        };
+        let prepared = crate::task::prepare_registered_workflow_task_run(
+            self.core.api.as_ref(),
+            &self.core.workspace_root,
+            &registered_profile,
+            &request,
+            &self.core.catalog,
+        )
+        // Preparation reads mutable workspace state (scanned nodes, belief
+        // context); a later tick may succeed once that state exists.
+        .map_err(|error| DispatchPortError::retryable(error.to_string()))?;
+        let mut init_payload = prepared.init_payload;
+        // The actor rejects a drifted run id before opening durable
+        // progress, so the prepared context binds the actor-derived id.
+        init_payload.task_run_context.task_run_id = task_run_id.to_string();
+        Ok(PreparedPackageRun {
+            compiled_task: prepared.compiled_task,
+            init_payload,
+        })
+    }
+}
+
+/// Production package-step invoker over the root capability registry.
+///
+/// Released invocations execute through the registered capability invokers
+/// (the workflow task-path set) against the root api facade; expansion
+/// requests compile through the public expansion compiler registry.
+struct RootCapabilityStepInvoker {
+    core: Arc<ProductionDispatchRouteContext>,
+}
+
+#[async_trait]
+impl PackageStepInvoker for RootCapabilityStepInvoker {
+    async fn invoke_capability(
+        &self,
+        instance: &BoundCapabilityInstance,
+        payload: &CapabilityInvocationPayload,
+    ) -> Result<CapabilityInvocationResult, meld_execution::error::ApiError> {
+        let runtime_init = self.core.registry.runtime_init_for(instance)?;
+        let invoker = self
+            .core
+            .registry
+            .get(&instance.capability_type_id, instance.capability_version)
+            .cloned()
+            .ok_or_else(|| {
+                meld_execution::error::ExecutionInvariantError::ConfigError(format!(
+                    "dispatch route is missing invoker for '{}' version '{}'",
+                    instance.capability_type_id, instance.capability_version
+                ))
+            })?;
+        invoker
+            .invoke(self.core.api.as_ref(), &runtime_init, payload, None)
+            .await
+            .map_err(|error| {
+                meld_execution::error::ExecutionInvariantError::GenerationFailed(error.to_string())
+            })
+    }
+
+    fn compile_expansion(
+        &self,
+        compiled_task: &CompiledTaskRecord,
+        request: &TaskExpansionRequest,
+    ) -> Result<CompiledTaskDelta, meld_execution::error::ApiError> {
+        crate::task::expansion::compile_task_expansion_request(
+            self.core.api.as_ref(),
+            compiled_task,
+            request,
+            &self.core.catalog,
+        )
+        .map_err(|error| {
+            meld_execution::error::ExecutionInvariantError::ConfigError(error.to_string())
+        })
+    }
+}
+
+/// Production claimed-task invoker over the real task executor.
+///
+/// One claimed task node executes its own compiled capability graph to
+/// completion through the workflow task-path capability set. The invoker
+/// returns the emitted artifact records without persisting them: the
+/// dispatch actor owns artifact persistence order and outcome recording.
+struct CompiledTaskClaimInvoker {
+    core: Arc<ProductionDispatchRouteContext>,
+}
+
+#[async_trait]
+impl ClaimedTaskInvoker for CompiledTaskClaimInvoker {
+    async fn invoke_claimed_task(
+        &self,
+        node: &TaskNode,
+        claim: &Claim,
+        init_payload: &TaskInitializationPayload,
+    ) -> Result<ClaimedInvocationOutcome, DispatchPortError> {
+        let mut executor = crate::task::TaskExecutor::new(
+            node.compiled_task.clone(),
+            init_payload.clone(),
+            format!("dispatch_claim::{}", claim.claim_id),
+        )
+        .map_err(|error| DispatchPortError::fatal(error.to_string()))?;
+        match crate::task::execute_task_to_completion(
+            self.core.api.as_ref(),
+            &mut executor,
+            &self.core.catalog,
+            &self.core.registry,
+            None,
+            None,
+        )
+        .await
+        {
+            Ok(_summary) => Ok(ClaimedInvocationOutcome::Completed(
+                executor.artifact_repo().record().artifacts.clone(),
+            )),
+            // An unresolved invocation keeps the claim fenced: a later tick
+            // resumes it instead of recording a premature terminal outcome.
+            Err(error) => Err(DispatchPortError::retryable(error.to_string())),
+        }
     }
 }
 

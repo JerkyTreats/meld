@@ -71,6 +71,69 @@ impl RunContext {
         Arc::clone(self.assembly.workflow_registry())
     }
 
+    /// Product runtime assembly backing runtime commands.
+    pub fn product_runtime(&self) -> &Arc<crate::runtime::assembly::ProductRuntimeAssembly> {
+        self.assembly.product_runtime()
+    }
+
+    /// Compose and bind the production dispatch routes for this boot.
+    ///
+    /// Only a stewardship composition carries a dispatch route seed. The
+    /// composition is best-effort by design: a boot whose routes cannot be
+    /// composed (for example an invalid provider binding) leaves the
+    /// dispatch actor a truthful unresolved required binding — with the
+    /// assembly diagnostic naming the gap — instead of failing the run.
+    /// An injected route binding wins: the slot binds first-come only.
+    fn bind_production_dispatch_routes(&self) {
+        use crate::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
+        use crate::runtime::assembly::DispatchRouteBindings;
+        use crate::runtime::ports::ProductionDispatchRouteContext;
+
+        let product = self.assembly.product_runtime();
+        let Some(seed) = product.dispatch_route_seed() else {
+            return;
+        };
+        if product.dispatch_routes_bound() {
+            return;
+        }
+        // The production capability set is the workflow task-path set — the
+        // same catalog and executor registry the registered workflow route
+        // executes through.
+        let task_path_runtime = match crate::workflow::build_workflow_task_path_runtime() {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                warn!(error = %error, "dispatch route composition skipped: capability set unavailable");
+                return;
+            }
+        };
+        let provider = match ProviderExecutionBinding::new(
+            seed.provider_id.clone(),
+            ProviderRuntimeOverrides::default(),
+        ) {
+            Ok(provider) => provider,
+            Err(error) => {
+                warn!(error = %error, "dispatch route composition skipped: provider binding invalid");
+                return;
+            }
+        };
+        let routes = DispatchRouteBindings::production(ProductionDispatchRouteContext {
+            api: Arc::clone(self.assembly.api()),
+            workflow_registry: self.workflow_registry(),
+            workspace_root: seed.workspace_root.clone(),
+            subject_path: seed.subject_path.clone(),
+            agent_id: seed.agent_id.clone(),
+            provider,
+            // The registered workflow route derives its default frame type
+            // from the agent identity; the dispatch route follows the same
+            // convention so published frames share one lineage vocabulary.
+            frame_type: format!("context-{}", seed.agent_id),
+            session_id: Some(seed.session_id.clone()),
+            catalog: task_path_runtime.catalog,
+            registry: task_path_runtime.registry,
+        });
+        product.bind_dispatch_routes(routes);
+    }
+
     /// Create run context from workspace root and optional config path. Uses ConfigLoader only.
     pub fn new(workspace_root: PathBuf, config_path: Option<PathBuf>) -> Result<Self, ApiError> {
         let config = if let Some(ref cfg_path) = config_path {
@@ -268,10 +331,18 @@ impl RunContext {
                 command,
                 session_id,
             ),
-            Commands::Runtime { command } => crate::runtime::tooling::handle_cli_command(
-                self.assembly.product_runtime().as_ref(),
-                command,
-            ),
+            Commands::Runtime { command } => {
+                // A foreground run over a stewardship composition resolves
+                // the dispatch actor by binding the production execution
+                // routes before the supervisor starts.
+                if matches!(command, crate::cli::parse::RuntimeCommands::Run { .. }) {
+                    self.bind_production_dispatch_routes();
+                }
+                crate::runtime::tooling::handle_cli_command(
+                    self.assembly.product_runtime().as_ref(),
+                    command,
+                )
+            }
             Commands::World {
                 command:
                     WorldCommands::Init {

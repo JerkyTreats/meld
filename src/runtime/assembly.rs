@@ -94,6 +94,8 @@ pub struct ProductRuntimeAssembly {
     default_work_budget: WorkBudget,
     process_services: RuntimeProcessServices,
     diagnostics: Vec<AssemblyDiagnostic>,
+    dispatch_route_slot: Option<DispatchRouteSlot>,
+    dispatch_route_seed: Option<DispatchRouteSeed>,
 }
 
 /// Read-only product runtime description for operator CLI commands.
@@ -467,6 +469,96 @@ pub struct DispatchRouteBindings {
     pub claim_invoker: SharedClaimedTaskInvoker,
 }
 
+impl DispatchRouteBindings {
+    /// Compose the production execution routes over the real machinery.
+    ///
+    /// The preparer resolves plans through the registered workflow package
+    /// surface, capability invocations execute through the workflow
+    /// task-path capability set, and providers resolve through the provider
+    /// registry the api facade carries — mirroring the registered workflow
+    /// route, sourced from product config and stewardship bindings.
+    pub fn production(context: crate::runtime::ports::ProductionDispatchRouteContext) -> Self {
+        let (preparer, package_invoker, claim_invoker) = context.into_route_ports();
+        Self {
+            preparer,
+            package_invoker,
+            claim_invoker,
+        }
+    }
+}
+
+/// Shared late-binding slot for the dispatch execution route ports.
+///
+/// Owner: product runtime assembly. The production dispatch routes execute
+/// through the root api facade, which the CLI composes after product stores
+/// open — after this assembly has already built its factories. The slot lets
+/// the composition caller bind the routes exactly once before supervisor
+/// start without rebuilding factories.
+///
+/// Invariants:
+///
+/// - The first binding wins; an injected `StewardshipTheoryBindings::dispatch`
+///   preloads the slot and later bind calls are no-ops.
+/// - An unbound slot leaves the dispatch handle body-less, so a boot that
+///   never binds routes still projects a truthful
+///   `UnresolvedRequiredBinding` — the slot never manufactures behavior.
+#[derive(Clone, Default)]
+pub struct DispatchRouteSlot {
+    routes: Arc<Mutex<Option<DispatchRouteBindings>>>,
+}
+
+impl DispatchRouteSlot {
+    fn preloaded(routes: Option<DispatchRouteBindings>) -> Self {
+        Self {
+            routes: Arc::new(Mutex::new(routes)),
+        }
+    }
+
+    /// Bind execution routes once; returns whether this call installed them.
+    pub fn bind(&self, routes: DispatchRouteBindings) -> bool {
+        let mut slot = self.routes.lock().unwrap_or_else(|e| e.into_inner());
+        if slot.is_some() {
+            return false;
+        }
+        *slot = Some(routes);
+        true
+    }
+
+    /// Return whether execution routes are currently bound.
+    pub fn is_bound(&self) -> bool {
+        self.routes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
+    }
+
+    fn current(&self) -> Option<DispatchRouteBindings> {
+        self.routes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+}
+
+/// Physical identities a route composer needs to build the production
+/// dispatch routes for one stewardship composition.
+///
+/// Everything here is identity or physical scope copied from the validated
+/// physical binding — never theory bodies and never open resources.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DispatchRouteSeed {
+    /// Canonical workspace root the stewarded subject lives in.
+    pub workspace_root: PathBuf,
+    /// Workspace-relative subject path the package route triggers on.
+    pub subject_path: PathBuf,
+    /// Durable agent identity that stewards the subject.
+    pub agent_id: String,
+    /// Provider key guaranteed present in the root provider map.
+    pub provider_id: String,
+    /// Event ledger session partition shared with the composed actors.
+    pub session_id: String,
+}
+
 /// One stewardship composition input for product assembly.
 pub struct StewardshipComposition {
     /// Validated physical binding resolved from configuration (stage 0).
@@ -523,6 +615,22 @@ struct ComposedStewardship {
     network: Option<Arc<Mutex<SledTaskNetworkStore>>>,
     cursor_registry: EventConsumerRegistryCapability,
     worker_id: String,
+    dispatch_slot: DispatchRouteSlot,
+    dispatch_route_seed: DispatchRouteSeed,
+}
+
+/// Derive the production route seed from one validated physical binding.
+fn dispatch_route_seed(
+    binding: &PhysicalBinding,
+    bindings: &StewardshipActorBindings,
+) -> DispatchRouteSeed {
+    DispatchRouteSeed {
+        workspace_root: binding.workspace_root.clone(),
+        subject_path: PathBuf::from(&binding.subject),
+        agent_id: binding.agent_id.clone(),
+        provider_id: binding.provider_id.clone(),
+        session_id: bindings.session_id.clone(),
+    }
 }
 
 /// Process-local registry of inert runtime factories.
@@ -649,7 +757,8 @@ struct PlanningFactory {
 
 #[derive(Clone)]
 struct DispatchFactory {
-    routes: DispatchRouteBindings,
+    /// Late-binding route slot: an unbound slot builds a body-less handle.
+    routes: DispatchRouteSlot,
     execution_db: sled::Db,
     network: Arc<Mutex<SledTaskNetworkStore>>,
     handoffs: Arc<PackageRouteHandoffs>,
@@ -1098,8 +1207,9 @@ impl ProductRuntimeAssembly {
                     None => None,
                 };
                 Some(ComposedStewardship {
-                    bindings,
-                    theory: composition.theory,
+                    dispatch_slot: DispatchRouteSlot::preloaded(
+                        composition.theory.dispatch.clone(),
+                    ),
                     handoffs: Arc::new(PackageRouteHandoffs::default()),
                     network,
                     cursor_registry: event_authority.consumer_registry_capability(),
@@ -1107,6 +1217,9 @@ impl ProductRuntimeAssembly {
                     // identity, never process-random state, so interrupted
                     // claims are resumable across supervisor restarts.
                     worker_id: format!("runtime-worker::{}", event_authority.ledger_identity()),
+                    theory: composition.theory,
+                    dispatch_route_seed: dispatch_route_seed(&composition.binding, &bindings),
+                    bindings,
                 })
             }
             None => None,
@@ -1120,6 +1233,12 @@ impl ProductRuntimeAssembly {
             composed_stewardship.as_ref(),
             &mut diagnostics,
         )?;
+        let dispatch_route_slot = composed_stewardship
+            .as_ref()
+            .map(|composed| composed.dispatch_slot.clone());
+        let dispatch_route_seed = composed_stewardship
+            .as_ref()
+            .map(|composed| composed.dispatch_route_seed.clone());
 
         Ok(Self {
             product_root,
@@ -1137,6 +1256,8 @@ impl ProductRuntimeAssembly {
             default_work_budget: config.default_work_budget,
             process_services: config.process_services,
             diagnostics,
+            dispatch_route_slot,
+            dispatch_route_seed,
         })
     }
 
@@ -1206,6 +1327,44 @@ impl ProductRuntimeAssembly {
     /// Return desired runtime states prepared for supervisor handoff.
     pub fn desired_runtime_state(&self) -> &[DesiredRuntimeState] {
         &self.desired_runtime_state
+    }
+
+    /// Return the production route seed for this stewardship composition.
+    ///
+    /// `None` means no stewardship expression composed this assembly, so
+    /// there is no dispatch route to build.
+    pub fn dispatch_route_seed(&self) -> Option<&DispatchRouteSeed> {
+        self.dispatch_route_seed.as_ref()
+    }
+
+    /// Return whether execution routes are bound for the dispatch actor.
+    ///
+    /// `false` covers both an unbound slot and a composition with no
+    /// stewardship expression at all.
+    pub fn dispatch_routes_bound(&self) -> bool {
+        self.dispatch_route_slot
+            .as_ref()
+            .is_some_and(DispatchRouteSlot::is_bound)
+    }
+
+    /// Bind production execution routes for the dispatch actor.
+    ///
+    /// Returns whether this call installed the routes: `false` means either
+    /// no stewardship composition carries a dispatch slot or routes were
+    /// already bound (injected theory bindings win). Binding after
+    /// supervisor start has no effect on already-built handles; callers bind
+    /// before starting the supervisor.
+    pub fn bind_dispatch_routes(&self, routes: DispatchRouteBindings) -> bool {
+        self.dispatch_route_slot
+            .as_ref()
+            .is_some_and(|slot| slot.bind(routes))
+    }
+
+    /// Return the currently bound dispatch execution routes, when any.
+    pub fn dispatch_routes(&self) -> Option<DispatchRouteBindings> {
+        self.dispatch_route_slot
+            .as_ref()
+            .and_then(DispatchRouteSlot::current)
     }
 
     /// Return assembly diagnostics captured before supervisor handoff.
@@ -1436,9 +1595,12 @@ impl RuntimeHandleFactory {
     ///
     /// Catalog-only descriptors build body-less handles; the supervisor uses
     /// this distinction to classify active actors truthfully instead of
-    /// leasing and health-reporting inert placeholders.
+    /// leasing and health-reporting inert placeholders. Dispatch is dynamic:
+    /// its body exists only while its execution route slot is bound, so the
+    /// classification observed at supervisor start stays truthful for boots
+    /// that never compose routes.
     pub fn has_semantic_body(&self) -> bool {
-        !matches!(self.semantic, RuntimeSemanticHandleFactory::None)
+        self.semantic.resolved()
     }
 
     /// Build an inert runtime handle.
@@ -1770,21 +1932,25 @@ impl RuntimeSemanticHandleFactory {
                 let Some(composed) = stewardship else {
                     return Ok(Self::None);
                 };
-                let Some(routes) = composed.theory.dispatch.clone() else {
-                    return unresolved(
-                        diagnostics,
-                        "dispatch_route_unresolved",
-                        "no execution route bindings are composed; task dispatch stays unresolved"
-                            .to_string(),
-                    );
-                };
                 let (Some(execution_db), Some(network)) =
                     (stores.execution_db.opened(), composed.network.as_ref())
                 else {
                     return Ok(Self::None);
                 };
+                // The factory carries the shared route slot: an injected
+                // theory binding preloads it and the CLI composition may
+                // bind the production routes before supervisor start. An
+                // unbound slot stays a truthful unresolved required binding.
+                if !composed.dispatch_slot.is_bound() {
+                    diagnostics.push(AssemblyDiagnostic {
+                        code: "dispatch_route_unresolved".to_string(),
+                        message: "no execution route bindings are composed; task dispatch \
+                                  stays unresolved until routes are bound"
+                            .to_string(),
+                    });
+                }
                 Ok(Self::Dispatch(Box::new(DispatchFactory {
-                    routes,
+                    routes: composed.dispatch_slot.clone(),
                     execution_db: execution_db.clone(),
                     network: Arc::clone(network),
                     handoffs: Arc::clone(&composed.handoffs),
@@ -1807,6 +1973,17 @@ impl RuntimeSemanticHandleFactory {
                 })))
             }
             _ => Ok(Self::None),
+        }
+    }
+
+    /// Return whether this factory currently resolves a semantic body.
+    fn resolved(&self) -> bool {
+        match self {
+            Self::None => false,
+            // The dispatch body exists only while execution routes are
+            // bound; an unbound slot is an unresolved required binding.
+            Self::Dispatch(factory) => factory.routes.is_bound(),
+            _ => true,
         }
     }
 
@@ -1941,12 +2118,17 @@ impl RuntimeSemanticHandleFactory {
                 handoffs: Arc::clone(&factory.handoffs),
             })),
             Self::Dispatch(factory) => {
+                // Body-less when routes are unbound: the supervisor projects
+                // an unresolved required binding, never a healthy placeholder.
+                let Some(routes) = factory.routes.current() else {
+                    return RuntimeSemanticHandle::None;
+                };
                 let (actor, construction_error) = match DispatchRuntimeActor::new(
                     factory.worker_id.clone(),
                     factory.execution_db.clone(),
-                    factory.routes.preparer.clone(),
-                    factory.routes.package_invoker.clone(),
-                    factory.routes.claim_invoker.clone(),
+                    routes.preparer,
+                    routes.package_invoker,
+                    routes.claim_invoker,
                 ) {
                     Ok(actor) => (Some(actor), None),
                     Err(error) => (None, Some(error.to_string())),
@@ -3868,6 +4050,121 @@ mod tests {
         expected.sort_unstable();
         assert_eq!(ticked, expected);
         supervisor.request_shutdown(2_000).unwrap();
+    }
+
+    /// Route stubs shaped like production bindings; never invoked because
+    /// these tests exercise resolution, not execution.
+    fn stub_routes() -> DispatchRouteBindings {
+        use meld_execution::capability::{
+            BoundCapabilityInstance, CapabilityInvocationPayload, CapabilityInvocationResult,
+        };
+        use meld_execution::task::expansion::{CompiledTaskDelta, TaskExpansionRequest};
+        use meld_execution::task::{
+            CompiledTaskRecord, PackageStepInvoker, TaskInitializationPayload,
+        };
+        use meld_execution::task_network::dispatch::Claim;
+        use meld_execution::task_network::dispatch_actor::{
+            ClaimedInvocationOutcome, ClaimedTaskInvoker, DispatchPortError, PackageRunPreparer,
+            PreparedPackageRun,
+        };
+        use meld_execution::task_network::state::TaskNode;
+
+        struct StubPreparer;
+        impl PackageRunPreparer for StubPreparer {
+            fn prepare_package_run(
+                &self,
+                _plan: &TaskPackageRoutePlan,
+                _task_run_id: &str,
+            ) -> Result<PreparedPackageRun, DispatchPortError> {
+                Err(DispatchPortError::retryable("stub preparer"))
+            }
+        }
+
+        struct StubStepInvoker;
+        #[async_trait::async_trait]
+        impl PackageStepInvoker for StubStepInvoker {
+            async fn invoke_capability(
+                &self,
+                _instance: &BoundCapabilityInstance,
+                _payload: &CapabilityInvocationPayload,
+            ) -> Result<CapabilityInvocationResult, meld_execution::error::ApiError> {
+                Err(meld_execution::error::ExecutionInvariantError::ConfigError(
+                    "stub step invoker".to_string(),
+                ))
+            }
+
+            fn compile_expansion(
+                &self,
+                _compiled_task: &CompiledTaskRecord,
+                _request: &TaskExpansionRequest,
+            ) -> Result<CompiledTaskDelta, meld_execution::error::ApiError> {
+                Err(meld_execution::error::ExecutionInvariantError::ConfigError(
+                    "stub step invoker".to_string(),
+                ))
+            }
+        }
+
+        struct StubClaimInvoker;
+        #[async_trait::async_trait]
+        impl ClaimedTaskInvoker for StubClaimInvoker {
+            async fn invoke_claimed_task(
+                &self,
+                _node: &TaskNode,
+                _claim: &Claim,
+                _init_payload: &TaskInitializationPayload,
+            ) -> Result<ClaimedInvocationOutcome, DispatchPortError> {
+                Err(DispatchPortError::retryable("stub claim invoker"))
+            }
+        }
+
+        DispatchRouteBindings {
+            preparer: SharedPackageRunPreparer(Arc::new(StubPreparer)),
+            package_invoker: SharedPackageStepInvoker(Arc::new(StubStepInvoker)),
+            claim_invoker: SharedClaimedTaskInvoker(Arc::new(StubClaimInvoker)),
+        }
+    }
+
+    #[test]
+    fn late_bound_dispatch_routes_resolve_the_dispatch_actor() {
+        let harness = StewardshipHarness::new();
+        let assembly = harness.assembly(StewardshipTheoryBindings::default());
+
+        // Without composed routes the dispatch factory truthfully carries
+        // no semantic body and the route seed names the composition inputs.
+        let factory = assembly
+            .handle_factories()
+            .get("execution.task_dispatch")
+            .unwrap();
+        assert!(!factory.has_semantic_body());
+        assert!(!assembly.dispatch_routes_bound());
+        let seed = assembly.dispatch_route_seed().unwrap();
+        assert_eq!(seed.subject_path, PathBuf::from("docs"));
+        assert_eq!(seed.agent_id, STEWARD_AGENT_ID);
+        assert_eq!(seed.provider_id, "main-provider");
+        assert_eq!(seed.session_id, "stewardship::docs_freshness");
+        assert_eq!(seed.workspace_root, harness.binding.workspace_root);
+
+        // Binding production-shaped routes resolves the actor; the first
+        // binding wins and later binds are no-ops.
+        assert!(assembly.bind_dispatch_routes(stub_routes()));
+        assert!(!assembly.bind_dispatch_routes(stub_routes()));
+        assert!(assembly.dispatch_routes_bound());
+        let factory = assembly
+            .handle_factories()
+            .get("execution.task_dispatch")
+            .unwrap();
+        assert!(factory.has_semantic_body());
+        assert!(factory.build_handle().has_semantic_body());
+    }
+
+    #[test]
+    fn plain_composition_has_no_dispatch_route_slot() {
+        let temp = tempfile::tempdir().unwrap();
+        let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
+
+        assert!(assembly.dispatch_route_seed().is_none());
+        assert!(!assembly.dispatch_routes_bound());
+        assert!(!assembly.bind_dispatch_routes(stub_routes()));
     }
 
     #[test]

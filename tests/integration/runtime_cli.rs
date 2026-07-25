@@ -3,14 +3,17 @@ use meld::config::ConfigLoader;
 use meld::error::ApiError;
 use meld::events::binding::resolve_product_event_authority;
 use meld::runtime::assembly::ProductRuntimeAssembly;
+use meld::runtime::contracts::{RuntimeLaunchStatus, RuntimeStatusReader};
 use meld::runtime::storage::ProductStorageLayout;
-use meld::runtime::supervisor::RuntimeId;
+use meld::runtime::supervisor::{RuntimeId, SupervisorReportStore};
 use meld_events::{AppendMode, DomainObjectRef, EventEnvelope};
 use serde_json::json;
 use serde_json::Value;
+use std::path::Path;
 use tempfile::TempDir;
 
-use super::with_xdg_env;
+use super::parity_fixture::DeterministicDocsProvider;
+use super::{create_test_agent, with_xdg_env};
 
 #[test]
 fn runtime_status_reports_desired_runtimes_without_supervisor_store() {
@@ -245,6 +248,258 @@ fn runtime_run_rejects_unknown_restart_policy() {
 
         assert_config_error_contains(result, "unknown restart policy");
     });
+}
+
+#[test]
+fn runtime_run_accounts_distinguish_work_from_quiescence() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        let workspace_root = workspace(&temp_dir);
+        let assembly = open_bound_assembly(&workspace_root);
+        // One committed graph event makes the first maintenance pass a
+        // working pass; later passes are truthfully quiescent.
+        assembly
+            .event_authority()
+            .append_capability()
+            .append_durable(
+                EventEnvelope::new_domain(
+                    "2026-07-25T00:00:00Z".to_string(),
+                    "session-account",
+                    "workspace_fs",
+                    "workspace-a",
+                    "workspace.node.observed",
+                    None,
+                    json!({ "node": "node-account" }),
+                )
+                .with_graph(
+                    vec![DomainObjectRef::new("workspace_fs", "node", "node-account").unwrap()],
+                    Vec::new(),
+                )
+                .with_record_id("workspace-node-account"),
+                AppendMode::Plain,
+            )
+            .unwrap();
+
+        let mut sink = Vec::new();
+        let output = meld::runtime::tooling::handle_cli_command_with_account_writer(
+            &assembly,
+            &RuntimeCommands::Run {
+                instance_id: Some("runtime-cli-account".to_string()),
+                tick_ms: 1,
+                duration_ms: Some(60),
+                format: "json".to_string(),
+                restart_policy: "on-heartbeat-expiry".to_string(),
+                restart_attempt_limit: 3,
+                restart_backoff_ms: 0,
+            },
+            &mut sink,
+        )
+        .unwrap();
+        // The returned run result stays pure JSON; account lines stream
+        // through the writer instead.
+        serde_json::from_str::<Value>(&output).unwrap();
+
+        let lines = String::from_utf8(sink).unwrap();
+        let accounts: Vec<Value> = lines
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("each account line is one JSON object"))
+            .collect();
+        assert!(!accounts.is_empty());
+        for account in &accounts {
+            assert_eq!(account["type"], "runtime_tick_account");
+            assert_eq!(account["instance_id"], "runtime-cli-account");
+        }
+        let working_pass = accounts.iter().find(|account| {
+            account["quiescent"] == false
+                && account["actors"].as_array().unwrap().iter().any(|actor| {
+                    actor["runtime_id"] == "world_model.graph_replay"
+                        && actor["items_committed"].as_u64().unwrap() >= 1
+                        && actor["lifecycle"] == "active_working"
+                })
+        });
+        assert!(
+            working_pass.is_some(),
+            "no working pass observed in accounts: {lines}"
+        );
+        let quiescent_pass = accounts.iter().find(|account| {
+            account["quiescent"] == true
+                && account["actors"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|actor| actor["outcome"] == "no_work")
+        });
+        assert!(
+            quiescent_pass.is_some(),
+            "no quiescent pass observed in accounts: {lines}"
+        );
+    });
+}
+
+#[test]
+fn runtime_run_publishes_durable_lifecycle_snapshots() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        let workspace_root = workspace(&temp_dir);
+        let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
+        let output = run_context
+            .execute(&runtime_run_json(
+                Some("runtime-cli-snapshots"),
+                1,
+                Some(5),
+                "on-heartbeat-expiry",
+            ))
+            .unwrap();
+        let parsed: Value = serde_json::from_str(&output).unwrap();
+        drop(run_context);
+
+        // The clean-stop envelope is durable and readable through the
+        // frozen RuntimeStatusReader contract after the process would have
+        // exited.
+        let assembly = open_bound_assembly(&workspace_root);
+        let reader = SupervisorReportStore::open(assembly.supervisor_store()).unwrap();
+        let latest = reader
+            .read_latest_snapshot()
+            .unwrap()
+            .expect("shutdown snapshot must be durable");
+        assert_eq!(latest.writer.launch_status, RuntimeLaunchStatus::Stopped);
+        assert_eq!(
+            latest.writer.instance_id.as_deref(),
+            Some("runtime-cli-snapshots")
+        );
+        let shutdown = latest.snapshot.shutdown.expect("shutdown summary");
+        assert_eq!(
+            shutdown.shutdown_id.as_deref(),
+            parsed["shutdown_id"].as_str()
+        );
+        assert_eq!(shutdown.status, "stopped");
+        assert!(latest
+            .snapshot
+            .instance
+            .as_ref()
+            .is_some_and(|instance| instance.instance_id == "runtime-cli-snapshots"));
+    });
+}
+
+#[test]
+fn stewardship_boot_composes_production_dispatch_routes() {
+    use meld_execution::task_network::dispatch_actor::{package_route_run_id, PackageRunPreparer};
+
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        meld::init::initialize_workflows(false).unwrap();
+        let workspace_root = workspace(&temp_dir);
+        std::fs::create_dir_all(workspace_root.join("docs")).unwrap();
+        std::fs::write(workspace_root.join("docs/guide.txt"), "guide\n").unwrap();
+        create_test_agent("docs-writer", Some("docs_writer_thread_v1"));
+        let provider = DeterministicDocsProvider::spawn(&workspace_root);
+        write_stewardship_config(&workspace_root, provider.endpoint());
+
+        let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
+        run_context
+            .execute(&Commands::Scan { force: true })
+            .unwrap();
+        let product = run_context.product_runtime();
+        // The stewardship composition carries the route seed but stays a
+        // truthful unresolved binding until the foreground run composes the
+        // production routes.
+        assert!(product.dispatch_route_seed().is_some());
+        assert!(!product.dispatch_routes_bound());
+        assert!(!product
+            .handle_factories()
+            .get("execution.task_dispatch")
+            .unwrap()
+            .has_semantic_body());
+
+        run_context
+            .execute(&runtime_run_json(
+                Some("runtime-cli-dispatch"),
+                1,
+                Some(1),
+                "on-heartbeat-expiry",
+            ))
+            .unwrap();
+
+        // A configured product boot resolves the dispatch actor.
+        assert!(product.dispatch_routes_bound());
+        assert!(product
+            .handle_factories()
+            .get("execution.task_dispatch")
+            .unwrap()
+            .has_semantic_body());
+
+        // The production preparer resolves a plan through the registered
+        // workflow package surface, keyed by the actor-derived run id.
+        let routes = product.dispatch_routes().unwrap();
+        let plan = docs_route_plan("plan-production-route");
+        let task_run_id = package_route_run_id(&plan.plan_id);
+        let prepared = routes
+            .preparer
+            .prepare_package_run(&plan, &task_run_id)
+            .unwrap();
+        assert_eq!(
+            prepared.init_payload.task_run_context.task_run_id,
+            task_run_id
+        );
+        assert!(!prepared.compiled_task.capability_instances.is_empty());
+
+        drop(run_context);
+        provider.shutdown();
+    });
+}
+
+fn docs_route_plan(plan_id: &str) -> meld_execution::planning::realization::TaskPackageRoutePlan {
+    meld_execution::planning::realization::TaskPackageRoutePlan {
+        plan_id: plan_id.to_string(),
+        network_id: "stewardship.docs_freshness".to_string(),
+        composition_id: "composition-a".to_string(),
+        goal_id: "goal-a".to_string(),
+        method_id: "method-a".to_string(),
+        action_id: "action-a".to_string(),
+        package_id: "docs_writer".to_string(),
+        workflow_id: "docs_writer_thread_v1".to_string(),
+        outcome_contract_id: "execution.package.aggregate.v1".to_string(),
+        artifact: meld_execution::planning::ActionArtifactMeaning {
+            artifact_type_id: "docs_patch".to_string(),
+            schema_version: 1,
+        },
+        world_state_frame: meld_execution::planning::PlanningWorldStateFrameRef {
+            frame_id: "frame-1".to_string(),
+            projection_version: "world_model.planner.v1".to_string(),
+            perspective_id: "default".to_string(),
+            branch_id: "main".to_string(),
+            source_refs: Vec::new(),
+            warnings: Vec::new(),
+        },
+    }
+}
+
+fn write_stewardship_config(workspace_root: &Path, endpoint: &str) {
+    let config_dir = workspace_root.join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    let target_root = workspace_root.canonicalize().unwrap();
+    let config = format!(
+        r#"[providers.steward-provider]
+provider_name = "steward-provider"
+provider_type = "local"
+model = "test-model"
+endpoint = "{endpoint}"
+
+[stewardship.docs_freshness]
+expression = "docs_freshness"
+target_root = "{target_root}"
+subject = "docs"
+agent_id = "docs-writer"
+provider_id = "steward-provider"
+
+[stewardship.docs_freshness.theory]
+belief_family_id = "docs-freshness-family"
+evidence_mapping_id = "docs-outcome-mapping"
+curation_rule_id = "docs-curation"
+"#,
+        target_root = target_root.display()
+    );
+    std::fs::write(config_dir.join("config.toml"), config).unwrap();
 }
 
 fn workspace(temp_dir: &TempDir) -> std::path::PathBuf {
