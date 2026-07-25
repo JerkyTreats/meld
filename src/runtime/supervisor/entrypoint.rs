@@ -6,11 +6,15 @@ use std::path::PathBuf;
 use thiserror::Error;
 
 use crate::runtime::assembly::{
-    DesiredRuntimeState, InertRuntimeHandle, RuntimeHandleFlushReport, RuntimeHandleStopReport,
-    RuntimeLeaseContext, SupervisorStartupPackage,
+    DesiredRuntimeState, RuntimeHandleFlushReport, RuntimeHandleStopReport, RuntimeLeaseContext,
+    SupervisorStartupPackage,
 };
-use crate::runtime::contracts::{WorkBudget, WorkerTickReport};
+use crate::runtime::contracts::{
+    ActorBoundedStep, RuntimeActionOutcome, RuntimeActionRecord, RuntimeStatusPublisher,
+    WorkBudget, WorkerTickReport,
+};
 use crate::runtime::error::RuntimeAssemblyError;
+use crate::runtime::registration::{RegistrationKind, RegistrationLifecycle, RegistrationSet};
 
 use super::contracts::{
     RestartCause, RestartPolicy, RuntimeDesiredState, RuntimeDiagnosticSummary, RuntimeHealth,
@@ -19,6 +23,8 @@ use super::contracts::{
     RuntimeShutdownState, RuntimeShutdownStatus, SupervisorContractError, SupervisorLifecycleEvent,
     SupervisorLifecycleEventType,
 };
+use super::reports::SupervisorReportStore;
+use super::stepping::BoundedActorHandle;
 use super::store::{SupervisorStore, SupervisorStoreError};
 
 const DEFAULT_RESTART_ATTEMPT_LIMIT: u64 = 3;
@@ -58,6 +64,14 @@ pub struct SupervisorStartCommand {
     pub restart_attempt_limit: u64,
     /// Backoff recorded for each restart attempt.
     pub restart_backoff_ms: u64,
+    /// Explicit registration classification for this composition.
+    ///
+    /// When present, declared kinds win: passive services are never leased,
+    /// never ticked, and receive no actor health. When absent the supervisor
+    /// classifies conservatively from whether the handle factory binds a
+    /// semantic body. The actor-binding workstream replaces the conservative
+    /// seam with owner-scoped registration production.
+    pub registration_set: Option<RegistrationSet>,
 }
 
 /// Operational snapshot for a supervisor instance.
@@ -84,6 +98,13 @@ pub struct SupervisorRuntimeStatus {
     pub factory_available: bool,
     /// Whether this process currently has a local started handle.
     pub handle_started: bool,
+    /// Root classification for this runtime id.
+    pub registration_kind: RegistrationKind,
+    /// Truthful lifecycle projection derived from durable reports.
+    ///
+    /// `None` means this participant has no actor lifecycle: passive
+    /// services are never assigned actor health.
+    pub lifecycle: Option<RegistrationLifecycle>,
     /// Active lease id when present.
     pub active_lease_id: Option<String>,
     /// Active lease status when present.
@@ -143,6 +164,12 @@ pub struct SupervisorTickReport {
     pub heartbeat_runtime_ids: Vec<String>,
     /// Restart policy evaluation result for this tick.
     pub restart_evaluation: SupervisorRestartEvaluation,
+    /// Full per-tick action records, one per bounded actor invocation.
+    ///
+    /// Each record is also persisted through the report store before the
+    /// lifecycle summary is written; this copy exists so callers see the
+    /// same durable truth without a read-back.
+    pub actions: Vec<RuntimeActionRecord>,
 }
 
 /// Explicit root runtime supervisor.
@@ -160,10 +187,30 @@ pub struct RuntimeSupervisor<'a> {
     started_at_ms: u64,
     desired: BTreeMap<String, SupervisorRuntimeDesired>,
     handles: BTreeMap<String, SupervisedRuntimeHandle>,
+    report_store: SupervisorReportStore,
     event_sequence: u64,
+    action_sequence: u64,
     restart_attempt_limit: u64,
     restart_backoff_ms: u64,
     shutdown_completed: bool,
+}
+
+/// Root classification for one desired runtime id.
+///
+/// Classification prefers an explicit registration kind. Where assembly does
+/// not yet supply registrations the supervisor classifies conservatively
+/// from whether the handle factory binds a semantic body; that conservative
+/// arm is the seam the actor-binding workstream replaces with owner-scoped
+/// registration production.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeClassification {
+    /// Active actor with a bound semantic body: leased and ticked.
+    ActiveBound,
+    /// Required active binding that cannot resolve: never leased and never
+    /// projected healthy.
+    ActiveUnresolved,
+    /// Passive service: never leased, never ticked, no actor health rows.
+    Passive,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -172,10 +219,11 @@ struct SupervisorRuntimeDesired {
     enabled: bool,
     factory_available: bool,
     restart_policy: RestartPolicy,
+    classification: RuntimeClassification,
 }
 
 struct SupervisedRuntimeHandle {
-    handle: InertRuntimeHandle,
+    actor: BoundedActorHandle,
     owner: RuntimeLeaseOwner,
 }
 
@@ -188,6 +236,7 @@ impl SupervisorStartCommand {
             default_restart_policy: RestartPolicy::OnHeartbeatExpiry,
             restart_attempt_limit: DEFAULT_RESTART_ATTEMPT_LIMIT,
             restart_backoff_ms: DEFAULT_RESTART_BACKOFF_MS,
+            registration_set: None,
         }
     }
 }
@@ -207,7 +256,10 @@ impl<'a> RuntimeSupervisor<'a> {
         let desired = desired_runtime_map(
             package.desired_runtime_state,
             command.default_restart_policy,
+            command.registration_set.as_ref(),
+            package.handle_factories,
         )?;
+        let report_store = SupervisorReportStore::open(package.supervisor_store)?;
         let mut supervisor = Self {
             product_root: package.product_root.to_path_buf(),
             stores: package.stores,
@@ -219,7 +271,9 @@ impl<'a> RuntimeSupervisor<'a> {
             started_at_ms: command.started_at_ms,
             desired,
             handles: BTreeMap::new(),
+            report_store,
             event_sequence: INITIAL_EVENT_SEQUENCE,
+            action_sequence: 0,
             restart_attempt_limit: command.restart_attempt_limit,
             restart_backoff_ms: command.restart_backoff_ms,
             shutdown_completed: false,
@@ -237,6 +291,11 @@ impl<'a> RuntimeSupervisor<'a> {
     /// Return this supervisor instance id.
     pub fn instance_id(&self) -> &str {
         &self.instance_id
+    }
+
+    /// Borrow the durable report store for `RuntimeStatusReader` access.
+    pub fn report_store(&self) -> &SupervisorReportStore {
+        &self.report_store
     }
 
     /// Build an operator status snapshot without reading domain internals.
@@ -268,7 +327,9 @@ impl<'a> RuntimeSupervisor<'a> {
                 last_heartbeat_at_ms.map(|observed| now_ms.saturating_sub(observed));
             let default_health_status = if !desired.enabled {
                 RuntimeHealthStatus::Stopped
-            } else if !desired.factory_available {
+            } else if desired.classification == RuntimeClassification::ActiveUnresolved {
+                // A required active binding without a resolvable body is
+                // truthfully unavailable, never defaulted toward health.
                 RuntimeHealthStatus::Unhealthy
             } else {
                 RuntimeHealthStatus::Unknown
@@ -316,6 +377,15 @@ impl<'a> RuntimeSupervisor<'a> {
                 .as_ref()
                 .and_then(|record| record.diagnostic.as_ref())
                 .map(|diagnostic| diagnostic.actor_id.clone());
+            // Idle-versus-working detail comes from the preserved durable
+            // report, not from a supervisor-side shadow of domain meaning.
+            let latest_action = self
+                .report_store
+                .latest_action_for_runtime(desired.runtime_id.as_str())?;
+            let registration_kind = match desired.classification {
+                RuntimeClassification::Passive => RegistrationKind::PassiveService,
+                _ => RegistrationKind::ActiveActor,
+            };
 
             runtimes.push(SupervisorRuntimeStatus {
                 runtime_id: desired.runtime_id.to_string(),
@@ -324,7 +394,14 @@ impl<'a> RuntimeSupervisor<'a> {
                 handle_started: self
                     .handles
                     .get(desired.runtime_id.as_str())
-                    .is_some_and(|runtime| runtime.handle.is_started()),
+                    .is_some_and(|runtime| runtime.actor.is_started()),
+                registration_kind,
+                lifecycle: lifecycle_projection(
+                    desired.classification,
+                    desired.enabled,
+                    health_status,
+                    latest_action.as_ref(),
+                ),
                 active_lease_id: active_lease.as_ref().map(|record| record.lease_id.clone()),
                 lease_status: active_lease.as_ref().map(|record| record.status),
                 lease_expires_at_ms: active_lease.as_ref().map(|record| record.expires_at_ms),
@@ -433,7 +510,13 @@ impl<'a> RuntimeSupervisor<'a> {
         })
     }
 
-    /// Renew local leases, write healthy heartbeats, and evaluate restarts.
+    /// Renew local leases, step each active actor once, and evaluate restarts.
+    ///
+    /// Every started actor is stepped exactly once per maintenance pass
+    /// through the bounded-step contract and always yields a real report:
+    /// a failed step becomes a truthful fatal report. The full report is
+    /// persisted as an action record before the lifecycle summary derives
+    /// from it.
     pub fn tick(&mut self, now_ms: u64) -> Result<SupervisorTickReport, SupervisorRuntimeError> {
         let owners = self
             .handles
@@ -442,6 +525,7 @@ impl<'a> RuntimeSupervisor<'a> {
             .collect::<Vec<_>>();
         let mut renewed_runtime_ids = Vec::new();
         let mut heartbeat_runtime_ids = Vec::new();
+        let mut actions = Vec::new();
 
         for owner in owners {
             let active_lease = self
@@ -460,13 +544,42 @@ impl<'a> RuntimeSupervisor<'a> {
             )?;
             renewed_runtime_ids.push(owner.runtime_id.to_string());
 
-            let semantic_report = self
-                .handles
-                .get_mut(owner.runtime_id.as_str())
-                .and_then(|runtime| runtime.handle.tick(self.default_work_budget.clone()));
-            let health_status = health_status_from_tick_report(semantic_report.as_ref());
+            let budget = self.default_work_budget.clone();
+            let Some(runtime) = self.handles.get_mut(owner.runtime_id.as_str()) else {
+                continue;
+            };
+            // Exactly one bounded invocation per active actor per pass.
+            let report = runtime
+                .actor
+                .bounded_step(now_ms, &budget)
+                .unwrap_or_else(|error| {
+                    WorkerTickReport::fatal(
+                        owner.runtime_id.as_str(),
+                        runtime_domain_id(owner.runtime_id.as_str()),
+                        None,
+                        "bounded_step",
+                        "actor_bounded_step_failed",
+                        error.message,
+                    )
+                });
+            let health_status = health_status_from_tick_report(&report);
 
-            self.write_runtime_heartbeat(&owner, health_status, now_ms, semantic_report.as_ref())?;
+            // Persist the full report first; heartbeat and health snapshot
+            // are summaries derived from this durable record.
+            self.action_sequence += 1;
+            let action = RuntimeActionRecord::from_worker_tick(
+                format!(
+                    "action:{}:{}:{}:{:020}",
+                    self.instance_id, owner.runtime_id, now_ms, self.action_sequence
+                ),
+                owner.runtime_id.to_string(),
+                now_ms,
+                report.clone(),
+            );
+            self.report_store.publish_action(&action)?;
+            actions.push(action);
+
+            self.write_runtime_heartbeat(&owner, health_status, now_ms, Some(&report))?;
             self.write_lifecycle_event(
                 Some(owner.runtime_id.clone()),
                 Some(owner.lease_id.clone()),
@@ -493,11 +606,14 @@ impl<'a> RuntimeSupervisor<'a> {
         }
 
         let restart_evaluation = self.evaluate_restart_policies(now_ms)?;
+        // One store flush covers the lifecycle trees and the sibling report
+        // trees; preserved reports are durable before the tick returns.
         self.supervisor_store.flush()?;
         Ok(SupervisorTickReport {
             renewed_runtime_ids,
             heartbeat_runtime_ids,
             restart_evaluation,
+            actions,
         })
     }
 
@@ -536,15 +652,15 @@ impl<'a> RuntimeSupervisor<'a> {
         let mut stop_reports = Vec::new();
         let mut flush_reports = Vec::new();
         for runtime in self.handles.values_mut() {
-            stop_reports.push(runtime.handle.request_stop());
-            let safe_point = runtime.handle.wait_for_safe_point();
+            stop_reports.push(runtime.actor.request_stop());
+            let safe_point = runtime.actor.wait_for_safe_point();
             if !safe_point.safe_for_flush {
                 return Err(SupervisorRuntimeError::InvalidCommand(format!(
                     "runtime '{}' did not reach a safe point",
                     safe_point.runtime_id
                 )));
             }
-            flush_reports.push(runtime.handle.flush_resources()?);
+            flush_reports.push(runtime.actor.flush_resources()?);
         }
 
         self.stores
@@ -660,6 +776,11 @@ impl<'a> RuntimeSupervisor<'a> {
             let Some(desired) = self.desired.get(&runtime_id) else {
                 continue;
             };
+            // Passive services are not actors: no start, no lease, and no
+            // actor health rows regardless of the enabled flag.
+            if desired.classification == RuntimeClassification::Passive {
+                continue;
+            }
             if !desired.enabled {
                 self.write_health_snapshot(
                     &desired.runtime_id.clone(),
@@ -694,6 +815,11 @@ impl<'a> RuntimeSupervisor<'a> {
             })?
             .clone();
         let runtime = desired.runtime_id.clone();
+        // Passive services never reach the start path from the supervisor's
+        // own loops; guard defensively without writing actor health.
+        if desired.classification == RuntimeClassification::Passive {
+            return Ok(None);
+        }
         self.write_lifecycle_event(
             Some(runtime.clone()),
             None,
@@ -701,6 +827,22 @@ impl<'a> RuntimeSupervisor<'a> {
             SupervisorLifecycleEventType::RuntimeStartRequested,
             Some("runtime start requested".to_string()),
         )?;
+
+        // A required active binding without a resolvable semantic body is
+        // truthfully unavailable: no lease and never a healthy projection.
+        if desired.classification != RuntimeClassification::ActiveBound
+            || !desired.factory_available
+        {
+            self.write_health_snapshot(
+                &runtime,
+                None,
+                RuntimeHealthStatus::Unhealthy,
+                now_ms,
+                restart_count,
+                last_restart_cause,
+            )?;
+            return Ok(None);
+        }
 
         let Some(factory) = self.handle_factories.get(runtime_id) else {
             self.write_health_snapshot(
@@ -713,18 +855,6 @@ impl<'a> RuntimeSupervisor<'a> {
             )?;
             return Ok(None);
         };
-
-        if !desired.factory_available {
-            self.write_health_snapshot(
-                &runtime,
-                None,
-                RuntimeHealthStatus::Unhealthy,
-                now_ms,
-                restart_count,
-                last_restart_cause,
-            )?;
-            return Ok(None);
-        }
 
         let lease_id = format!(
             "lease:{}:{}:{}:{}",
@@ -765,7 +895,9 @@ impl<'a> RuntimeSupervisor<'a> {
             lease_id: lease.lease_id.clone(),
         })?;
         let owner = lease.owner();
-        self.write_runtime_heartbeat(&owner, RuntimeHealthStatus::Healthy, now_ms, None)?;
+        // A started actor has not proven health yet: only a real bounded
+        // tick report may promote it past starting.
+        self.write_runtime_heartbeat(&owner, RuntimeHealthStatus::Starting, now_ms, None)?;
         self.write_lifecycle_event(
             Some(runtime.clone()),
             Some(owner.lease_id.clone()),
@@ -776,7 +908,7 @@ impl<'a> RuntimeSupervisor<'a> {
         self.write_health_snapshot(
             &runtime,
             Some(owner.lease_id.clone()),
-            RuntimeHealthStatus::Healthy,
+            RuntimeHealthStatus::Starting,
             now_ms,
             restart_count,
             last_restart_cause,
@@ -784,7 +916,7 @@ impl<'a> RuntimeSupervisor<'a> {
         self.handles.insert(
             runtime_id.to_string(),
             SupervisedRuntimeHandle {
-                handle,
+                actor: BoundedActorHandle::new(handle),
                 owner: owner.clone(),
             },
         );
@@ -979,10 +1111,30 @@ impl<'a> RuntimeSupervisor<'a> {
 fn desired_runtime_map(
     states: &[DesiredRuntimeState],
     restart_policy: RestartPolicy,
+    registration_set: Option<&RegistrationSet>,
+    handle_factories: &crate::runtime::assembly::RuntimeHandleFactoryRegistry,
 ) -> Result<BTreeMap<String, SupervisorRuntimeDesired>, SupervisorRuntimeError> {
+    if let Some(set) = registration_set {
+        for registration in &set.registrations {
+            if !states
+                .iter()
+                .any(|state| state.runtime_id == registration.runtime_id)
+            {
+                return Err(SupervisorRuntimeError::InvalidCommand(format!(
+                    "registration '{}' references unknown runtime id '{}'",
+                    registration.registration_id, registration.runtime_id
+                )));
+            }
+        }
+    }
+
     let mut desired = BTreeMap::new();
     for state in states {
         let runtime_id = RuntimeId::new(state.runtime_id.clone())?;
+        let has_semantic_body = handle_factories
+            .get(&state.runtime_id)
+            .is_some_and(|factory| factory.has_semantic_body());
+        let explicit_kind = registration_set.and_then(|set| set.kind_of(&state.runtime_id));
         desired.insert(
             state.runtime_id.clone(),
             SupervisorRuntimeDesired {
@@ -990,10 +1142,34 @@ fn desired_runtime_map(
                 enabled: state.enabled,
                 factory_available: state.factory_available,
                 restart_policy,
+                classification: classify_runtime(explicit_kind, has_semantic_body),
             },
         );
     }
     Ok(desired)
+}
+
+/// Classify one runtime id from its declared kind and bound body.
+///
+/// A declared passive service wins unconditionally. A declared or assumed
+/// active actor is bound only when a semantic body exists; an enabled active
+/// requirement without a body is an unresolved required binding, never a
+/// healthy placeholder. The `None` arm is the conservative classification
+/// seam the actor-binding workstream replaces.
+fn classify_runtime(
+    explicit_kind: Option<RegistrationKind>,
+    has_semantic_body: bool,
+) -> RuntimeClassification {
+    match explicit_kind {
+        Some(RegistrationKind::PassiveService) => RuntimeClassification::Passive,
+        Some(RegistrationKind::ActiveActor) | None => {
+            if has_semantic_body {
+                RuntimeClassification::ActiveBound
+            } else {
+                RuntimeClassification::ActiveUnresolved
+            }
+        }
+    }
 }
 
 fn is_retryable_restart_signal(heartbeat: &RuntimeHeartbeat) -> bool {
@@ -1009,10 +1185,12 @@ fn is_retryable_restart_signal(heartbeat: &RuntimeHeartbeat) -> bool {
                 .is_some_and(|diagnostic| diagnostic.retryable_issue_count > 0))
 }
 
-fn health_status_from_tick_report(report: Option<&WorkerTickReport>) -> RuntimeHealthStatus {
-    let Some(report) = report else {
-        return RuntimeHealthStatus::Healthy;
-    };
+/// Project one real bounded tick report onto coarse operational health.
+///
+/// This function deliberately has no missing-report arm: absence of a report
+/// is never health. Body-less roles never lease or tick, and a failed step
+/// is converted into a truthful fatal report before projection.
+fn health_status_from_tick_report(report: &WorkerTickReport) -> RuntimeHealthStatus {
     if !report.fatal_errors.is_empty() {
         RuntimeHealthStatus::Unhealthy
     } else if !report.retryable_errors.is_empty() || report.budget_exhausted {
@@ -1020,6 +1198,52 @@ fn health_status_from_tick_report(report: Option<&WorkerTickReport>) -> RuntimeH
     } else {
         RuntimeHealthStatus::Healthy
     }
+}
+
+/// Project the truthful registration lifecycle for one status row.
+///
+/// Passive services carry no actor lifecycle. Disabled participants are
+/// stopped. An enabled active requirement without a bound body is an
+/// unresolved required binding. A bound actor's idle-versus-working detail
+/// derives from its latest durable action record, so the lifecycle summary
+/// derives from the preserved report rather than replacing it.
+fn lifecycle_projection(
+    classification: RuntimeClassification,
+    enabled: bool,
+    health_status: RuntimeHealthStatus,
+    latest_action: Option<&RuntimeActionRecord>,
+) -> Option<RegistrationLifecycle> {
+    match classification {
+        RuntimeClassification::Passive => None,
+        _ if !enabled => Some(RegistrationLifecycle::Stopped),
+        RuntimeClassification::ActiveUnresolved => {
+            Some(RegistrationLifecycle::UnresolvedRequiredBinding)
+        }
+        RuntimeClassification::ActiveBound => Some(match health_status {
+            RuntimeHealthStatus::Stopped => RegistrationLifecycle::Stopped,
+            RuntimeHealthStatus::Unknown | RuntimeHealthStatus::Starting => {
+                RegistrationLifecycle::Starting
+            }
+            RuntimeHealthStatus::Unhealthy => RegistrationLifecycle::Unhealthy,
+            RuntimeHealthStatus::Healthy | RuntimeHealthStatus::Degraded => latest_action
+                .map(lifecycle_from_action_record)
+                .unwrap_or(RegistrationLifecycle::Starting),
+        }),
+    }
+}
+
+/// Project one preserved action record onto the registration lifecycle.
+fn lifecycle_from_action_record(record: &RuntimeActionRecord) -> RegistrationLifecycle {
+    match record.outcome {
+        RuntimeActionOutcome::FatalFailure => RegistrationLifecycle::Unhealthy,
+        RuntimeActionOutcome::NoWork => RegistrationLifecycle::ActiveIdle,
+        _ => RegistrationLifecycle::ActiveWorking,
+    }
+}
+
+/// Return the owning domain segment of one runtime id for fatal reports.
+fn runtime_domain_id(runtime_id: &str) -> &str {
+    runtime_id.split('.').next().unwrap_or(runtime_id)
 }
 
 fn last_error_code(report: &WorkerTickReport) -> Option<String> {
@@ -1054,19 +1278,27 @@ mod tests {
         assert_eq!(status.product_root, temp.path());
         assert_eq!(status.instance_status, RuntimeInstanceStatus::Running);
         assert_eq!(status.runtimes.len(), 12);
+        // Truthfulness fix: only the two roles with concrete semantic
+        // bodies start; the remaining enabled roles stay unresolved instead
+        // of leasing as healthy no-op placeholders.
         assert_eq!(
             status
                 .runtimes
                 .iter()
                 .filter(|runtime| runtime.desired_enabled && runtime.handle_started)
                 .count(),
-            11
+            2
         );
         let event_append = runtime_status(&status, "event.append");
         assert!(event_append.desired_enabled);
         assert!(event_append.factory_available);
         assert!(event_append.handle_started);
-        assert_eq!(event_append.health_status, RuntimeHealthStatus::Healthy);
+        // A started actor that has not ticked yet is starting, not healthy.
+        assert_eq!(event_append.health_status, RuntimeHealthStatus::Starting);
+        assert_eq!(
+            event_append.lifecycle,
+            Some(RegistrationLifecycle::Starting)
+        );
         assert_eq!(event_append.last_heartbeat_at_ms, Some(100));
         assert_eq!(event_append.heartbeat_age_ms, Some(50));
         assert_eq!(
@@ -1077,6 +1309,136 @@ mod tests {
         assert!(!dispatch.desired_enabled);
         assert!(!dispatch.handle_started);
         assert_eq!(dispatch.health_status, RuntimeHealthStatus::Stopped);
+        assert_eq!(dispatch.lifecycle, Some(RegistrationLifecycle::Stopped));
+    }
+
+    #[test]
+    fn body_less_enabled_roles_are_never_healthy_and_hold_no_lease() {
+        let temp = tempfile::tempdir().unwrap();
+        let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
+        let mut supervisor = RuntimeSupervisor::start(
+            assembly.supervisor_startup_package(),
+            SupervisorStartCommand::new("instance-a", 100),
+        )
+        .unwrap();
+
+        supervisor.tick(120).unwrap();
+        let status = supervisor.status_snapshot(130).unwrap();
+
+        let body_less = status
+            .runtimes
+            .iter()
+            .filter(|runtime| runtime.desired_enabled && !runtime.handle_started)
+            .collect::<Vec<_>>();
+        assert_eq!(body_less.len(), 9);
+        for runtime in body_less {
+            assert_ne!(
+                runtime.health_status,
+                RuntimeHealthStatus::Healthy,
+                "{} must never be healthy without a semantic body",
+                runtime.runtime_id
+            );
+            assert_eq!(
+                runtime.lifecycle,
+                Some(RegistrationLifecycle::UnresolvedRequiredBinding),
+                "{}",
+                runtime.runtime_id
+            );
+            assert!(
+                runtime.active_lease_id.is_none(),
+                "{} must hold no lease",
+                runtime.runtime_id
+            );
+            let runtime_id = RuntimeId::new(runtime.runtime_id.clone()).unwrap();
+            assert!(assembly
+                .supervisor_store()
+                .get_active_runtime_lease(&runtime_id)
+                .unwrap()
+                .is_none());
+            assert!(assembly
+                .supervisor_store()
+                .get_runtime_heartbeat(&runtime_id)
+                .unwrap()
+                .is_none());
+        }
+    }
+
+    #[test]
+    fn passive_registrations_receive_no_lease_and_no_health_rows() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = ProductRuntimeConfig::for_product_root(temp.path());
+        config.enabled_runtime_ids = vec![
+            "event.append".to_string(),
+            "execution.task_network_command".to_string(),
+        ];
+        let assembly = ProductRuntimeAssembly::load(config).unwrap();
+        let mut command = SupervisorStartCommand::new("instance-a", 100);
+        command.registration_set = Some(crate::runtime::registration::RegistrationSet {
+            registrations: vec![crate::runtime::registration::RuntimeRegistration {
+                registration_id: "registration-command".to_string(),
+                runtime_id: "execution.task_network_command".to_string(),
+                kind: RegistrationKind::PassiveService,
+                required_resources: Vec::new(),
+            }],
+        });
+        let mut supervisor =
+            RuntimeSupervisor::start(assembly.supervisor_startup_package(), command).unwrap();
+
+        supervisor.tick(120).unwrap();
+        let status = supervisor.status_snapshot(130).unwrap();
+        let passive = runtime_status(&status, "execution.task_network_command");
+        let runtime_id = RuntimeId::new("execution.task_network_command").unwrap();
+
+        assert_eq!(passive.registration_kind, RegistrationKind::PassiveService);
+        assert_eq!(passive.lifecycle, None);
+        assert!(!passive.handle_started);
+        assert!(passive.active_lease_id.is_none());
+        assert!(assembly
+            .supervisor_store()
+            .get_active_runtime_lease(&runtime_id)
+            .unwrap()
+            .is_none());
+        assert!(assembly
+            .supervisor_store()
+            .get_runtime_heartbeat(&runtime_id)
+            .unwrap()
+            .is_none());
+        assert!(assembly
+            .supervisor_store()
+            .get_health_snapshot(&runtime_id)
+            .unwrap()
+            .is_none());
+        assert!(supervisor
+            .report_store()
+            .latest_action_for_runtime("execution.task_network_command")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn registration_set_with_unknown_runtime_id_is_rejected() {
+        let temp = tempfile::tempdir().unwrap();
+        let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
+        let mut command = SupervisorStartCommand::new("instance-a", 100);
+        command.registration_set = Some(crate::runtime::registration::RegistrationSet {
+            registrations: vec![crate::runtime::registration::RuntimeRegistration {
+                registration_id: "registration-unknown".to_string(),
+                runtime_id: "future.unknown".to_string(),
+                kind: RegistrationKind::ActiveActor,
+                required_resources: Vec::new(),
+            }],
+        });
+
+        let error = match RuntimeSupervisor::start(assembly.supervisor_startup_package(), command) {
+            Ok(_) => panic!("unknown registration runtime id should fail"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(
+            error,
+            SupervisorRuntimeError::InvalidCommand(message)
+                if message.contains("unknown runtime id")
+        ));
     }
 
     #[test]
@@ -1319,7 +1681,9 @@ mod tests {
             health.last_restart_cause,
             Some(RestartCause::RetryableFailure)
         );
-        assert_eq!(health.status, RuntimeHealthStatus::Healthy);
+        // Truthfulness fix: a restarted actor is starting until its next
+        // real bounded tick report, never immediately healthy.
+        assert_eq!(health.status, RuntimeHealthStatus::Starting);
     }
 
     #[test]
@@ -1423,6 +1787,182 @@ mod tests {
         let diagnostic = heartbeat.diagnostic.expect("expected diagnostic");
         assert_eq!(diagnostic.actor_id, "world_state.graph.reducer");
         assert_eq!(diagnostic.fatal_issue_count, 0);
+    }
+
+    #[test]
+    fn zero_work_ticks_project_active_idle_and_do_not_flood_action_records() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = ProductRuntimeConfig::for_product_root(temp.path());
+        config.enabled_runtime_ids = vec!["event.append".to_string()];
+        let assembly = ProductRuntimeAssembly::load(config).unwrap();
+        let mut supervisor = RuntimeSupervisor::start(
+            assembly.supervisor_startup_package(),
+            SupervisorStartCommand::new("instance-a", 100),
+        )
+        .unwrap();
+
+        for (index, now_ms) in [120_u64, 140, 160].into_iter().enumerate() {
+            let report = supervisor.tick(now_ms).unwrap();
+            // Exactly one bounded invocation per active actor per pass.
+            assert_eq!(report.actions.len(), 1, "tick {index}");
+            assert_eq!(report.actions[0].runtime_id, "event.append");
+            assert_eq!(
+                report.actions[0].outcome,
+                crate::runtime::contracts::RuntimeActionOutcome::NoWork
+            );
+        }
+
+        let status = supervisor.status_snapshot(170).unwrap();
+        let event_append = runtime_status(&status, "event.append");
+        assert_eq!(event_append.health_status, RuntimeHealthStatus::Healthy);
+        assert_eq!(
+            event_append.lifecycle,
+            Some(RegistrationLifecycle::ActiveIdle)
+        );
+
+        use crate::runtime::contracts::RuntimeStatusReader;
+        let actions = supervisor.report_store().read_recent_actions(16).unwrap();
+        assert_eq!(actions.len(), 3);
+        // Repeated idle ticks change no semantic checkpoints.
+        for action in &actions {
+            assert_eq!(
+                action.checkpoints[0].input_value,
+                action.checkpoints[0].output_value
+            );
+            assert_eq!(action.checkpoints[0].output_value, 0);
+        }
+    }
+
+    #[test]
+    fn per_tick_reports_are_recoverable_including_checkpoint_movement() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = ProductRuntimeConfig::for_product_root(temp.path());
+        config.enabled_runtime_ids = vec!["world_model.graph_replay".to_string()];
+        let assembly = ProductRuntimeAssembly::load(config).unwrap();
+        let subject = DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap();
+        assembly
+            .event_authority()
+            .append_capability()
+            .append_durable(
+                EventEnvelope::new_domain(
+                    "2026-06-22T00:00:00Z".to_string(),
+                    "session-a",
+                    "workspace_fs",
+                    "workspace-a",
+                    "workspace.node.observed",
+                    None,
+                    json!({ "node": "node-a" }),
+                )
+                .with_graph(vec![subject], Vec::new())
+                .with_record_id("workspace-node-a"),
+                AppendMode::Idempotent,
+            )
+            .unwrap();
+        let mut supervisor = RuntimeSupervisor::start(
+            assembly.supervisor_startup_package(),
+            SupervisorStartCommand::new("instance-a", 100),
+        )
+        .unwrap();
+
+        supervisor.tick(120).unwrap();
+        let working = supervisor.status_snapshot(125).unwrap();
+        supervisor.tick(140).unwrap();
+        let idle = supervisor.status_snapshot(145).unwrap();
+
+        assert_eq!(
+            runtime_status(&working, "world_model.graph_replay").lifecycle,
+            Some(RegistrationLifecycle::ActiveWorking)
+        );
+        assert_eq!(
+            runtime_status(&idle, "world_model.graph_replay").lifecycle,
+            Some(RegistrationLifecycle::ActiveIdle)
+        );
+
+        // The full per-tick reports are recoverable through the public
+        // reader path over a freshly opened report store.
+        use crate::runtime::contracts::{RuntimeActionOutcome, RuntimeStatusReader};
+        let reader = SupervisorReportStore::open(assembly.supervisor_store()).unwrap();
+        let actions = reader.read_recent_actions(16).unwrap();
+
+        assert_eq!(actions.len(), 2);
+        let first = &actions[0];
+        assert_eq!(first.actor_id, "world_state.graph.reducer");
+        assert_eq!(first.outcome, RuntimeActionOutcome::Succeeded);
+        assert_eq!(first.checkpoints[0].input_name, "event_spine_seq");
+        assert_eq!(first.checkpoints[0].input_value, 0);
+        assert_eq!(first.checkpoints[0].output_value, 1);
+        assert_eq!(first.metrics.committed, 1);
+        let second = &actions[1];
+        assert_eq!(second.outcome, RuntimeActionOutcome::NoWork);
+        assert_eq!(second.checkpoints[0].input_value, 1);
+        assert_eq!(second.checkpoints[0].output_value, 1);
+
+        // The idle tick moved no semantic checkpoint: the durable domain
+        // cursor still matches the first tick's output.
+        let cursor = assembly
+            .ports()
+            .graph_cursor()
+            .current()
+            .unwrap()
+            .expect("graph cursor should be reported");
+        assert_eq!(cursor.reported_seq, 1);
+    }
+
+    #[test]
+    fn fatal_reports_project_unhealthy_and_missing_reports_are_never_healthy() {
+        let fatal = WorkerTickReport::fatal(
+            "execution.planning",
+            "execution",
+            Some("planning"),
+            "task_network_revision",
+            "planning_failed",
+            "planning failed",
+        );
+
+        assert_eq!(
+            health_status_from_tick_report(&fatal),
+            RuntimeHealthStatus::Unhealthy
+        );
+        let record =
+            RuntimeActionRecord::from_worker_tick("action-fatal", "execution.planning", 10, fatal);
+        assert_eq!(
+            lifecycle_projection(
+                RuntimeClassification::ActiveBound,
+                true,
+                RuntimeHealthStatus::Unhealthy,
+                Some(&record),
+            ),
+            Some(RegistrationLifecycle::Unhealthy)
+        );
+        // The missing-report arm no longer exists: an unresolved required
+        // binding projects truthfully instead of defaulting healthy.
+        assert_eq!(
+            lifecycle_projection(
+                RuntimeClassification::ActiveUnresolved,
+                true,
+                RuntimeHealthStatus::Unhealthy,
+                None,
+            ),
+            Some(RegistrationLifecycle::UnresolvedRequiredBinding)
+        );
+        assert_eq!(
+            lifecycle_projection(
+                RuntimeClassification::Passive,
+                true,
+                RuntimeHealthStatus::Unknown,
+                None
+            ),
+            None
+        );
+        assert_eq!(
+            lifecycle_projection(
+                RuntimeClassification::ActiveBound,
+                true,
+                RuntimeHealthStatus::Starting,
+                None,
+            ),
+            Some(RegistrationLifecycle::Starting)
+        );
     }
 
     #[test]
