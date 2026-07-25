@@ -372,20 +372,32 @@ pub fn curate_threshold_rule(
 }
 
 /// Run deterministic agent-owned satisfaction curation without writing durable state.
+///
+/// Precedence over the agent's goals, in deterministic goal id order:
+/// an active goal whose target is satisfied emits `Satisfy` carrying the
+/// observed lifecycle epoch; otherwise a satisfied goal whose maintained
+/// condition the reviewed revision violates emits an idempotent `Reopen`
+/// citing that revision (the frozen future-drift rule — satisfied is never
+/// absorbing); otherwise the review is absorbed or indeterminate.
 pub fn curate_goal_satisfaction(
     input: AgentGoalSatisfactionInput,
 ) -> Result<AgentCurationOutcome, StorageError> {
     validate_satisfaction_input(&input)?;
-    let mut candidates: Vec<&Goal> = input
+    let mut owned: Vec<&Goal> = input
         .active_goals
         .goals
         .iter()
-        .filter(|goal| matches!(goal.lifecycle, GoalLifecycle::Active))
         .filter(|goal| goal.agent_id == input.agent.agent_id)
+        .filter(|goal| {
+            matches!(
+                goal.lifecycle,
+                GoalLifecycle::Active | GoalLifecycle::Satisfied { .. }
+            )
+        })
         .collect();
-    candidates.sort_by(|left, right| left.goal_id.cmp(&right.goal_id));
+    owned.sort_by(|left, right| left.goal_id.cmp(&right.goal_id));
 
-    if candidates.is_empty() {
+    if owned.is_empty() {
         let dedupe_key = no_candidate_dedupe_key(&input);
         let decision_key = format!(
             "{}::satisfy::none::{}",
@@ -406,15 +418,42 @@ pub fn curate_goal_satisfaction(
     let mut satisfied_count = 0usize;
     let mut first_unsatisfied: Option<&Goal> = None;
     let mut first_indeterminate: Option<&Goal> = None;
+    // First satisfied-lifecycle goal whose maintained condition the reviewed
+    // state violates, captured as owned identity so the input can move later.
+    let mut first_drifted: Option<(String, AgentCurationDedupeKey)> = None;
+    let mut first_stable: Option<(String, AgentCurationDedupeKey)> = None;
 
-    for goal in &candidates {
+    for goal in &owned {
         if let Some(variable) = goal.target.grounding_issue() {
             return Err(StorageError::InvalidPath(format!(
                 "candidate goal target must be ground: {variable}"
             )));
         }
 
-        match evaluate(&input.planner_projection.world_state, &goal.target) {
+        let evaluation = evaluate(&input.planner_projection.world_state, &goal.target);
+        if matches!(goal.lifecycle, GoalLifecycle::Satisfied { .. }) {
+            match evaluation {
+                meld_lang::EvalResult::Unsatisfied { .. } => {
+                    if first_drifted.is_none() {
+                        first_drifted = Some((
+                            goal.goal_id.clone(),
+                            dedupe_key_for_goal(&input.agent, goal)?,
+                        ));
+                    }
+                }
+                _ => {
+                    if first_stable.is_none() {
+                        first_stable = Some((
+                            goal.goal_id.clone(),
+                            dedupe_key_for_goal(&input.agent, goal)?,
+                        ));
+                    }
+                }
+            }
+            continue;
+        }
+
+        match evaluation {
             meld_lang::EvalResult::Satisfied => {
                 if first_satisfied.is_none() {
                     first_satisfied = Some(goal);
@@ -450,6 +489,7 @@ pub fn curate_goal_satisfaction(
             goal_id: goal.goal_id.clone(),
             kind: AgentGoalMutationKind::Satisfy {
                 at_seq: input.review_seq,
+                lifecycle_epoch: input.active_goals.lifecycle_epoch(&goal.goal_id),
             },
             dedupe_key: dedupe_key.clone(),
             review_seq: input.review_seq,
@@ -478,6 +518,10 @@ pub fn curate_goal_satisfaction(
         });
     }
 
+    if let Some((goal_id, dedupe_key)) = first_drifted {
+        return curate_reopen_for_drift(input, goal_id, dedupe_key);
+    }
+
     if let Some(goal) = first_indeterminate {
         let dedupe_key = dedupe_key_for_goal(&input.agent, goal)?;
         let decision_key = format!(
@@ -496,12 +540,29 @@ pub fn curate_goal_satisfaction(
         ));
     }
 
-    let goal = first_unsatisfied.expect("candidate list is non-empty");
-    let dedupe_key = dedupe_key_for_goal(&input.agent, goal)?;
+    if let Some(goal) = first_unsatisfied {
+        let dedupe_key = dedupe_key_for_goal(&input.agent, goal)?;
+        let decision_key = format!(
+            "{}::satisfy::{}::{}",
+            dedupe_key.index_key(),
+            goal.goal_id,
+            input.review_seq
+        );
+        let decision_id = deterministic_id("decision", &decision_key);
+        return Ok(satisfaction_without_command(
+            input,
+            dedupe_key,
+            decision_id,
+            AgentDecisionKind::Absorbed,
+            "goal target unsatisfied",
+        ));
+    }
+
+    let (goal_id, dedupe_key) = first_stable.expect("owned goal list is non-empty");
     let decision_key = format!(
-        "{}::satisfy::{}::{}",
+        "{}::satisfied-stable::{}::{}",
         dedupe_key.index_key(),
-        goal.goal_id,
+        goal_id,
         input.review_seq
     );
     let decision_id = deterministic_id("decision", &decision_key);
@@ -510,8 +571,75 @@ pub fn curate_goal_satisfaction(
         dedupe_key,
         decision_id,
         AgentDecisionKind::Absorbed,
-        "goal target unsatisfied",
+        "satisfied goals show no drift",
     ))
+}
+
+/// Build the idempotent reopen outcome for one drifted satisfied goal.
+///
+/// The command identity derives from the goal, the triggering revision, and
+/// the observed epoch — not the review sequence — so a replayed reopen for
+/// the same drift is byte-identical and execution absorbs it as a duplicate.
+fn curate_reopen_for_drift(
+    input: AgentGoalSatisfactionInput,
+    goal_id: String,
+    dedupe_key: AgentCurationDedupeKey,
+) -> Result<AgentCurationOutcome, StorageError> {
+    let decision_key = format!(
+        "{}::reopen::{}::{}",
+        dedupe_key.index_key(),
+        goal_id,
+        input.review_seq
+    );
+    let decision_id = deterministic_id("decision", &decision_key);
+    let Some(revision_id) = input.input_refs.belief_revision_id.clone() else {
+        // Drift provenance must cite the triggering revision; without one
+        // the review cannot author a well-formed reopen.
+        return Ok(satisfaction_without_command(
+            input,
+            dedupe_key,
+            decision_id,
+            AgentDecisionKind::Indeterminate,
+            "drift review has no belief revision to cite",
+        ));
+    };
+    let observed_epoch = input.active_goals.lifecycle_epoch(&goal_id);
+    let command_key = format!(
+        "{}::reopen::{}::{}::{}",
+        dedupe_key.index_key(),
+        goal_id,
+        revision_id,
+        observed_epoch
+    );
+    let command_id = deterministic_id("goal-mutation-command", &command_key);
+    let command = AgentGoalMutationCommand {
+        command_id: command_id.clone(),
+        agent_id: input.agent.agent_id.clone(),
+        goal_id,
+        kind: AgentGoalMutationKind::Reopen {
+            triggering_belief_revision_id: revision_id,
+            observed_lifecycle_epoch: observed_epoch,
+        },
+        dedupe_key: dedupe_key.clone(),
+        review_seq: input.review_seq,
+        projection_version: input.planner_projection.projection_version.clone(),
+        planner_source_refs: input.input_refs.planner_source_refs.clone(),
+        planner_warnings: input.input_refs.planner_warnings.clone(),
+    };
+    command.validate()?;
+    let decision = satisfaction_decision(
+        input,
+        dedupe_key,
+        decision_id,
+        AgentDecisionKind::GoalMutationCommand,
+        "satisfied goal drifted below its maintained condition",
+        Some(command_id),
+    );
+    Ok(AgentCurationOutcome {
+        decision,
+        goal_command: None,
+        goal_mutation_command: Some(command),
+    })
 }
 
 fn absorbed_or_indeterminate(
