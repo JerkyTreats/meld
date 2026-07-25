@@ -23,6 +23,11 @@
 //! - Per-folder subjects, the task instance, the outcome identity, and the
 //!   artifact identities are carried into the aggregate intact from durable
 //!   records. Nothing is summarized away.
+//! - Folder classification arrives as data on the run binding: only work
+//!   units whose durable capability type is named there contribute folder
+//!   rows, so orchestration units with placeholder scope references never
+//!   mint phantom folder subjects. Completion detection still spans the
+//!   whole graph.
 //! - Aggregate publication is idempotent at both layers: the durable receipt
 //!   record keyed on the aggregate identity, and the deterministic event
 //!   record id inside the ledger.
@@ -96,6 +101,17 @@ pub enum AggregatePublicationError {
         aggregate_id: String,
     },
 
+    /// A completed run matched no folder work units, so the binding's
+    /// classification and the compiled graph disagree. A completed
+    /// selected-tree run must carry at least one folder row.
+    #[error(
+        "package run '{package_run_id}' completed with no work units matching the binding's folder classification"
+    )]
+    NoFolderWorkUnits {
+        /// Package run whose compiled graph matched no classification entry.
+        package_run_id: String,
+    },
+
     /// A succeeded terminal outcome was supplied while durable progress still
     /// has incomplete work units. The aggregate must never trust a terminal
     /// claim that durable state contradicts.
@@ -151,6 +167,16 @@ pub struct AggregateRunBinding {
     pub network_id: String,
     /// Selected-tree subject the run targets.
     pub selected_scope: DomainObjectRef,
+    /// Durable capability type ids whose work units carry per-folder work.
+    ///
+    /// The discriminator is `capability_type_id` on the snapshot's compiled
+    /// instances, which persists inside the durable executor snapshot. A
+    /// package graph may also contain orchestration units, such as a
+    /// traversal seeder bound to a placeholder scope reference, whose scope
+    /// is not a folder subject: those units still count toward completion
+    /// but never contribute a folder result. The classification must name at
+    /// least one capability type.
+    pub folder_unit_capability_types: Vec<String>,
 }
 
 /// Read-only completion projection over one durable executor snapshot.
@@ -223,16 +249,28 @@ pub fn load_aggregate_completion(
     Ok(snapshot.as_ref().map(check_aggregate_completion))
 }
 
-/// Maps each expected folder to the work units that target it.
+/// Maps each expected folder to the folder-classified work units targeting it.
 ///
 /// Folder identity is the durable scope reference bound to each compiled
-/// capability instance. Multiple work units may target one folder; every
-/// work unit must carry a scope reference.
+/// capability instance whose durable capability type is named by the
+/// classification. Non-classified units, such as traversal or other
+/// orchestration instances with placeholder scope references, are excluded
+/// here while still counting toward whole-graph completion. Multiple work
+/// units may target one folder; every classified unit must carry a scope
+/// reference.
 pub fn expected_folder_units(
     snapshot: &TaskExecutorSnapshot,
+    folder_unit_capability_types: &[String],
 ) -> Result<BTreeMap<String, Vec<String>>, AggregatePublicationError> {
+    let classified: BTreeSet<&str> = folder_unit_capability_types
+        .iter()
+        .map(String::as_str)
+        .collect();
     let mut folders: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for instance in &snapshot.compiled_task.capability_instances {
+        if !classified.contains(instance.capability_type_id.as_str()) {
+            continue;
+        }
         if !has_text(&instance.scope_ref) {
             return Err(AggregatePublicationError::MissingFolderSubject {
                 capability_instance_id: instance.capability_instance_id.clone(),
@@ -300,7 +338,21 @@ pub fn produce_aggregate_outcome(
         OutcomeStatus::Failed => AggregatePackageStatus::Failed,
     };
 
-    let folder_units = expected_folder_units(snapshot)?;
+    let folder_units = expected_folder_units(snapshot, &binding.folder_unit_capability_types)?;
+    if status == AggregatePackageStatus::Completed && folder_units.is_empty() {
+        // A completed selected-tree run without one folder row means the
+        // classification and the compiled graph disagree; publishing an empty
+        // aggregate would misread as satisfied folder work.
+        return Err(AggregatePublicationError::NoFolderWorkUnits {
+            package_run_id: binding.package_run_id.clone(),
+        });
+    }
+    let known_units: BTreeSet<&str> = snapshot
+        .compiled_task
+        .capability_instances
+        .iter()
+        .map(|instance| instance.capability_instance_id.as_str())
+        .collect();
     let mut folder_artifacts: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     let mut unit_to_folder: BTreeMap<&str, &str> = BTreeMap::new();
     for (folder, units) in &folder_units {
@@ -310,9 +362,14 @@ pub fn produce_aggregate_outcome(
     }
     // Artifact identities transfer intact and in durable record order from
     // the terminal outcome; grouping by folder is the only transformation.
+    // Artifacts from known non-folder units are orchestration products, not
+    // per-folder facts, and stay out of the folder rows.
     for artifact in &outcome.artifact_records {
         let producer = artifact.producer.capability_instance_id.as_str();
         let Some(folder) = unit_to_folder.get(producer) else {
+            if known_units.contains(producer) {
+                continue;
+            }
             return Err(AggregatePublicationError::UnknownArtifactProducer {
                 artifact_id: artifact.artifact_id.clone(),
                 capability_instance_id: producer.to_string(),
@@ -382,6 +439,8 @@ pub enum AggregatePublicationState {
 pub struct AggregatePublication {
     /// Canonical aggregate outcome carried by this publication.
     pub aggregate: AggregatePackageOutcome,
+    /// Worker identity that persisted the current state, kept for audit.
+    pub worker_id: String,
     /// Current publication state.
     pub state: AggregatePublicationState,
 }
@@ -455,7 +514,7 @@ impl AggregatePublicationStore {
 pub struct PublishAggregateRequest {
     /// Event ledger session partition for the produced envelope.
     pub session_id: String,
-    /// Worker identity for audit and request validation.
+    /// Worker identity persisted on the durable publication record.
     pub worker_id: String,
 }
 
@@ -613,6 +672,7 @@ pub fn publish_aggregate<E: EventAppendSink>(
     // for terminal aggregates, so no partial aggregate ever reaches storage.
     outbox.save(&AggregatePublication {
         aggregate: aggregate.clone(),
+        worker_id: request.worker_id.clone(),
         state: AggregatePublicationState::Pending,
     })?;
 
@@ -627,6 +687,7 @@ pub fn publish_aggregate<E: EventAppendSink>(
         Ok(receipt) => {
             outbox.save(&AggregatePublication {
                 aggregate: aggregate.clone(),
+                worker_id: request.worker_id.clone(),
                 state: AggregatePublicationState::Published { receipt },
             })?;
             Ok(AggregatePublishResult::Published {
@@ -638,6 +699,7 @@ pub fn publish_aggregate<E: EventAppendSink>(
         Err(error) => {
             outbox.save(&AggregatePublication {
                 aggregate: aggregate.clone(),
+                worker_id: request.worker_id.clone(),
                 state: AggregatePublicationState::Failed {
                     error: error.clone(),
                 },
@@ -699,6 +761,14 @@ fn folder_subject(scope_ref: &str) -> Result<DomainObjectRef, AggregatePublicati
 fn validate_binding(binding: &AggregateRunBinding) -> Result<(), AggregatePublicationError> {
     require_text("package_run_id", &binding.package_run_id)?;
     require_text("network_id", &binding.network_id)?;
+    if binding.folder_unit_capability_types.is_empty() {
+        return Err(AggregatePublicationError::InvalidRequest(
+            "folder_unit_capability_types must name at least one capability type".to_string(),
+        ));
+    }
+    for capability_type_id in &binding.folder_unit_capability_types {
+        require_text("folder_unit_capability_type", capability_type_id)?;
+    }
     binding
         .selected_scope
         .validate()

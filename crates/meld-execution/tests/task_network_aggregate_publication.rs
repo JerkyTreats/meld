@@ -105,16 +105,24 @@ fn aggregate_records(events: &TestEvents) -> Vec<meld_events::EventRecord> {
         .collect()
 }
 
-fn instance(capability_instance_id: &str, scope_ref: &str) -> BoundCapabilityInstance {
+fn typed_instance(
+    capability_instance_id: &str,
+    capability_type_id: &str,
+    scope_ref: &str,
+) -> BoundCapabilityInstance {
     BoundCapabilityInstance {
         capability_instance_id: capability_instance_id.to_string(),
-        capability_type_id: "docs.write".to_string(),
+        capability_type_id: capability_type_id.to_string(),
         capability_version: 1,
         scope_ref: scope_ref.to_string(),
         scope_kind: "filesystem".to_string(),
         binding_values: vec![],
         input_wiring: vec![],
     }
+}
+
+fn instance(capability_instance_id: &str, scope_ref: &str) -> BoundCapabilityInstance {
+    typed_instance(capability_instance_id, "docs.write", scope_ref)
 }
 
 /// Branching fan-out over a root folder and two child folders.
@@ -197,6 +205,7 @@ fn binding() -> AggregateRunBinding {
         package_run_id: PACKAGE_RUN_ID.to_string(),
         network_id: NETWORK_ID.to_string(),
         selected_scope: DomainObjectRef::new("workspace_fs", "node", "root").unwrap(),
+        folder_unit_capability_types: vec!["docs.write".to_string()],
     }
 }
 
@@ -413,6 +422,7 @@ fn completed_run_publishes_one_aggregate_with_the_full_intact_folder_set() {
         AggregatePublicationState::Published { receipt: *receipt }
     );
     assert_eq!(stored.aggregate, payload);
+    assert_eq!(stored.worker_id, "worker-aggregate");
 }
 
 #[test]
@@ -663,6 +673,7 @@ fn per_folder_publications_coexist_and_the_aggregate_arrives_only_after_completi
         package_run_id: PACKAGE_RUN_ID.to_string(),
         network_id: NETWORK_ID.to_string(),
         selected_scope: DomainObjectRef::new("workspace_fs", "node", "readme").unwrap(),
+        folder_unit_capability_types: vec!["docs.write".to_string()],
     };
     let progress = open_progress(Some(&snapshot));
     let outbox = open_outbox();
@@ -729,4 +740,183 @@ fn per_folder_publications_coexist_and_the_aggregate_arrives_only_after_completi
         .map(|artifact_id| artifact_id.as_bytes())
         .collect();
     assert_eq!(payload_artifact_ids, durable_artifact_ids);
+}
+
+/// Regression for the phantom-folder finding: the real package's initial
+/// compiled task carries a traversal instance bound to the literal
+/// placeholder scope reference "target" (a folder subject only
+/// expansion-added node instances carry). The binding's data-driven folder
+/// classification must keep that unit out of the folder rows and off the
+/// envelope graph while it still counts toward completion.
+#[test]
+fn traversal_placeholder_scope_never_becomes_a_folder_row() {
+    let event_tempdir = tempfile::tempdir().unwrap();
+    let events = open_events(&event_tempdir);
+
+    // Mirror the real package shape: the seeded traversal instance with the
+    // placeholder scope plus expansion-added per-node writer instances.
+    let mut snapshot = branching_snapshot(&[]);
+    snapshot.compiled_task.capability_instances = vec![
+        typed_instance("traversal", "merkle_traversal", "target"),
+        instance("write::a", "root/a"),
+        instance("write::b", "root/b"),
+    ];
+    snapshot.completed_instance_ids = vec![
+        "traversal".to_string(),
+        "write::a".to_string(),
+        "write::b".to_string(),
+    ];
+    let progress = open_progress(Some(&snapshot));
+    let outbox = open_outbox();
+
+    // The traversal batch artifact rides the same terminal outcome as the
+    // per-node artifacts.
+    let outcome = terminal_outcome(
+        OutcomeStatus::Succeeded,
+        vec![
+            artifact("artifact-traversal-batch", "traversal"),
+            artifact("artifact-a", "write::a"),
+            artifact("artifact-b", "write::b"),
+        ],
+    );
+
+    let result = publish_aggregate_for_run(
+        &progress,
+        Some(&outcome),
+        &binding(),
+        &outbox,
+        &events,
+        &request(),
+    )
+    .unwrap();
+    assert!(matches!(result, AggregatePublishResult::Published { .. }));
+
+    let records = aggregate_records(&events);
+    assert_eq!(records.len(), 1);
+    let payload: AggregatePackageOutcome =
+        serde_json::from_value(records[0].envelope.data.clone()).unwrap();
+
+    let phantom = DomainObjectRef::new("workspace_fs", "node", "target").unwrap();
+    let folders: Vec<_> = payload
+        .folder_results
+        .iter()
+        .map(|result| result.folder.clone())
+        .collect();
+    assert_eq!(
+        folders,
+        vec![
+            DomainObjectRef::new("workspace_fs", "node", "root/a").unwrap(),
+            DomainObjectRef::new("workspace_fs", "node", "root/b").unwrap(),
+        ]
+    );
+    assert!(!folders.contains(&phantom));
+    for folder_result in &payload.folder_results {
+        assert!(!folder_result
+            .artifact_ids
+            .contains(&"artifact-traversal-batch".to_string()));
+    }
+    assert!(!records[0].envelope.objects.contains(&phantom));
+}
+
+#[test]
+fn empty_folder_classification_is_rejected() {
+    let event_tempdir = tempfile::tempdir().unwrap();
+    let events = open_events(&event_tempdir);
+    let snapshot = branching_snapshot(&["write::root", "write::a", "write::b"]);
+    let progress = open_progress(Some(&snapshot));
+    let outbox = open_outbox();
+    let outcome = terminal_outcome(OutcomeStatus::Succeeded, branching_artifacts());
+    let mut unclassified = binding();
+    unclassified.folder_unit_capability_types.clear();
+
+    let error = publish_aggregate_for_run(
+        &progress,
+        Some(&outcome),
+        &unclassified,
+        &outbox,
+        &events,
+        &request(),
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        AggregatePublicationError::InvalidRequest(_)
+    ));
+    assert!(read_all(&events).is_empty());
+}
+
+#[test]
+fn completed_run_matching_no_folder_units_is_rejected() {
+    let event_tempdir = tempfile::tempdir().unwrap();
+    let events = open_events(&event_tempdir);
+    let snapshot = branching_snapshot(&["write::root", "write::a", "write::b"]);
+    let progress = open_progress(Some(&snapshot));
+    let outbox = open_outbox();
+    let outcome = terminal_outcome(OutcomeStatus::Succeeded, branching_artifacts());
+    let mut mismatched = binding();
+    mismatched.folder_unit_capability_types = vec!["docs.unknown".to_string()];
+
+    let error = publish_aggregate_for_run(
+        &progress,
+        Some(&outcome),
+        &mismatched,
+        &outbox,
+        &events,
+        &request(),
+    )
+    .unwrap_err();
+
+    assert!(matches!(
+        error,
+        AggregatePublicationError::NoFolderWorkUnits { .. }
+    ));
+    assert!(outbox.load(&expected_aggregate_id()).unwrap().is_none());
+    assert!(read_all(&events).is_empty());
+}
+
+/// Cross-module parity: the aggregate's folder subject minting must match
+/// the workspace node coordinates the task event mapping publishes, so the
+/// world model sees one subject vocabulary across per-task facts and the
+/// aggregate.
+#[test]
+fn folder_subject_minting_matches_the_task_event_workspace_node_mapping() {
+    let event_tempdir = tempfile::tempdir().unwrap();
+    let events = open_events(&event_tempdir);
+    let mut snapshot = branching_snapshot(&[]);
+    snapshot.compiled_task.capability_instances = vec![instance("write", "root/a")];
+    snapshot.completed_instance_ids = vec!["write".to_string()];
+    let progress = open_progress(Some(&snapshot));
+    let outbox = open_outbox();
+    let outcome = terminal_outcome(
+        OutcomeStatus::Succeeded,
+        vec![artifact("artifact-a", "write")],
+    );
+
+    publish_aggregate_for_run(
+        &progress,
+        Some(&outcome),
+        &binding(),
+        &outbox,
+        &events,
+        &request(),
+    )
+    .unwrap();
+    let payload: AggregatePackageOutcome =
+        serde_json::from_value(aggregate_records(&events)[0].envelope.data.clone()).unwrap();
+    let aggregate_folder = payload.folder_results[0].folder.clone();
+
+    let mut task_event =
+        meld_execution::task::TaskEvent::new("task_started", "task_docs_writer", PACKAGE_RUN_ID);
+    task_event.target_node_id = Some("root/a".to_string());
+    let task_envelope =
+        meld_execution::task::build_execution_task_envelope("session-parity", &task_event).unwrap();
+    let task_event_folder = task_envelope
+        .objects
+        .iter()
+        .find(|object| object.object_id == "root/a")
+        .cloned()
+        .unwrap();
+
+    assert_eq!(aggregate_folder, task_event_folder);
 }
