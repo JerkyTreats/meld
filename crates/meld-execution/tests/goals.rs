@@ -621,6 +621,7 @@ fn persistent_goal_store_recovers_applied_outcome_from_split_record_write() {
         goal: command.goal.clone(),
         source_command_id: Some(command.metadata.command_id.clone()),
         source_identity: command.metadata.source_identity.clone(),
+        lifecycle_epoch: 0,
         created_at_seq: command.metadata.seq,
         updated_at_seq: command.metadata.seq,
     };

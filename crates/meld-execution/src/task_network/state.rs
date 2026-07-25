@@ -216,6 +216,24 @@ pub struct DependencyEdge {
     pub to: String,
     /// Semantics required to satisfy this dependency.
     pub kind: DependencyKind,
+    /// Why the edge exists. Committed edges record their origin so the
+    /// later semantic-versus-scheduling separation needs no migration.
+    #[serde(default)]
+    pub origin: DependencyEdgeOrigin,
+}
+
+/// Recorded origin of a committed dependency edge.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum DependencyEdgeOrigin {
+    /// The edge encodes domain meaning, such as child artifacts feeding a
+    /// parent.
+    Semantic,
+    /// The edge encodes an execution-policy ordering with no domain
+    /// meaning.
+    Scheduling,
+    /// The edge predates origin recording. New commits must not use this.
+    #[default]
+    Unrecorded,
 }
 
 /// Dependency semantics between two task nodes.

@@ -83,8 +83,8 @@ use crate::task_network::{
     contracts::stable_id,
     mutation,
     state::{
-        DependencyEdge, DependencyKind, StaticSeedInitSource, TaskInitSource, TaskLineage,
-        TaskNode, UpstreamArtifactInitSource,
+        DependencyEdge, DependencyEdgeOrigin, DependencyKind, StaticSeedInitSource, TaskInitSource,
+        TaskLineage, TaskNode, UpstreamArtifactInitSource,
     },
 };
 use meld_lang::{Bindings, Edge, EdgeKind, Operator, Step, StepKind, Term};
@@ -789,6 +789,9 @@ fn incoming_edges(
                 from: task_instance_id(network_id, &composition.composition_id, &edge.from),
                 to: task_instance_id(network_id, &composition.composition_id, &edge.to),
                 kind,
+                // Composition edges carry method-declared meaning, never
+                // execution scheduling policy.
+                origin: DependencyEdgeOrigin::Semantic,
             })
         })
         .collect()

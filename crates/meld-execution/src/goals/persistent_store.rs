@@ -63,6 +63,7 @@ impl PersistentGoalSetStore {
             goal: command.goal.clone(),
             source_command_id: Some(command.metadata.command_id.clone()),
             source_identity: command.metadata.source_identity.clone(),
+            lifecycle_epoch: 0,
             created_at_seq: command.metadata.seq,
             updated_at_seq: command.metadata.seq,
         };
@@ -189,6 +190,9 @@ impl PersistentGoalSetStore {
             goal: command.goal.clone(),
             source_command_id: Some(command.metadata.command_id.clone()),
             source_identity: source_identity.clone(),
+            // Modification revises content under the same identity; only the
+            // reopen command may advance the epoch.
+            lifecycle_epoch: existing.lifecycle_epoch,
             created_at_seq: existing.created_at_seq,
             updated_at_seq: command.metadata.seq,
         };

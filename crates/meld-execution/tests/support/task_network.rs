@@ -21,8 +21,8 @@ use meld_execution::task_network::dispatch::{
 use meld_execution::task_network::mutation::{Inject, Mutation, ReadPrecondition, Set};
 use meld_execution::task_network::readiness::compute_ready_set;
 use meld_execution::task_network::state::{
-    DependencyEdge, DependencyKind, StaticSeedInitSource, TaskInitSource, TaskLineage, TaskNode,
-    UpstreamArtifactInitSource,
+    DependencyEdge, DependencyEdgeOrigin, DependencyKind, StaticSeedInitSource, TaskInitSource,
+    TaskLineage, TaskNode, UpstreamArtifactInitSource,
 };
 use meld_execution::task_network::store::{InMemoryTaskNetworkStore, SledTaskNetworkStore};
 use meld_lang::{
@@ -703,6 +703,8 @@ pub fn two_task_ordering_set(upstream: &str, downstream: &str) -> Set {
                     from: upstream.to_string(),
                     to: downstream.to_string(),
                     kind: DependencyKind::Ordering,
+
+                    origin: DependencyEdgeOrigin::Unrecorded,
                 }],
             )),
         ],

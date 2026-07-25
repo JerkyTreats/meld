@@ -3,7 +3,9 @@ mod task_network_support;
 
 use meld_execution::task_network::command::{Command, Response};
 use meld_execution::task_network::mutation::{Mutation, ReadPrecondition, Rejection, Set};
-use meld_execution::task_network::state::{DependencyEdge, DependencyKind, TaskStatus};
+use meld_execution::task_network::state::{
+    DependencyEdge, DependencyEdgeOrigin, DependencyKind, TaskStatus,
+};
 use meld_execution::task_network::store::InMemoryTaskNetworkStore;
 
 #[test]
@@ -298,6 +300,8 @@ fn invalid_graph_rejects_before_state_mutation() {
                 from: "missing".to_string(),
                 to: "task-alpha".to_string(),
                 kind: DependencyKind::Ordering,
+
+                origin: DependencyEdgeOrigin::Unrecorded,
             }],
         ))],
         vec![],
@@ -445,6 +449,8 @@ fn data_flow_edge_without_matching_upstream_source_rejects_before_state_mutation
                     kind: DependencyKind::DataFlow {
                         artifact_type_id: "metadata_doc".to_string(),
                     },
+
+                    origin: DependencyEdgeOrigin::Unrecorded,
                 }],
             )),
         ],
@@ -517,6 +523,8 @@ fn cycle_validation_rejects_before_state_mutation() {
                     from: "task-beta".to_string(),
                     to: "task-alpha".to_string(),
                     kind: DependencyKind::Ordering,
+
+                    origin: DependencyEdgeOrigin::Unrecorded,
                 }],
             )),
             Mutation::Inject(task_network_support::inject_for_node(
@@ -525,6 +533,8 @@ fn cycle_validation_rejects_before_state_mutation() {
                     from: "task-alpha".to_string(),
                     to: "task-beta".to_string(),
                     kind: DependencyKind::Ordering,
+
+                    origin: DependencyEdgeOrigin::Unrecorded,
                 }],
             )),
         ],
@@ -550,6 +560,8 @@ fn duplicate_edges_are_deduped_on_commit() {
         from: "task-alpha".to_string(),
         to: "task-beta".to_string(),
         kind: DependencyKind::Ordering,
+
+        origin: DependencyEdgeOrigin::Unrecorded,
     };
     let set = Set::new(
         "network-docs",
@@ -686,6 +698,8 @@ fn no_path_precondition_distinguishes_reachable_and_unreachable_nodes() {
                     from: "task-alpha".to_string(),
                     to: "task-beta".to_string(),
                     kind: DependencyKind::Ordering,
+
+                    origin: DependencyEdgeOrigin::Unrecorded,
                 }],
             )),
             Mutation::Inject(task_network_support::inject_for_node(
@@ -694,6 +708,8 @@ fn no_path_precondition_distinguishes_reachable_and_unreachable_nodes() {
                     from: "task-beta".to_string(),
                     to: "task-gamma".to_string(),
                     kind: DependencyKind::Ordering,
+
+                    origin: DependencyEdgeOrigin::Unrecorded,
                 }],
             )),
         ],

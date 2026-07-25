@@ -4,6 +4,8 @@
 //! execution composition artifact. Task lowering and dispatch stay outside this
 //! domain.
 
+/// Affordance-shaped available-action binding contracts.
+pub mod action;
 /// Planning request, result, diagnostic, and composition contracts.
 pub mod contracts;
 /// Lowering from execution compositions into task network mutation proposals.
@@ -15,6 +17,10 @@ pub mod runtime;
 /// Execution-side world state projection request contracts.
 pub mod world_state;
 
+pub use action::{
+    ActionArtifactMeaning, ActionOutcomeContractRef, ActionRealizationRoute,
+    AvailableActionBinding, AvailableActionSet,
+};
 pub use contracts::{
     CandidateStatus, ExecutionComposition, InvalidMethodReport, MethodCandidateReport,
     NoApplicableMethod, OperatorResolutionReport, OperatorResolutionStatus, PlanningDiagnostic,

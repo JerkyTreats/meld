@@ -4,8 +4,8 @@ mod task_network_support;
 use meld_execution::task_network::command::Command;
 use meld_execution::task_network::readiness::compute_ready_set;
 use meld_execution::task_network::state::{
-    ArtifactAvailability, DependencyEdge, DependencyKind, NetworkState, ReadinessDiagnosticCode,
-    TaskStatus,
+    ArtifactAvailability, DependencyEdge, DependencyEdgeOrigin, DependencyKind, NetworkState,
+    ReadinessDiagnosticCode, TaskStatus,
 };
 use meld_execution::task_network::store::InMemoryTaskNetworkStore;
 use proptest::prelude::*;
@@ -106,6 +106,8 @@ fn ordering_edge_waits_for_upstream_success() {
         from: "task-upstream".to_string(),
         to: "task-downstream".to_string(),
         kind: DependencyKind::Ordering,
+
+        origin: DependencyEdgeOrigin::Unrecorded,
     });
     state.set_revision_and_hash(1);
     assert_eq!(
@@ -159,6 +161,8 @@ fn data_flow_edge_waits_for_matching_artifact_availability() {
         kind: DependencyKind::DataFlow {
             artifact_type_id: "docs_patch".to_string(),
         },
+
+        origin: DependencyEdgeOrigin::Unrecorded,
     });
     state.set_revision_and_hash(1);
     assert!(compute_ready_set(&state).task_instance_ids.is_empty());
@@ -199,6 +203,8 @@ fn missing_dependency_endpoint_reports_diagnostic() {
         from: "missing".to_string(),
         to: "task-alpha".to_string(),
         kind: DependencyKind::Ordering,
+
+        origin: DependencyEdgeOrigin::Unrecorded,
     });
     state.set_revision_and_hash(2);
 
@@ -231,11 +237,15 @@ fn cycle_reports_diagnostic() {
         from: "task-a".to_string(),
         to: "task-b".to_string(),
         kind: DependencyKind::Ordering,
+
+        origin: DependencyEdgeOrigin::Unrecorded,
     });
     state.edges.push(DependencyEdge {
         from: "task-b".to_string(),
         to: "task-a".to_string(),
         kind: DependencyKind::Ordering,
+
+        origin: DependencyEdgeOrigin::Unrecorded,
     });
     state.set_revision_and_hash(1);
 
@@ -392,6 +402,8 @@ fn data_flow_readiness_uses_source_schema_version_when_present() {
         kind: DependencyKind::DataFlow {
             artifact_type_id: "metadata_doc".to_string(),
         },
+
+        origin: DependencyEdgeOrigin::Unrecorded,
     });
     state.artifact_availability.push(ArtifactAvailability {
         task_instance_id: "task-upstream".to_string(),
@@ -449,6 +461,8 @@ fn data_flow_readiness_blocks_when_source_record_does_not_match_edge() {
         kind: DependencyKind::DataFlow {
             artifact_type_id: "metadata_doc".to_string(),
         },
+
+        origin: DependencyEdgeOrigin::Unrecorded,
     });
     state.artifact_availability.push(ArtifactAvailability {
         task_instance_id: "task-upstream".to_string(),

@@ -13,6 +13,8 @@
 //! Those domains adapt through explicit contracts.
 
 /// Serialized command boundary for task network writers.
+/// Canonical aggregate package outcome contract.
+pub mod aggregate;
 pub mod command;
 /// Shared identity and hashing helpers for task network records.
 pub mod contracts;
@@ -37,6 +39,11 @@ pub mod state;
 /// In memory and sled-backed command stores.
 pub mod store;
 
+pub use aggregate::{
+    AggregatePackageOutcome, AggregatePackageStatus, FolderPublicationResult,
+    AGGREGATE_OUTCOME_CONTRACT_ID, AGGREGATE_PACKAGE_COMPLETED_EVENT_TYPE,
+    AGGREGATE_PACKAGE_FAILED_EVENT_TYPE,
+};
 pub use command::{Command, Request as CommandRequest, Response};
 pub use dispatch::{Claim, Outcome, OutcomeStatus, Request as DispatchRequest};
 pub use initialization::{

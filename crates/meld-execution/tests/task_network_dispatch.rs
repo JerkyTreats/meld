@@ -9,7 +9,7 @@ use meld_execution::task_network::dispatch::{
 use meld_execution::task_network::mutation::Rejection;
 use meld_execution::task_network::mutation::{Mutation, Set};
 use meld_execution::task_network::state::{
-    ArtifactAvailability, DependencyEdge, DependencyKind, TaskStatus,
+    ArtifactAvailability, DependencyEdge, DependencyEdgeOrigin, DependencyKind, TaskStatus,
 };
 use meld_execution::task_network::store::InMemoryTaskNetworkStore;
 
@@ -103,6 +103,8 @@ fn claim_blocks_when_upstream_outcome_has_no_available_artifact() {
                     kind: DependencyKind::DataFlow {
                         artifact_type_id: "metadata_doc".to_string(),
                     },
+
+                    origin: DependencyEdgeOrigin::Unrecorded,
                 }],
             )),
         ],

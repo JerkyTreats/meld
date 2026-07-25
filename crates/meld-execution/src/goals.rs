@@ -62,9 +62,9 @@ pub mod store;
 pub use api::{GoalAcceptanceLifecycle, GoalAcceptanceRequest, GoalSetApi, GoalSetApiError};
 pub use contracts::{
     AddGoalCommand, ExecutionGoalRecord, GoalCommandMetadata, GoalCommandOutcome,
-    ModifyGoalCommand, RemoveGoalCommand, ResumeGoalCommand, SatisfyGoalCommand,
+    ModifyGoalCommand, RemoveGoalCommand, ReopenGoalCommand, ResumeGoalCommand, SatisfyGoalCommand,
     SuspendGoalCommand,
 };
 pub use persistent_store::PersistentGoalSetStore;
-pub use query::GoalSetQuery;
+pub use query::{ActiveGoalQuery, ActiveGoalQueryError, GoalSetQuery};
 pub use store::GoalSetStore;

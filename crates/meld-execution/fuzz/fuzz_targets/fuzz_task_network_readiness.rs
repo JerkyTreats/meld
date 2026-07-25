@@ -4,7 +4,7 @@ use libfuzzer_sys::fuzz_target;
 use meld_execution::task::{CompiledTaskRecord, TaskRunContext};
 use meld_execution::task_network::{
     readiness::compute_ready_set,
-    state::{DependencyEdge, DependencyKind, NetworkState, TaskLineage, TaskNode, TaskStatus},
+    state::{DependencyEdge, DependencyEdgeOrigin, DependencyKind, NetworkState, TaskLineage, TaskNode, TaskStatus},
 };
 
 fn task_node(id: &str) -> TaskNode {
@@ -65,6 +65,8 @@ fuzz_target!(|data: &[u8]| {
                 from: format!("task-{}", index - 1),
                 to: format!("task-{index}"),
                 kind: DependencyKind::Ordering,
+            
+                origin: DependencyEdgeOrigin::Unrecorded,
             });
         }
     }

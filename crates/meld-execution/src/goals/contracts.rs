@@ -11,6 +11,12 @@ pub struct ExecutionGoalRecord {
     pub source_command_id: Option<String>,
     /// Non-empty producer identity used to dedupe retries across command ids.
     pub source_identity: Option<String>,
+    /// Lifecycle epoch of the stable goal identity. Reopening a satisfied
+    /// goal advances the epoch in place; satisfaction evidence binds the
+    /// epoch it was produced under, so satisfied is never an absorbing
+    /// state. Zero on records that predate epochs.
+    #[serde(default)]
+    pub lifecycle_epoch: u64,
     /// Monotonic sequence observed when the record was created.
     pub created_at_seq: u64,
     /// Monotonic sequence observed when the record was last changed.
@@ -86,6 +92,22 @@ pub struct ResumeGoalCommand {
     pub metadata: GoalCommandMetadata,
     /// Goal to mark active again.
     pub goal_id: String,
+}
+
+/// Reopen a satisfied goal in place after later drift.
+///
+/// The frozen future-drift rule: the same goal identity transitions from
+/// satisfied to active through an idempotent agent-curated reopen appended
+/// as a new goal revision with the lifecycle epoch advanced. Prior-epoch
+/// satisfaction evidence never satisfies the reopened goal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReopenGoalCommand {
+    /// Idempotency and ordering metadata.
+    pub metadata: GoalCommandMetadata,
+    /// Satisfied goal to reopen under an advanced epoch.
+    pub goal_id: String,
+    /// Belief revision whose drift triggered the reopen, as provenance.
+    pub triggering_belief_revision_id: String,
 }
 
 /// Deterministic outcome for goal curation commands.
