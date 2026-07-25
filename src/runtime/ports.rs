@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use meld_events::error::EventAuthorityError;
 use meld_events::{
     AppendMode, AppendReceipt, DomainObjectRef, EventAppendCapability, EventAuthority,
@@ -9,17 +10,42 @@ use meld_events::{
     EventRecord, EventReplayCapability, EventWatermark, EventWatermarkCapability, LedgerCursor,
     LedgerIdentity, ReplayRequest,
 };
+use meld_execution::capability::{
+    BoundCapabilityInstance, CapabilityInvocationPayload, CapabilityInvocationResult,
+};
 use meld_execution::goals::{
     GoalAcceptanceLifecycle, GoalAcceptanceRequest, GoalCommandMetadata, GoalCommandOutcome,
     GoalSetApi, PersistentGoalSetStore,
 };
-use meld_execution::task::TaskArtifactRepoFactory;
+use meld_execution::planning::realization::TaskPackageRoutePlan;
+use meld_execution::planning::{
+    PlanningProjectionError as ExecutionPlanningProjectionError, PlanningProjectionPort,
+    PlanningWorldStateFrameRef, PlanningWorldStateProjection, PlanningWorldStateRequest,
+};
+use meld_execution::task::expansion::{CompiledTaskDelta, TaskExpansionRequest};
+use meld_execution::task::{
+    CompiledTaskRecord, PackageStepInvoker, TaskArtifactRepoFactory, TaskInitializationPayload,
+};
+use meld_execution::task_network::dispatch::Claim;
+use meld_execution::task_network::dispatch_actor::{
+    ClaimedInvocationOutcome, ClaimedTaskInvoker, DispatchPortError, PackageRunPreparer,
+    PreparedPackageRun,
+};
+use meld_execution::task_network::state::TaskNode;
 use meld_execution::task_network::store::TaskNetworkStoreFactory;
 use meld_execution::task_network::EventAppendSink;
-use meld_world_model::belief::{
-    ingest_promoted_evidence, ConfigSnapshot, PromotedEvidenceIngestionRequest,
+use meld_world_model::agent::{
+    ActiveGoalSummary, AgentActiveGoalQuery, AgentActiveGoalQueryError, AgentGoalCommandSink,
+    AgentGoalMutationSink, AgentSinkError, AgentSinkSubmission,
 };
-use meld_world_model::planner::{PlannerProjectionError, PlannerProjectionOutput, PlannerQuery};
+use meld_world_model::belief::{
+    configured_belief_key, ingest_promoted_evidence, BeliefFamilyRegistry,
+    BeliefFamilyRegistryStore, ConfigSnapshot, EvidenceEventReplaySource,
+    PromotedEvidenceIngestionRequest,
+};
+use meld_world_model::planner::{
+    PlannerProjectionError, PlannerProjectionOutput, PlannerQuery, PlannerSourceRef,
+};
 use meld_world_model::world_state::graph::store::TraversalStore;
 use meld_world_model::world_state::graph::{
     GraphConsumerCursorReporter, GraphDerivedEventSink, GraphEventReplaySource, PerspectiveKey,
@@ -38,34 +64,37 @@ use crate::execution::goal_mutation::{
 use crate::execution::{build_docs_task_success_evidence, DocsTaskSuccessEvidenceRequest};
 use crate::prompt_context::PromptContextArtifactStorage;
 use crate::runtime::error::{RuntimeAssemblyError, RuntimePortError};
-use crate::runtime::storage::OpenProductStores;
+use crate::runtime::storage::{OpenProductStores, ScopedResource};
 use crate::store::SledNodeRecordStore;
 
 /// Maximum events returned by one root-assembled replay port call.
 pub const MAX_EVENT_REPLAY_LIMIT: usize = 1024;
 
 /// All direct handoff and root adapter ports produced by product assembly.
-#[derive(Clone)]
+///
+/// Store-backed ports are scoped: a composition built from an explicit
+/// registration set constructs only the ports whose stores that set opened.
+/// Event-authority ports are always present because the authority is
+/// resolved and supplied by product binding.
 pub struct ProductRuntimePorts {
     event_append: ProductEventAppendPort,
     event_replay: ProductEventReplayPort,
     graph_cursor: ProductGraphCursorPort,
-    docs_task_evidence: DocsTaskEvidenceReplayPort,
-    goal_command: ExecutionGoalCommandPort,
-    goal_mutation: ExecutionGoalMutationPort,
-    planner_projection: PlannerProjectionPort,
+    docs_task_evidence: ScopedResource<DocsTaskEvidenceReplayPort>,
+    goal_command: ScopedResource<ExecutionGoalCommandPort>,
+    goal_mutation: ScopedResource<ExecutionGoalMutationPort>,
+    planner_projection: ScopedResource<PlannerProjectionPort>,
     adapters: RuntimeAdapterPorts,
 }
 
 /// Passive root adapter ports shared with runtime factories.
-#[derive(Clone)]
 pub struct RuntimeAdapterPorts {
-    context: ContextRuntimePort,
+    context: ScopedResource<ContextRuntimePort>,
     provider: ProviderRuntimePort,
-    prompt: PromptRuntimePort,
-    workspace: WorkspaceRuntimePort,
-    task_artifacts: TaskArtifactFactoryPort,
-    task_networks: TaskNetworkFactoryPort,
+    prompt: ScopedResource<PromptRuntimePort>,
+    workspace: ScopedResource<WorkspaceRuntimePort>,
+    task_artifacts: ScopedResource<TaskArtifactFactoryPort>,
+    task_networks: ScopedResource<TaskNetworkFactoryPort>,
 }
 
 /// Provider availability settings checked during assembly.
@@ -150,6 +179,14 @@ pub struct ProductGraphCursorPort {
 }
 
 /// Bounded docs task event to belief evidence replay port.
+///
+/// Compatibility quarantine: this port carries root-hardcoded docs
+/// evidence policy (fixed probabilities and source kind) and is kept only
+/// for the characterized docs-freshness reopen contract tests. The
+/// production evidence path is the world-model-owned
+/// [`meld_world_model::belief::EvidenceIngestionActor`] over an installed
+/// [`meld_world_model::belief::ConfiguredOutcomeMapping`], bound by the
+/// runtime actor factories. Do not add new callers.
 #[derive(Clone)]
 pub struct DocsTaskEvidenceReplayPort {
     event_replay: ProductEventReplayPort,
@@ -221,6 +258,9 @@ pub struct TaskNetworkFactoryPort {
 
 impl ProductRuntimePorts {
     /// Build root adapters from one already-resolved event authority.
+    ///
+    /// Ports are built only for store groups the composition opened; a
+    /// closed store leaves its port closed rather than failing assembly.
     pub fn from_authority(
         stores: &OpenProductStores,
         authority: &EventAuthority,
@@ -229,28 +269,91 @@ impl ProductRuntimePorts {
         let provider_port = ProviderRuntimePort::new(provider)?;
         let event_append = ProductEventAppendPort::new(authority);
         let event_replay = ProductEventReplayPort::new(authority.replay_capability());
+
+        let world_model = stores
+            .belief_store
+            .opened()
+            .zip(stores.traversal_store.opened());
+        let docs_task_evidence = match world_model {
+            Some((belief, traversal)) => ScopedResource::open(
+                "docs_task_evidence_port",
+                DocsTaskEvidenceReplayPort::new(
+                    event_replay.clone(),
+                    Arc::clone(belief),
+                    Arc::clone(traversal),
+                ),
+            ),
+            None => ScopedResource::closed("docs_task_evidence_port"),
+        };
+        let planner_projection = match world_model {
+            Some((belief, traversal)) => ScopedResource::open(
+                "planner_projection_port",
+                PlannerProjectionPort::new(Arc::clone(belief), Arc::clone(traversal)),
+            ),
+            None => ScopedResource::closed("planner_projection_port"),
+        };
+        let (goal_command, goal_mutation) = match stores.goal_store.opened() {
+            Some(goal_store) => (
+                ScopedResource::open(
+                    "goal_command_port",
+                    ExecutionGoalCommandPort::new(Arc::clone(goal_store)),
+                ),
+                ScopedResource::open(
+                    "goal_mutation_port",
+                    ExecutionGoalMutationPort::new(Arc::clone(goal_store)),
+                ),
+            ),
+            None => (
+                ScopedResource::closed("goal_command_port"),
+                ScopedResource::closed("goal_mutation_port"),
+            ),
+        };
+
         Ok(Self {
             event_append,
             event_replay: event_replay.clone(),
             graph_cursor: ProductGraphCursorPort::new(authority.consumer_registry_capability()),
-            docs_task_evidence: DocsTaskEvidenceReplayPort::new(
-                event_replay,
-                Arc::clone(&stores.belief_store),
-                Arc::clone(&stores.traversal_store),
-            ),
-            goal_command: ExecutionGoalCommandPort::new(Arc::clone(&stores.goal_store)),
-            goal_mutation: ExecutionGoalMutationPort::new(Arc::clone(&stores.goal_store)),
-            planner_projection: PlannerProjectionPort::new(
-                Arc::clone(&stores.belief_store),
-                Arc::clone(&stores.traversal_store),
-            ),
+            docs_task_evidence,
+            goal_command,
+            goal_mutation,
+            planner_projection,
             adapters: RuntimeAdapterPorts {
-                context: ContextRuntimePort::new(Arc::clone(&stores.frame_storage)),
+                context: match stores.frame_storage.opened() {
+                    Some(storage) => ScopedResource::open(
+                        "context_port",
+                        ContextRuntimePort::new(Arc::clone(storage)),
+                    ),
+                    None => ScopedResource::closed("context_port"),
+                },
                 provider: provider_port,
-                prompt: PromptRuntimePort::new(Arc::clone(&stores.prompt_artifacts)),
-                workspace: WorkspaceRuntimePort::new(Arc::clone(&stores.node_store)),
-                task_artifacts: TaskArtifactFactoryPort::new(stores.task_artifacts.clone()),
-                task_networks: TaskNetworkFactoryPort::new(stores.task_networks.clone()),
+                prompt: match stores.prompt_artifacts.opened() {
+                    Some(storage) => ScopedResource::open(
+                        "prompt_port",
+                        PromptRuntimePort::new(Arc::clone(storage)),
+                    ),
+                    None => ScopedResource::closed("prompt_port"),
+                },
+                workspace: match stores.node_store.opened() {
+                    Some(store) => ScopedResource::open(
+                        "workspace_port",
+                        WorkspaceRuntimePort::new(Arc::clone(store)),
+                    ),
+                    None => ScopedResource::closed("workspace_port"),
+                },
+                task_artifacts: match stores.task_artifacts.opened() {
+                    Some(factory) => ScopedResource::open(
+                        "task_artifacts_port",
+                        TaskArtifactFactoryPort::new(factory.clone()),
+                    ),
+                    None => ScopedResource::closed("task_artifacts_port"),
+                },
+                task_networks: match stores.task_networks.opened() {
+                    Some(factory) => ScopedResource::open(
+                        "task_networks_port",
+                        TaskNetworkFactoryPort::new(factory.clone()),
+                    ),
+                    None => ScopedResource::closed("task_networks_port"),
+                },
             },
         })
     }
@@ -280,14 +383,29 @@ impl ProductRuntimePorts {
         &self.goal_command
     }
 
+    /// Return the goal command sink port when its store is in scope.
+    pub fn try_goal_command(&self) -> Option<&ExecutionGoalCommandPort> {
+        self.goal_command.opened()
+    }
+
     /// Return the goal mutation sink port.
     pub fn goal_mutation(&self) -> &ExecutionGoalMutationPort {
         &self.goal_mutation
     }
 
+    /// Return the goal mutation sink port when its store is in scope.
+    pub fn try_goal_mutation(&self) -> Option<&ExecutionGoalMutationPort> {
+        self.goal_mutation.opened()
+    }
+
     /// Return the planner projection query port.
     pub fn planner_projection(&self) -> &PlannerProjectionPort {
         &self.planner_projection
+    }
+
+    /// Return the planner projection port when its stores are in scope.
+    pub fn try_planner_projection(&self) -> Option<&PlannerProjectionPort> {
+        self.planner_projection.opened()
     }
 
     /// Return passive adapter ports.
@@ -322,9 +440,19 @@ impl RuntimeAdapterPorts {
         &self.task_artifacts
     }
 
+    /// Return the task artifact factory port when its store is in scope.
+    pub fn try_task_artifacts(&self) -> Option<&TaskArtifactFactoryPort> {
+        self.task_artifacts.opened()
+    }
+
     /// Return the task network factory adapter port.
     pub fn task_networks(&self) -> &TaskNetworkFactoryPort {
         &self.task_networks
+    }
+
+    /// Return the task network factory port when its store is in scope.
+    pub fn try_task_networks(&self) -> Option<&TaskNetworkFactoryPort> {
+        self.task_networks.opened()
     }
 }
 
@@ -744,6 +872,493 @@ impl TaskNetworkFactoryPort {
     }
 }
 
+impl EvidenceEventReplaySource for ProductEventReplayPort {
+    fn ledger_identity(&self) -> LedgerIdentity {
+        self.replay.ledger_identity()
+    }
+
+    fn replay(&self, request: ReplayRequest) -> Result<EventPage, EventAuthorityError> {
+        self.replay.replay(request)
+    }
+}
+
+/// Execution-owned active-goal view adapted for world-model curation.
+///
+/// Owner: root translation only. The adapter copies every goal record the
+/// execution store holds for one agent — including proposed and satisfied
+/// records so dedupe and the reopen path see them — together with the
+/// authoritative lifecycle epoch by goal id, so satisfaction and reopen
+/// commands bind the epoch they observed.
+#[derive(Clone)]
+pub struct ExecutionAgentGoalQueryPort {
+    store: Arc<PersistentGoalSetStore>,
+}
+
+impl ExecutionAgentGoalQueryPort {
+    /// Bind the port to an opened execution goal store.
+    pub fn new(store: Arc<PersistentGoalSetStore>) -> Self {
+        Self { store }
+    }
+}
+
+impl AgentActiveGoalQuery for ExecutionAgentGoalQueryPort {
+    fn active_goals_for_agent(
+        &mut self,
+        agent_id: &str,
+    ) -> Result<ActiveGoalSummary, AgentActiveGoalQueryError> {
+        let records = self
+            .store
+            .goal_records()
+            .map_err(|error| AgentActiveGoalQueryError::retryable(error.to_string()))?;
+        let mut summary = ActiveGoalSummary::default();
+        for record in records
+            .into_iter()
+            .filter(|record| record.goal.agent_id == agent_id)
+        {
+            summary
+                .lifecycle_epochs
+                .insert(record.goal.goal_id.clone(), record.lifecycle_epoch);
+            summary.goals.push(record.goal);
+        }
+        Ok(summary)
+    }
+}
+
+/// The named curation-to-goal-set port bound to execution goal storage.
+///
+/// This is the composition-time binding of
+/// [`meld_world_model::agent::CurationGoalSetPort`] (satisfied through the
+/// blanket impl over both sinks): curated goal commands route through the
+/// execution goal command port and both mutation kinds — satisfy and
+/// reopen — route through the execution goal mutation port. The sequence is
+/// the injected step sequence of the invoking bounded actor tick and is
+/// recorded as the accepted command's ordering sequence.
+pub struct CurationGoalExecutionPort {
+    command: ExecutionGoalCommandPort,
+    mutation: ExecutionGoalMutationPort,
+    sequence: u64,
+}
+
+impl CurationGoalExecutionPort {
+    /// Bind the port for one bounded step at the injected sequence.
+    pub fn new(
+        command: ExecutionGoalCommandPort,
+        mutation: ExecutionGoalMutationPort,
+        sequence: u64,
+    ) -> Self {
+        Self {
+            command,
+            mutation,
+            sequence,
+        }
+    }
+}
+
+impl AgentGoalCommandSink for CurationGoalExecutionPort {
+    fn submit_goal_command(
+        &mut self,
+        command: &AgentGoalCommand,
+    ) -> Result<AgentSinkSubmission, AgentSinkError> {
+        let command_id = command.command_id.clone();
+        let outcome = self
+            .command
+            .accept_agent_goal_command(command.clone(), self.sequence)
+            .map_err(|error| AgentSinkError::retryable(error.to_string()))?;
+        goal_outcome_submission(command_id, outcome)
+    }
+}
+
+impl AgentGoalMutationSink for CurationGoalExecutionPort {
+    fn submit_goal_mutation(
+        &mut self,
+        command: &AgentGoalMutationCommand,
+    ) -> Result<AgentSinkSubmission, AgentSinkError> {
+        let command_id = command.command_id.clone();
+        let outcome = self
+            .mutation
+            .satisfy_agent_goal_mutation(command.clone())
+            .map_err(|error| AgentSinkError::retryable(error.to_string()))?;
+        goal_outcome_submission(command_id, outcome)
+    }
+}
+
+/// Translate one goal command outcome into the sink submission vocabulary.
+///
+/// A stale no-op is absorbed as `duplicate`: the record was left
+/// byte-identical by design (epoch fence), so the curation receipt must not
+/// read as a fresh application.
+fn goal_outcome_submission(
+    command_id: String,
+    outcome: GoalCommandOutcome,
+) -> Result<AgentSinkSubmission, AgentSinkError> {
+    match outcome {
+        GoalCommandOutcome::Applied(record) => Ok(AgentSinkSubmission::new(
+            command_id,
+            record.goal.goal_id,
+            "applied",
+        )),
+        GoalCommandOutcome::Duplicate { existing_goal_id } => Ok(AgentSinkSubmission::new(
+            command_id,
+            existing_goal_id,
+            "duplicate",
+        )),
+        GoalCommandOutcome::StaleNoOp { goal_id, .. } => {
+            Ok(AgentSinkSubmission::new(command_id, goal_id, "duplicate"))
+        }
+        GoalCommandOutcome::NotFound { goal_id } => Err(AgentSinkError::fatal(format!(
+            "goal '{goal_id}' does not exist in the execution goal set"
+        ))),
+    }
+}
+
+/// Exact-key planner projection port for the execution planning actor.
+///
+/// Owner: root translation. The port resolves the configured belief
+/// family's current theory revision per projection, derives the exact
+/// configured belief key, and reads through the world model's exact-key
+/// path, so the projected revision and theory lineage are the identities
+/// the belief store holds for that key — never a same-subject neighbor.
+pub struct ExactKeyPlanningProjectionPort {
+    belief_store: Arc<BeliefStore>,
+    traversal_store: Arc<TraversalStore>,
+    registry: Arc<BeliefFamilyRegistryStore>,
+    family_id: String,
+    subject: DomainObjectRef,
+    perspective: PerspectiveKey,
+    branch_scope: BranchScope,
+}
+
+impl ExactKeyPlanningProjectionPort {
+    /// Bind the port to world-model stores and the configured scope.
+    pub fn new(
+        belief_store: Arc<BeliefStore>,
+        traversal_store: Arc<TraversalStore>,
+        registry: Arc<BeliefFamilyRegistryStore>,
+        family_id: impl Into<String>,
+        subject: DomainObjectRef,
+        perspective: PerspectiveKey,
+        branch_scope: BranchScope,
+    ) -> Self {
+        Self {
+            belief_store,
+            traversal_store,
+            registry,
+            family_id: family_id.into(),
+            subject,
+            perspective,
+            branch_scope,
+        }
+    }
+}
+
+impl PlanningProjectionPort for ExactKeyPlanningProjectionPort {
+    fn project(
+        &mut self,
+        request: PlanningWorldStateRequest,
+    ) -> Result<PlanningWorldStateProjection, ExecutionPlanningProjectionError> {
+        // Theory resolves per projection, mirroring the belief actors, so
+        // planning always consumes the currently installed revision and a
+        // not-yet-installed family stays retryable rather than fatal.
+        let revision = self
+            .registry
+            .current(&self.family_id)
+            .map_err(|error| ExecutionPlanningProjectionError::fatal(error.to_string()))?
+            .ok_or_else(|| {
+                ExecutionPlanningProjectionError::retryable(format!(
+                    "belief family '{}' has no installed registry revision",
+                    self.family_id
+                ))
+            })?;
+        let key = configured_belief_key(
+            &revision,
+            &self.subject,
+            &self.perspective,
+            &self.branch_scope,
+        );
+        let query = PlannerQuery::new(
+            BeliefQuery::new(self.belief_store.as_ref()),
+            TraversalQuery::new(self.traversal_store.as_ref()),
+        );
+        let output = query
+            .project_world_state_for_key(&key)
+            .map_err(|error| ExecutionPlanningProjectionError::retryable(error.to_string()))?;
+
+        let source_refs: Vec<String> = output.source_refs.iter().map(render_source_ref).collect();
+        // Frame identity is deterministic from the consumed belief revision
+        // so identical projections carry identical causality and a revised
+        // belief produces a causally distinct frame.
+        let frame_id = output
+            .source_refs
+            .iter()
+            .find_map(|source| match source {
+                PlannerSourceRef::BeliefRevision { revision_id } => {
+                    Some(format!("belief-revision::{revision_id}"))
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| format!("unassessed::{}", key.index_key()));
+        Ok(PlanningWorldStateProjection {
+            world_state: output.world_state,
+            frame: PlanningWorldStateFrameRef {
+                frame_id,
+                projection_version: output.projection_version,
+                perspective_id: request.perspective_id,
+                branch_id: request.branch_id,
+                source_refs,
+                warnings: output
+                    .warnings
+                    .iter()
+                    .map(|warning| format!("{warning:?}"))
+                    .collect(),
+            },
+        })
+    }
+}
+
+fn render_source_ref(source: &PlannerSourceRef) -> String {
+    match source {
+        PlannerSourceRef::BeliefRevision { revision_id } => {
+            format!("belief_revision::{revision_id}")
+        }
+        PlannerSourceRef::Evidence { evidence_id } => format!("evidence::{evidence_id}"),
+        PlannerSourceRef::SourceFact { source_fact_id } => {
+            format!("source_fact::{source_fact_id}")
+        }
+        PlannerSourceRef::GraphAnchor { anchor_id } => format!("graph_anchor::{anchor_id:?}"),
+        PlannerSourceRef::ProjectionRule { rule_id } => format!("projection_rule::{rule_id}"),
+    }
+}
+
+/// Shared handle adapter for an injected package-run preparation port.
+#[derive(Clone)]
+pub struct SharedPackageRunPreparer(pub Arc<dyn PackageRunPreparer + Send + Sync>);
+
+impl PackageRunPreparer for SharedPackageRunPreparer {
+    fn prepare_package_run(
+        &self,
+        plan: &TaskPackageRoutePlan,
+        task_run_id: &str,
+    ) -> Result<PreparedPackageRun, DispatchPortError> {
+        self.0.prepare_package_run(plan, task_run_id)
+    }
+}
+
+/// Shared handle adapter for an injected package capability invoker.
+#[derive(Clone)]
+pub struct SharedPackageStepInvoker(pub Arc<dyn PackageStepInvoker>);
+
+#[async_trait]
+impl PackageStepInvoker for SharedPackageStepInvoker {
+    async fn invoke_capability(
+        &self,
+        instance: &BoundCapabilityInstance,
+        payload: &CapabilityInvocationPayload,
+    ) -> Result<CapabilityInvocationResult, meld_execution::error::ApiError> {
+        self.0.invoke_capability(instance, payload).await
+    }
+
+    fn compile_expansion(
+        &self,
+        compiled_task: &CompiledTaskRecord,
+        request: &TaskExpansionRequest,
+    ) -> Result<CompiledTaskDelta, meld_execution::error::ApiError> {
+        self.0.compile_expansion(compiled_task, request)
+    }
+}
+
+/// Shared handle adapter for an injected claimed-task invoker.
+#[derive(Clone)]
+pub struct SharedClaimedTaskInvoker(pub Arc<dyn ClaimedTaskInvoker>);
+
+#[async_trait]
+impl ClaimedTaskInvoker for SharedClaimedTaskInvoker {
+    async fn invoke_claimed_task(
+        &self,
+        node: &TaskNode,
+        claim: &Claim,
+        init_payload: &TaskInitializationPayload,
+    ) -> Result<ClaimedInvocationOutcome, DispatchPortError> {
+        self.0.invoke_claimed_task(node, claim, init_payload).await
+    }
+}
+
 fn map_projection_error(error: PlannerProjectionError) -> RuntimePortError {
     RuntimePortError::PlannerProjection(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use meld_execution::goals::{GoalAcceptanceLifecycle, GoalAcceptanceRequest};
+    use meld_lang::{Goal, GoalLifecycle, GoalPriority, GoalSource, Proposition, Term};
+    use meld_world_model::agent::AgentGoalMutationKind;
+    use meld_world_model::AgentCurationDedupeKey;
+
+    fn subject() -> DomainObjectRef {
+        DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap()
+    }
+
+    fn rule() -> meld_world_model::AgentCurationRuleConfig {
+        meld_world_model::AgentCurationRuleConfig {
+            dimension_id: "docs_freshness".to_string(),
+            threshold: 0.7,
+            priority_urgency: 8,
+            desired_summary: "fresh docs".to_string(),
+            source_kind: "docs_freshness".to_string(),
+        }
+    }
+
+    fn goal(goal_id: &str) -> Goal {
+        Goal {
+            goal_id: goal_id.to_string(),
+            agent_id: "agent-a".to_string(),
+            target: Proposition::Holds {
+                subject: Term::Object(subject()),
+                dimension: Term::Dimension("docs_freshness".to_string()),
+                condition: rule().target_condition(),
+            },
+            priority: GoalPriority {
+                urgency: 8,
+                cost_ceiling: None,
+            },
+            source: GoalSource::BeliefDivergence {
+                dimension: "docs_freshness".to_string(),
+                observed: "confidence=0.2".to_string(),
+                desired: "fresh docs".to_string(),
+            },
+            lifecycle: GoalLifecycle::Proposed,
+        }
+    }
+
+    fn open_goal_store() -> (tempfile::TempDir, Arc<PersistentGoalSetStore>) {
+        let temp = tempfile::tempdir().unwrap();
+        let db = sled::open(temp.path().join("goals.sled")).unwrap();
+        (temp, Arc::new(PersistentGoalSetStore::new(db).unwrap()))
+    }
+
+    fn accept_goal(store: &Arc<PersistentGoalSetStore>, goal_id: &str, seq: u64) {
+        let command = GoalAcceptanceRequest {
+            metadata: GoalCommandMetadata {
+                command_id: format!("command-{goal_id}"),
+                source_identity: Some(format!("identity-{goal_id}")),
+                seq,
+            },
+            goal: goal(goal_id),
+            lifecycle_policy: GoalAcceptanceLifecycle::RequireProposedThenActivate,
+        };
+        ExecutionGoalCommandPort::new(Arc::clone(store))
+            .accept_goal(command)
+            .unwrap();
+    }
+
+    #[test]
+    fn agent_goal_query_port_reports_lifecycle_epochs_from_goal_records() {
+        let (_temp, store) = open_goal_store();
+        accept_goal(&store, "goal-a", 5);
+        let mutation_port = ExecutionGoalMutationPort::new(Arc::clone(&store));
+        let dedupe_key = AgentCurationDedupeKey::threshold_rule(
+            "agent-a",
+            &subject(),
+            &BranchScope::main(),
+            &rule(),
+        );
+        // Satisfy at epoch zero, then reopen: the durable record advances to
+        // lifecycle epoch one.
+        mutation_port
+            .satisfy_agent_goal_mutation(AgentGoalMutationCommand {
+                command_id: "mutation-satisfy".to_string(),
+                agent_id: "agent-a".to_string(),
+                goal_id: "goal-a".to_string(),
+                kind: AgentGoalMutationKind::Satisfy {
+                    at_seq: 6,
+                    lifecycle_epoch: 0,
+                },
+                dedupe_key: dedupe_key.clone(),
+                review_seq: 6,
+                projection_version: "world_model.planner.v1".to_string(),
+                planner_source_refs: Vec::new(),
+                planner_warnings: Vec::new(),
+            })
+            .unwrap();
+        mutation_port
+            .satisfy_agent_goal_mutation(AgentGoalMutationCommand {
+                command_id: "mutation-reopen".to_string(),
+                agent_id: "agent-a".to_string(),
+                goal_id: "goal-a".to_string(),
+                kind: AgentGoalMutationKind::Reopen {
+                    triggering_belief_revision_id: "belief-revision-b".to_string(),
+                    observed_lifecycle_epoch: 0,
+                },
+                dedupe_key,
+                review_seq: 7,
+                projection_version: "world_model.planner.v1".to_string(),
+                planner_source_refs: Vec::new(),
+                planner_warnings: Vec::new(),
+            })
+            .unwrap();
+
+        let summary = ExecutionAgentGoalQueryPort::new(Arc::clone(&store))
+            .active_goals_for_agent("agent-a")
+            .unwrap();
+
+        // The observed epoch flows from the execution goal record into the
+        // snapshot the satisfy adapter binds its mutations to.
+        assert_eq!(summary.lifecycle_epoch("goal-a"), 1);
+        assert_eq!(summary.goals.len(), 1);
+        assert!(matches!(summary.goals[0].lifecycle, GoalLifecycle::Active));
+    }
+
+    #[test]
+    fn agent_goal_query_port_filters_by_agent_identity() {
+        let (_temp, store) = open_goal_store();
+        accept_goal(&store, "goal-a", 5);
+
+        let summary = ExecutionAgentGoalQueryPort::new(Arc::clone(&store))
+            .active_goals_for_agent("agent-other")
+            .unwrap();
+
+        assert!(summary.goals.is_empty());
+        assert!(summary.lifecycle_epochs.is_empty());
+    }
+
+    #[test]
+    fn curation_port_routes_commands_and_absorbs_stale_mutations() {
+        let (_temp, store) = open_goal_store();
+        accept_goal(&store, "goal-a", 5);
+        let mut port = CurationGoalExecutionPort::new(
+            ExecutionGoalCommandPort::new(Arc::clone(&store)),
+            ExecutionGoalMutationPort::new(Arc::clone(&store)),
+            9,
+        );
+        let dedupe_key = AgentCurationDedupeKey::threshold_rule(
+            "agent-a",
+            &subject(),
+            &BranchScope::main(),
+            &rule(),
+        );
+
+        // A satisfy that observed a stale epoch is absorbed as duplicate:
+        // the goal record must stay byte-identical under the epoch fence.
+        let stale = port
+            .submit_goal_mutation(&AgentGoalMutationCommand {
+                command_id: "mutation-stale".to_string(),
+                agent_id: "agent-a".to_string(),
+                goal_id: "goal-a".to_string(),
+                kind: AgentGoalMutationKind::Satisfy {
+                    at_seq: 9,
+                    lifecycle_epoch: 3,
+                },
+                dedupe_key,
+                review_seq: 9,
+                projection_version: "world_model.planner.v1".to_string(),
+                planner_source_refs: Vec::new(),
+                planner_warnings: Vec::new(),
+            })
+            .unwrap();
+
+        assert_eq!(stale.outcome, "duplicate");
+        let record = store.get_goal("goal-a").unwrap().unwrap();
+        assert_eq!(record.lifecycle_epoch, 0);
+        assert!(matches!(record.goal.lifecycle, GoalLifecycle::Active));
+    }
 }

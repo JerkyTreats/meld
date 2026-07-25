@@ -1,37 +1,94 @@
 //! Product runtime assembly for durable flywheel infrastructure.
+//!
+//! Owner: root runtime composition. Assembly is machine initialization
+//! (Runtime Initialization stages 0, 1, and 5): it opens stores for the
+//! composed registration scope, builds ports, derives registrations from
+//! the selected stewardship expression, and binds concrete domain actor
+//! factories. It never creates semantic state — no genesis, no theory
+//! install, no seeding. A world with incomplete genesis hydrates with the
+//! genesis-dependent actors truthfully unresolved (no semantic body, so
+//! the supervisor projects `UnresolvedRequiredBinding`), never with
+//! manufactured state; a later process start after explicit initialization
+//! resolves them.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use meld_events::EventAuthority;
 #[cfg(test)]
 use meld_events::EventAuthorityOpenOptions;
+use meld_events::EventConsumerRegistryCapability;
+use meld_events::{DomainObjectRef, DurableConsumerCursor, EventAuthority};
+use meld_execution::capability::CapabilityCatalog;
+use meld_execution::goals::PersistentGoalSetStore;
+use meld_execution::planning::realization::TaskPackageRoutePlan;
+use meld_execution::planning::{
+    AvailableActionSet, ExecutionCompositionLowerer, MethodLibrary, MethodRealizationBinding,
+    PlanningRuntime, PlanningRuntimeActor, PlanningRuntimeActorGoalResult,
+    PlanningRuntimeActorRequest,
+};
+use meld_execution::task::package::{load_builtin_task_package_spec, PackageExpansionSpec};
+use meld_execution::task::{TaskCompiler, TaskProgressStore};
+use meld_execution::task_network::aggregate_publication::{
+    publish_aggregate_for_run, AggregatePublicationError, AggregatePublicationStore,
+    AggregatePublishResult, AggregateRunBinding, PublishAggregateRequest,
+};
+use meld_execution::task_network::dispatch_actor::{
+    package_route_run_id, DispatchRuntimeActor, DispatchTickReport, DispatchTickRequest,
+};
+use meld_execution::task_network::SledTaskNetworkStore;
+use meld_lang::Method;
+use meld_world_model::agent::{
+    AgentGoalCurationActor, AgentSatisfactionCurationActor, AgentStepReport, AgentStepRequest,
+    AgentStore,
+};
+use meld_world_model::belief::{
+    BeliefAssessmentActor, BeliefAssessmentReport, BeliefAssessmentRequest, BeliefFamilyRegistry,
+    BeliefFamilyRegistryStore, BeliefStore, BeliefSubjectBinding, BranchScope,
+    ConfiguredOutcomeMapping, EvidenceEventReplaySource, EvidenceIngestionActor,
+    EvidenceIngestionReport, EvidenceIngestionRequest, OutcomeEvidenceMapping,
+    OutcomeMappingConfig,
+};
 use meld_world_model::world_state::graph::runtime::{GraphCatchUpBudget, GraphRuntime};
+use meld_world_model::world_state::graph::store::TraversalStore;
+use meld_world_model::PerspectiveKey;
 use serde::{Deserialize, Serialize};
 
 use crate::config::MerkleConfig;
-use crate::runtime::contracts::{WorkBudget, WorkerTickReport};
+use crate::config::PhysicalBinding;
+use crate::runtime::contracts::{
+    WorkBudget, WorkerCheckpoint, WorkerScope, WorkerTickIssue, WorkerTickReport,
+};
 use crate::runtime::error::{RuntimeAssemblyError, RuntimeRegistryError};
-use crate::runtime::ports::{ProductRuntimePorts, ProviderPortConfig};
-use crate::runtime::storage::{OpenProductStores, ProductStorageLayout, ProductStorageRoot};
+use crate::runtime::ports::{
+    CurationGoalExecutionPort, ExactKeyPlanningProjectionPort, ExecutionAgentGoalQueryPort,
+    ExecutionGoalCommandPort, ExecutionGoalMutationPort, ProductEventAppendPort,
+    ProductEventReplayPort, ProductRuntimePorts, ProviderPortConfig, SharedClaimedTaskInvoker,
+    SharedPackageRunPreparer, SharedPackageStepInvoker,
+};
+use crate::runtime::registration::{RegistrationKind, RegistrationSet, RuntimeRegistration};
+use crate::runtime::storage::{
+    OpenProductStores, ProductStorageLayout, ProductStorageRoot, StoreScope,
+};
 use crate::runtime::supervisor::SupervisorStore;
 
 /// Root product runtime assembly.
 ///
-/// This type opens product stores, opens supervisor lifecycle storage, builds
-/// direct handoff ports, and prepares inert runtime factory metadata. It does
-/// not run semantic work or own domain progress.
+/// This type opens product stores for the composed registration scope,
+/// opens supervisor lifecycle storage, builds direct handoff ports, and
+/// binds concrete actor factories. It does not run semantic work or own
+/// domain progress.
 pub struct ProductRuntimeAssembly {
     product_root: ProductStorageRoot,
     layout: ProductStorageLayout,
     stores: Arc<OpenProductStores>,
     event_authority: Arc<EventAuthority>,
-    graph_runtime: Arc<GraphRuntime>,
+    graph_runtime: Option<Arc<GraphRuntime>>,
     supervisor_store: SupervisorStore,
     ports: ProductRuntimePorts,
     registry: RuntimeFactoryRegistry,
     handle_factories: RuntimeHandleFactoryRegistry,
+    registration_set: Option<RegistrationSet>,
     desired_runtime_state: Vec<DesiredRuntimeState>,
     lifecycle_config: RuntimeLifecycleConfig,
     default_work_budget: WorkBudget,
@@ -73,6 +130,14 @@ pub struct ProductRuntimeConfig {
     pub enabled_runtime_ids: Vec<String>,
     /// Runtime ids kept disabled but visible in desired state.
     pub disabled_runtime_ids: Vec<String>,
+    /// Explicit registration set composing this assembly.
+    ///
+    /// Registration-set composition is a public surface: harness and proof
+    /// callers may compose any actor subset here, and store opening is
+    /// scoped to the composed set. When absent, a stewardship composition
+    /// derives the set; a plain composition opens everything and keeps the
+    /// conservative supervisor classification.
+    pub registration_set: Option<RegistrationSet>,
     /// Passive provider availability check.
     pub provider: ProviderPortConfig,
     /// Supervisor lifecycle timing defaults.
@@ -139,6 +204,325 @@ pub enum RuntimeResource {
     Prompt,
     /// Workspace node storage.
     Workspace,
+    /// World model belief, agent, registry, and traversal stores.
+    WorldModel,
+}
+
+/// Store scope one resource requirement pulls into a composition.
+fn resource_store_scope(resource: &RuntimeResource) -> StoreScope {
+    match resource {
+        RuntimeResource::Workspace => StoreScope {
+            workspace: true,
+            ..StoreScope::none()
+        },
+        RuntimeResource::WorldModel | RuntimeResource::PlannerProjection => StoreScope {
+            world_model: true,
+            ..StoreScope::none()
+        },
+        RuntimeResource::GoalCommand | RuntimeResource::GoalMutation => StoreScope {
+            execution_goals: true,
+            ..StoreScope::none()
+        },
+        RuntimeResource::TaskArtifactFactory | RuntimeResource::TaskNetworkFactory => StoreScope {
+            task_execution: true,
+            ..StoreScope::none()
+        },
+        RuntimeResource::Context => StoreScope {
+            context_frames: true,
+            ..StoreScope::none()
+        },
+        RuntimeResource::Prompt => StoreScope {
+            prompt_artifacts: true,
+            ..StoreScope::none()
+        },
+        // Event capabilities come from the supplied authority and the
+        // provider from process configuration; neither opens product stores.
+        RuntimeResource::EventAppend
+        | RuntimeResource::EventReplay
+        | RuntimeResource::EventConsumerRegistry
+        | RuntimeResource::Provider => StoreScope::none(),
+    }
+}
+
+/// Derive the store scope one composed registration set requires.
+///
+/// The union covers both the resources declared on each registration and
+/// the catalog descriptor's resources for its runtime id, so an explicit
+/// set with empty resource lists still opens what its actors need.
+pub fn scope_for_registration_set(
+    set: &RegistrationSet,
+    registry: &RuntimeFactoryRegistry,
+) -> StoreScope {
+    let mut scope = StoreScope::none();
+    for registration in &set.registrations {
+        for resource in &registration.required_resources {
+            scope = scope.union(resource_store_scope(resource));
+        }
+        if let Some(descriptor) = registry.get(&registration.runtime_id) {
+            for resource in &descriptor.required_resources {
+                scope = scope.union(resource_store_scope(resource));
+            }
+        }
+    }
+    scope
+}
+
+/// Runtime ids classified as passive services in the stewardship-derived set.
+///
+/// The event append and replay capabilities and the goal-set and
+/// task-network command services are called by actors; they are never
+/// leased, never ticked, and receive no actor health. This includes the
+/// former `event.append` diagnostics observer: its ledger-health facts now
+/// live on the passive append capability's health surface
+/// (`ProductEventAppendPort::health`) and the existing self-observation
+/// watcher, so the actor-shaped diagnostics handle survives only as a
+/// compatibility body for explicit legacy compositions.
+const STEWARDSHIP_PASSIVE_SERVICE_IDS: [&str; 4] = [
+    "event.append",
+    "event.replay",
+    "execution.goal_set",
+    "execution.task_network_command",
+];
+
+/// Derive the runtime registration set from one validated stewardship binding.
+///
+/// Per the ground map: selecting docs freshness causes composition to derive
+/// exactly the actor and passive-service registrations the convergence loop
+/// requires. There are no product slots or slot counts — the derivation
+/// walks the internal descriptor catalog and classifies each required role
+/// honestly. Registration production stays a public composition surface:
+/// this derivation is one producer, and harness callers may supply an
+/// explicit [`RegistrationSet`] instead.
+pub fn derive_stewardship_registrations(
+    binding: &PhysicalBinding,
+) -> Result<RegistrationSet, RuntimeAssemblyError> {
+    let registry = RuntimeFactoryRegistry::first_proof_registry()?;
+    let expression = &binding.package.expression;
+    let registrations = registry
+        .descriptors()
+        .map(|descriptor| {
+            let kind = if STEWARDSHIP_PASSIVE_SERVICE_IDS.contains(&descriptor.runtime_id.as_str())
+            {
+                RegistrationKind::PassiveService
+            } else {
+                RegistrationKind::ActiveActor
+            };
+            RuntimeRegistration {
+                registration_id: format!("stewardship::{expression}::{}", descriptor.runtime_id),
+                runtime_id: descriptor.runtime_id.clone(),
+                kind,
+                required_resources: descriptor.required_resources.clone(),
+            }
+        })
+        .collect();
+    Ok(RegistrationSet { registrations })
+}
+
+/// Canonical subject reference for one stewardship binding.
+///
+/// The docs freshness subject is a workspace filesystem node. This
+/// derivation is shared identity: the initialization command surface must
+/// derive the same reference when seeding the stage 4 genesis fact, or the
+/// composed actors observe a different subject than genesis declared.
+pub fn stewardship_subject_ref(
+    binding: &PhysicalBinding,
+) -> Result<DomainObjectRef, RuntimeAssemblyError> {
+    DomainObjectRef::new("workspace_fs", "node", &binding.subject)
+        .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))
+}
+
+/// Pure actor-facing values derived from one stewardship binding.
+///
+/// Everything here is identity or physical scope — never theory bodies.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StewardshipActorBindings {
+    /// Stewardship expression name.
+    pub expression: String,
+    /// Canonical subject the expression stewards.
+    pub subject: DomainObjectRef,
+    /// Durable agent identity that stewards the subject.
+    pub agent_id: String,
+    /// Selected belief family identity, resolved by the world model per tick.
+    pub belief_family_id: String,
+    /// Selected outcome-to-evidence mapping identity.
+    pub evidence_mapping_id: String,
+    /// World model perspective the composed actors read through.
+    pub perspective: PerspectiveKey,
+    /// World model branch scope the composed actors read through.
+    pub branch_scope: BranchScope,
+    /// Graph anchor perspective kind for initial belief assessment.
+    pub anchor_perspective_kind: String,
+    /// Graph anchor perspective id for initial belief assessment.
+    pub anchor_perspective_id: String,
+    /// Task network the composed execution actors share.
+    pub network_id: String,
+    /// Event ledger session partition for aggregate publication.
+    pub session_id: String,
+    /// Durable capability type ids whose package work units carry
+    /// per-folder work, derived from the selected package document.
+    pub folder_unit_capability_types: Vec<String>,
+}
+
+impl StewardshipActorBindings {
+    /// Derive actor-facing bindings from one validated physical binding.
+    pub fn derive(binding: &PhysicalBinding) -> Result<Self, RuntimeAssemblyError> {
+        let expression = binding.package.expression.clone();
+        Ok(Self {
+            subject: stewardship_subject_ref(binding)?,
+            agent_id: binding.agent_id.clone(),
+            belief_family_id: binding.package.belief_family_id.clone(),
+            evidence_mapping_id: binding.package.evidence_mapping_id.clone(),
+            perspective: PerspectiveKey::new("default", "default")
+                .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?,
+            branch_scope: BranchScope::main(),
+            // Workspace graph anchors are published by analysis frames; this
+            // is the existing graph-anchor convention, not belief theory.
+            anchor_perspective_kind: "frame_type".to_string(),
+            anchor_perspective_id: "analysis".to_string(),
+            network_id: format!("stewardship.{expression}"),
+            session_id: format!("stewardship::{expression}"),
+            folder_unit_capability_types: folder_unit_capability_types(&expression)?,
+            expression,
+        })
+    }
+}
+
+/// Derive per-folder work unit capability types from the selected package.
+///
+/// The stewardship expression selects the built-in package; the package
+/// document's repeated per-node stage chain declares which durable
+/// capability types execute folder work. Root only reads the declaration —
+/// the classification is package-authored data, not root vocabulary.
+fn folder_unit_capability_types(expression: &str) -> Result<Vec<String>, RuntimeAssemblyError> {
+    let package_id = match expression {
+        "docs_freshness" => "docs_writer",
+        other => {
+            return Err(RuntimeAssemblyError::Config(format!(
+                "stewardship expression '{other}' selects no known task package"
+            )))
+        }
+    };
+    let spec = load_builtin_task_package_spec(package_id)
+        .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?;
+    let mut types = BTreeSet::new();
+    for expansion in &spec.expansions {
+        let PackageExpansionSpec::TraversalPrerequisite(traversal) = expansion;
+        for stage in &traversal.repeated_region.stage_chain.stages {
+            types.insert(stage.capability_type_id.clone());
+        }
+    }
+    if types.is_empty() {
+        return Err(RuntimeAssemblyError::Config(format!(
+            "task package '{package_id}' declares no per-folder stage capability types"
+        )));
+    }
+    Ok(types.into_iter().collect())
+}
+
+/// Injected theory and route bindings for one stewardship composition.
+///
+/// Assembly never bakes theory bodies into factories. Theory with a durable
+/// registry (the belief family, the curation rule on the agent record)
+/// resolves at tick time from that registry. The remaining kinds have no
+/// durable registry yet, so composition callers inject them here; a missing
+/// injection leaves the dependent actor a truthful unresolved required
+/// binding instead of manufacturing behavior.
+#[derive(Default)]
+pub struct StewardshipTheoryBindings {
+    /// Installed outcome-to-evidence mapping configuration.
+    ///
+    /// Seam: when the world model gains its durable mapping registry
+    /// (Runtime Initialization stage 2), assembly hydrates from it and this
+    /// injection becomes harness-only.
+    pub outcome_mapping: Option<OutcomeMappingConfig>,
+    /// Planning theory: methods, catalog, afforded actions, realizations.
+    pub planning: Option<PlanningTheoryBinding>,
+    /// Real execution route bindings for the dispatch actor.
+    pub dispatch: Option<DispatchRouteBindings>,
+}
+
+/// Planning theory injected until a durable method registry exists.
+#[derive(Clone)]
+pub struct PlanningTheoryBinding {
+    /// Planning methods for the stewarded domain.
+    pub methods: Vec<Method>,
+    /// Capability catalog the methods and lowering resolve against.
+    pub capability_catalog: CapabilityCatalog,
+    /// Actions the stewarded domain affords, in the frozen affordance shape.
+    pub available_actions: AvailableActionSet,
+    /// Data-driven method-to-action associations.
+    pub method_realizations: Vec<MethodRealizationBinding>,
+    /// Dimensions the projection port should prioritize for each goal.
+    pub requested_dimensions: Vec<String>,
+}
+
+/// Execution route ports injected for the dispatch actor.
+#[derive(Clone)]
+pub struct DispatchRouteBindings {
+    /// Resolves plan handoffs into compiled package runs.
+    pub preparer: SharedPackageRunPreparer,
+    /// Executes package capability invocations over the real route.
+    pub package_invoker: SharedPackageStepInvoker,
+    /// Executes claimed task invocations over the real route.
+    pub claim_invoker: SharedClaimedTaskInvoker,
+}
+
+/// One stewardship composition input for product assembly.
+pub struct StewardshipComposition {
+    /// Validated physical binding resolved from configuration (stage 0).
+    pub binding: PhysicalBinding,
+    /// Injected theory and route bindings.
+    pub theory: StewardshipTheoryBindings,
+}
+
+/// In-process package-route plan handoffs between planning and dispatch.
+///
+/// The handoff carries no durable record by design: durable dedupe lives in
+/// the package progress store keyed by the run id derived from the
+/// deterministic plan identity. This registry only carries plans across
+/// bounded ticks inside one process; a restart reconstructs it from the
+/// next planning tick, and dispatch converges on the same durable run via
+/// [`package_route_run_id`].
+#[derive(Default)]
+pub struct PackageRouteHandoffs {
+    plans: Mutex<BTreeMap<String, TaskPackageRoutePlan>>,
+}
+
+impl PackageRouteHandoffs {
+    /// Record one plan handoff, deduped on its deterministic plan identity.
+    pub fn record(&self, plan: TaskPackageRoutePlan) {
+        let mut plans = self.plans.lock().unwrap_or_else(|e| e.into_inner());
+        plans.entry(plan.plan_id.clone()).or_insert(plan);
+    }
+
+    /// Current plan handoffs in deterministic plan id order.
+    pub fn plans(&self) -> Vec<TaskPackageRoutePlan> {
+        let plans = self.plans.lock().unwrap_or_else(|e| e.into_inner());
+        plans.values().cloned().collect()
+    }
+
+    /// Durable run bindings for the recorded plans.
+    ///
+    /// Every consumer derives the run id through the exported
+    /// [`package_route_run_id`] so plan identity and durable package
+    /// progress can never fork.
+    pub fn run_bindings(&self) -> Vec<(String, String)> {
+        let plans = self.plans.lock().unwrap_or_else(|e| e.into_inner());
+        plans
+            .keys()
+            .map(|plan_id| (plan_id.clone(), package_route_run_id(plan_id)))
+            .collect()
+    }
+}
+
+/// Stewardship values shared by the composed actor factories.
+struct ComposedStewardship {
+    bindings: StewardshipActorBindings,
+    theory: StewardshipTheoryBindings,
+    handoffs: Arc<PackageRouteHandoffs>,
+    network: Option<Arc<Mutex<SledTaskNetworkStore>>>,
+    cursor_registry: EventConsumerRegistryCapability,
+    worker_id: String,
 }
 
 /// Process-local registry of inert runtime factories.
@@ -170,21 +554,140 @@ pub struct InertRuntimeHandle {
     semantic: RuntimeSemanticHandle,
 }
 
+/// Durably monotonic per-actor step sequence.
+///
+/// Satisfaction reviews and assessment checkpoints require an injected
+/// sequence that never regresses across supervisor restarts. The ratchet
+/// persists `last + 1` through the belief store's runtime-meta surface
+/// before the actor sees the value, so a crash or restart can never replay
+/// a smaller sequence — wall clock resets are irrelevant.
+#[derive(Clone)]
+struct DurableStepSequence {
+    store: Arc<BeliefStore>,
+    key: String,
+}
+
+impl DurableStepSequence {
+    fn new(store: Arc<BeliefStore>, runtime_id: &str) -> Self {
+        Self {
+            store,
+            key: format!("root_step_sequence::{runtime_id}"),
+        }
+    }
+
+    fn next(&self) -> Result<u64, String> {
+        let last = self
+            .store
+            .get_runtime_meta(&self.key)
+            .map_err(|error| error.to_string())?
+            .and_then(|raw| raw.parse::<u64>().ok())
+            .unwrap_or(0);
+        let next = last.saturating_add(1);
+        self.store
+            .put_runtime_meta(&self.key, &next.to_string())
+            .map_err(|error| error.to_string())?;
+        self.store.flush().map_err(|error| error.to_string())?;
+        Ok(next)
+    }
+}
+
+#[derive(Clone)]
+struct BeliefAssessmentFactory {
+    belief_store: Arc<BeliefStore>,
+    traversal_store: Arc<TraversalStore>,
+    registry: Arc<BeliefFamilyRegistryStore>,
+    family_id: String,
+    subject_binding: BeliefSubjectBinding,
+    perspective: PerspectiveKey,
+    branch_scope: BranchScope,
+}
+
+#[derive(Clone)]
+struct EvidenceIngestionFactory {
+    belief_store: Arc<BeliefStore>,
+    traversal_store: Arc<TraversalStore>,
+    registry: Arc<BeliefFamilyRegistryStore>,
+    family_id: String,
+    replay: ProductEventReplayPort,
+    cursor: EventConsumerRegistryCapability,
+    mapping: Arc<ConfiguredOutcomeMapping>,
+    perspective: PerspectiveKey,
+    branch_scope: BranchScope,
+}
+
+/// Which bounded agent actor an [`AgentActorFactory`] builds.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AgentActorKind {
+    GoalCuration,
+    SatisfactionCuration,
+}
+
+#[derive(Clone)]
+struct AgentActorFactory {
+    kind: AgentActorKind,
+    runtime_id: String,
+    agent_id: String,
+    agent_store: Arc<AgentStore>,
+    belief_store: Arc<BeliefStore>,
+    traversal_store: Arc<TraversalStore>,
+    goal_store: Arc<PersistentGoalSetStore>,
+    goal_command: ExecutionGoalCommandPort,
+    goal_mutation: ExecutionGoalMutationPort,
+}
+
+#[derive(Clone)]
+struct PlanningFactory {
+    theory: PlanningTheoryBinding,
+    goal_store: Arc<PersistentGoalSetStore>,
+    network: Arc<Mutex<SledTaskNetworkStore>>,
+    belief_store: Arc<BeliefStore>,
+    traversal_store: Arc<TraversalStore>,
+    registry: Arc<BeliefFamilyRegistryStore>,
+    bindings: StewardshipActorBindings,
+    handoffs: Arc<PackageRouteHandoffs>,
+}
+
+#[derive(Clone)]
+struct DispatchFactory {
+    routes: DispatchRouteBindings,
+    execution_db: sled::Db,
+    network: Arc<Mutex<SledTaskNetworkStore>>,
+    handoffs: Arc<PackageRouteHandoffs>,
+    worker_id: String,
+}
+
+#[derive(Clone)]
+struct PublicationFactory {
+    execution_db: sled::Db,
+    event_append: ProductEventAppendPort,
+    handoffs: Arc<PackageRouteHandoffs>,
+    bindings: StewardshipActorBindings,
+    worker_id: String,
+}
+
 #[derive(Clone)]
 enum RuntimeSemanticHandleFactory {
     None,
-    GraphReplay {
-        graph_runtime: Arc<GraphRuntime>,
-    },
-    EventAppend {
-        port: crate::runtime::ports::ProductEventAppendPort,
-    },
+    GraphReplay { graph_runtime: Arc<GraphRuntime> },
+    EventAppend { port: ProductEventAppendPort },
+    BeliefAssessment(Box<BeliefAssessmentFactory>),
+    EvidenceIngestion(Box<EvidenceIngestionFactory>),
+    AgentActor(Box<AgentActorFactory>),
+    Planning(Box<PlanningFactory>),
+    Dispatch(Box<DispatchFactory>),
+    AggregatePublication(Box<PublicationFactory>),
 }
 
 enum RuntimeSemanticHandle {
     None,
     GraphReplay(GraphReplayRuntimeHandle),
     EventAppend(EventAppendRuntimeHandle),
+    BeliefAssessment(Box<BeliefAssessmentHandle>),
+    EvidenceIngestion(Box<EvidenceIngestionHandle>),
+    AgentActor(Box<AgentActorHandle>),
+    Planning(Box<PlanningHandle>),
+    Dispatch(Box<DispatchHandle>),
+    AggregatePublication(Box<PublicationHandle>),
 }
 
 #[derive(Clone)]
@@ -196,11 +699,81 @@ struct GraphReplayRuntimeHandle {
 /// standard tick report path: the watermark is its checkpoint and drop
 /// bursts surface as retryable issues, so heartbeats and health snapshots
 /// carry ledger state without new publisher plumbing.
+///
+/// Compatibility: the stewardship-derived registration set declares
+/// `event.append` a passive service, so this body is never leased or
+/// ticked there; ledger health lives on the passive capability and the
+/// self-observation watcher. The body remains only for explicit legacy
+/// compositions without a registration set.
 struct EventAppendRuntimeHandle {
-    port: crate::runtime::ports::ProductEventAppendPort,
+    port: ProductEventAppendPort,
     // Baseline sampled on the first tick so a restart or an existing ledger
     // never misreports history as fresh work or fresh drops.
     last: Option<(u64, u64)>,
+}
+
+struct BeliefAssessmentHandle {
+    actor: BeliefAssessmentActor,
+    subject_key: String,
+    sequence: DurableStepSequence,
+}
+
+struct EvidenceIngestionHandle {
+    actor: EvidenceIngestionActor,
+}
+
+struct AgentActorHandle {
+    kind: AgentActorKind,
+    runtime_id: String,
+    agent_id: String,
+    curation: Option<AgentGoalCurationActor>,
+    satisfaction: Option<AgentSatisfactionCurationActor>,
+    goal_query: ExecutionAgentGoalQueryPort,
+    goal_command: ExecutionGoalCommandPort,
+    goal_mutation: ExecutionGoalMutationPort,
+    sequence: DurableStepSequence,
+}
+
+struct PlanningHandle {
+    actor: PlanningRuntimeActor<TaskCompiler>,
+    goal_store: PersistentGoalSetStore,
+    network: Arc<Mutex<SledTaskNetworkStore>>,
+    projection: ExactKeyPlanningProjectionPort,
+    request_seed: PlanningRequestSeed,
+    handoffs: Arc<PackageRouteHandoffs>,
+}
+
+#[derive(Clone)]
+struct PlanningRequestSeed {
+    network_id: String,
+    perspective_id: String,
+    branch_id: String,
+    requested_dimensions: Vec<String>,
+    available_actions: AvailableActionSet,
+    method_realizations: Vec<MethodRealizationBinding>,
+}
+
+struct DispatchHandle {
+    actor: Option<
+        DispatchRuntimeActor<
+            SharedPackageRunPreparer,
+            SharedPackageStepInvoker,
+            SharedClaimedTaskInvoker,
+        >,
+    >,
+    construction_error: Option<String>,
+    tokio_runtime: Option<tokio::runtime::Runtime>,
+    network: Arc<Mutex<SledTaskNetworkStore>>,
+    handoffs: Arc<PackageRouteHandoffs>,
+    sequence: u64,
+}
+
+struct PublicationHandle {
+    stores: Result<(TaskProgressStore, AggregatePublicationStore), String>,
+    event_append: ProductEventAppendPort,
+    handoffs: Arc<PackageRouteHandoffs>,
+    bindings: StewardshipActorBindings,
+    worker_id: String,
 }
 
 /// Lease context supplied by the supervisor before a handle starts.
@@ -314,6 +887,7 @@ impl ProductRuntimeConfig {
             supervisor_store_path: None,
             enabled_runtime_ids: Vec::new(),
             disabled_runtime_ids: vec!["execution.task_dispatch".to_string()],
+            registration_set: None,
             provider: ProviderPortConfig::default(),
             lifecycle_config: RuntimeLifecycleConfig::default(),
             default_work_budget: WorkBudget { max_items: 64 },
@@ -433,10 +1007,25 @@ impl ProductRuntimeAssembly {
         Self::load_with_authority(config, authority)
     }
 
-    /// Open non-event product stores and compose runtime around one supplied authority.
+    /// Open product stores and compose runtime around one supplied authority.
     pub fn load_with_authority(
         config: ProductRuntimeConfig,
         event_authority: Arc<EventAuthority>,
+    ) -> Result<Self, RuntimeAssemblyError> {
+        Self::load_composed(config, event_authority, None)
+    }
+
+    /// Compose the runtime with an optional stewardship expression binding.
+    ///
+    /// The composed registration set comes from, in precedence order: the
+    /// explicit set on `config` (harness and proof callers), then the
+    /// stewardship-derived set, else none (legacy conservative
+    /// classification). Store and port opening is scoped to the composed
+    /// set; without one, everything opens.
+    pub fn load_composed(
+        config: ProductRuntimeConfig,
+        event_authority: Arc<EventAuthority>,
+        stewardship: Option<StewardshipComposition>,
     ) -> Result<Self, RuntimeAssemblyError> {
         if config.product_root.as_os_str().is_empty() {
             return Err(RuntimeAssemblyError::Config(
@@ -446,13 +1035,26 @@ impl ProductRuntimeAssembly {
 
         let product_root = ProductStorageRoot::new(config.product_root);
         let layout = product_root.layout();
-        let stores = Arc::new(OpenProductStores::open(&layout)?);
-        let supervisor_store_path = config
-            .supervisor_store_path
-            .unwrap_or_else(|| layout.root.join("supervisor.sled"));
         let registry = RuntimeFactoryRegistry::first_proof_registry()?;
         validate_runtime_selection(&config.enabled_runtime_ids)?;
         validate_runtime_selection(&config.disabled_runtime_ids)?;
+
+        let registration_set = match (&config.registration_set, &stewardship) {
+            (Some(explicit), _) => Some(explicit.clone()),
+            (None, Some(composition)) => {
+                Some(derive_stewardship_registrations(&composition.binding)?)
+            }
+            (None, None) => None,
+        };
+        let scope = registration_set
+            .as_ref()
+            .map(|set| scope_for_registration_set(set, &registry))
+            .unwrap_or_else(StoreScope::all);
+
+        let stores = Arc::new(OpenProductStores::open_scoped(&layout, &scope)?);
+        let supervisor_store_path = config
+            .supervisor_store_path
+            .unwrap_or_else(|| layout.root.join("supervisor.sled"));
         let desired_runtime_state = desired_runtime_state(
             &registry,
             config.enabled_runtime_ids,
@@ -466,17 +1068,58 @@ impl ProductRuntimeAssembly {
             event_authority.as_ref(),
             provider,
         )?;
-        let graph_runtime = Arc::new(
-            GraphRuntime::from_ports(
-                Arc::new(ports.event_replay().clone()),
-                Arc::new(ports.event_append().clone()),
-                Arc::new(ports.graph_cursor().clone()),
-                Arc::clone(&stores.traversal_store),
-            )
-            .map_err(|error| RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string()))?,
-        );
-        let handle_factories =
-            RuntimeHandleFactoryRegistry::from_registry(&registry, &ports, &graph_runtime)?;
+        let graph_runtime = match stores.traversal_store.opened() {
+            Some(traversal_store) => Some(Arc::new(
+                GraphRuntime::from_ports(
+                    Arc::new(ports.event_replay().clone()),
+                    Arc::new(ports.event_append().clone()),
+                    Arc::new(ports.graph_cursor().clone()),
+                    Arc::clone(traversal_store),
+                )
+                .map_err(|error| {
+                    RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
+                })?,
+            )),
+            None => None,
+        };
+
+        let mut diagnostics = Vec::new();
+        let composed_stewardship = match stewardship {
+            Some(composition) => {
+                let bindings = StewardshipActorBindings::derive(&composition.binding)?;
+                let network = match stores.task_networks.opened() {
+                    Some(factory) => Some(Arc::new(Mutex::new(
+                        factory
+                            .open_network(&bindings.network_id)
+                            .map_err(|error| {
+                                RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
+                            })?,
+                    ))),
+                    None => None,
+                };
+                Some(ComposedStewardship {
+                    bindings,
+                    theory: composition.theory,
+                    handoffs: Arc::new(PackageRouteHandoffs::default()),
+                    network,
+                    cursor_registry: event_authority.consumer_registry_capability(),
+                    // Worker identity derives from the durable ledger
+                    // identity, never process-random state, so interrupted
+                    // claims are resumable across supervisor restarts.
+                    worker_id: format!("runtime-worker::{}", event_authority.ledger_identity()),
+                })
+            }
+            None => None,
+        };
+
+        let handle_factories = RuntimeHandleFactoryRegistry::from_registry(
+            &registry,
+            &ports,
+            &stores,
+            graph_runtime.as_ref(),
+            composed_stewardship.as_ref(),
+            &mut diagnostics,
+        )?;
 
         Ok(Self {
             product_root,
@@ -488,11 +1131,12 @@ impl ProductRuntimeAssembly {
             ports,
             registry,
             handle_factories,
+            registration_set,
             desired_runtime_state,
             lifecycle_config: config.lifecycle_config,
             default_work_budget: config.default_work_budget,
             process_services: config.process_services,
-            diagnostics: Vec::new(),
+            diagnostics,
         })
     }
 
@@ -517,8 +1161,17 @@ impl ProductRuntimeAssembly {
     }
 
     /// Return the graph runtime shared by direct catch-up and supervisor handles.
+    ///
+    /// Panics when the composed registration scope excludes the world model
+    /// store group; scoped callers use [`Self::try_graph_runtime`].
     pub fn graph_runtime(&self) -> Arc<GraphRuntime> {
-        Arc::clone(&self.graph_runtime)
+        self.try_graph_runtime()
+            .expect("graph runtime requires the world model store scope")
+    }
+
+    /// Return the graph runtime when the world model scope is open.
+    pub fn try_graph_runtime(&self) -> Option<Arc<GraphRuntime>> {
+        self.graph_runtime.as_ref().map(Arc::clone)
     }
 
     /// Return supervisor lifecycle storage.
@@ -539,6 +1192,15 @@ impl ProductRuntimeAssembly {
     /// Return inert runtime handle factories.
     pub fn handle_factories(&self) -> &RuntimeHandleFactoryRegistry {
         &self.handle_factories
+    }
+
+    /// Return the registration set composing this assembly, when one exists.
+    ///
+    /// The caller passes this set to the supervisor through
+    /// `SupervisorStartCommand::registration_set` so classification follows
+    /// the composed declaration rather than the conservative seam.
+    pub fn registration_set(&self) -> Option<&RegistrationSet> {
+        self.registration_set.as_ref()
     }
 
     /// Return desired runtime states prepared for supervisor handoff.
@@ -631,22 +1293,30 @@ impl RuntimeFactoryRegistry {
             RuntimeFactoryDescriptor::new("event.replay", vec![EventReplay])?,
             RuntimeFactoryDescriptor::new(
                 "world_model.graph_replay",
-                vec![EventAppend, EventReplay, EventConsumerRegistry],
+                vec![EventAppend, EventReplay, EventConsumerRegistry, WorldModel],
             )?,
-            RuntimeFactoryDescriptor::new("world_model.belief_assessment", vec![])?,
+            RuntimeFactoryDescriptor::new("world_model.belief_assessment", vec![WorldModel])?,
             RuntimeFactoryDescriptor::new(
                 "world_model.agent_goal_curation",
-                vec![GoalCommand, PlannerProjection],
+                vec![GoalCommand, GoalMutation, PlannerProjection, WorldModel],
             )?,
-            RuntimeFactoryDescriptor::new("world_model.evidence_ingestion", vec![EventReplay])?,
+            RuntimeFactoryDescriptor::new(
+                "world_model.evidence_ingestion",
+                vec![EventReplay, EventConsumerRegistry, WorldModel],
+            )?,
             RuntimeFactoryDescriptor::new(
                 "world_model.satisfaction_curation",
-                vec![GoalMutation, PlannerProjection],
+                vec![GoalCommand, GoalMutation, PlannerProjection, WorldModel],
             )?,
             RuntimeFactoryDescriptor::new("execution.goal_set", vec![GoalCommand])?,
             RuntimeFactoryDescriptor::new(
                 "execution.planning",
-                vec![PlannerProjection, TaskNetworkFactory],
+                vec![
+                    GoalCommand,
+                    PlannerProjection,
+                    TaskNetworkFactory,
+                    WorldModel,
+                ],
             )?,
             RuntimeFactoryDescriptor::new(
                 "execution.task_network_command",
@@ -665,7 +1335,7 @@ impl RuntimeFactoryRegistry {
             )?,
             RuntimeFactoryDescriptor::new(
                 "execution.publication",
-                vec![TaskNetworkFactory, EventAppend],
+                vec![TaskNetworkFactory, TaskArtifactFactory, EventAppend],
             )?,
         ])
     }
@@ -704,10 +1374,19 @@ impl RuntimeFactoryDescriptor {
 
 impl RuntimeHandleFactoryRegistry {
     /// Build inert handle factories from the runtime factory registry.
-    pub fn from_registry(
+    ///
+    /// Stage 5 hydration: each stewardship actor factory probes the durable
+    /// state it requires (installed theory revisions, genesis identities,
+    /// injected route bindings). A probe miss produces a body-less factory
+    /// — a truthful unresolved required binding — plus a diagnostic; it
+    /// never manufactures the missing state.
+    fn from_registry(
         registry: &RuntimeFactoryRegistry,
         ports: &ProductRuntimePorts,
-        graph_runtime: &Arc<GraphRuntime>,
+        stores: &OpenProductStores,
+        graph_runtime: Option<&Arc<GraphRuntime>>,
+        stewardship: Option<&ComposedStewardship>,
+        diagnostics: &mut Vec<AssemblyDiagnostic>,
     ) -> Result<Self, RuntimeAssemblyError> {
         let factories = registry
             .descriptors()
@@ -719,7 +1398,10 @@ impl RuntimeHandleFactoryRegistry {
                         semantic: RuntimeSemanticHandleFactory::for_descriptor(
                             descriptor,
                             ports,
+                            stores,
                             graph_runtime,
+                            stewardship,
+                            diagnostics,
                         )?,
                     },
                 ))
@@ -862,18 +1544,268 @@ impl InertRuntimeHandle {
 }
 
 impl RuntimeSemanticHandleFactory {
+    /// Bind the semantic factory for one catalog descriptor.
+    ///
+    /// The `None` outcomes are truthful unresolved bindings; each one is
+    /// paired with a diagnostic naming the missing durable state.
     fn for_descriptor(
         descriptor: &RuntimeFactoryDescriptor,
         ports: &ProductRuntimePorts,
-        graph_runtime: &Arc<GraphRuntime>,
+        stores: &OpenProductStores,
+        graph_runtime: Option<&Arc<GraphRuntime>>,
+        stewardship: Option<&ComposedStewardship>,
+        diagnostics: &mut Vec<AssemblyDiagnostic>,
     ) -> Result<Self, RuntimeAssemblyError> {
-        match descriptor.runtime_id.as_str() {
-            "world_model.graph_replay" => Ok(Self::GraphReplay {
-                graph_runtime: Arc::clone(graph_runtime),
-            }),
+        let runtime_id = descriptor.runtime_id.as_str();
+        fn unresolved(
+            diagnostics: &mut Vec<AssemblyDiagnostic>,
+            code: &str,
+            message: String,
+        ) -> Result<RuntimeSemanticHandleFactory, RuntimeAssemblyError> {
+            diagnostics.push(AssemblyDiagnostic {
+                code: code.to_string(),
+                message,
+            });
+            Ok(RuntimeSemanticHandleFactory::None)
+        }
+        match runtime_id {
+            "world_model.graph_replay" => match graph_runtime {
+                Some(graph_runtime) => Ok(Self::GraphReplay {
+                    graph_runtime: Arc::clone(graph_runtime),
+                }),
+                None => unresolved(
+                    diagnostics,
+                    "graph_replay_unresolved",
+                    "graph replay requires the world model store scope".to_string(),
+                ),
+            },
             "event.append" => Ok(Self::EventAppend {
                 port: ports.event_append().clone(),
             }),
+            "world_model.belief_assessment" => {
+                let Some(composed) = stewardship else {
+                    return Ok(Self::None);
+                };
+                let (Some(belief), Some(traversal), Some(registry)) = (
+                    stores.belief_store.opened(),
+                    stores.traversal_store.opened(),
+                    stores.belief_family_registry.opened(),
+                ) else {
+                    return Ok(Self::None);
+                };
+                let family_id = composed.bindings.belief_family_id.clone();
+                if !family_installed(registry, &family_id, runtime_id, diagnostics) {
+                    return Ok(Self::None);
+                }
+                Ok(Self::BeliefAssessment(Box::new(BeliefAssessmentFactory {
+                    belief_store: Arc::clone(belief),
+                    traversal_store: Arc::clone(traversal),
+                    registry: Arc::clone(registry),
+                    family_id,
+                    subject_binding: BeliefSubjectBinding {
+                        subject: composed.bindings.subject.clone(),
+                        anchor_perspective_kind: composed.bindings.anchor_perspective_kind.clone(),
+                        anchor_perspective_id: composed.bindings.anchor_perspective_id.clone(),
+                    },
+                    perspective: composed.bindings.perspective.clone(),
+                    branch_scope: composed.bindings.branch_scope.clone(),
+                })))
+            }
+            "world_model.evidence_ingestion" => {
+                let Some(composed) = stewardship else {
+                    return Ok(Self::None);
+                };
+                let (Some(belief), Some(traversal), Some(registry)) = (
+                    stores.belief_store.opened(),
+                    stores.traversal_store.opened(),
+                    stores.belief_family_registry.opened(),
+                ) else {
+                    return Ok(Self::None);
+                };
+                let family_id = composed.bindings.belief_family_id.clone();
+                if !family_installed(registry, &family_id, runtime_id, diagnostics) {
+                    return Ok(Self::None);
+                }
+                let Some(mapping_config) = composed.theory.outcome_mapping.clone() else {
+                    return unresolved(
+                        diagnostics,
+                        "evidence_mapping_unresolved",
+                        format!(
+                            "evidence mapping '{}' has no installed configuration; \
+                             evidence ingestion stays unresolved",
+                            composed.bindings.evidence_mapping_id
+                        ),
+                    );
+                };
+                let mapping = match ConfiguredOutcomeMapping::new(mapping_config) {
+                    Ok(mapping) => Arc::new(mapping),
+                    Err(error) => {
+                        return unresolved(
+                            diagnostics,
+                            "evidence_mapping_invalid",
+                            format!("installed outcome mapping is invalid: {error}"),
+                        )
+                    }
+                };
+                if mapping.mapping_id() != composed.bindings.evidence_mapping_id {
+                    // The actor still binds the installed identity — the
+                    // mapping id it ingests under always comes from the
+                    // mapping itself — but the drift is surfaced.
+                    diagnostics.push(AssemblyDiagnostic {
+                        code: "evidence_mapping_selection_drift".to_string(),
+                        message: format!(
+                            "selection names mapping '{}' but the installed mapping is '{}'",
+                            composed.bindings.evidence_mapping_id,
+                            mapping.mapping_id()
+                        ),
+                    });
+                }
+                Ok(Self::EvidenceIngestion(Box::new(
+                    EvidenceIngestionFactory {
+                        belief_store: Arc::clone(belief),
+                        traversal_store: Arc::clone(traversal),
+                        registry: Arc::clone(registry),
+                        family_id,
+                        replay: ports.event_replay().clone(),
+                        cursor: composed.cursor_registry.clone(),
+                        mapping,
+                        perspective: composed.bindings.perspective.clone(),
+                        branch_scope: composed.bindings.branch_scope.clone(),
+                    },
+                )))
+            }
+            "world_model.agent_goal_curation" | "world_model.satisfaction_curation" => {
+                let Some(composed) = stewardship else {
+                    return Ok(Self::None);
+                };
+                let (Some(belief), Some(traversal), Some(agent_store), Some(goal_store)) = (
+                    stores.belief_store.opened(),
+                    stores.traversal_store.opened(),
+                    stores.agent_store.opened(),
+                    stores.goal_store.opened(),
+                ) else {
+                    return Ok(Self::None);
+                };
+                let (Some(goal_command), Some(goal_mutation)) =
+                    (ports.try_goal_command(), ports.try_goal_mutation())
+                else {
+                    return Ok(Self::None);
+                };
+                // Stage 5 hydration probe: activation loads durable agent
+                // identities and never creates them. A missing genesis
+                // identity is a truthful unresolved required binding.
+                let agent_id = composed.bindings.agent_id.clone();
+                match agent_store.get_agent(&agent_id) {
+                    Ok(Some(_)) => {}
+                    Ok(None) => {
+                        return unresolved(
+                            diagnostics,
+                            "agent_identity_unresolved",
+                            format!(
+                                "agent '{agent_id}' has no durable genesis record; \
+                                 '{runtime_id}' stays unresolved"
+                            ),
+                        )
+                    }
+                    Err(error) => {
+                        return unresolved(
+                            diagnostics,
+                            "agent_probe_failed",
+                            format!("agent record probe failed: {error}"),
+                        )
+                    }
+                }
+                let kind = if runtime_id == "world_model.agent_goal_curation" {
+                    AgentActorKind::GoalCuration
+                } else {
+                    AgentActorKind::SatisfactionCuration
+                };
+                Ok(Self::AgentActor(Box::new(AgentActorFactory {
+                    kind,
+                    runtime_id: runtime_id.to_string(),
+                    agent_id,
+                    agent_store: Arc::clone(agent_store),
+                    belief_store: Arc::clone(belief),
+                    traversal_store: Arc::clone(traversal),
+                    goal_store: Arc::clone(goal_store),
+                    goal_command: goal_command.clone(),
+                    goal_mutation: goal_mutation.clone(),
+                })))
+            }
+            "execution.planning" => {
+                let Some(composed) = stewardship else {
+                    return Ok(Self::None);
+                };
+                let Some(theory) = composed.theory.planning.clone() else {
+                    return unresolved(
+                        diagnostics,
+                        "planning_theory_unresolved",
+                        "no planning theory is installed; execution planning stays unresolved"
+                            .to_string(),
+                    );
+                };
+                let (Some(belief), Some(traversal), Some(registry), Some(goal_store)) = (
+                    stores.belief_store.opened(),
+                    stores.traversal_store.opened(),
+                    stores.belief_family_registry.opened(),
+                    stores.goal_store.opened(),
+                ) else {
+                    return Ok(Self::None);
+                };
+                let Some(network) = composed.network.as_ref() else {
+                    return Ok(Self::None);
+                };
+                Ok(Self::Planning(Box::new(PlanningFactory {
+                    theory,
+                    goal_store: Arc::clone(goal_store),
+                    network: Arc::clone(network),
+                    belief_store: Arc::clone(belief),
+                    traversal_store: Arc::clone(traversal),
+                    registry: Arc::clone(registry),
+                    bindings: composed.bindings.clone(),
+                    handoffs: Arc::clone(&composed.handoffs),
+                })))
+            }
+            "execution.task_dispatch" => {
+                let Some(composed) = stewardship else {
+                    return Ok(Self::None);
+                };
+                let Some(routes) = composed.theory.dispatch.clone() else {
+                    return unresolved(
+                        diagnostics,
+                        "dispatch_route_unresolved",
+                        "no execution route bindings are composed; task dispatch stays unresolved"
+                            .to_string(),
+                    );
+                };
+                let (Some(execution_db), Some(network)) =
+                    (stores.execution_db.opened(), composed.network.as_ref())
+                else {
+                    return Ok(Self::None);
+                };
+                Ok(Self::Dispatch(Box::new(DispatchFactory {
+                    routes,
+                    execution_db: execution_db.clone(),
+                    network: Arc::clone(network),
+                    handoffs: Arc::clone(&composed.handoffs),
+                    worker_id: composed.worker_id.clone(),
+                })))
+            }
+            "execution.publication" => {
+                let Some(composed) = stewardship else {
+                    return Ok(Self::None);
+                };
+                let Some(execution_db) = stores.execution_db.opened() else {
+                    return Ok(Self::None);
+                };
+                Ok(Self::AggregatePublication(Box::new(PublicationFactory {
+                    execution_db: execution_db.clone(),
+                    event_append: ports.event_append().clone(),
+                    handoffs: Arc::clone(&composed.handoffs),
+                    bindings: composed.bindings.clone(),
+                    worker_id: composed.worker_id.clone(),
+                })))
+            }
             _ => Ok(Self::None),
         }
     }
@@ -892,6 +1824,188 @@ impl RuntimeSemanticHandleFactory {
                     last: None,
                 })
             }
+            Self::BeliefAssessment(factory) => {
+                RuntimeSemanticHandle::BeliefAssessment(Box::new(BeliefAssessmentHandle {
+                    actor: BeliefAssessmentActor::new(
+                        "world_model.belief_assessment",
+                        Arc::clone(&factory.belief_store),
+                        Arc::clone(&factory.traversal_store),
+                        Arc::clone(&factory.registry)
+                            as Arc<dyn BeliefFamilyRegistry + Send + Sync>,
+                        vec![factory.family_id.clone()],
+                        vec![factory.subject_binding.clone()],
+                        factory.perspective.clone(),
+                        factory.branch_scope.clone(),
+                    ),
+                    subject_key: factory.subject_binding.subject.index_key(),
+                    sequence: DurableStepSequence::new(
+                        Arc::clone(&factory.belief_store),
+                        "world_model.belief_assessment",
+                    ),
+                }))
+            }
+            Self::EvidenceIngestion(factory) => {
+                RuntimeSemanticHandle::EvidenceIngestion(Box::new(EvidenceIngestionHandle {
+                    actor: EvidenceIngestionActor::new(
+                        "world_model.evidence_ingestion",
+                        Arc::clone(&factory.belief_store),
+                        Arc::clone(&factory.traversal_store),
+                        Arc::clone(&factory.registry)
+                            as Arc<dyn BeliefFamilyRegistry + Send + Sync>,
+                        factory.family_id.clone(),
+                        Arc::new(factory.replay.clone()) as Arc<dyn EvidenceEventReplaySource>,
+                        Arc::new(factory.cursor.clone())
+                            as Arc<dyn DurableConsumerCursor + Send + Sync>,
+                        Arc::clone(&factory.mapping)
+                            as Arc<dyn OutcomeEvidenceMapping + Send + Sync>,
+                        // The ingestion mapping id always derives from the
+                        // installed mapping itself, so a selected-versus-
+                        // installed mismatch is unconstructible here.
+                        factory.mapping.mapping_id(),
+                        factory.perspective.clone(),
+                        factory.branch_scope.clone(),
+                    ),
+                }))
+            }
+            Self::AgentActor(factory) => {
+                let (curation, satisfaction) = match factory.kind {
+                    AgentActorKind::GoalCuration => (
+                        Some(AgentGoalCurationActor::new(
+                            factory.runtime_id.clone(),
+                            factory.agent_id.clone(),
+                            Arc::clone(&factory.agent_store),
+                            Arc::clone(&factory.belief_store),
+                            Arc::clone(&factory.traversal_store),
+                        )),
+                        None,
+                    ),
+                    AgentActorKind::SatisfactionCuration => (
+                        None,
+                        Some(AgentSatisfactionCurationActor::new(
+                            factory.runtime_id.clone(),
+                            factory.agent_id.clone(),
+                            Arc::clone(&factory.agent_store),
+                            Arc::clone(&factory.belief_store),
+                            Arc::clone(&factory.traversal_store),
+                        )),
+                    ),
+                };
+                RuntimeSemanticHandle::AgentActor(Box::new(AgentActorHandle {
+                    kind: factory.kind,
+                    runtime_id: factory.runtime_id.clone(),
+                    agent_id: factory.agent_id.clone(),
+                    curation,
+                    satisfaction,
+                    goal_query: ExecutionAgentGoalQueryPort::new(Arc::clone(&factory.goal_store)),
+                    goal_command: factory.goal_command.clone(),
+                    goal_mutation: factory.goal_mutation.clone(),
+                    sequence: DurableStepSequence::new(
+                        Arc::clone(&factory.belief_store),
+                        &factory.runtime_id,
+                    ),
+                }))
+            }
+            Self::Planning(factory) => RuntimeSemanticHandle::Planning(Box::new(PlanningHandle {
+                actor: PlanningRuntimeActor::new(
+                    PlanningRuntime::new(
+                        MethodLibrary::from_methods(
+                            factory.theory.methods.clone(),
+                            &factory.theory.capability_catalog,
+                        ),
+                        factory.theory.capability_catalog.clone(),
+                    ),
+                    ExecutionCompositionLowerer::new(
+                        TaskCompiler::new(),
+                        factory.theory.capability_catalog.clone(),
+                    ),
+                ),
+                goal_store: factory.goal_store.as_ref().clone(),
+                network: Arc::clone(&factory.network),
+                projection: ExactKeyPlanningProjectionPort::new(
+                    Arc::clone(&factory.belief_store),
+                    Arc::clone(&factory.traversal_store),
+                    Arc::clone(&factory.registry),
+                    factory.bindings.belief_family_id.clone(),
+                    factory.bindings.subject.clone(),
+                    factory.bindings.perspective.clone(),
+                    factory.bindings.branch_scope.clone(),
+                ),
+                request_seed: PlanningRequestSeed {
+                    network_id: factory.bindings.network_id.clone(),
+                    perspective_id: factory.bindings.perspective.perspective_id.clone(),
+                    branch_id: factory.bindings.branch_scope.branch_id.clone(),
+                    requested_dimensions: factory.theory.requested_dimensions.clone(),
+                    available_actions: factory.theory.available_actions.clone(),
+                    method_realizations: factory.theory.method_realizations.clone(),
+                },
+                handoffs: Arc::clone(&factory.handoffs),
+            })),
+            Self::Dispatch(factory) => {
+                let (actor, construction_error) = match DispatchRuntimeActor::new(
+                    factory.worker_id.clone(),
+                    factory.execution_db.clone(),
+                    factory.routes.preparer.clone(),
+                    factory.routes.package_invoker.clone(),
+                    factory.routes.claim_invoker.clone(),
+                ) {
+                    Ok(actor) => (Some(actor), None),
+                    Err(error) => (None, Some(error.to_string())),
+                };
+                let tokio_runtime = tokio::runtime::Runtime::new().ok();
+                RuntimeSemanticHandle::Dispatch(Box::new(DispatchHandle {
+                    actor,
+                    construction_error,
+                    tokio_runtime,
+                    network: Arc::clone(&factory.network),
+                    handoffs: Arc::clone(&factory.handoffs),
+                    sequence: 0,
+                }))
+            }
+            Self::AggregatePublication(factory) => {
+                let stores = TaskProgressStore::open(factory.execution_db.clone())
+                    .map_err(|error| error.to_string())
+                    .and_then(|progress| {
+                        AggregatePublicationStore::open(factory.execution_db.clone())
+                            .map(|outbox| (progress, outbox))
+                            .map_err(|error| error.to_string())
+                    });
+                RuntimeSemanticHandle::AggregatePublication(Box::new(PublicationHandle {
+                    stores,
+                    event_append: factory.event_append.clone(),
+                    handoffs: Arc::clone(&factory.handoffs),
+                    bindings: factory.bindings.clone(),
+                    worker_id: factory.worker_id.clone(),
+                }))
+            }
+        }
+    }
+}
+
+/// Probe the durable registry for one installed family revision.
+fn family_installed(
+    registry: &Arc<BeliefFamilyRegistryStore>,
+    family_id: &str,
+    runtime_id: &str,
+    diagnostics: &mut Vec<AssemblyDiagnostic>,
+) -> bool {
+    match registry.current(family_id) {
+        Ok(Some(_)) => true,
+        Ok(None) => {
+            diagnostics.push(AssemblyDiagnostic {
+                code: "belief_family_unresolved".to_string(),
+                message: format!(
+                    "belief family '{family_id}' has no installed registry revision; \
+                     '{runtime_id}' stays unresolved"
+                ),
+            });
+            false
+        }
+        Err(error) => {
+            diagnostics.push(AssemblyDiagnostic {
+                code: "belief_family_probe_failed".to_string(),
+                message: format!("belief family registry probe failed: {error}"),
+            });
+            false
         }
     }
 }
@@ -902,6 +2016,12 @@ impl RuntimeSemanticHandle {
             Self::None => None,
             Self::GraphReplay(handle) => Some(handle.tick(budget)),
             Self::EventAppend(handle) => Some(handle.tick()),
+            Self::BeliefAssessment(handle) => Some(handle.tick(budget)),
+            Self::EvidenceIngestion(handle) => Some(handle.tick(budget)),
+            Self::AgentActor(handle) => Some(handle.tick(budget)),
+            Self::Planning(handle) => Some(handle.tick(budget)),
+            Self::Dispatch(handle) => Some(handle.tick(budget)),
+            Self::AggregatePublication(handle) => Some(handle.tick(budget)),
         }
     }
 
@@ -924,7 +2044,7 @@ impl EventAppendRuntimeHandle {
             Some((last_watermark, last_dropped)) => {
                 let mut issues = Vec::new();
                 if dropped > last_dropped {
-                    issues.push(crate::runtime::contracts::WorkerTickIssue {
+                    issues.push(WorkerTickIssue {
                         item_id: None,
                         code: "ingest_drops_observed".to_string(),
                         message: format!(
@@ -937,7 +2057,7 @@ impl EventAppendRuntimeHandle {
             }
         };
         if let Some(error) = health_error {
-            retryable_errors.push(crate::runtime::contracts::WorkerTickIssue {
+            retryable_errors.push(WorkerTickIssue {
                 item_id: None,
                 code: "event_health_unavailable".to_string(),
                 message: error,
@@ -948,20 +2068,12 @@ impl EventAppendRuntimeHandle {
         // checkpoint movement alone reports ledger progress.
         let report = WorkerTickReport {
             actor_id: "event.append".to_string(),
-            scope: crate::runtime::contracts::WorkerScope {
-                domain_id: "events".to_string(),
-                stream_id: None,
-                work_key: None,
-                agent_id: None,
-                perspective_key: None,
-                branch_id: None,
-                subject_key: None,
-            },
-            input_checkpoint: crate::runtime::contracts::WorkerCheckpoint {
+            scope: worker_scope("events", None, None, None),
+            input_checkpoint: WorkerCheckpoint {
                 name: "event_commit_watermark".to_string(),
                 value: input_watermark,
             },
-            output_checkpoint: crate::runtime::contracts::WorkerCheckpoint {
+            output_checkpoint: WorkerCheckpoint {
                 name: "event_commit_watermark".to_string(),
                 value: watermark,
             },
@@ -993,6 +2105,501 @@ impl GraphReplayRuntimeHandle {
                     error.to_string(),
                 )
             })
+    }
+}
+
+impl BeliefAssessmentHandle {
+    fn tick(&mut self, budget: WorkBudget) -> WorkerTickReport {
+        let sequence = match self.sequence.next() {
+            Ok(sequence) => sequence,
+            Err(error) => {
+                return WorkerTickReport::fatal(
+                    "world_model.belief_assessment",
+                    "world_model",
+                    Some("belief_assessment"),
+                    "belief_assessment_sequence",
+                    "step_sequence_failed",
+                    error,
+                )
+            }
+        };
+        let report = self.actor.bounded_step(&BeliefAssessmentRequest {
+            sequence,
+            max_items: budget.max_items,
+        });
+        belief_assessment_worker_report(report, &self.subject_key)
+    }
+}
+
+impl EvidenceIngestionHandle {
+    fn tick(&mut self, budget: WorkBudget) -> WorkerTickReport {
+        let report = self.actor.bounded_step(&EvidenceIngestionRequest {
+            max_events: budget.max_items,
+        });
+        evidence_ingestion_worker_report(report)
+    }
+}
+
+impl AgentActorHandle {
+    fn tick(&mut self, budget: WorkBudget) -> WorkerTickReport {
+        let sequence = match self.sequence.next() {
+            Ok(sequence) => sequence,
+            Err(error) => {
+                return WorkerTickReport::fatal(
+                    self.runtime_id.clone(),
+                    "world_model",
+                    Some("agent_curation"),
+                    "agent_step_sequence",
+                    "step_sequence_failed",
+                    error,
+                )
+            }
+        };
+        let request = AgentStepRequest {
+            sequence,
+            max_items: budget.max_items,
+        };
+        // Curation crosses into execution only through the named
+        // curation-to-goal-set port, bound here at composition.
+        let mut port = CurationGoalExecutionPort::new(
+            self.goal_command.clone(),
+            self.goal_mutation.clone(),
+            sequence,
+        );
+        let report = match self.kind {
+            AgentActorKind::GoalCuration => self
+                .curation
+                .as_ref()
+                .expect("goal curation handle holds its actor")
+                .bounded_step(&request, &mut self.goal_query, &mut port),
+            AgentActorKind::SatisfactionCuration => self
+                .satisfaction
+                .as_ref()
+                .expect("satisfaction handle holds its actor")
+                .bounded_step(&request, &mut self.goal_query, &mut port),
+        };
+        agent_step_worker_report(report, &self.runtime_id, &self.agent_id)
+    }
+}
+
+impl PlanningHandle {
+    fn tick(&mut self, budget: WorkBudget) -> WorkerTickReport {
+        let request = PlanningRuntimeActorRequest {
+            network_id: self.request_seed.network_id.clone(),
+            perspective_id: self.request_seed.perspective_id.clone(),
+            branch_id: self.request_seed.branch_id.clone(),
+            requested_dimensions: self.request_seed.requested_dimensions.clone(),
+            required_preconditions: Vec::new(),
+            available_actions: self.request_seed.available_actions.clone(),
+            method_realizations: self.request_seed.method_realizations.clone(),
+            limit: Some(budget.max_items),
+        };
+        let mut network = match self.network.lock() {
+            Ok(network) => network,
+            Err(_) => {
+                return WorkerTickReport::fatal(
+                    "execution.planning",
+                    "execution",
+                    Some("planning"),
+                    "task_network_revision",
+                    "network_lock_poisoned",
+                    "shared task network mutex is poisoned".to_string(),
+                )
+            }
+        };
+        match self.actor.run_once(
+            &mut self.goal_store,
+            &mut network,
+            &mut self.projection,
+            request,
+        ) {
+            Ok(report) => {
+                // Package-route handoffs are in-process by design; durable
+                // dedupe happens in dispatch keyed by the run id derived
+                // from the deterministic plan identity.
+                for result in &report.results {
+                    if let PlanningRuntimeActorGoalResult::PackageRouteSelected { plan, .. } =
+                        result
+                    {
+                        self.handoffs.record(plan.clone());
+                    }
+                }
+                WorkerTickReport::from(report)
+            }
+            Err(error) => WorkerTickReport::fatal(
+                "execution.planning",
+                "execution",
+                Some("planning"),
+                "task_network_revision",
+                "planning_actor_failed",
+                error.to_string(),
+            ),
+        }
+    }
+}
+
+impl DispatchHandle {
+    fn tick(&mut self, budget: WorkBudget) -> WorkerTickReport {
+        let fatal = |code: &str, message: String| {
+            WorkerTickReport::fatal(
+                "execution.task_dispatch",
+                "execution",
+                Some("dispatch"),
+                "task_network_revision",
+                code,
+                message,
+            )
+        };
+        if let Some(error) = &self.construction_error {
+            return fatal("dispatch_construction_failed", error.clone());
+        }
+        let Some(actor) = self.actor.as_ref() else {
+            return fatal(
+                "dispatch_construction_failed",
+                "dispatch actor is absent".to_string(),
+            );
+        };
+        let Some(tokio_runtime) = self.tokio_runtime.as_ref() else {
+            return fatal(
+                "dispatch_runtime_unavailable",
+                "tokio runtime construction failed".to_string(),
+            );
+        };
+        self.sequence = self.sequence.saturating_add(1);
+        let request = DispatchTickRequest {
+            sequence: self.sequence,
+            max_items: budget.max_items,
+            package_plans: self.handoffs.plans(),
+        };
+        let mut network = match self.network.lock() {
+            Ok(network) => network,
+            Err(_) => {
+                return fatal(
+                    "network_lock_poisoned",
+                    "shared task network mutex is poisoned".to_string(),
+                )
+            }
+        };
+        match tokio_runtime.block_on(actor.tick(&mut *network, request)) {
+            Ok(report) => dispatch_worker_report(report),
+            Err(error) => fatal("dispatch_tick_failed", error.to_string()),
+        }
+    }
+}
+
+impl PublicationHandle {
+    fn tick(&mut self, _budget: WorkBudget) -> WorkerTickReport {
+        let actor_id = "execution.publication";
+        let (progress, outbox) = match &self.stores {
+            Ok(stores) => stores,
+            Err(error) => {
+                return WorkerTickReport::fatal(
+                    actor_id,
+                    "execution",
+                    Some("aggregate_publication"),
+                    "aggregate_publications",
+                    "publication_store_unavailable",
+                    error.clone(),
+                )
+            }
+        };
+        let mut report = WorkerTickReport {
+            actor_id: actor_id.to_string(),
+            scope: worker_scope(
+                "execution",
+                Some("aggregate_publication"),
+                None,
+                Some(self.bindings.subject.index_key()),
+            ),
+            input_checkpoint: WorkerCheckpoint {
+                name: "aggregate_publications".to_string(),
+                value: 0,
+            },
+            output_checkpoint: WorkerCheckpoint {
+                name: "aggregate_publications".to_string(),
+                value: 0,
+            },
+            items_attempted: 0,
+            items_committed: 0,
+            retryable_errors: Vec::new(),
+            fatal_errors: Vec::new(),
+            budget_exhausted: false,
+        };
+        let request = PublishAggregateRequest {
+            session_id: self.bindings.session_id.clone(),
+            worker_id: self.worker_id.clone(),
+        };
+        for (plan_id, run_id) in self.handoffs.run_bindings() {
+            report.items_attempted += 1;
+            let binding = AggregateRunBinding {
+                package_run_id: run_id,
+                network_id: self.bindings.network_id.clone(),
+                selected_scope: self.bindings.subject.clone(),
+                // Folder classification comes from the stewardship-derived
+                // configuration (the selected package's stage chain), never
+                // from runtime inventory.
+                folder_unit_capability_types: self.bindings.folder_unit_capability_types.clone(),
+            };
+            // Seam: the durable terminal outcome for a package-route run is
+            // not yet recorded through the task-network command boundary by
+            // any actor, so eligible runs stay truthfully skipped here
+            // (`RunNotTerminal`) rather than publishing from a synthesized
+            // outcome. Terminal-outcome recording belongs with firm
+            // terminality policy.
+            match publish_aggregate_for_run(
+                progress,
+                None,
+                &binding,
+                outbox,
+                &self.event_append,
+                &request,
+            ) {
+                Ok(AggregatePublishResult::Published { .. }) => {
+                    report.items_committed += 1;
+                    report.output_checkpoint.value += 1;
+                }
+                Ok(AggregatePublishResult::AlreadyPublished { .. })
+                | Ok(AggregatePublishResult::Skipped(_)) => {}
+                Ok(AggregatePublishResult::AppendFailed { error, .. }) => {
+                    report.retryable_errors.push(WorkerTickIssue {
+                        item_id: Some(plan_id.clone()),
+                        code: "aggregate_append_failed".to_string(),
+                        message: error,
+                    });
+                }
+                Err(error) => {
+                    let issue = aggregate_publish_issue(&plan_id, error);
+                    if issue.0 {
+                        report.fatal_errors.push(issue.1);
+                    } else {
+                        report.retryable_errors.push(issue.1);
+                    }
+                }
+            }
+        }
+        report
+    }
+}
+
+/// Classify one aggregate publication error for the tick report.
+///
+/// A completed run rejected with the no-folder-work signal is a
+/// classification mismatch between the stewardship-derived folder types and
+/// the compiled package graph — fatal, never retryable.
+fn aggregate_publish_issue(
+    plan_id: &str,
+    error: AggregatePublicationError,
+) -> (bool, WorkerTickIssue) {
+    let fatal = matches!(
+        error,
+        AggregatePublicationError::NoFolderWorkUnits { .. }
+            | AggregatePublicationError::InvalidRequest(_)
+            | AggregatePublicationError::IdentityDrift { .. }
+            | AggregatePublicationError::LedgerIdentityMismatch { .. }
+    );
+    let code = if matches!(error, AggregatePublicationError::NoFolderWorkUnits { .. }) {
+        "aggregate_classification_mismatch"
+    } else if fatal {
+        "aggregate_publication_invalid"
+    } else {
+        "aggregate_publication_failed"
+    };
+    (
+        fatal,
+        WorkerTickIssue {
+            item_id: Some(plan_id.to_string()),
+            code: code.to_string(),
+            message: error.to_string(),
+        },
+    )
+}
+
+fn worker_scope(
+    domain_id: &str,
+    work_key: Option<&str>,
+    agent_id: Option<&str>,
+    subject_key: Option<String>,
+) -> WorkerScope {
+    WorkerScope {
+        domain_id: domain_id.to_string(),
+        stream_id: None,
+        work_key: work_key.map(str::to_string),
+        agent_id: agent_id.map(str::to_string),
+        perspective_key: None,
+        branch_id: None,
+        subject_key,
+    }
+}
+
+/// Translate one belief assessment report into the supervisor shape.
+///
+/// The step-sequence checkpoint is bookkeeping, not a domain progress
+/// cursor, so both worker checkpoints carry the persisted value and
+/// progress is signaled through committed items alone: a zero-work step
+/// projects truthfully to active idle.
+fn belief_assessment_worker_report(
+    report: BeliefAssessmentReport,
+    subject_key: &str,
+) -> WorkerTickReport {
+    WorkerTickReport {
+        actor_id: report.actor_id,
+        scope: worker_scope(
+            "world_model",
+            Some("belief_assessment"),
+            None,
+            Some(subject_key.to_string()),
+        ),
+        input_checkpoint: WorkerCheckpoint {
+            name: "belief_assessment_checkpoint".to_string(),
+            value: report.output_checkpoint,
+        },
+        output_checkpoint: WorkerCheckpoint {
+            name: "belief_assessment_checkpoint".to_string(),
+            value: report.output_checkpoint,
+        },
+        items_attempted: report.items_attempted,
+        items_committed: report.items_committed,
+        retryable_errors: report
+            .retryable_errors
+            .into_iter()
+            .map(|issue| WorkerTickIssue {
+                item_id: issue.item_id,
+                code: issue.code,
+                message: issue.message,
+            })
+            .collect(),
+        fatal_errors: report
+            .fatal_errors
+            .into_iter()
+            .map(|issue| WorkerTickIssue {
+                item_id: issue.item_id,
+                code: issue.code,
+                message: issue.message,
+            })
+            .collect(),
+        budget_exhausted: report.budget_exhausted,
+    }
+}
+
+/// Translate one evidence ingestion report into the supervisor shape.
+///
+/// The durable consumer cursor is a real domain cursor, so it maps onto the
+/// worker checkpoints directly.
+fn evidence_ingestion_worker_report(report: EvidenceIngestionReport) -> WorkerTickReport {
+    WorkerTickReport {
+        actor_id: report.actor_id,
+        scope: worker_scope("world_model", Some("evidence_ingestion"), None, None),
+        input_checkpoint: WorkerCheckpoint {
+            name: "event_spine_seq".to_string(),
+            value: report.input_after_seq,
+        },
+        output_checkpoint: WorkerCheckpoint {
+            name: "event_spine_seq".to_string(),
+            value: report.output_after_seq,
+        },
+        items_attempted: report.events_replayed,
+        items_committed: report.new_assignment_count + report.revisions_committed,
+        retryable_errors: report
+            .retryable_errors
+            .into_iter()
+            .map(|issue| WorkerTickIssue {
+                item_id: issue.item_id,
+                code: issue.code,
+                message: issue.message,
+            })
+            .collect(),
+        fatal_errors: report
+            .fatal_errors
+            .into_iter()
+            .map(|issue| WorkerTickIssue {
+                item_id: issue.item_id,
+                code: issue.code,
+                message: issue.message,
+            })
+            .collect(),
+        budget_exhausted: report.more_available,
+    }
+}
+
+/// Translate one bounded agent step report into the supervisor shape.
+///
+/// Like assessment, the injected step sequence is bookkeeping: both
+/// checkpoints carry it and progress derives from persisted decisions and
+/// accepted sink submissions.
+fn agent_step_worker_report(
+    report: AgentStepReport,
+    runtime_id: &str,
+    agent_id: &str,
+) -> WorkerTickReport {
+    WorkerTickReport {
+        actor_id: runtime_id.to_string(),
+        scope: worker_scope("world_model", Some("agent_curation"), Some(agent_id), None),
+        input_checkpoint: WorkerCheckpoint {
+            name: "agent_step_sequence".to_string(),
+            value: report.input_sequence,
+        },
+        output_checkpoint: WorkerCheckpoint {
+            name: "agent_step_sequence".to_string(),
+            value: report.input_sequence,
+        },
+        items_attempted: report.items_attempted,
+        items_committed: report.decisions_persisted + report.sink_submissions,
+        retryable_errors: report
+            .retryable_errors
+            .into_iter()
+            .map(|issue| WorkerTickIssue {
+                item_id: issue.item_id,
+                code: issue.code,
+                message: issue.message,
+            })
+            .collect(),
+        fatal_errors: report
+            .fatal_errors
+            .into_iter()
+            .map(|issue| WorkerTickIssue {
+                item_id: issue.item_id,
+                code: issue.code,
+                message: issue.message,
+            })
+            .collect(),
+        budget_exhausted: report.budget_exhausted,
+    }
+}
+
+/// Translate one dispatch tick report into the supervisor shape.
+fn dispatch_worker_report(report: DispatchTickReport) -> WorkerTickReport {
+    WorkerTickReport {
+        actor_id: "execution.task_dispatch".to_string(),
+        scope: worker_scope("execution", Some("dispatch"), None, None),
+        input_checkpoint: WorkerCheckpoint {
+            name: "task_network_revision".to_string(),
+            value: report.input_revision,
+        },
+        output_checkpoint: WorkerCheckpoint {
+            name: "task_network_revision".to_string(),
+            value: report.output_revision,
+        },
+        items_attempted: report.items_attempted,
+        items_committed: report.items_committed,
+        retryable_errors: report
+            .retryable_errors
+            .into_iter()
+            .map(|issue| WorkerTickIssue {
+                item_id: issue.item_id,
+                code: issue.code,
+                message: issue.message,
+            })
+            .collect(),
+        fatal_errors: report
+            .fatal_errors
+            .into_iter()
+            .map(|issue| WorkerTickIssue {
+                item_id: issue.item_id,
+                code: issue.code,
+                message: issue.message,
+            })
+            .collect(),
+        budget_exhausted: report.budget_exhausted,
     }
 }
 
@@ -1078,7 +2685,6 @@ fn validate_runtime_id(runtime_id: &str) -> Result<(), RuntimeRegistryError> {
     }
     Ok(())
 }
-
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
@@ -1373,6 +2979,7 @@ mod tests {
                 RuntimeResource::EventAppend,
                 RuntimeResource::EventReplay,
                 RuntimeResource::EventConsumerRegistry,
+                RuntimeResource::WorldModel,
             ]
         );
     }
@@ -1847,5 +3454,562 @@ mod tests {
         assert!(second.output_checkpoint.value > second.input_checkpoint.value);
         assert!(second.made_progress());
         assert_eq!(second.items_committed, 0);
+    }
+
+    // ---- Stewardship composition fixtures ----
+
+    use crate::config::{DocsFreshnessSelection, StewardshipConfig, TheorySelection};
+    use crate::runtime::registration::RegistrationLifecycle;
+    use crate::runtime::supervisor::{RuntimeSupervisor, SupervisorStartCommand};
+    use meld_world_model::agent::{
+        AgentCurationRuleBinding, AgentRegistration, AgentSubscription, SeedAgentRegistration,
+        SubscribeAgentCommand,
+    };
+    use meld_world_model::belief::{
+        configured_belief_key, OutcomeContentRule, OutcomeFieldRule, OutcomeMappingConfig,
+        OutcomeSubjectBinding, OutcomeValueSource,
+    };
+
+    const STEWARD_AGENT_ID: &str = "seed.docs_freshness";
+    const FAMILY_ID: &str = "docs-freshness-family";
+    const MAPPING_ID: &str = "publication-to-freshness";
+
+    fn stewardship_merkle_config(workspace: &Path, storage_root: &Path) -> MerkleConfig {
+        let mut config = MerkleConfig::default();
+        config.providers.insert(
+            "main-provider".to_string(),
+            crate::config::ProviderConfig {
+                provider_name: Some("main-provider".to_string()),
+                provider_type: crate::provider::ProviderType::Ollama,
+                model: "test-model".to_string(),
+                api_key: None,
+                endpoint: None,
+                default_options: crate::provider::CompletionOptions::default(),
+            },
+        );
+        config.system.storage.product_root = Some(storage_root.to_path_buf());
+        config.stewardship = StewardshipConfig {
+            docs_freshness: Some(DocsFreshnessSelection {
+                expression: "docs_freshness".to_string(),
+                target_root: workspace.to_path_buf(),
+                subject: "docs".to_string(),
+                agent_id: STEWARD_AGENT_ID.to_string(),
+                provider_id: "main-provider".to_string(),
+                theory: TheorySelection {
+                    belief_family_id: FAMILY_ID.to_string(),
+                    evidence_mapping_id: MAPPING_ID.to_string(),
+                    curation_rule_id: "docs-curation".to_string(),
+                },
+            }),
+        };
+        config
+    }
+
+    fn resolved_physical_binding(workspace: &Path, storage_root: &Path) -> PhysicalBinding {
+        PhysicalBinding::resolve(&stewardship_merkle_config(workspace, storage_root)).unwrap()
+    }
+
+    fn open_external_authority(dir: &Path) -> Arc<EventAuthority> {
+        let db = sled::open(dir.join("ledger.sled")).unwrap();
+        Arc::new(EventAuthority::open(db, EventAuthorityOpenOptions::default()).unwrap())
+    }
+
+    fn family_config_json() -> &'static str {
+        r#"{
+            "family_id": "docs-freshness-family",
+            "dimension_id": "docs_freshness",
+            "predicate_id": "confidence",
+            "evidence_policy_id": "default_policy",
+            "evidence_schemas": [
+                {
+                    "schema_id": "content_written_signal",
+                    "required": false,
+                    "role": "Support",
+                    "reliability": 1.0,
+                    "precision": 1.0
+                }
+            ],
+            "source_mappings": [
+                {
+                    "mapping_id": "content_written_to_signal",
+                    "source_kind": "content_written",
+                    "evidence_schema_id": "content_written_signal",
+                    "subject_from": "record.subject",
+                    "value_field": "stale_probability",
+                    "factor_id": "content_written_signal"
+                }
+            ],
+            "comparator": {
+                "engine_id": "weighted_bayesian",
+                "engine_version": "1",
+                "factors": [
+                    {
+                        "factor_id": "content_written_signal",
+                        "evidence_schema_id": "content_written_signal",
+                        "weight": 1.0,
+                        "polarity": "Supports"
+                    }
+                ],
+                "missing_evidence_uncertainty": 0.9
+            },
+            "default_prior": 0.8,
+            "planner_projection": {
+                "confidence_field": "confidence",
+                "threshold": 0.7,
+                "posterior_meaning": "stale_probability"
+            },
+            "config_version": "1"
+        }"#
+    }
+
+    fn installed_outcome_mapping() -> OutcomeMappingConfig {
+        OutcomeMappingConfig {
+            mapping_id: MAPPING_ID.to_string(),
+            source_kind: "content_written".to_string(),
+            match_domain_id: "execution".to_string(),
+            match_event_type: "execution.task.succeeded".to_string(),
+            match_content: vec![OutcomeContentRule::ArrayAnyFieldEquals {
+                array_pointer: "/artifact_records".to_string(),
+                field: "artifact_type_id".to_string(),
+                equals: "docs_patch".to_string(),
+            }],
+            subject: OutcomeSubjectBinding {
+                object_kind: "node".to_string(),
+                domain_id: Some("workspace_fs".to_string()),
+            },
+            evidence_fields: vec![OutcomeFieldRule {
+                field: "stale_probability".to_string(),
+                source: OutcomeValueSource::Constant { value: 0.0 },
+            }],
+        }
+    }
+
+    struct StewardshipHarness {
+        _workspace: tempfile::TempDir,
+        _external: tempfile::TempDir,
+        binding: PhysicalBinding,
+        authority: Arc<EventAuthority>,
+    }
+
+    impl StewardshipHarness {
+        fn new() -> Self {
+            let workspace = tempfile::tempdir().unwrap();
+            let external = tempfile::tempdir().unwrap();
+            let binding =
+                resolved_physical_binding(workspace.path(), &external.path().join("runtime"));
+            let ledger_dir = external.path().join("ledger");
+            std::fs::create_dir_all(&ledger_dir).unwrap();
+            let authority = open_external_authority(&ledger_dir);
+            Self {
+                _workspace: workspace,
+                _external: external,
+                binding,
+                authority,
+            }
+        }
+
+        fn assembly(&self, theory: StewardshipTheoryBindings) -> ProductRuntimeAssembly {
+            ProductRuntimeAssembly::load_composed(
+                ProductRuntimeConfig::for_product_root(self.binding.storage_root.clone()),
+                Arc::clone(&self.authority),
+                Some(StewardshipComposition {
+                    binding: self.binding.clone(),
+                    theory,
+                }),
+            )
+            .unwrap()
+        }
+
+        /// Stage 2 and 3 world initialization through public domain commands.
+        fn run_world_genesis(&self, assembly: &ProductRuntimeAssembly) {
+            let stores = assembly.stores();
+            let mut registry = stores.belief_family_registry.as_ref().clone();
+            let family_config = serde_json::from_str(family_config_json()).unwrap();
+            let (_, revision) = registry.install(family_config, 1).unwrap();
+            let agent_store = stores.agent_store.opened().unwrap();
+            AgentRegistration::new(agent_store)
+                .register_seed_agent(SeedAgentRegistration {
+                    agent_id: STEWARD_AGENT_ID.to_string(),
+                    perspective_key: PerspectiveKey::new("default", "default").unwrap(),
+                    subject: stewardship_subject_ref(&self.binding).unwrap(),
+                    branch_scope: BranchScope::main(),
+                    observation_scope: FAMILY_ID.to_string(),
+                    directive: "steward docs freshness".to_string(),
+                    seed_provenance: "trusted init".to_string(),
+                    curation_rule: Some(
+                        AgentCurationRuleBinding::for_rule(
+                            meld_world_model::AgentCurationRuleConfig {
+                                dimension_id: "docs_freshness".to_string(),
+                                threshold: 0.7,
+                                priority_urgency: 8,
+                                desired_summary: "fresh docs".to_string(),
+                                source_kind: "docs_freshness".to_string(),
+                            },
+                        )
+                        .unwrap(),
+                    ),
+                    created_at_seq: 2,
+                })
+                .unwrap();
+            let belief_key = configured_belief_key(
+                &revision,
+                &stewardship_subject_ref(&self.binding).unwrap(),
+                &PerspectiveKey::new("default", "default").unwrap(),
+                &BranchScope::main(),
+            );
+            AgentSubscription::new(agent_store)
+                .subscribe(SubscribeAgentCommand {
+                    agent_id: STEWARD_AGENT_ID.to_string(),
+                    belief_key,
+                    created_at_seq: 3,
+                })
+                .unwrap();
+            AgentRegistration::new(agent_store)
+                .mark_operational(STEWARD_AGENT_ID, 4)
+                .unwrap();
+            assembly.flush_product_boundary().unwrap();
+        }
+    }
+
+    fn lifecycle_of(
+        status: &crate::runtime::supervisor::SupervisorStatusSnapshot,
+        runtime_id: &str,
+    ) -> Option<RegistrationLifecycle> {
+        status
+            .runtimes
+            .iter()
+            .find(|row| row.runtime_id == runtime_id)
+            .unwrap_or_else(|| panic!("status row for '{runtime_id}'"))
+            .lifecycle
+    }
+
+    fn kind_of(
+        status: &crate::runtime::supervisor::SupervisorStatusSnapshot,
+        runtime_id: &str,
+    ) -> RegistrationKind {
+        status
+            .runtimes
+            .iter()
+            .find(|row| row.runtime_id == runtime_id)
+            .unwrap_or_else(|| panic!("status row for '{runtime_id}'"))
+            .registration_kind
+    }
+
+    #[test]
+    fn stewardship_registration_derivation_classifies_required_roles() {
+        let harness = StewardshipHarness::new();
+
+        let set = derive_stewardship_registrations(&harness.binding).unwrap();
+
+        assert_eq!(set.registrations.len(), 12);
+        for passive in STEWARDSHIP_PASSIVE_SERVICE_IDS {
+            assert_eq!(
+                set.kind_of(passive),
+                Some(RegistrationKind::PassiveService),
+                "'{passive}' must be a passive service"
+            );
+        }
+        for active in [
+            "world_model.graph_replay",
+            "world_model.belief_assessment",
+            "world_model.evidence_ingestion",
+            "world_model.agent_goal_curation",
+            "world_model.satisfaction_curation",
+            "execution.planning",
+            "execution.task_dispatch",
+            "execution.publication",
+        ] {
+            assert_eq!(
+                set.kind_of(active),
+                Some(RegistrationKind::ActiveActor),
+                "'{active}' must be an active actor"
+            );
+        }
+        assert!(set.registrations.iter().all(|registration| registration
+            .registration_id
+            .starts_with("stewardship::docs_freshness::")));
+    }
+
+    #[test]
+    fn ungenesised_stewardship_boot_is_truthful_and_writes_no_semantic_state() {
+        let harness = StewardshipHarness::new();
+        let assembly = harness.assembly(StewardshipTheoryBindings::default());
+        let registration_set = assembly.registration_set().cloned().unwrap();
+
+        let mut command = SupervisorStartCommand::new("instance-a", 100);
+        command.registration_set = Some(registration_set);
+        let mut supervisor =
+            RuntimeSupervisor::start(assembly.supervisor_startup_package(), command).unwrap();
+        let tick = supervisor.tick(1_100).unwrap();
+        let status = supervisor.status_snapshot(1_100).unwrap();
+
+        // Genesis-dependent actors hydrate truthfully unresolved: activation
+        // never creates the theory or identities they require.
+        for unresolved in [
+            "world_model.belief_assessment",
+            "world_model.evidence_ingestion",
+            "world_model.agent_goal_curation",
+            "world_model.satisfaction_curation",
+            "execution.planning",
+        ] {
+            assert_eq!(
+                lifecycle_of(&status, unresolved),
+                Some(RegistrationLifecycle::UnresolvedRequiredBinding),
+                "'{unresolved}' must be an unresolved required binding"
+            );
+        }
+        // Dispatch is disabled by default until provider access and route
+        // bindings are composed.
+        assert_eq!(
+            lifecycle_of(&status, "execution.task_dispatch"),
+            Some(RegistrationLifecycle::Stopped)
+        );
+        // Passive services carry no actor lifecycle and are never leased.
+        for passive in STEWARDSHIP_PASSIVE_SERVICE_IDS {
+            assert_eq!(kind_of(&status, passive), RegistrationKind::PassiveService);
+            assert_eq!(lifecycle_of(&status, passive), None);
+        }
+        // The quiescent bound actors reach truthful active idle.
+        for idle in ["world_model.graph_replay", "execution.publication"] {
+            assert_eq!(
+                lifecycle_of(&status, idle),
+                Some(RegistrationLifecycle::ActiveIdle),
+                "'{idle}' must be active idle over an empty world"
+            );
+        }
+        // Exactly one bounded invocation per bound active actor per pass.
+        let mut ticked: Vec<&str> = tick
+            .actions
+            .iter()
+            .map(|action| action.runtime_id.as_str())
+            .collect();
+        ticked.sort_unstable();
+        assert_eq!(
+            ticked,
+            vec!["execution.publication", "world_model.graph_replay"]
+        );
+
+        // Boot and tick created no semantic state anywhere.
+        assert!(assembly
+            .ports()
+            .event_replay()
+            .read_after_limit(0, 10)
+            .unwrap()
+            .is_empty());
+        assert!(assembly
+            .stores()
+            .goal_store
+            .goal_records()
+            .unwrap()
+            .is_empty());
+        assert!(assembly
+            .stores()
+            .agent_store
+            .get_agent(STEWARD_AGENT_ID)
+            .unwrap()
+            .is_none());
+        supervisor.request_shutdown(2_000).unwrap();
+    }
+
+    #[test]
+    fn genesised_world_binds_epistemic_actors_and_ticks_each_exactly_once() {
+        let harness = StewardshipHarness::new();
+        {
+            let assembly = harness.assembly(StewardshipTheoryBindings::default());
+            harness.run_world_genesis(&assembly);
+        }
+
+        let assembly = harness.assembly(StewardshipTheoryBindings {
+            outcome_mapping: Some(installed_outcome_mapping()),
+            ..StewardshipTheoryBindings::default()
+        });
+        let registration_set = assembly.registration_set().cloned().unwrap();
+        let mut command = SupervisorStartCommand::new("instance-b", 100);
+        command.registration_set = Some(registration_set);
+        let mut supervisor =
+            RuntimeSupervisor::start(assembly.supervisor_startup_package(), command).unwrap();
+        let tick = supervisor.tick(1_100).unwrap();
+        let status = supervisor.status_snapshot(1_100).unwrap();
+
+        let bound = [
+            "world_model.graph_replay",
+            "world_model.belief_assessment",
+            "world_model.evidence_ingestion",
+            "world_model.agent_goal_curation",
+            "world_model.satisfaction_curation",
+            "execution.publication",
+        ];
+        for runtime_id in bound {
+            let lifecycle = lifecycle_of(&status, runtime_id);
+            assert!(
+                matches!(
+                    lifecycle,
+                    Some(RegistrationLifecycle::ActiveIdle)
+                        | Some(RegistrationLifecycle::ActiveWorking)
+                ),
+                "'{runtime_id}' must be truthfully active after genesis, got {lifecycle:?}"
+            );
+        }
+        // Planning theory has no durable registry yet, so it stays a
+        // truthful unresolved binding until a composition injects it.
+        assert_eq!(
+            lifecycle_of(&status, "execution.planning"),
+            Some(RegistrationLifecycle::UnresolvedRequiredBinding)
+        );
+        // One bounded invocation per bound actor per maintenance pass.
+        let mut ticked: Vec<&str> = tick
+            .actions
+            .iter()
+            .map(|action| action.runtime_id.as_str())
+            .collect();
+        ticked.sort_unstable();
+        let mut expected = bound.to_vec();
+        expected.sort_unstable();
+        assert_eq!(ticked, expected);
+        supervisor.request_shutdown(2_000).unwrap();
+    }
+
+    #[test]
+    fn satisfaction_sequences_are_durably_monotonic_across_assemblies() {
+        let harness = StewardshipHarness::new();
+        {
+            let assembly = harness.assembly(StewardshipTheoryBindings::default());
+            harness.run_world_genesis(&assembly);
+        }
+
+        let first_sequence = {
+            let assembly = harness.assembly(StewardshipTheoryBindings::default());
+            let sequence = DurableStepSequence::new(
+                Arc::clone(assembly.stores().belief_store.opened().unwrap()),
+                "world_model.satisfaction_curation",
+            );
+            let first = sequence.next().unwrap();
+            let second = sequence.next().unwrap();
+            assert!(second > first);
+            second
+        };
+
+        // A fresh assembly over the same durable root continues the ratchet
+        // instead of restarting it: injected sequences never regress.
+        let assembly = harness.assembly(StewardshipTheoryBindings::default());
+        let sequence = DurableStepSequence::new(
+            Arc::clone(assembly.stores().belief_store.opened().unwrap()),
+            "world_model.satisfaction_curation",
+        );
+        assert!(sequence.next().unwrap() > first_sequence);
+    }
+
+    #[test]
+    fn explicit_single_actor_registration_set_opens_only_its_stores() {
+        let temp = tempfile::tempdir().unwrap();
+        let ledger_dir = temp.path().join("ledger");
+        std::fs::create_dir_all(&ledger_dir).unwrap();
+        let authority = open_external_authority(&ledger_dir);
+        let product_root = temp.path().join("product");
+        let mut config = ProductRuntimeConfig::for_product_root(&product_root);
+        config.registration_set = Some(RegistrationSet {
+            registrations: vec![RuntimeRegistration {
+                registration_id: "isolate::belief_assessment".to_string(),
+                runtime_id: "world_model.belief_assessment".to_string(),
+                kind: RegistrationKind::ActiveActor,
+                required_resources: Vec::new(),
+            }],
+        });
+
+        let assembly = ProductRuntimeAssembly::load_composed(config, authority, None).unwrap();
+
+        let layout = assembly.layout();
+        assert!(layout.world_model_db.exists());
+        assert!(!layout.workspace_db.exists());
+        assert!(!layout.execution_goals_db.exists());
+        assert!(!layout.task_artifacts_db.exists());
+        assert!(!layout.task_networks_root.exists());
+        assert!(!layout.frame_blob_root.exists());
+        assert!(!layout.prompt_artifact_root.exists());
+        assert!(assembly.stores().belief_store.is_open());
+        assert!(!assembly.stores().goal_store.is_open());
+        assert!(!assembly.stores().node_store.is_open());
+        assert!(assembly.try_graph_runtime().is_some());
+    }
+
+    #[test]
+    fn package_route_handoffs_derive_run_ids_through_the_exported_derivation() {
+        let handoffs = PackageRouteHandoffs::default();
+        handoffs.record(route_plan("plan-a"));
+        // Duplicate plan ids dedupe to one recorded handoff.
+        handoffs.record(route_plan("plan-a"));
+
+        let bindings = handoffs.run_bindings();
+
+        assert_eq!(
+            bindings,
+            vec![("plan-a".to_string(), package_route_run_id("plan-a"))]
+        );
+    }
+
+    fn route_plan(plan_id: &str) -> TaskPackageRoutePlan {
+        TaskPackageRoutePlan {
+            plan_id: plan_id.to_string(),
+            network_id: "stewardship.docs_freshness".to_string(),
+            composition_id: "composition-a".to_string(),
+            goal_id: "goal-a".to_string(),
+            method_id: "method-a".to_string(),
+            action_id: "action-a".to_string(),
+            package_id: "docs_writer".to_string(),
+            workflow_id: "docs_writer_thread_v1".to_string(),
+            outcome_contract_id: "execution.package.aggregate.v1".to_string(),
+            artifact: meld_execution::planning::ActionArtifactMeaning {
+                artifact_type_id: "docs_patch".to_string(),
+                schema_version: 1,
+            },
+            world_state_frame: meld_execution::planning::PlanningWorldStateFrameRef {
+                frame_id: "frame-1".to_string(),
+                projection_version: "world_model.planner.v1".to_string(),
+                perspective_id: "default".to_string(),
+                branch_id: "main".to_string(),
+                source_refs: Vec::new(),
+                warnings: Vec::new(),
+            },
+        }
+    }
+
+    #[test]
+    fn no_folder_work_units_is_a_fatal_classification_mismatch() {
+        let (fatal, issue) = aggregate_publish_issue(
+            "plan-a",
+            AggregatePublicationError::NoFolderWorkUnits {
+                package_run_id: "package-route::plan-a".to_string(),
+            },
+        );
+        assert!(fatal);
+        assert_eq!(issue.code, "aggregate_classification_mismatch");
+
+        let (retryable_fatal, retryable_issue) = aggregate_publish_issue(
+            "plan-a",
+            AggregatePublicationError::Storage("io".to_string()),
+        );
+        assert!(!retryable_fatal);
+        assert_eq!(retryable_issue.code, "aggregate_publication_failed");
+    }
+
+    #[test]
+    fn folder_unit_capability_types_derive_from_the_selected_package() {
+        let types = folder_unit_capability_types("docs_freshness").unwrap();
+
+        assert!(types.contains(&"provider_execute_chat".to_string()));
+        assert!(types.contains(&"context_generate_prepare".to_string()));
+        assert!(types.contains(&"context_generate_finalize".to_string()));
+        assert!(folder_unit_capability_types("code_health").is_err());
+    }
+
+    #[test]
+    fn stewardship_subject_ref_is_a_workspace_node() {
+        let harness = StewardshipHarness::new();
+
+        let subject = stewardship_subject_ref(&harness.binding).unwrap();
+
+        assert_eq!(subject.domain_id, "workspace_fs");
+        assert_eq!(subject.object_kind, "node");
+        assert_eq!(subject.object_id, "docs");
     }
 }
