@@ -10,8 +10,8 @@
 //! supplies the mapper selected by id from the stewardship expression.
 
 use meld_events::EventRecord;
+use serde::Serialize;
 
-use crate::belief::config::stable_hash_hex;
 use crate::belief::contracts::PromotedEvidenceRecord;
 
 /// Durable consumer identity for world-model evidence ingestion.
@@ -34,7 +34,14 @@ pub struct OutcomeMappingInput {
 pub enum OutcomeMappingDisposition {
     /// The record maps to promoted evidence that must be durable before
     /// the consumer cursor advances.
-    Applicable(Box<PromotedEvidenceRecord>),
+    Applicable {
+        /// Frozen deterministic evidence identity from
+        /// [`promoted_evidence_identity`]. Durable evidence storage and
+        /// reopen-replay deduplication key on this value.
+        evidence_id: String,
+        /// Promoted evidence produced by the mapping.
+        record: Box<PromotedEvidenceRecord>,
+    },
     /// The record is understood and carries no evidence; the cursor may
     /// advance past it.
     NotApplicable {
@@ -59,8 +66,19 @@ pub trait OutcomeEvidenceMapping {
 ///
 /// Derived from the canonical publication record identity and the mapping
 /// identity alone, so replaying the same publication through the same
-/// installed mapping can never create distinct evidence.
+/// installed mapping can never create distinct evidence. Fields hash as a
+/// named-field structure so no delimiter inside either identity can make
+/// two distinct inputs collide.
 pub fn promoted_evidence_identity(publication_record_id: &str, mapping_id: &str) -> String {
-    let seed = format!("{publication_record_id}::{mapping_id}");
-    format!("evidence-{}", stable_hash_hex(seed.as_bytes()))
+    #[derive(Serialize)]
+    struct Identity<'a> {
+        publication_record_id: &'a str,
+        mapping_id: &'a str,
+    }
+    let bytes = serde_json::to_vec(&Identity {
+        publication_record_id,
+        mapping_id,
+    })
+    .expect("evidence identity serialization cannot fail");
+    format!("evidence-{}", blake3::hash(&bytes).to_hex())
 }
