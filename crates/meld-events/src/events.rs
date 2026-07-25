@@ -48,6 +48,8 @@ pub mod compat;
 pub mod consumer;
 /// Domain object and relation records carried by event envelopes.
 pub mod contracts;
+/// Authoritative durable consumer cursor storage.
+pub(crate) mod durable_cursor;
 /// Durable ledger identity contract.
 pub mod identity;
 /// Recoverable migration from frozen legacy ledgers into one authority.

@@ -13,7 +13,9 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::EventAuthorityError;
+use crate::error::{EventAuthorityError, StorageError};
+use crate::events::consumer::{ConsumerCursorError, ConsumerCursorState, DurableConsumerCursor};
+use crate::events::durable_cursor::DurableCursorTree;
 use crate::events::identity::LedgerIdentity;
 use crate::events::observability::{CoverageTruncation, EventReadCoverage};
 use crate::events::registry::{ConsumerCursor, EventCursorRegistry};
@@ -44,6 +46,7 @@ struct AuthorityInner {
     store: Arc<EventStore>,
     writer: EventWriter,
     registry: EventCursorRegistry,
+    durable_cursors: DurableCursorTree,
     _lease: AuthorityLease,
 }
 
@@ -284,6 +287,7 @@ impl EventAuthority {
 
         let lease = AuthorityLease::acquire(ledger_id)?;
         let registry = EventCursorRegistry::open_bound(store.db(), ledger_id)?;
+        let durable_cursors = DurableCursorTree::open(store.db(), ledger_id)?;
         let durable_tip = store.tip_seq()?;
         let writer = EventWriter::spawn_recovered(Arc::clone(&store), durable_tip);
         Ok(Self {
@@ -292,6 +296,7 @@ impl EventAuthority {
                 store,
                 writer,
                 registry,
+                durable_cursors,
                 _lease: lease,
             }),
         })
@@ -375,6 +380,7 @@ impl EventAppendCapability {
         mode: AppendMode,
     ) -> Result<AppendReceipt, EventAuthorityError> {
         validate_provenance(self.inner.ledger_id, &envelope)?;
+        validate_genesis_identity(&envelope)?;
         let outcome = self
             .inner
             .writer
@@ -399,6 +405,7 @@ impl EventAppendCapability {
     ) -> Result<Vec<AppendReceipt>, EventAuthorityError> {
         for envelope in &envelopes {
             validate_provenance(self.inner.ledger_id, envelope)?;
+            validate_genesis_identity(envelope)?;
         }
         self.inner
             .writer
@@ -425,6 +432,7 @@ impl EventAppendCapability {
         mode: AppendMode,
     ) -> Result<BestEffortAppendReceipt, EventAuthorityError> {
         validate_provenance(self.inner.ledger_id, &envelope)?;
+        validate_genesis_identity(&envelope)?;
         self.inner
             .writer
             .enqueue_best_effort(envelope, mode == AppendMode::Idempotent)?;
@@ -578,6 +586,63 @@ impl EventConsumerRegistryCapability {
     }
 }
 
+/// Authoritative durable cursor surface for named event consumers.
+///
+/// Authority lives in a tree parallel to the observational registry mirror:
+/// only consumers advanced through this contract own durable cursor state,
+/// so mirror reports from other consumers never silently become
+/// authoritative. Each accepted advancement is written to the authoritative
+/// tree first, then reported into the mirror so the existing
+/// [`ConsumerCursorPosition`] surface (`get`, `snapshot`, lag reports) stays
+/// reconciled with the durable state record. A mirror failure after the
+/// durable write is retryable: re-advancing is a monotonic no-op.
+impl DurableConsumerCursor for EventConsumerRegistryCapability {
+    fn ledger_identity(&self) -> LedgerIdentity {
+        self.inner.ledger_id
+    }
+
+    fn consumer_cursor(
+        &self,
+        consumer_id: &str,
+    ) -> Result<Option<ConsumerCursorState>, ConsumerCursorError> {
+        self.inner
+            .durable_cursors
+            .get(consumer_id)
+            .map_err(cursor_error)
+    }
+
+    fn advance_consumer_cursor(
+        &self,
+        consumer_id: &str,
+        after_seq: u64,
+    ) -> Result<ConsumerCursorState, ConsumerCursorError> {
+        let state = self
+            .inner
+            .durable_cursors
+            .advance(consumer_id, after_seq)
+            .map_err(cursor_error)?;
+        self.inner
+            .registry
+            .report(consumer_id, state.after_seq)
+            .map_err(cursor_error)?;
+        Ok(state)
+    }
+}
+
+fn cursor_error(error: StorageError) -> ConsumerCursorError {
+    let retryable = matches!(
+        error,
+        StorageError::IoError(_)
+            | StorageError::Backpressure(_)
+            | StorageError::Unavailable(_)
+            | StorageError::DurabilityIndeterminate(_)
+    );
+    ConsumerCursorError {
+        message: error.to_string(),
+        retryable,
+    }
+}
+
 impl EventObservabilityCapability {
     /// Returns the ledger accepted by this capability.
     pub fn ledger_identity(&self) -> LedgerIdentity {
@@ -658,6 +723,31 @@ fn validate_identity(
     } else {
         Err(EventAuthorityError::IdentityMismatch { expected, actual })
     }
+}
+
+// Genesis record identities join their segments with `::`, so a delimiter
+// inside domain_id or stream_id would let two distinct scopes collide on one
+// identity. The append surface rejects that instead of trusting every
+// constructor call site.
+fn validate_genesis_identity(envelope: &EventEnvelope) -> Result<(), EventAuthorityError> {
+    let is_genesis = envelope
+        .record_id
+        .as_deref()
+        .is_some_and(|record_id| record_id.starts_with("genesis::"));
+    if !is_genesis {
+        return Ok(());
+    }
+    for (field, value) in [
+        ("domain_id", envelope.domain_id.as_str()),
+        ("stream_id", envelope.stream_id.as_str()),
+    ] {
+        if value.contains("::") {
+            return Err(EventAuthorityError::invalid_request(format!(
+                "genesis {field} {value:?} must not contain the '::' identity delimiter"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn validate_provenance(
