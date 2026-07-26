@@ -167,6 +167,7 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 - [integration/runtime_completion_implementation_workstreams.md](integration/runtime_completion_implementation_workstreams.md) - current build-facing workstream decomposition
 - [world_model/strategy/ground_map.md](world_model/strategy/ground_map.md) - current Strategy primitive inventory, concept-to-ground map, and construction delta
 - [integration/agent_native_debugger_requirements.md](integration/agent_native_debugger_requirements.md) - requirements gathering for the agent-native runtime debugger, gated by runtime completion
+- [integration/runtime_harness_plan.md](integration/runtime_harness_plan.md) - phased delivery of the interactive runtime harness over the three-customer information model
 - [integration/runtime_initialization.md](integration/runtime_initialization.md) - staged initialization contract owning theory installation, identity genesis, and epistemic seeding
 - [integration/production_cognitive_runtime_closure_program.md](integration/production_cognitive_runtime_closure_program.md) - superseded production runtime closure proposal
 - [integration/production_cognitive_runtime_closure_delivery_ledger.md](integration/production_cognitive_runtime_closure_delivery_ledger.md) - superseded production-closure delivery ledger
