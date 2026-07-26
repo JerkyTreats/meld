@@ -14,5 +14,6 @@
 //! `design/plan/integration/agent_native_debugger_requirements.md`.
 
 pub mod boot;
+pub mod eligibility;
 pub mod manifest;
 pub mod walk;

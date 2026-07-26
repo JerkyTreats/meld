@@ -207,8 +207,11 @@ fn the_anchor_stall_is_recorded_and_the_walk_names_the_dead_end() {
     }
 
     // The declarations are durable: the report store serves them back
-    // after the run, which is what the eligibility walk will read.
+    // after the run, which is what the eligibility walk reads.
     {
+        use meld::harness::eligibility::{
+            AbsentRecordKind, EligibilityQuestion, EligibilityWalker,
+        };
         use meld::runtime::contracts::RuntimeStatusReader;
         let reports = meld::runtime::supervisor::SupervisorReportStore::open(
             run.assembly().supervisor_store(),
@@ -221,6 +224,38 @@ fn the_anchor_stall_is_recorded_and_the_walk_names_the_dead_end() {
                 .iter()
                 .any(|declaration| declaration.condition == "graph_anchor_absent")
         }));
+
+        // Phase-two exit evidence: the eligibility walk resolves the
+        // absent revision to its declaration chain, presenting the absent
+        // anchor and the subject-vocabulary mismatch as the reason the
+        // assessed revision does not exist.
+        let traversal = run
+            .assembly()
+            .stores()
+            .traversal_store
+            .opened()
+            .expect("traversal store is open in the survey composition");
+        let chain = EligibilityWalker::new(&reports)
+            .with_traversal(traversal)
+            .why_absent(EligibilityQuestion {
+                kind: AbsentRecordKind::BeliefRevision,
+                subject_key: Some(format!("workspace_fs::node::{SUBJECT_ID}")),
+            })
+            .unwrap();
+        assert!(chain
+            .links
+            .iter()
+            .any(|link| link.runtime_id == "world_model.belief_assessment"
+                && link.declaration.condition == "graph_anchor_absent"));
+        let divergence = chain
+            .divergences
+            .iter()
+            .find(|divergence| divergence.starts_with("graph_anchor_absent"))
+            .expect("the chain names the anchor divergence");
+        assert!(
+            divergence.contains("appears in no anchor record"),
+            "the divergence presents the subject-vocabulary mismatch: {divergence}"
+        );
     }
 
     // The manifest records the stalled step schedule as the durable
