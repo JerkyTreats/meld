@@ -162,6 +162,11 @@ fn the_substrate_serves_contract_types_over_loopback_for_a_live_session() {
     // Byte-consistency across live and playback: capture the sealed
     // session's answers over the live surface, then mount the same
     // handlers over the sealed root and compare bodies byte for byte.
+    let scope = json!({
+        "name": "consistency-scope",
+        "subject_keys": [format!("workspace_fs::node::{SUBJECT_ID}")],
+        "actor_ids": ["world_model.belief_assessment"],
+    });
     let probes: Vec<(&str, serde_json::Value)> = vec![
         ("/v1/reports/recent_actions", json!({ "limit": 64 })),
         (
@@ -172,6 +177,15 @@ fn the_substrate_serves_contract_types_over_loopback_for_a_live_session() {
             }),
         ),
         ("/v1/events/replay", serde_json::to_value(&request).unwrap()),
+        (
+            "/v1/projections/subagent",
+            json!({ "scope": scope, "after_seq": 0 }),
+        ),
+        (
+            "/v1/projections/parent",
+            json!({ "scope": scope, "after_seq": 0 }),
+        ),
+        ("/v1/events/watermark", json!({ "ledger_id": ledger_id })),
     ];
     let live_bodies: Vec<String> = probes
         .iter()
@@ -186,8 +200,15 @@ fn the_substrate_serves_contract_types_over_loopback_for_a_live_session() {
         survey_boot_request(session.path(), &binding, "served-playback", 2_000);
     playback_request.world_init = None;
     let playback = HarnessRun::boot(playback_request).unwrap();
-    let playback_handle =
-        serve(ServeSources::from_assembly(playback.assembly()).unwrap(), 0).unwrap();
+    // A sealed session root's whole retained history IS the session, so
+    // the playback mount lifts the live boot fence explicitly.
+    let playback_handle = serve(
+        ServeSources::from_assembly(playback.assembly())
+            .unwrap()
+            .with_full_history(),
+        0,
+    )
+    .unwrap();
     let playback_bodies: Vec<String> = probes
         .iter()
         .map(|(path, body)| {

@@ -99,13 +99,15 @@ pub fn dispatch(sources: &ServeSources, method: &str, path: &str, body: &[u8]) -
             sources.events.session(request)
         }),
         ("POST", "/v1/reports/recent_actions") => handle(body, |request: RecentActionsRequest| {
-            sources.reports.read_recent_actions(request.limit)
+            sources
+                .reports
+                .read_recent_actions_since(sources.action_floor, request.limit)
         }),
         ("POST", "/v1/reports/latest_for_runtime") => {
             handle(body, |request: LatestActionRequest| {
                 sources
                     .reports
-                    .latest_action_for_runtime(&request.runtime_id)
+                    .latest_action_for_runtime_since(sources.action_floor, &request.runtime_id)
             })
         }
         ("GET", "/v1/reports/latest_snapshot") => respond(sources.reports.read_latest_snapshot()),

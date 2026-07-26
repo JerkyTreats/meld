@@ -29,6 +29,8 @@ pub struct ServeSources {
     pub(crate) events: LocalEventAuthorityClient,
     pub(crate) ledger_id: LedgerIdentity,
     pub(crate) reports: SupervisorReportStore,
+    /// Sequence floor fencing report-derived reads to this session.
+    pub(crate) action_floor: u64,
     pub(crate) replay_port: ProductEventReplayPort,
     pub(crate) belief: Option<Arc<BeliefStore>>,
     pub(crate) agent: Option<Arc<AgentStore>>,
@@ -46,11 +48,17 @@ impl ServeSources {
     pub fn from_assembly(assembly: &ProductRuntimeAssembly) -> Result<Self, HarnessError> {
         let authority = assembly.event_authority();
         let stores = assembly.stores();
+        let reports = SupervisorReportStore::open(assembly.supervisor_store())
+            .map_err(|error| HarnessError::Storage(error.to_string()))?;
+        // Report-derived routes fence to this boot by default: everything
+        // appended from here on is this session's; a reused product root
+        // never serves a previous boot's declarations as current state.
+        let action_floor = reports.sequence_watermark();
         Ok(Self {
             events: LocalEventAuthorityClient::new(authority.as_ref()),
             ledger_id: authority.ledger_identity(),
-            reports: SupervisorReportStore::open(assembly.supervisor_store())
-                .map_err(|error| HarnessError::Storage(error.to_string()))?,
+            reports,
+            action_floor,
             replay_port: assembly.ports().event_replay().clone(),
             belief: stores.belief_store.opened().map(Arc::clone),
             agent: stores.agent_store.opened().map(Arc::clone),
@@ -63,6 +71,17 @@ impl ServeSources {
     /// The ledger identity every request must address.
     pub fn ledger_identity(&self) -> LedgerIdentity {
         self.ledger_id
+    }
+
+    /// Serve the root's whole retained history instead of one session.
+    ///
+    /// For playback mounts over a sealed root the harness owns: the
+    /// sealed session is the history. Never use this over a live reused
+    /// product root — the session fence exists so stale boots cannot
+    /// present as current state.
+    pub fn with_full_history(mut self) -> Self {
+        self.action_floor = 0;
+        self
     }
 
     pub(crate) fn thread_walker(&self) -> ThreadWalker<'_> {
@@ -81,11 +100,12 @@ impl ServeSources {
             reports: &self.reports,
             replay: Some(&self.replay_port),
             belief: self.belief.as_deref(),
+            action_floor: self.action_floor,
         }
     }
 
     pub(crate) fn eligibility_walker(&self) -> EligibilityWalker<'_> {
-        let walker = EligibilityWalker::new(&self.reports);
+        let walker = EligibilityWalker::new(&self.reports).with_floor(self.action_floor);
         match self.traversal.as_deref() {
             Some(traversal) => walker.with_traversal(traversal),
             None => walker,

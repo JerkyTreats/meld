@@ -84,6 +84,8 @@ pub struct EligibilityChain {
 pub struct EligibilityWalker<'a> {
     reports: &'a SupervisorReportStore,
     traversal: Option<&'a TraversalStore>,
+    /// Sequence floor fencing reads to one session; zero reads everything.
+    floor: u64,
 }
 
 impl<'a> EligibilityWalker<'a> {
@@ -92,7 +94,15 @@ impl<'a> EligibilityWalker<'a> {
         Self {
             reports,
             traversal: None,
+            floor: 0,
         }
+    }
+
+    /// Fence reads to actions at or after a session's sequence floor, so
+    /// a reused root's earlier boots cannot answer for this session.
+    pub fn with_floor(mut self, floor: u64) -> Self {
+        self.floor = floor;
+        self
     }
 
     /// Deepen anchor divergences through the graph read surface.
@@ -136,7 +146,7 @@ impl<'a> EligibilityWalker<'a> {
             let runtime_id = producer_runtime_id(kind);
             let action = self
                 .reports
-                .latest_action_for_runtime(runtime_id)
+                .latest_action_for_runtime_since(self.floor, runtime_id)
                 .map_err(|error| HarnessError::Storage(error.to_string()))?;
             let Some(action) = action else {
                 chain.divergences.push(format!(

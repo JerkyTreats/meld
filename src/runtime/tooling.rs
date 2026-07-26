@@ -293,6 +293,23 @@ pub fn try_live_runtime_status(
     .ok()?;
     let record: Option<RuntimeStatusCacheRecord> = response.into_json().ok()?;
     let record = record?;
+    // A recycled port serving a different root must not answer for this
+    // workspace; the snapshot names the root its writer owns.
+    if record.product_root != description.product_root {
+        return None;
+    }
+    if !runtime_ids.is_empty() {
+        let known: std::collections::BTreeSet<&str> = description
+            .desired_runtime_state
+            .iter()
+            .map(|state| state.runtime_id.as_str())
+            .collect();
+        if let Some(unknown) = runtime_ids.iter().find(|id| !known.contains(id.as_str())) {
+            return Some(Err(runtime_message(format!(
+                "unknown runtime id '{unknown}'"
+            ))));
+        }
+    }
     Some(render_live_status(&discovery, record, format, runtime_ids))
 }
 

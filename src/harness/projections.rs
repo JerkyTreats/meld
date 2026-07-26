@@ -19,9 +19,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::harness::boot::HarnessError;
-use crate::runtime::contracts::{
-    RuntimeActionOutcome, RuntimeActionRecord, RuntimeStatusReader as _, WaitingOnDeclaration,
-};
+use crate::runtime::contracts::{RuntimeActionOutcome, RuntimeActionRecord, WaitingOnDeclaration};
 use crate::runtime::ports::ProductEventReplayPort;
 use crate::runtime::supervisor::SupervisorReportStore;
 use meld_world_model::belief::BeliefStore;
@@ -182,7 +180,10 @@ pub struct UserProjection {
     /// One row per runtime observed in the retained window.
     pub couplings: Vec<CouplingStatus>,
     /// Dirty belief keys currently queued, when the store is readable.
+    /// The count saturates at the read bound; the flag says so.
     pub dirty_key_depth: Option<u64>,
+    /// True when more dirty keys exist past the reported depth.
+    pub dirty_key_depth_saturated: bool,
 }
 
 /// Read surfaces the projection derivations consume.
@@ -193,6 +194,9 @@ pub struct ProjectionSources<'a> {
     pub replay: Option<&'a ProductEventReplayPort>,
     /// Belief store for queue depths, when the composition opened it.
     pub belief: Option<&'a BeliefStore>,
+    /// Sequence floor fencing report reads to one session; zero reads
+    /// the whole retained window.
+    pub action_floor: u64,
 }
 
 /// Derive the subagent's scoped diff since its watermark.
@@ -213,7 +217,7 @@ pub fn subagent(
         .filter_map(|runtime_id| {
             sources
                 .reports
-                .latest_action_for_runtime(runtime_id)
+                .latest_action_for_runtime_since(sources.action_floor, runtime_id)
                 .map_err(|error| HarnessError::Storage(error.to_string()))
                 .transpose()
         })
@@ -257,7 +261,7 @@ pub fn parent(
     )?;
     let recent = sources
         .reports
-        .read_recent_actions(ACTION_WINDOW)
+        .read_recent_actions_since(sources.action_floor, ACTION_WINDOW)
         .map_err(|error| HarnessError::Storage(error.to_string()))?;
     let mut trajectory_signatures = Vec::new();
     for runtime_id in &request.scope.actor_ids {
@@ -280,7 +284,7 @@ pub fn parent(
 pub fn user(sources: &ProjectionSources<'_>) -> Result<UserProjection, HarnessError> {
     let recent = sources
         .reports
-        .read_recent_actions(ACTION_WINDOW)
+        .read_recent_actions_since(sources.action_floor, ACTION_WINDOW)
         .map_err(|error| HarnessError::Storage(error.to_string()))?;
     let mut couplings: std::collections::BTreeMap<String, CouplingStatus> =
         std::collections::BTreeMap::new();
@@ -303,19 +307,19 @@ pub fn user(sources: &ProjectionSources<'_>) -> Result<UserProjection, HarnessEr
         row.waiting_on = action.waiting_on.clone();
         row.latest_action_id = Some(action.action_id.clone());
     }
-    let dirty_key_depth = match sources.belief {
-        Some(belief) => Some(
-            belief
+    let (dirty_key_depth, dirty_key_depth_saturated) = match sources.belief {
+        Some(belief) => {
+            let (states, more_available) = belief
                 .dirty_key_states_bounded(ACTION_WINDOW)
-                .map_err(|error| HarnessError::Storage(error.to_string()))?
-                .0
-                .len() as u64,
-        ),
-        None => None,
+                .map_err(|error| HarnessError::Storage(error.to_string()))?;
+            (Some(states.len() as u64), more_available)
+        }
+        None => (None, false),
     };
     Ok(UserProjection {
         couplings: couplings.into_values().collect(),
         dirty_key_depth,
+        dirty_key_depth_saturated,
     })
 }
 
