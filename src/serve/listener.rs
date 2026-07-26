@@ -34,6 +34,7 @@ pub struct ServeHandle {
     addr: SocketAddr,
     stop: Arc<AtomicBool>,
     workers: Vec<JoinHandle<()>>,
+    advertised_root: Option<std::path::PathBuf>,
 }
 
 impl ServeHandle {
@@ -51,6 +52,9 @@ impl ServeHandle {
         self.stop.store(true, Ordering::SeqCst);
         for worker in self.workers.drain(..) {
             let _ = worker.join();
+        }
+        if let Some(root) = self.advertised_root.take() {
+            crate::serve::discovery::remove(&root);
         }
     }
 }
@@ -93,7 +97,22 @@ pub fn serve(sources: ServeSources, port: u16) -> Result<ServeHandle, HarnessErr
         addr,
         stop,
         workers,
+        advertised_root: None,
     })
+}
+
+/// Serve and advertise the bound address under the product root, so a
+/// second process can find the live surface instead of hitting the
+/// store locks (the survey's concurrent-status finding).
+pub fn serve_with_discovery(
+    sources: ServeSources,
+    port: u16,
+    product_root: &std::path::Path,
+) -> Result<ServeHandle, HarnessError> {
+    let mut handle = serve(sources, port)?;
+    crate::serve::discovery::write(product_root, handle.addr).map_err(HarnessError::Io)?;
+    handle.advertised_root = Some(product_root.to_path_buf());
+    Ok(handle)
 }
 
 fn worker_loop(server: &Server, sources: &ServeSources, stop: &AtomicBool) {

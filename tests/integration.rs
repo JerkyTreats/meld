@@ -38,6 +38,7 @@ mod product_storage_assembly;
 mod progress_observability;
 mod provider_cli;
 mod runtime_cli;
+mod runtime_status_live;
 mod store_integration;
 mod task_artifact_repo;
 mod task_bottom_up_compile_shape;

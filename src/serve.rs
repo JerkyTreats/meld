@@ -14,6 +14,7 @@
 //! substrate does not serve has a consumer defect, never an argument for
 //! widening the substrate.
 
+pub mod discovery;
 pub mod listener;
 pub mod routes;
 pub mod sources;
