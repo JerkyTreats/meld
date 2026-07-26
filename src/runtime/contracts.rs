@@ -604,9 +604,9 @@ pub struct RuntimeActionRecord {
     /// Domain-owned waiting-on declarations carried from the tick report.
     ///
     /// Appended last deliberately: the report store's encoding is bincode,
-    /// which is not self-describing, so pre-field records decode through
-    /// [`RuntimeActionRecordCompatV1`] and every later field must also
-    /// append at the end.
+    /// which is not self-describing, so a pre-field record hits
+    /// end-of-input here, falls back to [`RuntimeActionRecordCompatV1`],
+    /// and every later field must also append at the end.
     pub waiting_on: Vec<WaitingOnDeclaration>,
 }
 

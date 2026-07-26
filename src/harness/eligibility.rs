@@ -20,6 +20,9 @@ use meld_events::DomainObjectRef;
 use meld_world_model::world_state::graph::store::TraversalStore;
 use serde::{Deserialize, Serialize};
 
+use meld_execution::waiting::conditions as execution_conditions;
+use meld_world_model::waiting::conditions as world_model_conditions;
+
 use crate::harness::boot::HarnessError;
 use crate::runtime::contracts::WaitingOnDeclaration;
 use crate::runtime::supervisor::SupervisorReportStore;
@@ -143,10 +146,21 @@ impl<'a> EligibilityWalker<'a> {
             };
             let relevant = relevant_declarations(&action.waiting_on, &question.subject_key);
             if relevant.is_empty() {
-                chain.divergences.push(format!(
-                    "{runtime_id} recorded no waiting-on declaration on its last tick; \
-                     its selector found eligible work or committed"
-                ));
+                // Two different truths: a tick with no declarations found
+                // eligible work; a tick whose declarations all concern
+                // other subjects is quiet only about this subject.
+                if action.waiting_on.is_empty() {
+                    chain.divergences.push(format!(
+                        "{runtime_id} recorded no waiting-on declaration on its last tick; \
+                         its selector found eligible work or committed"
+                    ));
+                } else {
+                    chain.divergences.push(format!(
+                        "{runtime_id} recorded {} waiting-on declarations on its last tick, \
+                         none concerning the asked subject",
+                        action.waiting_on.len()
+                    ));
+                }
                 break;
             }
 
@@ -178,7 +192,7 @@ impl<'a> EligibilityWalker<'a> {
     /// is available: the survey's stall is not just a missing perspective
     /// but a subject key the anchor vocabulary has never contained.
     fn divergence_for(&self, declaration: &WaitingOnDeclaration) -> Result<String, HarnessError> {
-        if declaration.condition != "graph_anchor_absent" {
+        if declaration.condition != world_model_conditions::GRAPH_ANCHOR_ABSENT {
             return Ok(format!("{}: {}", declaration.condition, declaration.detail));
         }
         let Some((traversal, subject_key)) = self.traversal.zip(declaration.subject_key.as_deref())
@@ -223,16 +237,23 @@ fn producer_runtime_id(kind: AbsentRecordKind) -> &'static str {
 /// The upstream absence one waiting-on condition resolves to, when the
 /// coupling vocabulary names one; `None` terminates the chain.
 fn next_question_kind(condition: &str) -> Option<AbsentRecordKind> {
-    match condition {
-        "no_ready_tasks" | "upstream_artifact_unavailable" => {
-            Some(AbsentRecordKind::TaskNetworkPlan)
-        }
-        "no_active_goals" => Some(AbsentRecordKind::GoalCommand),
-        "no_undelivered_revisions" | "no_pending_satisfaction_reviews" => {
-            Some(AbsentRecordKind::BeliefRevision)
-        }
-        "belief_work_ineligible" => Some(AbsentRecordKind::Evidence),
-        _ => None,
+    // The vocabulary is compiled from the emitting domains' frozen
+    // constants, so a domain rename breaks this match at build time
+    // instead of silently changing the substrate's answer.
+    if condition == execution_conditions::NO_READY_TASKS
+        || condition == execution_conditions::UPSTREAM_ARTIFACT_UNAVAILABLE
+    {
+        Some(AbsentRecordKind::TaskNetworkPlan)
+    } else if condition == execution_conditions::NO_ACTIVE_GOALS {
+        Some(AbsentRecordKind::GoalCommand)
+    } else if condition == world_model_conditions::NO_UNDELIVERED_REVISIONS
+        || condition == world_model_conditions::NO_PENDING_SATISFACTION_REVIEWS
+    {
+        Some(AbsentRecordKind::BeliefRevision)
+    } else if condition == world_model_conditions::BELIEF_WORK_INELIGIBLE {
+        Some(AbsentRecordKind::Evidence)
+    } else {
+        None
     }
 }
 

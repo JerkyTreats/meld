@@ -25,7 +25,7 @@ use crate::agent::AgentSinkReceipt;
 use crate::belief::{BeliefQuery, BeliefStore};
 use crate::error::StorageError;
 use crate::planner::PlannerQuery;
-use crate::waiting::WaitingOnDeclaration;
+use crate::waiting::{conditions, WaitingOnDeclaration};
 use crate::world_state::graph::store::TraversalStore;
 use crate::world_state::graph::TraversalQuery;
 
@@ -251,7 +251,7 @@ impl AgentGoalCurationActor {
         // change it — a revision newer than the delivery cursor.
         if selection.items.is_empty() {
             report.waiting_on.push(WaitingOnDeclaration {
-                condition: "no_undelivered_revisions".to_string(),
+                condition: conditions::NO_UNDELIVERED_REVISIONS.to_string(),
                 subject_key: Some(agent.subject.index_key()),
                 detail: format!(
                     "every subscription of agent '{}' has consumed its latest revision",
@@ -368,7 +368,7 @@ impl AgentSatisfactionCurationActor {
         // waits on a newer revision or an outstanding sink receipt.
         if selection.items.is_empty() {
             report.waiting_on.push(WaitingOnDeclaration {
-                condition: "no_pending_satisfaction_reviews".to_string(),
+                condition: conditions::NO_PENDING_SATISFACTION_REVIEWS.to_string(),
                 subject_key: Some(agent.subject.index_key()),
                 detail: format!(
                     "no unreviewed revision or receipted decision awaits review for agent '{}'",

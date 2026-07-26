@@ -37,7 +37,7 @@ use crate::belief::outcome::mapping::{
 use crate::belief::registry::BeliefFamilyRegistry;
 use crate::belief::runtime::BeliefRuntime;
 use crate::belief::store::BeliefStore;
-use crate::waiting::WaitingOnDeclaration;
+use crate::waiting::{conditions, WaitingOnDeclaration};
 use crate::world_state::graph::store::TraversalStore;
 use crate::world_state::graph::PerspectiveKey;
 
@@ -394,12 +394,12 @@ impl EvidenceIngestionActor {
         // publisher-to-mapping mismatch surfaces exactly here.
         if report.events_replayed == 0 {
             report.waiting_on.push(WaitingOnDeclaration::broad(
-                "ledger_quiet_past_cursor",
+                conditions::LEDGER_QUIET_PAST_CURSOR,
                 format!("no committed events past cursor {}", report.input_after_seq),
             ));
         } else if report.applicable_count == 0 && report.invalid_count == 0 {
             report.waiting_on.push(WaitingOnDeclaration::broad(
-                "no_mappable_events",
+                conditions::NO_MAPPABLE_EVENTS,
                 format!(
                     "{} replayed records matched no source mapping of '{}'",
                     report.events_replayed, self.mapping_id

@@ -7,6 +7,27 @@
 //! computed; it never gates, reorders, or fails semantic work. The
 //! `condition` vocabulary is owned by the emitting actor's domain.
 
+/// Frozen condition vocabulary emitted by execution actors.
+///
+/// These constants are the contract between the emitting selectors and
+/// every downstream consumer (the eligibility walk, the projections, the
+/// debugger surface): both sides compile against the same string, so a
+/// rename cannot silently diverge the substrate's answer.
+pub mod conditions {
+    /// Planning waits on an active goal record.
+    pub const NO_ACTIVE_GOALS: &str = "no_active_goals";
+    /// Dispatch waits on a claimable ready task.
+    pub const NO_READY_TASKS: &str = "no_ready_tasks";
+    /// A dependency edge names a task that does not exist.
+    pub const DEPENDENCY_ENDPOINT_MISSING: &str = "dependency_endpoint_missing";
+    /// The active task graph contains a cycle.
+    pub const DEPENDENCY_CYCLE: &str = "dependency_cycle";
+    /// A conditional edge is not dispatchable in this slice.
+    pub const CONDITIONAL_EDGE_DEFERRED: &str = "conditional_edge_deferred";
+    /// A data-flow edge waits on an upstream artifact.
+    pub const UPSTREAM_ARTIFACT_UNAVAILABLE: &str = "upstream_artifact_unavailable";
+}
+
 /// One domain-owned statement of what would make work eligible.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WaitingOnDeclaration {

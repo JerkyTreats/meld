@@ -206,21 +206,19 @@ fn encode<T: Serialize>(record: &T) -> Result<Vec<u8>, SupervisorStoreError> {
     bincode::serialize(record).map_err(|error| SupervisorStoreError::Codec(error.to_string()))
 }
 
-fn decode<T: DeserializeOwned>(raw: &[u8]) -> Result<T, SupervisorStoreError> {
-    bincode::deserialize(raw).map_err(|error| SupervisorStoreError::Codec(error.to_string()))
-}
-
 /// Decode one action record, falling back to the pre-waiting-on shape.
 ///
-/// Bincode consumes exact bytes, so a record persisted before DBG-016
-/// fails the current-shape decode with trailing-field exhaustion and is
-/// unambiguously re-read through the frozen compat mirror; a current
-/// record can never mis-decode as the shorter legacy shape because the
-/// current shape is tried first.
+/// A legacy record ends exactly at its last field, so decoding it as the
+/// current shape hits end-of-input at the appended waiting-on field and
+/// falls back unambiguously. The fallback itself rejects trailing bytes:
+/// it accepts only byte-exact legacy records, so a future decode failure
+/// localized to the record's tail can never be mistaken for a legacy
+/// record with the tail silently discarded.
 fn decode_action(raw: &[u8]) -> Result<RuntimeActionRecord, SupervisorStoreError> {
     match bincode::deserialize::<RuntimeActionRecord>(raw) {
         Ok(record) => Ok(record),
-        Err(_) => decode::<RuntimeActionRecordCompatV1>(raw).map(RuntimeActionRecord::from),
+        Err(current_error) => decode_exact::<RuntimeActionRecordCompatV1>(raw, current_error)
+            .map(RuntimeActionRecord::from),
     }
 }
 
@@ -229,10 +227,28 @@ fn decode_action(raw: &[u8]) -> Result<RuntimeActionRecord, SupervisorStoreError
 fn decode_snapshot(raw: &[u8]) -> Result<RuntimeStatusCacheRecord, SupervisorStoreError> {
     match bincode::deserialize::<RuntimeStatusCacheRecord>(raw) {
         Ok(record) => Ok(record),
-        Err(_) => {
-            decode::<RuntimeStatusCacheRecordCompatV1>(raw).map(RuntimeStatusCacheRecord::from)
-        }
+        Err(current_error) => decode_exact::<RuntimeStatusCacheRecordCompatV1>(raw, current_error)
+            .map(RuntimeStatusCacheRecord::from),
     }
+}
+
+/// Byte-exact legacy decode: same fixint encoding as the store's writes,
+/// but trailing bytes are an error rather than silently discarded.
+fn decode_exact<T: DeserializeOwned>(
+    raw: &[u8],
+    current_error: bincode::Error,
+) -> Result<T, SupervisorStoreError> {
+    use bincode::Options as _;
+    bincode::DefaultOptions::new()
+        .with_fixint_encoding()
+        .with_no_limit()
+        .deserialize(raw)
+        .map_err(|legacy_error| {
+            SupervisorStoreError::Codec(format!(
+                "record decodes as neither the current shape ({current_error}) nor the \
+                 byte-exact legacy shape ({legacy_error})"
+            ))
+        })
 }
 
 fn decode_sequence(key: &[u8]) -> Result<u64, SupervisorStoreError> {
@@ -574,5 +590,17 @@ mod tests {
         // translated forward.
         assert_eq!(decoded.schema_version, 1);
         assert_eq!(decoded.recent_actions, vec![embedded]);
+    }
+
+    #[test]
+    fn the_legacy_fallback_rejects_trailing_bytes() {
+        let (_temp, reports) = open_report_store();
+        let expected = action("action-legacy", "event.append", 10, 0, 1);
+        let mut bytes = legacy_bytes(&expected);
+        bytes.extend_from_slice(b"garbage-tail");
+        reports.actions.insert(0u64.to_be_bytes(), bytes).unwrap();
+
+        let error = reports.read_recent_actions(10).unwrap_err();
+        assert!(error.to_string().contains("neither the current shape"));
     }
 }

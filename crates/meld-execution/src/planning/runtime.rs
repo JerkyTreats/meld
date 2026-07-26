@@ -22,7 +22,7 @@ use crate::task::TaskDefinitionCompiler;
 use crate::task_network::{
     command, mutation::ReadPrecondition, store::SledTaskNetworkStore, Command as TaskNetworkCommand,
 };
-use crate::waiting::WaitingOnDeclaration;
+use crate::waiting::{conditions, WaitingOnDeclaration};
 use meld_lang::{
     evaluate, substitute, validate, Bindings, Composition, CostEstimate, Effect, EvalResult,
     Operator, Proposition, Resolution, Step, StepKind, WorldState,
@@ -318,7 +318,7 @@ where
         // what would change that -- an accepted goal command.
         if active_goal_count == 0 {
             report.waiting_on.push(WaitingOnDeclaration::broad(
-                "no_active_goals",
+                conditions::NO_ACTIVE_GOALS,
                 "no active goal record exists in execution-owned storage",
             ));
         }

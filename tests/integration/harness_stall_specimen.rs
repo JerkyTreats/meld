@@ -256,6 +256,36 @@ fn the_anchor_stall_is_recorded_and_the_walk_names_the_dead_end() {
             divergence.contains("appears in no anchor record"),
             "the divergence presents the subject-vocabulary mismatch: {divergence}"
         );
+
+        // A real coupling hop over live emissions: an absent goal command
+        // walks through curation's quiet selection to the same anchor
+        // divergence, so the condition vocabulary the walk compiles
+        // against is proven to match what the domains actually emit.
+        let goal_chain = EligibilityWalker::new(&reports)
+            .with_traversal(traversal)
+            .why_absent(EligibilityQuestion {
+                kind: AbsentRecordKind::GoalCommand,
+                subject_key: Some(format!("workspace_fs::node::{SUBJECT_ID}")),
+            })
+            .unwrap();
+        let hops: Vec<&str> = goal_chain
+            .links
+            .iter()
+            .map(|link| link.runtime_id.as_str())
+            .collect();
+        assert_eq!(
+            hops,
+            vec![
+                "world_model.agent_goal_curation",
+                "world_model.belief_assessment",
+            ],
+            "the goal absence walks one live coupling hop; divergences: {:?}",
+            goal_chain.divergences
+        );
+        assert!(goal_chain
+            .divergences
+            .iter()
+            .any(|divergence| divergence.contains("appears in no anchor record")));
     }
 
     // The manifest records the stalled step schedule as the durable

@@ -21,7 +21,7 @@ use crate::belief::runtime::BeliefRuntime;
 use crate::belief::selection::{BeliefSubjectBinding, BeliefWorkKind, BeliefWorkSelector};
 use crate::belief::store::BeliefStore;
 use crate::error::StorageError;
-use crate::waiting::WaitingOnDeclaration;
+use crate::waiting::{conditions, WaitingOnDeclaration};
 use crate::world_state::graph::query::TraversalQuery;
 use crate::world_state::graph::store::TraversalStore;
 use crate::world_state::graph::PerspectiveKey;
@@ -176,9 +176,15 @@ impl BeliefAssessmentActor {
         // The hardened DBG-016 rule: whenever the selector finds nothing
         // eligible, the report says what would change that, so the
         // eligibility walk always has a chain to resolve.
+        if selection.items.is_empty() && families.is_empty() && report.waiting_on.is_empty() {
+            report.waiting_on.push(WaitingOnDeclaration::broad(
+                conditions::BELIEF_FAMILIES_UNCONFIGURED,
+                "no belief family id is configured for this actor",
+            ));
+        }
         if selection.items.is_empty() && !families.is_empty() {
             report.waiting_on.push(WaitingOnDeclaration::broad(
-                "belief_work_ineligible",
+                conditions::BELIEF_WORK_INELIGIBLE,
                 format!(
                     "no dirty keys and no unassessed subject bindings across {} installed \
                      families and {} configured subjects",
@@ -226,7 +232,7 @@ impl BeliefAssessmentActor {
                 Ok(None) => {}
                 Err(StorageError::Backpressure(message)) => {
                     report.waiting_on.push(WaitingOnDeclaration::about(
-                        "assessment_lease_held",
+                        conditions::ASSESSMENT_LEASE_HELD,
                         item_id.clone(),
                         format!("an active lease owns this key: {message}"),
                     ));
@@ -271,17 +277,29 @@ impl BeliefAssessmentActor {
     ) {
         match kind {
             BeliefWorkKind::InitialAssessment { binding } => {
-                let anchor = TraversalQuery::new(self.traversal.as_ref())
+                // A read failure must not mint a false absence: only a
+                // successful read that finds nothing declares the anchor
+                // absent; an errored read degrades to the generic block.
+                let anchor = match TraversalQuery::new(self.traversal.as_ref())
                     .current_anchor_for_subject(
                         &binding.subject,
                         &binding.anchor_perspective_kind,
                         &binding.anchor_perspective_id,
-                    )
-                    .ok()
-                    .flatten();
+                    ) {
+                    Ok(anchor) => anchor,
+                    Err(_) => {
+                        report.waiting_on.push(WaitingOnDeclaration::about(
+                            conditions::ASSESSMENT_BLOCKED,
+                            item_id,
+                            "initial assessment failed and the anchor precondition \
+                             could not be re-read",
+                        ));
+                        return;
+                    }
+                };
                 if anchor.is_none() {
                     report.waiting_on.push(WaitingOnDeclaration::about(
-                        "graph_anchor_absent",
+                        conditions::GRAPH_ANCHOR_ABSENT,
                         binding.subject.index_key(),
                         format!(
                             "no current anchor for subject {} under {}::{}",
@@ -293,14 +311,14 @@ impl BeliefAssessmentActor {
                     return;
                 }
                 report.waiting_on.push(WaitingOnDeclaration::about(
-                    "assessment_blocked",
+                    conditions::ASSESSMENT_BLOCKED,
                     item_id,
                     "initial assessment failed past the anchor precondition",
                 ));
             }
             BeliefWorkKind::DirtyKey { .. } => {
                 report.waiting_on.push(WaitingOnDeclaration::about(
-                    "assessment_blocked",
+                    conditions::ASSESSMENT_BLOCKED,
                     item_id,
                     "dirty-key assessment failed; the key stays dirty",
                 ));
@@ -325,7 +343,7 @@ impl BeliefAssessmentActor {
                 Ok(Some(revision)) => families.push(revision),
                 Ok(None) => {
                     report.waiting_on.push(WaitingOnDeclaration::broad(
-                        "belief_family_absent",
+                        conditions::BELIEF_FAMILY_ABSENT,
                         format!("belief family '{family_id}' has no installed registry revision"),
                     ));
                     report.retryable_errors.push(issue(

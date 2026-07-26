@@ -76,7 +76,7 @@ use crate::task_network::terminal_recording::{
     load_package_run_artifact_records, package_route_task_lineage,
     package_run_id_for_task_instance, record_package_run_terminal_outcome, PackageRunRecording,
 };
-use crate::waiting::WaitingOnDeclaration;
+use crate::waiting::{conditions, WaitingOnDeclaration};
 use async_trait::async_trait;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -886,7 +886,7 @@ where
         }
         if ready.task_instance_ids.is_empty() && ready.diagnostics.is_empty() {
             report.waiting_on.push(WaitingOnDeclaration::broad(
-                "no_ready_tasks",
+                conditions::NO_READY_TASKS,
                 format!("no claimable task at network revision {}", ready.revision),
             ));
         }
@@ -1215,9 +1215,9 @@ fn rejection_error(rejection: &Rejection) -> DispatchPortError {
 /// Stable waiting-on condition vocabulary for readiness diagnostics.
 fn readiness_condition(code: &ReadinessDiagnosticCode) -> &'static str {
     match code {
-        ReadinessDiagnosticCode::MissingEndpoint => "dependency_endpoint_missing",
-        ReadinessDiagnosticCode::CycleDetected => "dependency_cycle",
-        ReadinessDiagnosticCode::ConditionalDeferred => "conditional_edge_deferred",
-        ReadinessDiagnosticCode::ArtifactUnavailable => "upstream_artifact_unavailable",
+        ReadinessDiagnosticCode::MissingEndpoint => conditions::DEPENDENCY_ENDPOINT_MISSING,
+        ReadinessDiagnosticCode::CycleDetected => conditions::DEPENDENCY_CYCLE,
+        ReadinessDiagnosticCode::ConditionalDeferred => conditions::CONDITIONAL_EDGE_DEFERRED,
+        ReadinessDiagnosticCode::ArtifactUnavailable => conditions::UPSTREAM_ARTIFACT_UNAVAILABLE,
     }
 }
