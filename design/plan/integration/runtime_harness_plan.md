@@ -40,6 +40,8 @@ Key seams: the harness reads stores only after a run or through served surfaces 
 
 ### Phase 2 — Waiting-on declarations
 
+Status: closed 2026-07-26, merged at `252898d` on `runtime-completion`. The carrier and durable field landed with byte-exact bincode compatibility (`eaa437b`), the five domain emitters with frozen per-domain condition vocabularies (`5e6263d`), and the eligibility walk over the recorded declarations (`d52c63b`); pillar-tier fresh review passed with one blocking finding (unpinned condition vocabulary) corrected by domain-exported constants compiled into both emitters and walk, plus a live multi-hop chain assertion (`3e44e6e`). Exit evidence: the stall specimen produces per-tick declarations naming the absent anchor and exact subject key, serves them back durably, and resolves the absent revision — and an absent goal command across a real coupling hop — to the anchor divergence with the subject-vocabulary mismatch; legacy pre-field records decode unchanged from real bincode bytes with trailing-byte rejection on the fallback. Residual for phase three: the eligibility walk reads per-runtime latest actions across boots and needs session fencing before the served surface exposes it over reused roots.
+
 Goal: the eligibility walk — DBG-016, the register's one chartered contract change.
 
 Tasks:
