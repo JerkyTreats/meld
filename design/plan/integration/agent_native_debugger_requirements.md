@@ -4,6 +4,8 @@ Date: 2026-07-24
 Status: requirements gathering now; isolate prototyping gated per registration set; full-composition sessions gated by runtime completion
 Scope: interaction model for agentic tooling driving isolated and composed Meld domain runtimes as part of the development workflow
 
+Amendment date: 2026-07-25 — the information model and customer taxonomy added from the live runtime survey discussion, register entries DBG-015 through DBG-019 added, and the presentation posture revised: the user-facing visual projection joins this workstream, anchored on the information model and designed last.
+
 ## Concern
 
 Runtime completion delivers isolate primitives: assembly from an explicit registration set, a public actor bounded-step contract, canonical event injection, typed query facades, preserved per-tick reports, and native domain emission. This workstream determines what sits on top: how a coding agent — Claude, Codex, or a local model — natively interacts with live Meld runtimes while implementing experiments, features, and use cases.
@@ -60,6 +62,24 @@ append contradicting evidence  → step both → watch the posterior move
 The connection between the two isolates is nothing but shared durable state: belief revisions and subscription cursors on one side, delivery selection on the other. Stepping actor-by-actor makes the cross-domain handoff visible at exactly the granularity the on-paper worked examples describe. When the Strategy slice lands, the same session gains a third isolate and the draft gate becomes observable at the named curation port.
 
 The use-case walks in [Use Case Catalog](../../use_cases/README.md) are the scripted form of this scenario: an on-paper derivation becomes an executable session.
+
+## Information model
+
+The harness is an information hierarchy before it is any surface. Three customers consume one shared evidence record at three altitudes, and every surface is a projection of that record. Starting from visualization and working backward is the recorded anti-goal: a generic analytics dashboard that looks complete and communicates nothing.
+
+| Customer | Question | Cadence and shape |
+|---|---|---|
+| Subagent | Did my last action move the coupling I am working on? | High frequency, narrow, machine-shaped: a scoped causal diff since its watermark with a blocking watch |
+| Parent agent | Did anything change outside the scope I delegated, or does in-scope progress look wrong? | Exception stream plus trajectory signatures: spinning, stuck, budget exhaustion; silent when nothing crosses the boundary |
+| User | What is the flow and shape of the real runtime? | Low frequency, whole-loop: coupling flow rates, queue depths at each coupling, thread exploration of one piece of work end to end |
+
+The shared primitive is the causal record the runtime already persists: events cite source records, evidence cites publications, revisions cite evidence and theory revisions, decisions cite revisions, receipts cite decisions, task nodes carry full lineage, and epochs cite triggering revisions. Two derived walks make it navigable. The provenance walk answers why a record exists. The eligibility walk answers why a record does not exist — what would have to exist for a quiet actor to commit work. The second walk is the substance of failure context: not that an error fired, but that given the recorded chain the error was determined earlier, at a nameable divergence. Selectors compute eligibility every tick and currently discard it; recording it is the one contract change this model charters, DBG-016.
+
+Delegation scope is a first-class filter: a named set of subjects, actors, and couplings granted by a parent when it spawns a worker. The subagent projection filters inside the scope, the parent projection filters its complement plus in-scope trajectory anomalies, and the user projection spans the loop. All three projections cite the same record identities, so any party drops to the identical evidence when it chooses to inspect — shared evidence is a property of the record, not of any application.
+
+Worked check against the observed anchor stall: to a subagent the stall reads as a per-tick waiting-on naming the absent anchor for its exact subject key; to a parent it reads as one repeating failure signature whose thread ends at a record that does not exist; to the user it reads as a loop in which exactly one coupling never flowed, with the thread from the genesis fact dead-ending at the same absence and the subject-vocabulary mismatch visible because the selection subject never appears in any anchor record. One record, three altitudes, inevitability legible at each.
+
+One physical constraint binds every live mode: the stores are single-process, so live observation must be served by the running foreground process — the transport-neutral event authority contract already exists for the ledger, and the per-tick report store needs the same remote read surface. Playback reads the session artifact directly after the run.
 
 ## Candidate requirements register
 
@@ -123,6 +143,26 @@ CLI-first, no daemon, functional in sandboxed and remote environments. A Rust AP
 
 A use-case worked example is expressible as a scripted session and its falsification tests as session assertions. Rationale: this closes the loop this project has already committed to — design walks become executable evidence. Ground: the walks exist; sessions do not.
 
+### DBG-015 Causal thread walk
+
+Any record resolves to its transitive provenance thread across domain boundaries. Rationale: failure context is a chain, not a point event. Ground: the references exist piecewise — event provenance, task lineage, belief hydration references, decision input references — and a reader-side index can derive the unified walk without creating a second source of truth.
+
+### DBG-016 Waiting-on declarations
+
+An idle or failing bounded report may carry a domain-owned declaration of what would make work eligible. Rationale: absence explanations are the other half of inevitability; selectors already compute eligibility and discard it. Ground: none today — this is the register's one chartered contract change, an additive field on domain reports translated through the shared tick report.
+
+### DBG-017 Delegation scope projection
+
+A named scope of subjects, actors, and couplings filters the record into the subagent projection — scoped causal diff with blocking watch — and the parent projection — complement exceptions plus trajectory signatures such as attempted-without-committed runs and repeating failure signatures. Rationale: the parent steers on boundary deviations, not on feeds. Ground: worker scopes and subject keys on records suffice for filtering; scope itself is a harness concept requiring no runtime change.
+
+### DBG-018 Multi-party shared session
+
+Extends DBG-008: one session artifact inspectable by subagent, parent agent, and user, with every projection citing shared record identities so any party can inspect the identical evidence on demand. Rationale: steering disputes resolve by dropping one altitude, not by re-running. Ground: the durable stores plus a session manifest of stimuli and steps.
+
+### DBG-019 Standalone harness application through t3code
+
+The harness is a standalone application serving the machine-readable projections first, with the user's visual projection rendered over the same surface, launched, snapshotted, and video-recorded through the t3code preview tooling so agent and user share the same rendered evidence. Rationale: the collaboration environment already drives local applications; adapting to it makes shared inspection structural. Ground: preview tooling exists in the collaboration harness; the live-serve constraint in the information model governs its attach path.
+
 ## Interaction-mode candidates
 
 The exercise selects among, or layers, these modes against the register:
@@ -138,13 +178,13 @@ Selection criteria: agent ergonomics under real workflows, determinism, sandbox 
 
 ## Out of scope
 
-- Dashboards, terminal visualizers, and any presentation surface. They consume the same hooks and come later.
+- Generic dashboards and any presentation surface designed ahead of the information model. The user-projection visual surface is in scope for this workstream, anchored on the information model, designed last, and rejected when it degrades into charts that answer no recorded customer question.
 - Production attach and live debugging of a running steward. This workstream is development-time only.
 - A second runtime. The debugger composes product primitives; a session that behaves differently from the product assembly is a defect of the debugger.
 
 ## Exit criteria
 
-The workstream is ready to hand off to implementation when the register above is frozen with each entry accepted, amended, or rejected against observed agent workflows; the interaction mode set is selected against the criteria; and one prototype session has reproduced the worked Goal-and-Belief scenario end to end during Strategy first-slice development.
+The workstream is ready to hand off to implementation when the register above is frozen with each entry accepted, amended, or rejected against observed agent workflows; the interaction mode set is selected against the criteria; one prototype session has reproduced the worked Goal-and-Belief scenario end to end during Strategy first-slice development; and one real stall has been presented at all three customer altitudes from one session record.
 
 ## Read with
 
