@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 use crate::runtime::ports::DocsTaskEvidenceReplayReport;
 
 /// Current schema version for runtime status cache records.
-pub const RUNTIME_STATUS_CACHE_SCHEMA_VERSION: u16 = 1;
+/// Version 2 embeds action records carrying waiting-on declarations
+/// (DBG-016); version 1 records decode through the compat mirror.
+pub const RUNTIME_STATUS_CACHE_SCHEMA_VERSION: u16 = 2;
 
 /// Bounded work request shared by runtime supervisor adapters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,6 +111,28 @@ pub struct WorkerTickReport {
     pub fatal_errors: Vec<WorkerTickIssue>,
     /// True when the worker stopped because its budget was consumed.
     pub budget_exhausted: bool,
+    /// Domain-owned declarations of what would make work eligible,
+    /// translated from the owning domain's bounded report (DBG-016).
+    pub waiting_on: Vec<WaitingOnDeclaration>,
+}
+
+/// Domain-owned declaration of what would make idle or failing work
+/// eligible (DBG-016).
+///
+/// Selectors compute eligibility every tick; the declaration records what
+/// they found absent instead of discarding it, so the eligibility walk can
+/// resolve why a record does not exist to a nameable divergence. Emission
+/// is observational and derives only from state the tick already computed:
+/// a declaration never gates, reorders, or fails semantic work. The
+/// `condition` vocabulary belongs to the emitting domain.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WaitingOnDeclaration {
+    /// Stable domain-vocabulary code naming the awaited condition.
+    pub condition: String,
+    /// Exact subject key the condition is about, when the domain knows it.
+    pub subject_key: Option<String>,
+    /// Human-readable detail in the emitting domain's vocabulary.
+    pub detail: String,
 }
 
 /// Full cache record written by one runtime status cache publisher.
@@ -130,6 +154,45 @@ pub struct RuntimeStatusCacheRecord {
     pub recent_actions: Vec<RuntimeActionRecord>,
     /// Cache write time in milliseconds.
     pub written_at_ms: u64,
+}
+
+/// Byte shape of [`RuntimeStatusCacheRecord`] whose embedded actions
+/// predate the waiting-on field.
+///
+/// Snapshots persisted before DBG-016 embed [`RuntimeActionRecordCompatV1`]
+/// rows; a snapshot with a non-empty action window fails the current-shape
+/// decode and falls back here. Field order must never change.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct RuntimeStatusCacheRecordCompatV1 {
+    pub schema_version: u16,
+    pub product_root: PathBuf,
+    pub supervisor_store_path: PathBuf,
+    pub status_cache_path: PathBuf,
+    pub writer: RuntimeStatusWriterIdentity,
+    pub snapshot: RuntimeStatusSnapshot,
+    pub recent_actions: Vec<RuntimeActionRecordCompatV1>,
+    pub written_at_ms: u64,
+}
+
+impl From<RuntimeStatusCacheRecordCompatV1> for RuntimeStatusCacheRecord {
+    fn from(record: RuntimeStatusCacheRecordCompatV1) -> Self {
+        RuntimeStatusCacheRecord {
+            // The stored version is preserved verbatim: the record remains
+            // what its writer wrote, only its byte shape is translated.
+            schema_version: record.schema_version,
+            product_root: record.product_root,
+            supervisor_store_path: record.supervisor_store_path,
+            status_cache_path: record.status_cache_path,
+            writer: record.writer,
+            snapshot: record.snapshot,
+            recent_actions: record
+                .recent_actions
+                .into_iter()
+                .map(RuntimeActionRecord::from)
+                .collect(),
+            written_at_ms: record.written_at_ms,
+        }
+    }
 }
 
 impl RuntimeStatusCacheRecord {
@@ -538,6 +601,57 @@ pub struct RuntimeActionRecord {
     pub issues: Vec<RuntimeActionIssueSummary>,
     /// Whether sensitive values were absent or redacted.
     pub redaction: RuntimeRedactionState,
+    /// Domain-owned waiting-on declarations carried from the tick report.
+    ///
+    /// Appended last deliberately: the report store's encoding is bincode,
+    /// which is not self-describing, so pre-field records decode through
+    /// [`RuntimeActionRecordCompatV1`] and every later field must also
+    /// append at the end.
+    pub waiting_on: Vec<WaitingOnDeclaration>,
+}
+
+/// Byte shape of [`RuntimeActionRecord`] before the waiting-on field.
+///
+/// Compatibility mirror for the bincode report store: records persisted
+/// before DBG-016 end exactly at `redaction`, and bincode consumes exact
+/// bytes, so decoding them as the current shape fails and falls back here.
+/// Field order must never change.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct RuntimeActionRecordCompatV1 {
+    pub action_id: String,
+    pub observed_at_ms: u64,
+    pub runtime_id: String,
+    pub domain_id: String,
+    pub actor_id: String,
+    pub object_ref: RuntimeObjectRef,
+    pub action_kind: RuntimeActionKind,
+    pub cause: RuntimeActionCause,
+    pub outcome: RuntimeActionOutcome,
+    pub metrics: RuntimeActionMetrics,
+    pub checkpoints: Vec<RuntimeCheckpointObservation>,
+    pub issues: Vec<RuntimeActionIssueSummary>,
+    pub redaction: RuntimeRedactionState,
+}
+
+impl From<RuntimeActionRecordCompatV1> for RuntimeActionRecord {
+    fn from(record: RuntimeActionRecordCompatV1) -> Self {
+        RuntimeActionRecord {
+            action_id: record.action_id,
+            observed_at_ms: record.observed_at_ms,
+            runtime_id: record.runtime_id,
+            domain_id: record.domain_id,
+            actor_id: record.actor_id,
+            object_ref: record.object_ref,
+            action_kind: record.action_kind,
+            cause: record.cause,
+            outcome: record.outcome,
+            metrics: record.metrics,
+            checkpoints: record.checkpoints,
+            issues: record.issues,
+            redaction: record.redaction,
+            waiting_on: Vec::new(),
+        }
+    }
 }
 
 impl RuntimeActionRecord {
@@ -617,6 +731,7 @@ impl RuntimeActionRecord {
             checkpoints,
             issues,
             redaction: RuntimeRedactionState::NotNeeded,
+            waiting_on: report.waiting_on,
         }
     }
 }
@@ -922,6 +1037,7 @@ impl WorkerTickReport {
                 message: message.into(),
             }],
             budget_exhausted: false,
+            waiting_on: Vec::new(),
         }
     }
 }
@@ -968,6 +1084,7 @@ impl From<GraphCatchUpReport> for WorkerTickReport {
                 })
                 .collect(),
             budget_exhausted: report.budget_exhausted,
+            waiting_on: Vec::new(),
         }
     }
 }
@@ -1014,6 +1131,7 @@ impl From<PublicationBridgeReport> for WorkerTickReport {
                 })
                 .collect(),
             budget_exhausted: report.budget_exhausted,
+            waiting_on: Vec::new(),
         }
     }
 }
@@ -1060,6 +1178,7 @@ impl From<PublicationRuntimeReport> for WorkerTickReport {
                 })
                 .collect(),
             budget_exhausted: report.budget_exhausted,
+            waiting_on: Vec::new(),
         }
     }
 }
@@ -1106,6 +1225,7 @@ impl From<PlanningRuntimeActorReport> for WorkerTickReport {
                 })
                 .collect(),
             budget_exhausted: report.budget_exhausted,
+            waiting_on: Vec::new(),
         }
     }
 }
@@ -1140,6 +1260,7 @@ impl From<AgentRuntimeReport> for WorkerTickReport {
                 .collect(),
             fatal_errors: report.fatal_errors.into_iter().map(string_issue).collect(),
             budget_exhausted: report.budget_exhausted,
+            waiting_on: Vec::new(),
         }
     }
 }
@@ -1170,6 +1291,7 @@ impl From<DocsTaskEvidenceReplayReport> for WorkerTickReport {
             retryable_errors: Vec::new(),
             fatal_errors: Vec::new(),
             budget_exhausted: false,
+            waiting_on: Vec::new(),
         }
     }
 }
@@ -1408,6 +1530,7 @@ mod tests {
             retryable_errors: Vec::new(),
             fatal_errors: Vec::new(),
             budget_exhausted: false,
+            waiting_on: Vec::new(),
         };
 
         let action = RuntimeActionRecord::from_worker_tick(
@@ -1464,6 +1587,7 @@ mod tests {
             retryable_errors: Vec::new(),
             fatal_errors: Vec::new(),
             budget_exhausted: true,
+            waiting_on: Vec::new(),
         };
 
         let no_work = RuntimeActionRecord::from_worker_tick(
@@ -1541,6 +1665,7 @@ mod tests {
             }],
             issues: Vec::new(),
             redaction: RuntimeRedactionState::NotNeeded,
+            waiting_on: Vec::new(),
         };
         let snapshot = RuntimeStatusSnapshot {
             instance: Some(RuntimeStatusInstanceSummary {

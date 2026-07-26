@@ -2269,6 +2269,7 @@ impl EventAppendRuntimeHandle {
             retryable_errors,
             fatal_errors: Vec::new(),
             budget_exhausted: false,
+            waiting_on: Vec::new(),
         };
         self.last = Some((watermark, dropped));
         report
@@ -2511,6 +2512,7 @@ impl PublicationHandle {
             retryable_errors: Vec::new(),
             fatal_errors: Vec::new(),
             budget_exhausted: false,
+            waiting_on: Vec::new(),
         };
         let request = PublishAggregateRequest {
             session_id: self.bindings.session_id.clone(),
@@ -2668,6 +2670,7 @@ fn belief_assessment_worker_report(
             })
             .collect(),
         budget_exhausted: report.budget_exhausted,
+        waiting_on: Vec::new(),
     }
 }
 
@@ -2708,6 +2711,7 @@ fn evidence_ingestion_worker_report(report: EvidenceIngestionReport) -> WorkerTi
             })
             .collect(),
         budget_exhausted: report.more_available,
+        waiting_on: Vec::new(),
     }
 }
 
@@ -2753,6 +2757,7 @@ fn agent_step_worker_report(
             })
             .collect(),
         budget_exhausted: report.budget_exhausted,
+        waiting_on: Vec::new(),
     }
 }
 
@@ -2790,6 +2795,7 @@ fn dispatch_worker_report(report: DispatchTickReport) -> WorkerTickReport {
             })
             .collect(),
         budget_exhausted: report.budget_exhausted,
+        waiting_on: Vec::new(),
     }
 }
 
