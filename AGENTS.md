@@ -24,6 +24,7 @@
 - [Complex Change Workflow Governance](governance/complex_change_workflow.md)
 - [Storage Policy](governance/storage_policy.md)
 - [Semantic Unit Preservation Policy](governance/semantic_unit_preservation_policy.md)
+- [Harness Development Policy](governance/harness_development_policy.md)
 
 ## Commit Governance Rule
 
