@@ -21,6 +21,7 @@ mod execution_projection;
 mod frame_queue;
 mod generation_parity;
 mod goal_acceptance;
+mod harness_run;
 mod hasher_verification;
 mod init_command;
 mod logging_default;

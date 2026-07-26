@@ -63,6 +63,9 @@ anyhow = "1.0"
 # Concurrency
 parking_lot = "0.12"
 
+# Temporary run roots for the interactive runtime harness
+tempfile = "3.8"
+
 # Async support
 async-trait = "0.1"
 

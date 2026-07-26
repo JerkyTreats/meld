@@ -64,6 +64,30 @@ impl RegistrationSet {
     pub fn kind_of(&self, runtime_id: &str) -> Option<RegistrationKind> {
         self.get(runtime_id).map(|registration| registration.kind)
     }
+
+    /// Intersect this set with an operator's desired runtime ids.
+    ///
+    /// This is the contract every supervisor boot composes through: the
+    /// complete selection leaves the set intact, a runtime-id subset keeps
+    /// only registrations naming a desired id, and an empty intersection
+    /// is `None` so the supervisor never sees a registration for an absent
+    /// desired runtime.
+    pub fn intersect_desired_runtime_ids<'a>(
+        &self,
+        desired_runtime_ids: impl IntoIterator<Item = &'a str>,
+    ) -> Option<RegistrationSet> {
+        let desired: std::collections::BTreeSet<&str> = desired_runtime_ids.into_iter().collect();
+        let registrations = self
+            .registrations
+            .iter()
+            .filter(|registration| desired.contains(registration.runtime_id.as_str()))
+            .cloned()
+            .collect::<Vec<_>>();
+        if registrations.is_empty() {
+            return None;
+        }
+        Some(RegistrationSet { registrations })
+    }
 }
 
 /// Truthful lifecycle projection for one registration.

@@ -429,31 +429,14 @@ fn runtime_run(
     format_runtime_run_result(&run_result, options.format)
 }
 
-/// Intersect the composed registration set with the desired runtime state.
-///
-/// The default/complete operator selection leaves the derived set intact.
-/// An operator runtime-id subset keeps only registrations naming a desired
-/// runtime id; an empty intersection is omitted entirely so the supervisor
-/// never sees a registration for an absent desired runtime.
+/// Intersect the composed registration set with the desired runtime state
+/// through the registration domain contract.
 fn registration_set_for_supervisor(
     registration_set: Option<&RegistrationSet>,
     desired: &[DesiredRuntimeState],
 ) -> Option<RegistrationSet> {
-    let set = registration_set?;
-    let desired_ids = desired
-        .iter()
-        .map(|state| state.runtime_id.as_str())
-        .collect::<BTreeSet<_>>();
-    let registrations = set
-        .registrations
-        .iter()
-        .filter(|registration| desired_ids.contains(registration.runtime_id.as_str()))
-        .cloned()
-        .collect::<Vec<_>>();
-    if registrations.is_empty() {
-        return None;
-    }
-    Some(RegistrationSet { registrations })
+    registration_set?
+        .intersect_desired_runtime_ids(desired.iter().map(|state| state.runtime_id.as_str()))
 }
 
 #[allow(clippy::too_many_arguments)]

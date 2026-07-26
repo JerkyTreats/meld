@@ -17,6 +17,7 @@ pub mod control;
 pub mod error;
 pub mod events;
 pub mod execution;
+pub mod harness;
 pub mod heads;
 pub mod ignore;
 pub mod init;
