@@ -15,3 +15,4 @@
 
 pub mod boot;
 pub mod manifest;
+pub mod walk;

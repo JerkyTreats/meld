@@ -8,9 +8,7 @@
 //! sequences, step schedule, closing watermarks — and an existing data
 //! root is unreachable without the explicit unsafe flag.
 
-use meld::harness::boot::{
-    HarnessBootRequest, HarnessRootSelection, HarnessRun, HarnessWorldInit,
-};
+use meld::harness::boot::{HarnessBootRequest, HarnessRootSelection, HarnessRun, HarnessWorldInit};
 use meld::harness::manifest::HarnessManifest;
 use meld::init::world::pipeline::WorldInitContent;
 use meld::init::world::{WorldInitRequest, WorldInitStage};
