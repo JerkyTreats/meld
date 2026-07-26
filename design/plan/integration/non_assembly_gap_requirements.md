@@ -1,8 +1,10 @@
 # Non Assembly Gap Fix Requirements
 
 Date: 2026-06-06
-Status: proposed
+Status: implemented as contracts; live-composition closure carried by the flywheel-ignition lane
 Scope: contract and domain fixes that unblock end to end assembly for the minimal runtime flywheel
+
+Correction note 2026-07-25, from an assembly code survey: every NAG contract exists and is tested, but three implementation citations below have drifted from code truth. The NAG-2 per-task publication bridge in `crates/meld-execution/src/task_network/publication.rs` has no product caller — the assembled `execution.publication` actor runs the aggregate publisher over `execution.package.completed` and `execution.package.failed` instead, an assembly decision this document never recorded, and per-task pending publications accumulate undrained. The NAG-3 mapper cited at `src/execution/outcome_evidence.rs` is now a compatibility quarantine marked do-not-add-callers; the production contract is `ConfiguredOutcomeMapping` consumed by the world-model `EvidenceIngestionActor`, which the assembly wires but no CLI path composes because no theory is injected. NAG-5's retry-pause-error distinction exists only as a two-valued `retryable` flag on the dispatch port error, not on the outcome contract. Closing these in the live composition is flywheel-ignition work recorded in [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md), not new NAG contract work.
 
 ## Purpose
 

@@ -119,7 +119,7 @@ Required behavior:
 - Request a goal scoped `PlanningWorldStateRequest` through an injected planner projection port.
 - Use projection frame provenance from `PlanningWorldStateFrameRef` in every planning attempt record.
 - Run deterministic method selection against a verified method library and capability catalog.
-- Treat `PlanningResult::Satisfied` as an execution lifecycle candidate and submit satisfaction through the goal set API with a stable command id.
+- Treat `PlanningResult::Satisfied` as an execution lifecycle candidate and submit satisfaction through the goal set API with a stable command id. Correction 2026-07-25: superseded by the [Goal Ownership Boundary Audit](goal_ownership_boundary_audit.md) and the implemented code — planning reports satisfaction as a diagnostic and never mutates goal lifecycle; the world-model agent owns satisfaction through `AgentGoalMutationCommand`.
 - Treat `PlanningResult::Composed` as the only path that may create task network work.
 - Lower `ExecutionComposition` into a task network mutation set without reselecting a method.
 - Submit the mutation set as `Command::ApplyMutationSet` through the task network command boundary.

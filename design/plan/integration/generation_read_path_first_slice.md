@@ -1,7 +1,7 @@
 # Generation Read Path First Slice
 
 Date: 2026-07-07
-Status: draft
+Status: implemented and verified per the evidence log; the `belief_context` flag ships off by default
 Scope: ground content-producing capabilities in current belief through two mechanisms the existing contracts already sanction
 
 ## Purpose

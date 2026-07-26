@@ -10,6 +10,8 @@ The typed loop proves the shared formal contract between world model and executi
 
 It demonstrates that the system can express a current world state, a desired goal, a reusable method, a concrete composition, a state-changing effect, and a final satisfied goal through `meld-lang` values and pure operations.
 
+Production status 2026-07-25: the runtime survey found planning-theory production composition unowned — no product code path constructs the planning binding this loop proves in pure form. Closing that gap is chartered by the flywheel-ignition lane at phase five of the [Runtime Harness Plan](runtime_harness_plan.md).
+
 ## Contract Chain
 
 1. Events provide `DomainObjectRef` and `EventRelation`.

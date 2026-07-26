@@ -44,6 +44,10 @@ Branch note:
 
 ## Coordination Entries
 
+### 2026-07-25 runtime harness supersession
+
+This program's objective — a user telling whether `meld runtime run` started real work, stayed idle, stalled, retried, or moved the flywheel — is now owned by the [Runtime Harness Plan](runtime_harness_plan.md) over the frozen [Agent-Native Debugger Requirements](agent_native_debugger_requirements.md). The user projection with coupling flow rates and queue depths answers the flow question; per-tick waiting-on declarations and the eligibility walk answer the stalled-and-why question. The skeleton's real daemon transport is overtaken by the recorded serving decision: HTTP over loopback served by the foreground process, exiting with the session. Remaining waves in this ledger should not be implemented as written; any surviving need routes through the harness substrate.
+
 ### 2026-07-12 production runtime closure orchestration
 
 The parent program adds the missing semantic activation and correctness waves around this visibility work.

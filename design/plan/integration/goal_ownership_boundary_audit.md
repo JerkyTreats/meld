@@ -1,7 +1,9 @@
 # Goal Ownership Boundary Audit
 
 Date: 2026-06-13
-Status: assessed
+Status: assessed; code follow-ups closed 2026-07-25
+
+Closure note 2026-07-25, from an assembly code survey: every code gap this audit named is now closed in the audit's recommended direction. The boundary command exists as `AgentGoalMutationCommand` with satisfy and reopen kinds; only the owning agent's goals are curated for satisfaction; `review_seq` is first-class with a durable satisfaction checkpoint; the adapter maps the agent command into execution's satisfy API; and planning reads goals through the active-goal query only, reporting `PlanningResult::Satisfied` as a diagnostic without mutating lifecycle. The remaining follow-ups are documentation debts in the older design texts that still describe planning-loop satisfaction authority.
 
 ## Audit Question
 

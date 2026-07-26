@@ -1,7 +1,7 @@
 # NAG-4 Satisfaction Review Assessment
 
 Date: 2026-06-09
-Status: needs revision
+Status: superseded — implemented per the ownership audit; retained as gap evidence
 
 ## Correction Note
 

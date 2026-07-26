@@ -10,6 +10,8 @@ Amendment date: 2026-07-24 — Strategy continuity constraints, harness enableme
 
 Amendment date: 2026-07-24 — review tiering by contract durability added. Pillar contracts receive concentrated fresh review, slice verticals receive objective-scoped packet review, mechanical tails carry no standalone review, and reviewer license is bounded by a two-sided finding rule.
 
+Amendment date: 2026-07-25 — the waiting-on declaration added to the pillar enumeration at the debugger register freeze; its owning program is the [Runtime Harness Plan](runtime_harness_plan.md), phase two.
+
 ## Objective Baseline
 
 Requested outcome:
@@ -191,6 +193,20 @@ A live runtime survey over the real CLI composition preceded the convergence pro
 - Assembly diagnostics naming each unresolved binding are collected and dropped; no operator surface prints them.
 - Concurrent runtime status fails on the legacy compatibility store lock, so a running supervisor cannot be observed from another process.
 - The unobserved-scope genesis fact maps to no evidence rule; identity seeding works, belief motion from genesis does not.
+
+Lane extension 2026-07-25, from an assembly code survey that verified all five findings above still hold and found the lane undercounted. Additional findings, same lane, same discipline:
+
+- Evidence-mapping theory composition is unowned exactly as planning theory is: the CLI injects default stewardship bindings, so `outcome_mapping` is `None` and `world_model.evidence_ingestion` resolves to `evidence_mapping_unresolved` on every product invocation. The shipped mapping body in `theory/docs_freshness/` is loaded only by tests.
+- The theory load path and identity do not meet: the product loader resolves belief families from the XDG theory root while the committed body lives in repo `theory/`, and the committed selection id `docs-freshness-family` fails the loader's identity check against the file's `docs_freshness` family id.
+- The shipped belief family declares no `graph_anchor` source mapping, so anchor-optional assessment alone cannot ignite the coupling; evidence normalization rejects anchors the family cannot map.
+- The assembly hardcodes anchor perspective `analysis` while the production dispatch route publishes frames as `context-` prefixed agent frame types, so anchor perspective identity can never match on any product path.
+- The publisher and mapping vocabularies do not intersect: the assembled publication actor emits `execution.package.completed` and `execution.package.failed` while every installed mapping matches `execution.task.succeeded`; the assembly binds the single-rule mapping rather than the mapping set that exists precisely to interpret both shapes. The per-task NAG-2 bridge has no product caller, per-task pending publications accumulate undrained, and the production task route passes no event context, so per-task lifecycle events cannot reach the ledger at all.
+- `execution.task_dispatch` is disabled by default with no CLI flag to enable it: routes bind and the handle carries a semantic body, but the supervisor never starts it under any product invocation.
+- The aggregate publisher's work list is fed only by the planning handle's route handoffs, so publication semantics are transitively dead until planning composes.
+
+One survey finding lands early: the lock-free `ProductRuntimeDescription::describe_for_workspace` surface already exists with zero callers, shrinking the harness phase-three concurrent-observation fix to wiring rather than construction.
+
+Lane disposition 2026-07-25: execution is chartered by the [Runtime Harness Plan](runtime_harness_plan.md). The recorded findings and the lane extension above land at its phase five — excepting the concurrent-status store-lock finding, which lands at its phase three where the served read surface requires it — each validated live through the harness before fresh review. The convergence proof runs with the harness attached and remains this program's authoritative exit gate.
 
 Recorded review conventions for later lanes: the package-run marker-node prefix protection is claimer-side convention the composition stepper must adopt; the marker's per-task publication event carries the whole run's artifacts and the evidence mapping should decide whether to filter marker instances; the recorded lowering limit is sharpened to say dependency edges cannot reference steps outside the lowered composition, while disconnected node sets can lower and commit mid-run with manual edge wrapping.
 
@@ -726,6 +742,7 @@ Every packet diff decomposes into three tiers:
 | Dependency-edge origin recording | Workstream Four | Strategy semantic-versus-scheduling separation |
 | Canonical `EventRecord` and durable evidence-cursor mutation contract | Events | Every consumer lane |
 | Staged initialization contract with theory registry and genesis identities | Root | Debugger boot path and product initialization |
+| Waiting-on declaration on domain bounded reports and the stored action record | Runtime harness phase two | Every harness projection and the eligibility walk |
 
 ## Independent Review Protocol
 

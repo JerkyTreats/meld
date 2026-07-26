@@ -81,7 +81,7 @@ These limits scope every readiness claim above.
 - `execution.task_dispatch` is disabled by default in the first-proof roster at `src/runtime/assembly.rs:314`.
 - No code names an affordance, obligation, strategy record, directive schema, or admission verdict. The directive on an agent record is an opaque string.
 - The planner projection emits no `Related` propositions, so graph relations are absent from every `WorldState` frame.
-- There is no committed product belief-family file or method directory. The authored meaning surface exists as loader schemas and one test fixture.
+- There is no committed product belief-family file or method directory. The authored meaning surface exists as loader schemas and one test fixture. Correction 2026-07-25: a committed belief-family body now exists at `theory/docs_freshness/belief_family.docs_freshness.json` with observationality authored, but nothing on the product load path resolves it — the loader reads the XDG theory root, and the committed selection id `docs-freshness-family` does not match the file's `docs_freshness` family id. The method-directory half still holds. Line numbers throughout this document are advisory; `BeliefFamilyConfig` gained the observationality field after this map was written.
 - Producer discovery exists only as trigger-to-goal unification. Nothing unifies an intermediate obligation against `Effect::Assert` payloads, `Effect::Update` has no proposition form to unify against, and no effect-to-producer index exists.
 - `WorldState::gap` returns the whole query as one opaque gap for indeterminate evaluation, returns whole disjunctions for `Any`, and returns whole negations for `Not`. Per-conjunct decomposition with typed indeterminate obligations does not exist.
 - Proposition-level substitution is private inside `meld-lang`; Execution works around it by wrapping propositions in one-step compositions.
@@ -193,4 +193,5 @@ Running docs freshness end to end requires eight human-authored artifact kinds: 
 - [CVE Freshness Strategy](../../../cognitive_architecture/world_model/strategy/cve_freshness.md)
 - [Use Case Catalog](../../../use_cases/README.md)
 - [Runtime Completion Ground Map](../../integration/runtime_completion_ground_map.md)
+- [Runtime Harness Plan](../../integration/runtime_harness_plan.md) — the frozen debugger register names Strategy first-slice development as the harness's first customer; the Goal-and-Belief prototype session lands alongside this construction
 - [Cognitive Architecture Implementation Plan](../../README.md)
