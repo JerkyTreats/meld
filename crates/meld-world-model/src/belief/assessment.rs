@@ -21,6 +21,8 @@ use crate::belief::runtime::BeliefRuntime;
 use crate::belief::selection::{BeliefSubjectBinding, BeliefWorkKind, BeliefWorkSelector};
 use crate::belief::store::BeliefStore;
 use crate::error::StorageError;
+use crate::waiting::WaitingOnDeclaration;
+use crate::world_state::graph::query::TraversalQuery;
 use crate::world_state::graph::store::TraversalStore;
 use crate::world_state::graph::PerspectiveKey;
 
@@ -65,6 +67,11 @@ pub struct BeliefAssessmentReport {
     pub fatal_errors: Vec<BeliefAssessmentIssue>,
     /// True when eligible work remained after the budget was consumed.
     pub budget_exhausted: bool,
+    /// What would make quiet or blocked work eligible (DBG-016).
+    ///
+    /// Derived from the selection and per-item outcomes this step already
+    /// computed; emission never gates or reorders assessment work.
+    pub waiting_on: Vec<WaitingOnDeclaration>,
 }
 
 /// Bounded actor that discovers and assesses belief work from durable state.
@@ -127,6 +134,7 @@ impl BeliefAssessmentActor {
             retryable_errors: Vec::new(),
             fatal_errors: Vec::new(),
             budget_exhausted: false,
+            waiting_on: Vec::new(),
         };
         if request.max_items == 0 {
             report.fatal_errors.push(issue(
@@ -165,6 +173,21 @@ impl BeliefAssessmentActor {
         };
         report.budget_exhausted = selection.more_available;
 
+        // The hardened DBG-016 rule: whenever the selector finds nothing
+        // eligible, the report says what would change that, so the
+        // eligibility walk always has a chain to resolve.
+        if selection.items.is_empty() && !families.is_empty() {
+            report.waiting_on.push(WaitingOnDeclaration::broad(
+                "belief_work_ineligible",
+                format!(
+                    "no dirty keys and no unassessed subject bindings across {} installed \
+                     families and {} configured subjects",
+                    families.len(),
+                    self.subjects.len()
+                ),
+            ));
+        }
+
         for item in selection.items {
             let Some(family) = families
                 .iter()
@@ -202,11 +225,17 @@ impl BeliefAssessmentActor {
                 // evidence window was empty; durable state still owns it.
                 Ok(None) => {}
                 Err(StorageError::Backpressure(message)) => {
+                    report.waiting_on.push(WaitingOnDeclaration::about(
+                        "assessment_lease_held",
+                        item_id.clone(),
+                        format!("an active lease owns this key: {message}"),
+                    ));
                     report
                         .retryable_errors
                         .push(issue(Some(item_id), "lease_contended", &message));
                 }
                 Err(error) => {
+                    self.declare_blocked_item(&mut report, &item.kind, &item_id);
                     report.retryable_errors.push(issue(
                         Some(item_id),
                         "assessment_failed",
@@ -227,6 +256,58 @@ impl BeliefAssessmentActor {
         report
     }
 
+    /// Declare what a blocked assessment item is waiting on.
+    ///
+    /// For an initial assessment the load-bearing precondition is the
+    /// current graph anchor; the read here is observational (a point
+    /// lookup on state the failed attempt just consulted) and names the
+    /// exact subject key and perspective, so the anchor stall reads as a
+    /// nameable divergence rather than an opaque error.
+    fn declare_blocked_item(
+        &self,
+        report: &mut BeliefAssessmentReport,
+        kind: &BeliefWorkKind,
+        item_id: &str,
+    ) {
+        match kind {
+            BeliefWorkKind::InitialAssessment { binding } => {
+                let anchor = TraversalQuery::new(self.traversal.as_ref())
+                    .current_anchor_for_subject(
+                        &binding.subject,
+                        &binding.anchor_perspective_kind,
+                        &binding.anchor_perspective_id,
+                    )
+                    .ok()
+                    .flatten();
+                if anchor.is_none() {
+                    report.waiting_on.push(WaitingOnDeclaration::about(
+                        "graph_anchor_absent",
+                        binding.subject.index_key(),
+                        format!(
+                            "no current anchor for subject {} under {}::{}",
+                            binding.subject.index_key(),
+                            binding.anchor_perspective_kind,
+                            binding.anchor_perspective_id
+                        ),
+                    ));
+                    return;
+                }
+                report.waiting_on.push(WaitingOnDeclaration::about(
+                    "assessment_blocked",
+                    item_id,
+                    "initial assessment failed past the anchor precondition",
+                ));
+            }
+            BeliefWorkKind::DirtyKey { .. } => {
+                report.waiting_on.push(WaitingOnDeclaration::about(
+                    "assessment_blocked",
+                    item_id,
+                    "dirty-key assessment failed; the key stays dirty",
+                ));
+            }
+        }
+    }
+
     /// Resolve the current registry revision for every configured family.
     ///
     /// A missing family is retryable — installation may land later — but a
@@ -242,11 +323,17 @@ impl BeliefAssessmentActor {
         for family_id in family_ids {
             match self.registry.current(&family_id) {
                 Ok(Some(revision)) => families.push(revision),
-                Ok(None) => report.retryable_errors.push(issue(
-                    Some(family_id.clone()),
-                    "family_not_installed",
-                    "no current registry revision for configured family",
-                )),
+                Ok(None) => {
+                    report.waiting_on.push(WaitingOnDeclaration::broad(
+                        "belief_family_absent",
+                        format!("belief family '{family_id}' has no installed registry revision"),
+                    ));
+                    report.retryable_errors.push(issue(
+                        Some(family_id.clone()),
+                        "family_not_installed",
+                        "no current registry revision for configured family",
+                    ))
+                }
                 Err(error) => {
                     report.fatal_errors.push(issue(
                         Some(family_id.clone()),

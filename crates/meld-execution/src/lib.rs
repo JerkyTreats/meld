@@ -54,6 +54,9 @@ pub mod task;
 pub mod task_network;
 /// Traversal expansion DTOs for workflow-backed task packages.
 pub mod traversal;
+pub mod waiting;
+
+pub use waiting::WaitingOnDeclaration;
 /// Workflow profiles, state, gates, events, and execution runtimes.
 pub mod workflow;
 

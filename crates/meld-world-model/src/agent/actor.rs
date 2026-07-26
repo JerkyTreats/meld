@@ -25,6 +25,7 @@ use crate::agent::AgentSinkReceipt;
 use crate::belief::{BeliefQuery, BeliefStore};
 use crate::error::StorageError;
 use crate::planner::PlannerQuery;
+use crate::waiting::WaitingOnDeclaration;
 use crate::world_state::graph::store::TraversalStore;
 use crate::world_state::graph::TraversalQuery;
 
@@ -71,6 +72,11 @@ pub struct AgentStepReport {
     pub fatal_errors: Vec<AgentStepIssue>,
     /// True when eligible work remained after the budget was consumed.
     pub budget_exhausted: bool,
+    /// What would make quiet curation work eligible (DBG-016).
+    ///
+    /// Derived from the selection this step already computed; emission
+    /// never gates or reorders curation.
+    pub waiting_on: Vec<WaitingOnDeclaration>,
 }
 
 impl AgentStepReport {
@@ -86,6 +92,7 @@ impl AgentStepReport {
             retryable_errors: Vec::new(),
             fatal_errors: Vec::new(),
             budget_exhausted: false,
+            waiting_on: Vec::new(),
         }
     }
 
@@ -240,6 +247,18 @@ impl AgentGoalCurationActor {
         };
         report.budget_exhausted = selection.more_available;
         report.items_selected = selection.items.len();
+        // The hardened DBG-016 rule: a quiet selection states what would
+        // change it — a revision newer than the delivery cursor.
+        if selection.items.is_empty() {
+            report.waiting_on.push(WaitingOnDeclaration {
+                condition: "no_undelivered_revisions".to_string(),
+                subject_key: Some(agent.subject.index_key()),
+                detail: format!(
+                    "every subscription of agent '{}' has consumed its latest revision",
+                    self.core.agent_id
+                ),
+            });
+        }
 
         let runtime = AgentGoalCurationRuntime::new(&self.core.agent_store);
         for delivery in selection.items {
@@ -309,8 +328,8 @@ impl AgentSatisfactionCurationActor {
         if !self.core.begin(request, &mut report) {
             return report;
         }
-        match self.core.agent_store.get_agent(&self.core.agent_id) {
-            Ok(Some(_)) => {}
+        let agent = match self.core.agent_store.get_agent(&self.core.agent_id) {
+            Ok(Some(agent)) => agent,
             Ok(None) => {
                 report.fatal(
                     None,
@@ -323,7 +342,7 @@ impl AgentSatisfactionCurationActor {
                 report.fatal(None, "agent_read_failed", &error.to_string());
                 return report;
             }
-        }
+        };
 
         let belief_query = BeliefQuery::new(&self.core.belief_store);
         let planner_query = PlannerQuery::new(
@@ -345,6 +364,18 @@ impl AgentSatisfactionCurationActor {
         };
         report.budget_exhausted = selection.more_available;
         report.items_selected = selection.items.len();
+        // The hardened DBG-016 rule: no pending review means satisfaction
+        // waits on a newer revision or an outstanding sink receipt.
+        if selection.items.is_empty() {
+            report.waiting_on.push(WaitingOnDeclaration {
+                condition: "no_pending_satisfaction_reviews".to_string(),
+                subject_key: Some(agent.subject.index_key()),
+                detail: format!(
+                    "no unreviewed revision or receipted decision awaits review for agent '{}'",
+                    self.core.agent_id
+                ),
+            });
+        }
 
         let runtime = AgentSatisfactionCurationRuntime::new(&self.core.agent_store);
         for trigger in selection.items {

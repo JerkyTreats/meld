@@ -184,6 +184,45 @@ fn the_anchor_stall_is_recorded_and_the_walk_names_the_dead_end() {
             .collect::<Vec<_>>()
     );
 
+    // DBG-016 exit evidence: every stalled tick carries a waiting-on
+    // declaration naming the absent anchor and the exact subject key.
+    for action in &stalled {
+        let declaration = action
+            .waiting_on
+            .iter()
+            .find(|declaration| declaration.condition == "graph_anchor_absent")
+            .expect("stalled tick declares the absent anchor");
+        assert_eq!(
+            declaration.subject_key.as_deref(),
+            Some(format!("workspace_fs::node::{SUBJECT_ID}").as_str()),
+            "the declaration names the exact subject key"
+        );
+        assert!(
+            declaration
+                .detail
+                .contains(&actor_bindings.anchor_perspective_id),
+            "the declaration names the anchor perspective: {}",
+            declaration.detail
+        );
+    }
+
+    // The declarations are durable: the report store serves them back
+    // after the run, which is what the eligibility walk will read.
+    {
+        use meld::runtime::contracts::RuntimeStatusReader;
+        let reports = meld::runtime::supervisor::SupervisorReportStore::open(
+            run.assembly().supervisor_store(),
+        )
+        .unwrap();
+        let durable = reports.read_recent_actions(64).unwrap();
+        assert!(durable.iter().any(|action| {
+            action
+                .waiting_on
+                .iter()
+                .any(|declaration| declaration.condition == "graph_anchor_absent")
+        }));
+    }
+
     // The manifest records the stalled step schedule as the durable
     // session artifact.
     let manifest = HarnessManifest::load(run.manifest_path()).unwrap();

@@ -7,7 +7,10 @@ pub use meld_events as events;
 pub mod agent;
 pub mod belief;
 pub mod planner;
+pub mod waiting;
 pub mod world_state;
+
+pub use waiting::WaitingOnDeclaration;
 
 pub use agent::{
     ActiveGoalSummary, AdvanceSubscriptionCommand, AgentActivationId, AgentActivationRecord,

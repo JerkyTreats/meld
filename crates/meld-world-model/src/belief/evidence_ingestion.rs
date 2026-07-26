@@ -37,6 +37,7 @@ use crate::belief::outcome::mapping::{
 use crate::belief::registry::BeliefFamilyRegistry;
 use crate::belief::runtime::BeliefRuntime;
 use crate::belief::store::BeliefStore;
+use crate::waiting::WaitingOnDeclaration;
 use crate::world_state::graph::store::TraversalStore;
 use crate::world_state::graph::PerspectiveKey;
 
@@ -100,6 +101,11 @@ pub struct EvidenceIngestionReport {
     pub fatal_errors: Vec<EvidenceIngestionIssue>,
     /// True when more replayable records remained beyond the budget.
     pub more_available: bool,
+    /// What would make quiet or blocked ingestion eligible (DBG-016).
+    ///
+    /// Derived from the replay window and dispositions this step already
+    /// computed; emission never gates or reorders ingestion.
+    pub waiting_on: Vec<WaitingOnDeclaration>,
 }
 
 /// Bounded actor that discovers evidence work from the durable cursor.
@@ -174,6 +180,7 @@ impl EvidenceIngestionActor {
             retryable_errors: Vec::new(),
             fatal_errors: Vec::new(),
             more_available: false,
+            waiting_on: Vec::new(),
         };
         if request.max_events == 0 {
             report.fatal_errors.push(issue(
@@ -379,6 +386,25 @@ impl EvidenceIngestionActor {
                     ));
                 }
             }
+        }
+        // The hardened DBG-016 rule: a step that absorbed nothing states
+        // what would change that. A quiet ledger waits on new committed
+        // events; a window where every record fell outside the installed
+        // mapping waits on a vocabulary intersection — the survey's
+        // publisher-to-mapping mismatch surfaces exactly here.
+        if report.events_replayed == 0 {
+            report.waiting_on.push(WaitingOnDeclaration::broad(
+                "ledger_quiet_past_cursor",
+                format!("no committed events past cursor {}", report.input_after_seq),
+            ));
+        } else if report.applicable_count == 0 && report.invalid_count == 0 {
+            report.waiting_on.push(WaitingOnDeclaration::broad(
+                "no_mappable_events",
+                format!(
+                    "{} replayed records matched no source mapping of '{}'",
+                    report.events_replayed, self.mapping_id
+                ),
+            ));
         }
         report
     }

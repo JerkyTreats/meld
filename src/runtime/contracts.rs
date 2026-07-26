@@ -1225,7 +1225,15 @@ impl From<PlanningRuntimeActorReport> for WorkerTickReport {
                 })
                 .collect(),
             budget_exhausted: report.budget_exhausted,
-            waiting_on: Vec::new(),
+            waiting_on: report
+                .waiting_on
+                .into_iter()
+                .map(|declaration| WaitingOnDeclaration {
+                    condition: declaration.condition,
+                    subject_key: declaration.subject_key,
+                    detail: declaration.detail,
+                })
+                .collect(),
         }
     }
 }
@@ -1428,9 +1436,16 @@ mod tests {
             fatal_errors: Vec::new(),
             budget_exhausted: false,
             results: Vec::new(),
+            waiting_on: vec![meld_execution::WaitingOnDeclaration::broad(
+                "no_active_goals",
+                "no active goal record exists in execution-owned storage",
+            )],
         };
 
         let worker: WorkerTickReport = report.into();
+
+        assert_eq!(worker.waiting_on.len(), 1);
+        assert_eq!(worker.waiting_on[0].condition, "no_active_goals");
 
         assert_eq!(worker.actor_id, "execution.planning");
         assert_eq!(worker.scope.work_key.as_deref(), Some("planning"));
