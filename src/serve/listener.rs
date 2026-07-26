@@ -127,6 +127,19 @@ fn worker_loop(server: &Server, sources: &ServeSources, stop: &AtomicBool) {
         let method = match request.method() {
             Method::Get => "GET",
             Method::Post => "POST",
+            // Browser consumers preflight cross-origin POSTs; the surface
+            // is loopback-only, so origin distinctions carry no authority
+            // and the preflight is answered permissively.
+            Method::Options => {
+                send(
+                    request,
+                    RouteResponse {
+                        status: 204,
+                        body: Vec::new(),
+                    },
+                );
+                continue;
+            }
             other => {
                 let response = crate::serve::routes::RouteResponse {
                     status: 405,
@@ -158,12 +171,30 @@ fn worker_loop(server: &Server, sources: &ServeSources, stop: &AtomicBool) {
 }
 
 /// Write one response; a consumer that hung up is its own problem.
+///
+/// Every response carries permissive CORS headers: the substrate binds
+/// loopback only, so the browser origin model adds no boundary here, and
+/// an external browser-rendered consumer must be able to read the same
+/// bytes any process on this machine can read.
 fn send(request: tiny_http::Request, response: RouteResponse) {
-    let header = Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
+    let content_type = Header::from_bytes(&b"Content-Type"[..], &b"application/json"[..])
         .expect("static header is valid");
+    let allow_origin = Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..])
+        .expect("static header is valid");
+    let allow_methods = Header::from_bytes(
+        &b"Access-Control-Allow-Methods"[..],
+        &b"GET, POST, OPTIONS"[..],
+    )
+    .expect("static header is valid");
+    let allow_headers =
+        Header::from_bytes(&b"Access-Control-Allow-Headers"[..], &b"Content-Type"[..])
+            .expect("static header is valid");
     let _ = request.respond(
         Response::from_data(response.body)
             .with_status_code(response.status)
-            .with_header(header),
+            .with_header(content_type)
+            .with_header(allow_origin)
+            .with_header(allow_methods)
+            .with_header(allow_headers),
     );
 }
