@@ -56,6 +56,25 @@ fn main() {
         return;
     }
 
+    // Live-status bypass: when a running composition advertises its served
+    // surface, status answers from there without touching the store locks
+    // the live process holds. No advertisement falls through to the normal
+    // assembly path, which owns the no-live-process case.
+    if let Some(result) = try_execute_live_runtime_status(&cli) {
+        match result {
+            Ok(output) => {
+                info!("Live runtime status served from the running process");
+                println!("{}", output);
+            }
+            Err(e) => {
+                error!("Command failed: {}", e);
+                eprintln!("{}", meld::cli::map_error(&e));
+                process::exit(1);
+            }
+        }
+        return;
+    }
+
     // Create CLI context
     let context = match RunContext::new(cli.workspace.clone(), cli.config.clone()) {
         Ok(ctx) => {
@@ -107,6 +126,25 @@ fn try_execute_danger_command(cli: &Cli) -> Option<Result<String, meld::error::A
         }
         _ => None,
     }
+}
+
+fn try_execute_live_runtime_status(cli: &Cli) -> Option<Result<String, meld::error::ApiError>> {
+    let Commands::Runtime {
+        command:
+            meld::cli::RuntimeCommands::Status {
+                format,
+                runtime_ids,
+            },
+    } = &cli.command
+    else {
+        return None;
+    };
+    // Configuration failures fall through so the normal path reports them.
+    let config = match &cli.config {
+        Some(path) => ConfigLoader::load_from_file(path).ok()?,
+        None => ConfigLoader::load(&cli.workspace).ok()?,
+    };
+    meld::runtime::tooling::try_live_runtime_status(&cli.workspace, &config, format, runtime_ids)
 }
 
 fn try_execute_branch_command(cli: &Cli) -> Option<Result<String, meld::error::ApiError>> {

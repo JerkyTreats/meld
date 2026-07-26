@@ -263,6 +263,112 @@ struct RuntimeRunOptions<'a> {
     restart_backoff_ms: u64,
 }
 
+/// Serve `meld runtime status` for a live composition without opening
+/// any store: the lock-free workspace description finds the product
+/// root, the discovery file finds the live surface, and the answer is
+/// the snapshot that surface serves.
+///
+/// Returns `None` when no live surface is advertised or the
+/// advertisement is stale (connection refused), so the caller falls
+/// through to the normal assembly path that owns the no-live-process
+/// case — where the store locks are free to take.
+pub fn try_live_runtime_status(
+    workspace_root: &std::path::Path,
+    config: &crate::config::MerkleConfig,
+    format: &str,
+    runtime_ids: &[String],
+) -> Option<Result<String, ApiError>> {
+    let description = crate::runtime::assembly::ProductRuntimeAssembly::describe_for_workspace(
+        workspace_root,
+        config,
+    )
+    .ok()?;
+    let discovery = crate::serve::discovery::read(&description.product_root)?;
+    let response = ureq::get(&format!(
+        "http://{}/v1/reports/latest_snapshot",
+        discovery.addr
+    ))
+    .timeout(std::time::Duration::from_secs(2))
+    .call()
+    .ok()?;
+    let record: Option<RuntimeStatusCacheRecord> = response.into_json().ok()?;
+    let record = record?;
+    // A recycled port serving a different root must not answer for this
+    // workspace; the snapshot names the root its writer owns.
+    if record.product_root != description.product_root {
+        return None;
+    }
+    if !runtime_ids.is_empty() {
+        let known: std::collections::BTreeSet<&str> = description
+            .desired_runtime_state
+            .iter()
+            .map(|state| state.runtime_id.as_str())
+            .collect();
+        if let Some(unknown) = runtime_ids.iter().find(|id| !known.contains(id.as_str())) {
+            return Some(Err(runtime_message(format!(
+                "unknown runtime id '{unknown}'"
+            ))));
+        }
+    }
+    Some(render_live_status(&discovery, record, format, runtime_ids))
+}
+
+/// Render one live served snapshot in the status command's formats.
+fn render_live_status(
+    discovery: &crate::serve::discovery::ServeDiscovery,
+    mut record: RuntimeStatusCacheRecord,
+    format: &str,
+    runtime_ids: &[String],
+) -> Result<String, ApiError> {
+    validate_format(format)?;
+    if !runtime_ids.is_empty() {
+        record
+            .snapshot
+            .runtimes
+            .retain(|row| runtime_ids.iter().any(|id| id == &row.runtime_id));
+    }
+    if format == "json" {
+        return serde_json::to_string_pretty(&record)
+            .map_err(|error| runtime_message(format!("status encoding failed: {error}")));
+    }
+    let mut lines = vec![
+        format!(
+            "live surface at {} (pid {})",
+            discovery.addr, discovery.process_id
+        ),
+        format!("product root: {}", record.product_root.display()),
+    ];
+    if let Some(instance) = &record.snapshot.instance {
+        lines.push(format!(
+            "instance {} status {}",
+            instance.instance_id, instance.status
+        ));
+    }
+    for row in &record.snapshot.runtimes {
+        lines.push(format!(
+            "{}: {} (retryable {}, fatal {})",
+            row.runtime_id,
+            row.health.status,
+            row.health.retryable_error_count,
+            row.health.fatal_error_count
+        ));
+        if let Some(action) = &row.last_action {
+            for declaration in &action.waiting_on {
+                lines.push(format!(
+                    "  waiting on {}{}",
+                    declaration.condition,
+                    declaration
+                        .subject_key
+                        .as_deref()
+                        .map(|key| format!(" ({key})"))
+                        .unwrap_or_default()
+                ));
+            }
+        }
+    }
+    Ok(lines.join("\n"))
+}
+
 fn runtime_status(
     assembly: &ProductRuntimeAssembly,
     format: &str,
@@ -351,6 +457,23 @@ fn runtime_run(
                 .count()
         })
         .unwrap_or(0);
+    // The running foreground process serves the substrate: store access
+    // is single-process, so live observation must come from here. The
+    // surface is observational — a bind failure never gates the run —
+    // and the handle's drop withdraws the discovery advertisement.
+    let _serve_handle =
+        match crate::serve::sources::ServeSources::from_assembly(assembly).and_then(|sources| {
+            crate::serve::listener::serve_with_discovery(sources, 0, assembly.product_root())
+        }) {
+            Ok(handle) => {
+                tracing::info!(addr = %handle.addr(), "serving the /v1 substrate over loopback");
+                Some(handle)
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "served substrate unavailable for this run");
+                None
+            }
+        };
     let started = Instant::now();
     let mut tick_count = 0;
     let mut last_supervisor_time_ms = started_at_ms;

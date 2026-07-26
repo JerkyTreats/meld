@@ -16,4 +16,5 @@
 pub mod boot;
 pub mod eligibility;
 pub mod manifest;
+pub mod projections;
 pub mod walk;

@@ -197,6 +197,30 @@ impl<'a> ThreadWalker<'a> {
         }
     }
 
+    /// Bind the walker to explicitly owned read surfaces.
+    ///
+    /// The serving layer holds its own store handles rather than a live
+    /// assembly borrow, so the same walk serves live and playback roots.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_parts(
+        replay: Option<&'a ProductEventReplayPort>,
+        belief: Option<&'a BeliefStore>,
+        agent: Option<&'a AgentStore>,
+        traversal: Option<&'a TraversalStore>,
+        goals: Option<&'a PersistentGoalSetStore>,
+        task_networks: Option<&'a TaskNetworkStoreFactory>,
+    ) -> Self {
+        Self {
+            replay,
+            belief,
+            agent,
+            traversal,
+            goals,
+            task_networks,
+            max_nodes: DEFAULT_MAX_THREAD_NODES,
+        }
+    }
+
     /// Replace the walk's node bound.
     pub fn with_max_nodes(mut self, max_nodes: usize) -> Self {
         self.max_nodes = max_nodes.max(1);

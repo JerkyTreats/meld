@@ -86,6 +86,58 @@ impl SupervisorReportStore {
         self.record_count
     }
 
+    /// The append sequence this handle observed at open.
+    ///
+    /// Everything appended from here on belongs to the current process's
+    /// session, so the value fences served reads to one boot: a reused
+    /// product root never presents a previous boot's declarations as the
+    /// current run's state.
+    pub fn sequence_watermark(&self) -> u64 {
+        self.next_sequence
+    }
+
+    /// Read the most recent actions at or after a sequence floor,
+    /// ascending.
+    pub fn read_recent_actions_since(
+        &self,
+        floor: u64,
+        limit: usize,
+    ) -> Result<Vec<RuntimeActionRecord>, SupervisorStoreError> {
+        let mut records = self
+            .actions
+            .range(floor.to_be_bytes()..)
+            .rev()
+            .take(limit)
+            .map(|entry| {
+                let (_key, raw) = entry.map_err(to_sled)?;
+                decode_action(&raw)
+            })
+            .collect::<Result<Vec<RuntimeActionRecord>, _>>()?;
+        records.reverse();
+        Ok(records)
+    }
+
+    /// Latest preserved action for one runtime at or after a floor.
+    ///
+    /// Unlike [`Self::latest_action_for_runtime`], which reads the
+    /// cross-boot per-runtime index, this scans only the fenced range, so
+    /// an actor that has not ticked this session truthfully answers
+    /// `None`.
+    pub fn latest_action_for_runtime_since(
+        &self,
+        floor: u64,
+        runtime_id: &str,
+    ) -> Result<Option<RuntimeActionRecord>, SupervisorStoreError> {
+        for entry in self.actions.range(floor.to_be_bytes()..).rev() {
+            let (_key, raw) = entry.map_err(to_sled)?;
+            let record = decode_action(&raw)?;
+            if record.runtime_id == runtime_id {
+                return Ok(Some(record));
+            }
+        }
+        Ok(None)
+    }
+
     /// Return the latest preserved action record for one runtime id.
     ///
     /// This is the durable report the supervisor lifecycle projection reads;
