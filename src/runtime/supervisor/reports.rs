@@ -24,7 +24,8 @@
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::runtime::contracts::{
-    RuntimeActionRecord, RuntimeStatusCacheRecord, RuntimeStatusPublisher, RuntimeStatusReader,
+    RuntimeActionRecord, RuntimeActionRecordCompatV1, RuntimeStatusCacheRecord,
+    RuntimeStatusCacheRecordCompatV1, RuntimeStatusPublisher, RuntimeStatusReader,
 };
 
 use super::store::{SupervisorStore, SupervisorStoreError};
@@ -96,7 +97,7 @@ impl SupervisorReportStore {
         self.latest_by_runtime
             .get(runtime_id.as_bytes())
             .map_err(to_sled)?
-            .map(|raw| decode(&raw))
+            .map(|raw| decode_action(&raw))
             .transpose()
     }
 
@@ -176,7 +177,7 @@ impl RuntimeStatusReader for SupervisorReportStore {
         self.snapshots
             .get(LATEST_SNAPSHOT_KEY)
             .map_err(to_sled)?
-            .map(|raw| decode(&raw))
+            .map(|raw| decode_snapshot(&raw))
             .transpose()
     }
 
@@ -189,7 +190,7 @@ impl RuntimeStatusReader for SupervisorReportStore {
             .take(limit)
             .map(|entry| {
                 let (_key, raw) = entry.map_err(to_sled)?;
-                decode(&raw)
+                decode_action(&raw)
             })
             .collect::<Result<Vec<RuntimeActionRecord>, _>>()?;
         records.reverse();
@@ -205,8 +206,49 @@ fn encode<T: Serialize>(record: &T) -> Result<Vec<u8>, SupervisorStoreError> {
     bincode::serialize(record).map_err(|error| SupervisorStoreError::Codec(error.to_string()))
 }
 
-fn decode<T: DeserializeOwned>(raw: &[u8]) -> Result<T, SupervisorStoreError> {
-    bincode::deserialize(raw).map_err(|error| SupervisorStoreError::Codec(error.to_string()))
+/// Decode one action record, falling back to the pre-waiting-on shape.
+///
+/// A legacy record ends exactly at its last field, so decoding it as the
+/// current shape hits end-of-input at the appended waiting-on field and
+/// falls back unambiguously. The fallback itself rejects trailing bytes:
+/// it accepts only byte-exact legacy records, so a future decode failure
+/// localized to the record's tail can never be mistaken for a legacy
+/// record with the tail silently discarded.
+fn decode_action(raw: &[u8]) -> Result<RuntimeActionRecord, SupervisorStoreError> {
+    match bincode::deserialize::<RuntimeActionRecord>(raw) {
+        Ok(record) => Ok(record),
+        Err(current_error) => decode_exact::<RuntimeActionRecordCompatV1>(raw, current_error)
+            .map(RuntimeActionRecord::from),
+    }
+}
+
+/// Decode one status snapshot, falling back to the shape whose embedded
+/// action window predates the waiting-on field.
+fn decode_snapshot(raw: &[u8]) -> Result<RuntimeStatusCacheRecord, SupervisorStoreError> {
+    match bincode::deserialize::<RuntimeStatusCacheRecord>(raw) {
+        Ok(record) => Ok(record),
+        Err(current_error) => decode_exact::<RuntimeStatusCacheRecordCompatV1>(raw, current_error)
+            .map(RuntimeStatusCacheRecord::from),
+    }
+}
+
+/// Byte-exact legacy decode: same fixint encoding as the store's writes,
+/// but trailing bytes are an error rather than silently discarded.
+fn decode_exact<T: DeserializeOwned>(
+    raw: &[u8],
+    current_error: bincode::Error,
+) -> Result<T, SupervisorStoreError> {
+    use bincode::Options as _;
+    bincode::DefaultOptions::new()
+        .with_fixint_encoding()
+        .with_no_limit()
+        .deserialize(raw)
+        .map_err(|legacy_error| {
+            SupervisorStoreError::Codec(format!(
+                "record decodes as neither the current shape ({current_error}) nor the \
+                 byte-exact legacy shape ({legacy_error})"
+            ))
+        })
 }
 
 fn decode_sequence(key: &[u8]) -> Result<u64, SupervisorStoreError> {
@@ -258,6 +300,7 @@ mod tests {
             retryable_errors: Vec::new(),
             fatal_errors: Vec::new(),
             budget_exhausted: false,
+            waiting_on: Vec::new(),
         }
     }
 
@@ -427,5 +470,137 @@ mod tests {
         assert_eq!(latest.issues.len(), 1);
         assert_eq!(latest.issues[0].code, "planning_failed");
         assert_eq!(latest.issues[0].item_id.as_deref(), Some("goal-a"));
+    }
+
+    /// Freeze one action record into the exact pre-DBG-016 byte shape.
+    fn legacy_bytes(record: &RuntimeActionRecord) -> Vec<u8> {
+        let legacy = RuntimeActionRecordCompatV1 {
+            action_id: record.action_id.clone(),
+            observed_at_ms: record.observed_at_ms,
+            runtime_id: record.runtime_id.clone(),
+            domain_id: record.domain_id.clone(),
+            actor_id: record.actor_id.clone(),
+            object_ref: record.object_ref.clone(),
+            action_kind: record.action_kind.clone(),
+            cause: record.cause.clone(),
+            outcome: record.outcome.clone(),
+            metrics: record.metrics.clone(),
+            checkpoints: record.checkpoints.clone(),
+            issues: record.issues.clone(),
+            redaction: record.redaction.clone(),
+        };
+        bincode::serialize(&legacy).unwrap()
+    }
+
+    #[test]
+    fn legacy_action_records_without_waiting_on_decode_unchanged() {
+        let (_temp, reports) = open_report_store();
+        let expected = action("action-legacy", "event.append", 10, 0, 1);
+        assert!(expected.waiting_on.is_empty());
+        // Persist the pre-field bytes directly, simulating a store written
+        // before the waiting-on field existed.
+        let bytes = legacy_bytes(&expected);
+        reports
+            .actions
+            .insert(0u64.to_be_bytes(), bytes.clone())
+            .unwrap();
+        reports
+            .latest_by_runtime
+            .insert("event.append".as_bytes(), bytes)
+            .unwrap();
+
+        let recent = reports.read_recent_actions(10).unwrap();
+        assert_eq!(recent, vec![expected.clone()]);
+        assert_eq!(
+            reports.latest_action_for_runtime("event.append").unwrap(),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn a_current_record_with_declarations_round_trips_ahead_of_the_fallback() {
+        let (_temp, mut reports) = open_report_store();
+        let mut report = worker_report("event.append", 0, 0);
+        report
+            .waiting_on
+            .push(crate::runtime::contracts::WaitingOnDeclaration {
+                condition: "graph_anchor_absent".to_string(),
+                subject_key: Some("workspace_fs::node::docs".to_string()),
+                detail: "no current anchor under frame_type::analysis".to_string(),
+            });
+        let action = RuntimeActionRecord::from_worker_tick("action-w", "event.append", 10, report);
+        reports.publish_action(&action).unwrap();
+
+        let recent = reports.read_recent_actions(10).unwrap();
+        assert_eq!(recent[0].waiting_on.len(), 1);
+        assert_eq!(recent[0].waiting_on[0].condition, "graph_anchor_absent");
+        assert_eq!(
+            recent[0].waiting_on[0].subject_key.as_deref(),
+            Some("workspace_fs::node::docs")
+        );
+    }
+
+    #[test]
+    fn legacy_snapshots_with_embedded_actions_decode_unchanged() {
+        use crate::runtime::contracts::{
+            RuntimeStatusCacheRecordCompatV1, RuntimeStatusSnapshot, RuntimeStatusWriterIdentity,
+        };
+        let (_temp, reports) = open_report_store();
+        let embedded = action("action-snap", "event.append", 10, 0, 1);
+        let legacy_action: RuntimeActionRecordCompatV1 =
+            bincode::deserialize(&legacy_bytes(&embedded)).unwrap();
+        let legacy = RuntimeStatusCacheRecordCompatV1 {
+            schema_version: 1,
+            product_root: "/tmp/product".into(),
+            supervisor_store_path: "/tmp/product/supervisor.sled".into(),
+            status_cache_path: "/tmp/product/status".into(),
+            writer: RuntimeStatusWriterIdentity {
+                instance_id: Some("runtime-cli-1".to_string()),
+                process_id: Some(42),
+                parent_process_id: Some(41),
+                run_mode: crate::runtime::contracts::RuntimeRunMode::Foreground,
+                launch_status: crate::runtime::contracts::RuntimeLaunchStatus::Ready,
+            },
+            snapshot: RuntimeStatusSnapshot {
+                instance: None,
+                process: None,
+                shutdown: None,
+                runtimes: Vec::new(),
+                health_counts: crate::runtime::contracts::RuntimeStatusHealthCounts {
+                    unknown: 0,
+                    starting: 0,
+                    healthy: 0,
+                    degraded: 0,
+                    unhealthy: 0,
+                    stopped: 0,
+                },
+                ledger: None,
+                warnings: Vec::new(),
+            },
+            recent_actions: vec![legacy_action],
+            written_at_ms: 11,
+        };
+        reports
+            .snapshots
+            .insert(LATEST_SNAPSHOT_KEY, bincode::serialize(&legacy).unwrap())
+            .unwrap();
+
+        let decoded = reports.read_latest_snapshot().unwrap().unwrap();
+        // The stored writer version stays verbatim; only the byte shape is
+        // translated forward.
+        assert_eq!(decoded.schema_version, 1);
+        assert_eq!(decoded.recent_actions, vec![embedded]);
+    }
+
+    #[test]
+    fn the_legacy_fallback_rejects_trailing_bytes() {
+        let (_temp, reports) = open_report_store();
+        let expected = action("action-legacy", "event.append", 10, 0, 1);
+        let mut bytes = legacy_bytes(&expected);
+        bytes.extend_from_slice(b"garbage-tail");
+        reports.actions.insert(0u64.to_be_bytes(), bytes).unwrap();
+
+        let error = reports.read_recent_actions(10).unwrap_err();
+        assert!(error.to_string().contains("neither the current shape"));
     }
 }

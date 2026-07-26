@@ -159,6 +159,7 @@ mod tests {
             retryable_errors: Vec::new(),
             fatal_errors: Vec::new(),
             budget_exhausted: false,
+            waiting_on: Vec::new(),
         }
     }
 

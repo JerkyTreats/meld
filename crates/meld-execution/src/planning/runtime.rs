@@ -22,6 +22,7 @@ use crate::task::TaskDefinitionCompiler;
 use crate::task_network::{
     command, mutation::ReadPrecondition, store::SledTaskNetworkStore, Command as TaskNetworkCommand,
 };
+use crate::waiting::{conditions, WaitingOnDeclaration};
 use meld_lang::{
     evaluate, substitute, validate, Bindings, Composition, CostEstimate, Effect, EvalResult,
     Operator, Proposition, Resolution, Step, StepKind, WorldState,
@@ -223,6 +224,11 @@ pub struct PlanningRuntimeActorReport {
     pub budget_exhausted: bool,
     /// Per-goal results in deterministic goal id order.
     pub results: Vec<PlanningRuntimeActorGoalResult>,
+    /// What would make quiet planning work eligible (DBG-016).
+    ///
+    /// Derived from the active-goal query this pass already ran; emission
+    /// never gates or reorders planning.
+    pub waiting_on: Vec<WaitingOnDeclaration>,
 }
 
 /// Error that prevents a planning actor pass from producing a report.
@@ -306,7 +312,16 @@ where
             fatal_errors: Vec::new(),
             budget_exhausted,
             results: Vec::new(),
+            waiting_on: Vec::new(),
         };
+        // The hardened DBG-016 rule: planning with no active goal states
+        // what would change that -- an accepted goal command.
+        if active_goal_count == 0 {
+            report.waiting_on.push(WaitingOnDeclaration::broad(
+                conditions::NO_ACTIVE_GOALS,
+                "no active goal record exists in execution-owned storage",
+            ));
+        }
 
         for record in active_goals {
             report.attempted += 1;

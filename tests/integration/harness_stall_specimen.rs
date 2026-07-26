@@ -184,6 +184,110 @@ fn the_anchor_stall_is_recorded_and_the_walk_names_the_dead_end() {
             .collect::<Vec<_>>()
     );
 
+    // DBG-016 exit evidence: every stalled tick carries a waiting-on
+    // declaration naming the absent anchor and the exact subject key.
+    for action in &stalled {
+        let declaration = action
+            .waiting_on
+            .iter()
+            .find(|declaration| declaration.condition == "graph_anchor_absent")
+            .expect("stalled tick declares the absent anchor");
+        assert_eq!(
+            declaration.subject_key.as_deref(),
+            Some(format!("workspace_fs::node::{SUBJECT_ID}").as_str()),
+            "the declaration names the exact subject key"
+        );
+        assert!(
+            declaration
+                .detail
+                .contains(&actor_bindings.anchor_perspective_id),
+            "the declaration names the anchor perspective: {}",
+            declaration.detail
+        );
+    }
+
+    // The declarations are durable: the report store serves them back
+    // after the run, which is what the eligibility walk reads.
+    {
+        use meld::harness::eligibility::{
+            AbsentRecordKind, EligibilityQuestion, EligibilityWalker,
+        };
+        use meld::runtime::contracts::RuntimeStatusReader;
+        let reports = meld::runtime::supervisor::SupervisorReportStore::open(
+            run.assembly().supervisor_store(),
+        )
+        .unwrap();
+        let durable = reports.read_recent_actions(64).unwrap();
+        assert!(durable.iter().any(|action| {
+            action
+                .waiting_on
+                .iter()
+                .any(|declaration| declaration.condition == "graph_anchor_absent")
+        }));
+
+        // Phase-two exit evidence: the eligibility walk resolves the
+        // absent revision to its declaration chain, presenting the absent
+        // anchor and the subject-vocabulary mismatch as the reason the
+        // assessed revision does not exist.
+        let traversal = run
+            .assembly()
+            .stores()
+            .traversal_store
+            .opened()
+            .expect("traversal store is open in the survey composition");
+        let chain = EligibilityWalker::new(&reports)
+            .with_traversal(traversal)
+            .why_absent(EligibilityQuestion {
+                kind: AbsentRecordKind::BeliefRevision,
+                subject_key: Some(format!("workspace_fs::node::{SUBJECT_ID}")),
+            })
+            .unwrap();
+        assert!(chain
+            .links
+            .iter()
+            .any(|link| link.runtime_id == "world_model.belief_assessment"
+                && link.declaration.condition == "graph_anchor_absent"));
+        let divergence = chain
+            .divergences
+            .iter()
+            .find(|divergence| divergence.starts_with("graph_anchor_absent"))
+            .expect("the chain names the anchor divergence");
+        assert!(
+            divergence.contains("appears in no anchor record"),
+            "the divergence presents the subject-vocabulary mismatch: {divergence}"
+        );
+
+        // A real coupling hop over live emissions: an absent goal command
+        // walks through curation's quiet selection to the same anchor
+        // divergence, so the condition vocabulary the walk compiles
+        // against is proven to match what the domains actually emit.
+        let goal_chain = EligibilityWalker::new(&reports)
+            .with_traversal(traversal)
+            .why_absent(EligibilityQuestion {
+                kind: AbsentRecordKind::GoalCommand,
+                subject_key: Some(format!("workspace_fs::node::{SUBJECT_ID}")),
+            })
+            .unwrap();
+        let hops: Vec<&str> = goal_chain
+            .links
+            .iter()
+            .map(|link| link.runtime_id.as_str())
+            .collect();
+        assert_eq!(
+            hops,
+            vec![
+                "world_model.agent_goal_curation",
+                "world_model.belief_assessment",
+            ],
+            "the goal absence walks one live coupling hop; divergences: {:?}",
+            goal_chain.divergences
+        );
+        assert!(goal_chain
+            .divergences
+            .iter()
+            .any(|divergence| divergence.contains("appears in no anchor record")));
+    }
+
     // The manifest records the stalled step schedule as the durable
     // session artifact.
     let manifest = HarnessManifest::load(run.manifest_path()).unwrap();

@@ -69,12 +69,14 @@ use crate::task_network::initialization::materialize_task_initialization;
 use crate::task_network::mutation::Rejection;
 use crate::task_network::package_step::{PackageStep, PackageStepReport, PackageStepRequest};
 use crate::task_network::readiness::compute_ready_set;
+use crate::task_network::state::ReadinessDiagnosticCode;
 use crate::task_network::state::{NetworkState, TaskLineage, TaskNode, TaskStatus};
 use crate::task_network::store::{InMemoryTaskNetworkStore, SledTaskNetworkStore};
 use crate::task_network::terminal_recording::{
     load_package_run_artifact_records, package_route_task_lineage,
     package_run_id_for_task_instance, record_package_run_terminal_outcome, PackageRunRecording,
 };
+use crate::waiting::{conditions, WaitingOnDeclaration};
 use async_trait::async_trait;
 use std::collections::BTreeSet;
 use std::sync::Arc;
@@ -332,6 +334,12 @@ pub struct DispatchTickReport {
     pub fatal_errors: Vec<DispatchIssue>,
     /// True when eligible work remained beyond this tick's budget.
     pub budget_exhausted: bool,
+    /// What would make quiet or blocked dispatch work eligible (DBG-016).
+    ///
+    /// Derived from the ready-set snapshot this tick already computed —
+    /// including its readiness diagnostics, which previously never left
+    /// the domain; emission never gates or reorders dispatch.
+    pub waiting_on: Vec<WaitingOnDeclaration>,
 }
 
 impl DispatchTickReport {
@@ -347,6 +355,7 @@ impl DispatchTickReport {
             retryable_errors: Vec::new(),
             fatal_errors: Vec::new(),
             budget_exhausted: false,
+            waiting_on: Vec::new(),
         }
     }
 
@@ -865,6 +874,22 @@ where
         // outcomes wait for a later tick, mirroring the package-step wave
         // rule, and a task failed this tick can never re-enter the snapshot.
         let ready = compute_ready_set(network.network_state());
+        // The hardened DBG-016 rule: the readiness diagnostics the snapshot
+        // already computed become declarations instead of being discarded,
+        // and an empty ready set states that dispatch waits on one.
+        for diagnostic in &ready.diagnostics {
+            report.waiting_on.push(WaitingOnDeclaration {
+                condition: readiness_condition(&diagnostic.code).to_string(),
+                subject_key: diagnostic.task_instance_id.clone(),
+                detail: diagnostic.message.clone(),
+            });
+        }
+        if ready.task_instance_ids.is_empty() && ready.diagnostics.is_empty() {
+            report.waiting_on.push(WaitingOnDeclaration::broad(
+                conditions::NO_READY_TASKS,
+                format!("no claimable task at network revision {}", ready.revision),
+            ));
+        }
         for task_instance_id in &ready.task_instance_ids {
             // Same protection for a pending terminal node stranded before
             // its claim: recover the recording instead of dispatching it.
@@ -1184,5 +1209,15 @@ fn rejection_error(rejection: &Rejection) -> DispatchPortError {
             DispatchPortError::retryable("command base state hash is stale".to_string())
         }
         other => DispatchPortError::fatal(format!("command rejected: {other:?}")),
+    }
+}
+
+/// Stable waiting-on condition vocabulary for readiness diagnostics.
+fn readiness_condition(code: &ReadinessDiagnosticCode) -> &'static str {
+    match code {
+        ReadinessDiagnosticCode::MissingEndpoint => conditions::DEPENDENCY_ENDPOINT_MISSING,
+        ReadinessDiagnosticCode::CycleDetected => conditions::DEPENDENCY_CYCLE,
+        ReadinessDiagnosticCode::ConditionalDeferred => conditions::CONDITIONAL_EDGE_DEFERRED,
+        ReadinessDiagnosticCode::ArtifactUnavailable => conditions::UPSTREAM_ARTIFACT_UNAVAILABLE,
     }
 }

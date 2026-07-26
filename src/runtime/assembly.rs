@@ -2269,6 +2269,7 @@ impl EventAppendRuntimeHandle {
             retryable_errors,
             fatal_errors: Vec::new(),
             budget_exhausted: false,
+            waiting_on: Vec::new(),
         };
         self.last = Some((watermark, dropped));
         report
@@ -2511,6 +2512,7 @@ impl PublicationHandle {
             retryable_errors: Vec::new(),
             fatal_errors: Vec::new(),
             budget_exhausted: false,
+            waiting_on: Vec::new(),
         };
         let request = PublishAggregateRequest {
             session_id: self.bindings.session_id.clone(),
@@ -2626,6 +2628,39 @@ fn worker_scope(
 /// The step-sequence checkpoint is bookkeeping, not a domain progress
 /// cursor, so both worker checkpoints carry the persisted value and
 /// progress is signaled through committed items alone: a zero-work step
+
+/// Translate world-model waiting-on declarations into the carrier shape.
+fn world_model_waiting(
+    declarations: Vec<meld_world_model::WaitingOnDeclaration>,
+) -> Vec<crate::runtime::contracts::WaitingOnDeclaration> {
+    declarations
+        .into_iter()
+        .map(
+            |declaration| crate::runtime::contracts::WaitingOnDeclaration {
+                condition: declaration.condition,
+                subject_key: declaration.subject_key,
+                detail: declaration.detail,
+            },
+        )
+        .collect()
+}
+
+/// Translate execution waiting-on declarations into the carrier shape.
+fn execution_waiting(
+    declarations: Vec<meld_execution::WaitingOnDeclaration>,
+) -> Vec<crate::runtime::contracts::WaitingOnDeclaration> {
+    declarations
+        .into_iter()
+        .map(
+            |declaration| crate::runtime::contracts::WaitingOnDeclaration {
+                condition: declaration.condition,
+                subject_key: declaration.subject_key,
+                detail: declaration.detail,
+            },
+        )
+        .collect()
+}
+
 /// projects truthfully to active idle.
 fn belief_assessment_worker_report(
     report: BeliefAssessmentReport,
@@ -2668,6 +2703,7 @@ fn belief_assessment_worker_report(
             })
             .collect(),
         budget_exhausted: report.budget_exhausted,
+        waiting_on: world_model_waiting(report.waiting_on),
     }
 }
 
@@ -2708,6 +2744,7 @@ fn evidence_ingestion_worker_report(report: EvidenceIngestionReport) -> WorkerTi
             })
             .collect(),
         budget_exhausted: report.more_available,
+        waiting_on: world_model_waiting(report.waiting_on),
     }
 }
 
@@ -2753,6 +2790,7 @@ fn agent_step_worker_report(
             })
             .collect(),
         budget_exhausted: report.budget_exhausted,
+        waiting_on: world_model_waiting(report.waiting_on),
     }
 }
 
@@ -2790,6 +2828,7 @@ fn dispatch_worker_report(report: DispatchTickReport) -> WorkerTickReport {
             })
             .collect(),
         budget_exhausted: report.budget_exhausted,
+        waiting_on: execution_waiting(report.waiting_on),
     }
 }
 
