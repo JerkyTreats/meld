@@ -3,94 +3,23 @@
 //!
 //! Discipline: this specimen must not borrow the happy-path fixture's
 //! seeded anchor or its inline `graph_anchor` source mapping. The theory
-//! installed is exactly `theory/docs_freshness/belief_family.docs_freshness.json`
-//! as shipped, the composition is stewardship-derived, and the stall is
-//! observed, never worked around (no synthetic events, no store pokes, no
-//! forced cursor advances).
+//! installed is exactly the shipped body, the composition is
+//! stewardship-derived, and the stall is observed, never worked around
+//! (no synthetic events, no store pokes, no forced cursor advances).
 //!
-//! Phase-one exit evidence for the runtime harness plan: the thread walk
-//! resolves the anchor-stall chain end to end from the session's stores —
-//! genesis fact to absent anchor, including the subject-key dead end.
+//! Phase-one and phase-two exit evidence for the runtime harness plan:
+//! the thread walk resolves the anchor-stall chain end to end, and the
+//! recorded waiting-on declarations resolve the absence through the
+//! eligibility walk.
 
 use std::fs;
 
-use meld::config::{PhysicalBinding, SelectedStewardshipPackage};
-use meld::harness::boot::{HarnessBootRequest, HarnessRootSelection, HarnessRun, HarnessWorldInit};
+use super::harness_survey_fixture::{survey_binding, survey_boot_request, SUBJECT_ID};
+use meld::harness::boot::HarnessRun;
 use meld::harness::manifest::HarnessManifest;
 use meld::harness::walk::{ThreadCutReason, ThreadSubject, ThreadWalker};
-use meld::init::world::pipeline::WorldInitContent;
-use meld::init::world::{WorldInitRequest, WorldInitStage};
-use meld::runtime::assembly::{
-    StewardshipActorBindings, StewardshipComposition, StewardshipTheoryBindings,
-};
+use meld::runtime::assembly::StewardshipActorBindings;
 use meld::runtime::contracts::RuntimeActionRecord;
-use meld_events::DomainObjectRef;
-use meld_world_model::agent::AgentCurationRuleConfig;
-use meld_world_model::belief::BranchScope;
-use meld_world_model::PerspectiveKey;
-
-const SUBJECT_ID: &str = "docs";
-const AGENT_ID: &str = "seed.docs_freshness";
-const FAMILY_ID: &str = "docs_freshness";
-
-/// The shipped theory body, byte for byte; no fixture-local mappings.
-fn shipped_family_json() -> String {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/theory/docs_freshness/belief_family.docs_freshness.json"
-    );
-    fs::read_to_string(path).expect("shipped theory body exists")
-}
-
-fn binding(
-    workspace_root: std::path::PathBuf,
-    storage_root: std::path::PathBuf,
-) -> PhysicalBinding {
-    PhysicalBinding {
-        workspace_root,
-        subject: SUBJECT_ID.to_string(),
-        agent_id: AGENT_ID.to_string(),
-        provider_id: "specimen-provider".to_string(),
-        package: SelectedStewardshipPackage {
-            expression: "docs_freshness".to_string(),
-            belief_family_id: FAMILY_ID.to_string(),
-            evidence_mapping_id: "docs_freshness".to_string(),
-            curation_rule_id: "docs_freshness".to_string(),
-        },
-        storage_root,
-    }
-}
-
-fn world_init() -> HarnessWorldInit {
-    HarnessWorldInit {
-        request: WorldInitRequest {
-            stages: vec![
-                WorldInitStage::InstallTheory,
-                WorldInitStage::GenesisIdentities,
-                WorldInitStage::SeedEpistemicFacts,
-            ],
-        },
-        content: WorldInitContent {
-            family_config: serde_json::from_str(&shipped_family_json()).unwrap(),
-            curation_rule: AgentCurationRuleConfig {
-                dimension_id: FAMILY_ID.to_string(),
-                threshold: 0.7,
-                priority_urgency: 50,
-                desired_summary: "confidence>0.7".to_string(),
-                source_kind: "belief_divergence".to_string(),
-            },
-            agent_id: AGENT_ID.to_string(),
-            subject: DomainObjectRef::new("workspace_fs", "node", SUBJECT_ID).unwrap(),
-            perspective: PerspectiveKey::new("default", "default").unwrap(),
-            branch_scope: BranchScope::main(),
-            observation_scope: FAMILY_ID.to_string(),
-            directive: format!("steward 'docs_freshness' for subject '{SUBJECT_ID}'"),
-            provenance: "meld world init".to_string(),
-            session_id: "stall-specimen".to_string(),
-            observed_seq: 0,
-        },
-    }
-}
 
 #[test]
 fn the_anchor_stall_is_recorded_and_the_walk_names_the_dead_end() {
@@ -100,26 +29,13 @@ fn the_anchor_stall_is_recorded_and_the_walk_names_the_dead_end() {
     fs::create_dir_all(&workspace_root).unwrap();
     let workspace_root = workspace_root.canonicalize().unwrap();
 
-    let binding = binding(workspace_root, product_root.clone());
+    let binding = survey_binding(workspace_root, product_root.clone());
     let actor_bindings = StewardshipActorBindings::derive(&binding).unwrap();
 
     // The harness owns the session root, so binding.storage_root is known
     // before boot only through the explicit existing-root path.
     let boot_request = |manifest_id: &str, booted_at_ms: u64| {
-        let mut request = HarnessBootRequest::temporary(manifest_id, booted_at_ms);
-        request.root = HarnessRootSelection::ExistingDataRoot {
-            product_root: product_root.clone(),
-            branch_home: session.path().join("branch-home"),
-            legacy_store_path: session.path().join("legacy-compat"),
-            manifest_path: session.path().join(format!("{manifest_id}.json")),
-        };
-        request.unsafe_existing_root = true;
-        request.stewardship = Some(StewardshipComposition {
-            binding: binding.clone(),
-            theory: StewardshipTheoryBindings::default(),
-        });
-        request.world_init = Some(world_init());
-        request
+        survey_boot_request(session.path(), &binding, manifest_id, booted_at_ms)
     };
 
     // First boot initializes the world; actor binding checks installed

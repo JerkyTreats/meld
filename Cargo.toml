@@ -66,6 +66,9 @@ parking_lot = "0.12"
 # Temporary run roots for the interactive runtime harness
 tempfile = "3.8"
 
+# Loopback HTTP listener for the served harness substrate
+tiny_http = "0.12"
+
 # Async support
 async-trait = "0.1"
 
@@ -101,6 +104,7 @@ directories = "5.0"
 meld-events = { path = "crates/meld-events", version = "2.7.0", features = ["test-support"] }
 proptest = "1.4"
 tempfile = "3.8"
+ureq = { version = "2.10", features = ["json"] }
 tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "macros"] }
 
 # Benchmarking
