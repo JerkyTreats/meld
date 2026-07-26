@@ -16,6 +16,9 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::harness::eligibility::EligibilityQuestion;
+use crate::harness::projections::{
+    parent, subagent, user, ParentProjectionRequest, SubagentProjectionRequest,
+};
 use crate::harness::walk::ThreadSubject;
 use crate::runtime::contracts::RuntimeStatusReader as _;
 use crate::serve::sources::ServeSources;
@@ -116,6 +119,15 @@ pub fn dispatch(sources: &ServeSources, method: &str, path: &str, body: &[u8]) -
         ("POST", "/v1/walks/eligibility") => handle(body, |request: EligibilityQuestion| {
             sources.eligibility_walker().why_absent(request)
         }),
+        ("POST", "/v1/projections/subagent") => {
+            handle(body, |request: SubagentProjectionRequest| {
+                subagent(&sources.projection_sources(), &request)
+            })
+        }
+        ("POST", "/v1/projections/parent") => handle(body, |request: ParentProjectionRequest| {
+            parent(&sources.projection_sources(), &request)
+        }),
+        ("GET", "/v1/projections/user") => respond(user(&sources.projection_sources())),
         _ => error_response(404, format!("no route for {method} {path}")),
     }
 }

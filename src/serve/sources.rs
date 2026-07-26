@@ -76,6 +76,14 @@ impl ServeSources {
         )
     }
 
+    pub(crate) fn projection_sources(&self) -> crate::harness::projections::ProjectionSources<'_> {
+        crate::harness::projections::ProjectionSources {
+            reports: &self.reports,
+            replay: Some(&self.replay_port),
+            belief: self.belief.as_deref(),
+        }
+    }
+
     pub(crate) fn eligibility_walker(&self) -> EligibilityWalker<'_> {
         let walker = EligibilityWalker::new(&self.reports);
         match self.traversal.as_deref() {

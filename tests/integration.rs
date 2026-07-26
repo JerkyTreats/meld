@@ -25,6 +25,7 @@ mod harness_run;
 mod harness_served_surface;
 mod harness_stall_specimen;
 pub(crate) mod harness_survey_fixture;
+mod harness_three_altitudes;
 mod hasher_verification;
 mod init_command;
 mod logging_default;
