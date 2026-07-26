@@ -137,8 +137,9 @@ pub struct HarnessBootRequest {
     pub unsafe_existing_root: bool,
     /// Supervisor boot time in milliseconds; injected, never wall clock.
     pub booted_at_ms: u64,
-    /// Registration subset composed into the assembly; `None` composes the
-    /// full legacy classification, which no isolate should want.
+    /// Registration subset composed into the assembly. `None` falls back
+    /// to the stewardship-derived set when a composition is present, else
+    /// the full legacy classification.
     pub registration_set: Option<RegistrationSet>,
     /// Runtime ids force-enabled over the product defaults.
     pub enabled_runtime_ids: Vec<String>,

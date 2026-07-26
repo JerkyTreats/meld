@@ -18,6 +18,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
+use meld_events::DomainObjectRef;
 use meld_execution::goals::PersistentGoalSetStore;
 use meld_execution::task_network::store::{
     network_storage_key, SledTaskNetworkStore, TaskNetworkStoreFactory,
@@ -45,6 +46,16 @@ pub enum ThreadSubject {
     Fact { fact_id: String },
     /// Graph anchor selection record.
     Anchor { anchor_id: String },
+    /// The current anchor selection for a subject under one perspective —
+    /// the record whose absence the runtime survey's anchor stall is
+    /// about. Resolving it names the exact subject key either way.
+    AnchorForSubject {
+        subject_domain_id: String,
+        subject_object_kind: String,
+        subject_object_id: String,
+        perspective_kind: String,
+        perspective_id: String,
+    },
     /// Evidence item admitted into a belief key.
     Evidence { evidence_id: String },
     /// Committed belief revision.
@@ -73,6 +84,8 @@ pub enum ThreadCitation {
     CreatedByFact,
     /// Anchor → its source facts.
     AnchorSourceFact,
+    /// Anchor-for-subject → the concrete anchor selection it resolves to.
+    CurrentAnchor,
     /// Evidence → the traversal facts it cites.
     EvidenceSourceFact,
     /// Evidence → the graph anchors it cites.
@@ -342,6 +355,58 @@ impl<'a> ThreadWalker<'a> {
                         }),
                 ))
             }
+            ThreadSubject::AnchorForSubject {
+                subject_domain_id,
+                subject_object_kind,
+                subject_object_id,
+                perspective_kind,
+                perspective_id,
+            } => {
+                let Some(traversal) = self.traversal else {
+                    return Ok(Resolution::out_of_scope(None));
+                };
+                let subject =
+                    DomainObjectRef::new(subject_domain_id, subject_object_kind, subject_object_id)
+                        .map_err(storage_error)?;
+                let current = traversal
+                    .current_anchor_for_subject(&subject, perspective_kind, perspective_id)
+                    .map_err(storage_error)?;
+                match current {
+                    Some(anchor) => Ok(Resolution::Present(format!(
+                        "current anchor {} for subject {}",
+                        anchor.anchor_id,
+                        subject.index_key()
+                    ))),
+                    None => {
+                        // The subject-key dead end from the runtime survey:
+                        // when the subject key appears in no anchor record
+                        // at all, the absence is a vocabulary mismatch, not
+                        // just a missing perspective.
+                        let anywhere = traversal
+                            .current_anchors_for_subject(&subject)
+                            .map_err(storage_error)?;
+                        let reference = if anywhere.is_empty() {
+                            format!(
+                                "current anchor for subject {} under {}::{}; \
+                                 the subject key appears in no anchor record",
+                                subject.index_key(),
+                                perspective_kind,
+                                perspective_id
+                            )
+                        } else {
+                            format!(
+                                "current anchor for subject {} under {}::{}; \
+                                 {} anchors exist under other perspectives",
+                                subject.index_key(),
+                                perspective_kind,
+                                perspective_id,
+                                anywhere.len()
+                            )
+                        };
+                        Ok(Resolution::absent(Some(reference)))
+                    }
+                }
+            }
             ThreadSubject::Evidence { evidence_id } => {
                 let Some(belief) = self.belief else {
                     return Ok(Resolution::out_of_scope(None));
@@ -492,6 +557,31 @@ impl<'a> ThreadWalker<'a> {
                             ThreadCitation::AnchorSourceFact,
                         ));
                     }
+                }
+            }
+            ThreadSubject::AnchorForSubject {
+                subject_domain_id,
+                subject_object_kind,
+                subject_object_id,
+                perspective_kind,
+                perspective_id,
+            } => {
+                let Some(traversal) = self.traversal else {
+                    return Ok(refs);
+                };
+                let subject =
+                    DomainObjectRef::new(subject_domain_id, subject_object_kind, subject_object_id)
+                        .map_err(storage_error)?;
+                if let Some(anchor) = traversal
+                    .current_anchor_for_subject(&subject, perspective_kind, perspective_id)
+                    .map_err(storage_error)?
+                {
+                    refs.push(Reference::hop(
+                        ThreadSubject::Anchor {
+                            anchor_id: anchor.anchor_id.clone(),
+                        },
+                        ThreadCitation::CurrentAnchor,
+                    ));
                 }
             }
             ThreadSubject::Evidence { evidence_id } => {
@@ -759,6 +849,7 @@ fn owning_citation(subject: &ThreadSubject) -> ThreadCitation {
         ThreadSubject::Event { .. } => ThreadCitation::SourceRecord,
         ThreadSubject::Fact { .. } => ThreadCitation::FactSource,
         ThreadSubject::Anchor { .. } => ThreadCitation::CreatedByFact,
+        ThreadSubject::AnchorForSubject { .. } => ThreadCitation::CurrentAnchor,
         ThreadSubject::Evidence { .. } => ThreadCitation::EvidenceSourceFact,
         ThreadSubject::BeliefRevision { .. } => ThreadCitation::RevisionEvidence,
         ThreadSubject::Decision { .. } => ThreadCitation::DecisionInput,
@@ -773,6 +864,16 @@ fn display_subject(subject: &ThreadSubject) -> String {
         ThreadSubject::Event { seq } => format!("event seq {seq}"),
         ThreadSubject::Fact { fact_id } => format!("fact {fact_id}"),
         ThreadSubject::Anchor { anchor_id } => format!("anchor {anchor_id}"),
+        ThreadSubject::AnchorForSubject {
+            subject_domain_id,
+            subject_object_kind,
+            subject_object_id,
+            perspective_kind,
+            perspective_id,
+        } => format!(
+            "current anchor for {subject_domain_id}::{subject_object_kind}::\
+             {subject_object_id} under {perspective_kind}::{perspective_id}"
+        ),
         ThreadSubject::Evidence { evidence_id } => format!("evidence {evidence_id}"),
         ThreadSubject::BeliefRevision { revision_id } => {
             format!("belief revision {revision_id}")
@@ -1260,6 +1361,57 @@ mod tests {
             .expect("theory revision reference is recorded");
         assert_eq!(cut.reason, ThreadCutReason::SourceOutOfScope);
         assert!(cut.reference.contains("belief_family::docs_freshness"));
+    }
+
+    #[test]
+    fn a_present_anchor_for_subject_resolves_and_hops_to_the_anchor() {
+        let world = chain_world();
+        let thread = walker(&world)
+            .walk(ThreadSubject::AnchorForSubject {
+                subject_domain_id: "workspace_fs".to_string(),
+                subject_object_kind: "node".to_string(),
+                subject_object_id: "node-a".to_string(),
+                perspective_kind: "frame_type".to_string(),
+                perspective_id: "analysis".to_string(),
+            })
+            .unwrap();
+
+        assert!(thread.nodes[0].summary.contains(ANCHOR_ID));
+        let hop = thread
+            .edges
+            .iter()
+            .find(|edge| edge.citation == ThreadCitation::CurrentAnchor)
+            .expect("resolved anchor-for-subject hops to the anchor record");
+        assert_eq!(
+            thread.nodes[hop.to].subject,
+            ThreadSubject::Anchor {
+                anchor_id: ANCHOR_ID.to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn an_absent_perspective_reports_the_anchors_that_do_exist() {
+        let world = chain_world();
+        let thread = walker(&world)
+            .walk(ThreadSubject::AnchorForSubject {
+                subject_domain_id: "workspace_fs".to_string(),
+                subject_object_kind: "node".to_string(),
+                subject_object_id: "node-a".to_string(),
+                perspective_kind: "frame_type".to_string(),
+                perspective_id: "other-perspective".to_string(),
+            })
+            .unwrap();
+
+        assert_eq!(thread.cuts.len(), 1);
+        assert_eq!(thread.cuts[0].reason, ThreadCutReason::AbsentRecord);
+        assert!(
+            thread.cuts[0]
+                .reference
+                .contains("1 anchors exist under other perspectives"),
+            "the absence names the perspectives that do exist: {}",
+            thread.cuts[0].reference
+        );
     }
 
     #[test]

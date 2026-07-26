@@ -22,6 +22,7 @@ mod frame_queue;
 mod generation_parity;
 mod goal_acceptance;
 mod harness_run;
+mod harness_stall_specimen;
 mod hasher_verification;
 mod init_command;
 mod logging_default;
