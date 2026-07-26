@@ -19,6 +19,8 @@ Anti-goal, recorded from the program owner: a generic analytics dashboard that l
 
 ### Phase 1 — Session record and causal thread walk
 
+Status: closed 2026-07-26, merged at `a5046f5` on `runtime-completion`. The harness domain landed the manifest and staged boot (`d396e4c`), the causal thread walk (`cf9f24c`), and the anchor-stall specimen (`30bbe33`); every slice passed objective-scoped fresh review with blocking findings corrected. Exit evidence: `tests/integration/harness_run.rs` pins the temp-root staged boot and the unsafe-flag guard; `tests/integration/harness_stall_specimen.rs` records the survey stall over the shipped theory body and resolves genesis fact to absent anchor including the subject-key dead end; walk re-derivation identity is pinned in both. Residuals recorded for later phases: the stage-4 genesis append still stamps a wall-clock timestamp (pre-existing events-domain request), and the theory citation on revisions cuts as out-of-scope until a registry read surface exists.
+
 Goal: one shared evidence record with a navigable provenance walk, derived entirely from existing durable references.
 
 Tasks:
