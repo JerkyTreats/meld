@@ -31,6 +31,10 @@ Loose register; each is a direction with its first concrete step, not a specific
 - EVAL-R6 authority: action from eval flows only through goal curation. Eval families propose; agents authorize; execution acts. An eval revision is a theory revision — attributable through lineage and scoreable by its downstream outcomes, which is also the anti-Goodhart discipline: evals of evals are just more theory under the same accountability.
 - EVAL-R7 consumers before machinery: the Strategy first slice ranks on static cost and preference; reflexive families later replace the statics through the same request seams. The multiplier program is the first eval experiment — same tasks, different providers, quality per cost, measured through the substrate.
 
+## Relationship To Strategy
+
+Strategy achieves the majority of this structure by weight, and that is the design: its deferred normative tier — learned ranking, the learned efficacy model — is the learning half of eval, and this document's gates make Strategy's first slice the consumer eval replaces statics for. The boundary is the existing one. Strategy's contract records a prospective viability judgment and explicitly does not record that the theory succeeded or that the desired state was restored; eval is the retrospective half — outcomes becoming evidence, efficacy becoming belief — and it lives in the world model, which Strategy consumes as it consumes any belief. The standing decision this section exists to record: when the normative tier arrives, efficacy judgments are reflexive belief families, never a Strategy-private score store. Eval scope outside Strategy entirely: output quality of produced artifacts, provider and model comparison, belief-family calibration, and pipeline cost fidelity. The eval record is upstream of Strategy, not downstream: the learned efficacy model is unbuildable without accumulated actuals.
+
 ## Gates Before An Eval System Is Chartered
 
 - EVAL-R1 actual-cost recording landed and accumulating.
