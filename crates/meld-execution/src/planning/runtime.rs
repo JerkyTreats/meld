@@ -393,6 +393,64 @@ where
         };
 
         let PlanningResult::Composed(composition) = planning_result else {
+            // The hardened DBG-016 rule: a goal that planning attempted but
+            // did not compose states what would change that, in the result's
+            // own vocabulary. A satisfied goal waits on nothing — it is the
+            // satisfaction coupling's outcome, not a divergence.
+            match &planning_result {
+                PlanningResult::NoApplicableMethod(no_method) => {
+                    // Bounded like the diagnostic summary: the declaration
+                    // is a narration, not the full candidate report.
+                    const MAX_CANDIDATES: usize = 3;
+                    let mut candidates: Vec<String> = no_method
+                        .candidates
+                        .iter()
+                        .take(MAX_CANDIDATES)
+                        .map(|candidate| {
+                            format!(
+                                "{} {:?}: {}",
+                                candidate.method_id,
+                                candidate.status,
+                                summarize_diagnostics(&candidate.diagnostics)
+                            )
+                        })
+                        .collect();
+                    if no_method.candidates.len() > MAX_CANDIDATES {
+                        candidates.push(format!(
+                            "and {} more",
+                            no_method.candidates.len() - MAX_CANDIDATES
+                        ));
+                    }
+                    report.waiting_on.push(WaitingOnDeclaration::about(
+                        conditions::NO_APPLICABLE_METHOD,
+                        goal.goal_id.clone(),
+                        format!(
+                            "{} verified candidates, none applied — {}",
+                            no_method.candidates.len(),
+                            candidates.join(" | ")
+                        ),
+                    ));
+                }
+                PlanningResult::Indeterminate(indeterminate) => {
+                    report.waiting_on.push(WaitingOnDeclaration::about(
+                        conditions::WORLD_STATE_INDETERMINATE,
+                        goal.goal_id.clone(),
+                        format!(
+                            "missing terms: {:?}; {}",
+                            indeterminate.missing,
+                            summarize_diagnostics(&indeterminate.diagnostics)
+                        ),
+                    ));
+                }
+                PlanningResult::InvalidMethod(invalid) => {
+                    report.retryable_errors.push(PlanningRuntimeActorIssue {
+                        goal_id: Some(goal.goal_id.clone()),
+                        code: "invalid_method".to_string(),
+                        message: format!("{invalid:?}"),
+                    });
+                }
+                PlanningResult::Satisfied(_) | PlanningResult::Composed(_) => {}
+            }
             report
                 .results
                 .push(PlanningRuntimeActorGoalResult::Planned {
@@ -1144,6 +1202,26 @@ fn candidate_diagnostic(
     method_id: &str,
 ) -> PlanningDiagnostic {
     PlanningDiagnostic::new(code, message).with_method(method_id.to_string())
+}
+
+/// Compress planning diagnostics into one bounded declaration detail.
+fn summarize_diagnostics(diagnostics: &[PlanningDiagnostic]) -> String {
+    const MAX_SUMMARIZED: usize = 3;
+    if diagnostics.is_empty() {
+        return "no diagnostics".to_string();
+    }
+    let mut parts: Vec<String> = diagnostics
+        .iter()
+        .take(MAX_SUMMARIZED)
+        .map(|diagnostic| match &diagnostic.method_id {
+            Some(method_id) => format!("{method_id}: {}", diagnostic.message),
+            None => diagnostic.message.clone(),
+        })
+        .collect();
+    if diagnostics.len() > MAX_SUMMARIZED {
+        parts.push(format!("and {} more", diagnostics.len() - MAX_SUMMARIZED));
+    }
+    parts.join("; ")
 }
 
 fn composition_id(

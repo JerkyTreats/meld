@@ -914,3 +914,76 @@ fn mismatched_workflow_route_fails_deterministically() {
     };
     assert!(error.contains("docs_writer_thread_v1"));
 }
+
+/// A goal planning attempted but did not compose narrates itself in the
+/// result's own vocabulary instead of returning a silent Planned result.
+#[test]
+fn planning_actor_declares_why_a_goal_did_not_compose() {
+    // An unknown dimension leaves the goal indeterminate: the projected
+    // world state carries no fact that could decide it.
+    let mut goal = goal_with_ceiling(None);
+    goal.target = Proposition::Holds {
+        subject: node("readme"),
+        dimension: Term::Dimension("code_health".to_string()),
+        condition: Condition::Above(Term::Literal(Literal::Number(0.7))),
+    };
+    let mut goal_store = open_goal_store_with_active_goal(goal);
+    let mut task_network = open_task_network_store();
+    let actor = planning_actor();
+    let mut projection = fixed_projection(frame());
+
+    let report = actor
+        .run_once(
+            &mut goal_store,
+            &mut task_network,
+            &mut projection,
+            actor_request(None),
+        )
+        .unwrap();
+
+    assert_eq!(report.attempted, 1);
+    assert_eq!(report.committed, 0);
+    assert_eq!(report.waiting_on.len(), 1, "{report:?}");
+    assert_eq!(
+        report.waiting_on[0].condition,
+        meld_execution::waiting::conditions::WORLD_STATE_INDETERMINATE
+    );
+    assert_eq!(
+        report.waiting_on[0].subject_key.as_deref(),
+        Some("goal-docs")
+    );
+
+    // A matched trigger whose method preconditions fail declares
+    // no_applicable_method with the candidate dispositions.
+    let mut goal_store = open_goal_store_with_active_goal(goal_with_ceiling(None));
+    let mut task_network = open_task_network_store();
+    let mut inaccessible_projection = |_request: PlanningWorldStateRequest| {
+        Ok(PlanningWorldStateProjection {
+            world_state: WorldState::new(vec![Proposition::Holds {
+                subject: node("readme"),
+                dimension: Term::Dimension("docs_freshness".to_string()),
+                condition: Condition::Equals(Term::Literal(Literal::Number(0.2))),
+            }])
+            .unwrap(),
+            frame: frame(),
+        })
+    };
+
+    let report = actor
+        .run_once(
+            &mut goal_store,
+            &mut task_network,
+            &mut inaccessible_projection,
+            actor_request(None),
+        )
+        .unwrap();
+
+    assert_eq!(report.waiting_on.len(), 1, "{report:?}");
+    let declaration = &report.waiting_on[0];
+    assert_eq!(
+        declaration.condition,
+        meld_execution::waiting::conditions::NO_APPLICABLE_METHOD
+    );
+    assert_eq!(declaration.subject_key.as_deref(), Some("goal-docs"));
+    assert!(declaration.detail.contains("refresh"), "{declaration:?}");
+}

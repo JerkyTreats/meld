@@ -125,4 +125,55 @@ impl<'a> PlannerQuery<'a> {
             field_config,
         })
     }
+
+    /// Project planner world state for a key whose family declares the
+    /// unanchored coupling.
+    ///
+    /// The configured subject is the stewardship expression's maintained
+    /// scope, validated at binding time, so scope accessibility is declared
+    /// rather than derived from current anchors — the planner-side half of
+    /// the family's anchor declaration. Anchors still contribute provenance
+    /// when they exist.
+    pub fn project_world_state_for_unanchored_key(
+        &self,
+        key: &BeliefKey,
+    ) -> Result<PlannerProjectionOutput, PlannerProjectionError> {
+        let context = PlannerProjectionContext {
+            subject: key.subject.clone(),
+            perspective: key.perspective.clone(),
+            branch_scope: key.branch_scope.clone(),
+            projection_version: crate::planner::contracts::PLANNER_PROJECTION_VERSION.to_string(),
+        };
+
+        let belief_view = self
+            .belief_query
+            .current_revision_and_view(key)?
+            .map(|(_, view)| view);
+        let field_config = belief_view
+            .as_ref()
+            .map(PlannerFieldProjectionConfig::from_belief_view)
+            .unwrap_or_default();
+
+        let anchors = self
+            .traversal_query
+            .current_anchors_for_subject(&key.subject)?;
+        let graph_scope = PlannerGraphScope {
+            accessible: true,
+            anchor_ids: anchors
+                .iter()
+                .map(|anchor| anchor.anchor_id.clone())
+                .collect(),
+            source_fact_ids: anchors
+                .iter()
+                .flat_map(|anchor| anchor.source_fact_ids.clone())
+                .collect(),
+        };
+
+        project_world_state(PlannerProjectionInput {
+            context,
+            belief_view,
+            graph_scope: Some(graph_scope),
+            field_config,
+        })
+    }
 }

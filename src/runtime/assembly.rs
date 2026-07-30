@@ -31,13 +31,15 @@ use meld_execution::task::package::{load_builtin_task_package_spec, PackageExpan
 use meld_execution::task::{TaskCompiler, TaskProgressStore};
 use meld_execution::task_network::aggregate_publication::{
     publish_aggregate_for_run, AggregatePublicationError, AggregatePublicationStore,
-    AggregatePublishResult, AggregateRunBinding, PublishAggregateRequest,
+    AggregatePublishResult, AggregateRunBinding, AggregateSkipReason, PublishAggregateRequest,
 };
 use meld_execution::task_network::dispatch_actor::{
     package_route_run_id, DispatchRuntimeActor, DispatchTickReport, DispatchTickRequest,
 };
 use meld_execution::task_network::terminal_recording::package_run_terminal_outcome;
-use meld_execution::task_network::SledTaskNetworkStore;
+use meld_execution::task_network::{
+    PublicationRuntime, PublishPendingPublicationsRequest, SledTaskNetworkStore,
+};
 use meld_lang::Method;
 use meld_world_model::agent::{
     AgentGoalCurationActor, AgentSatisfactionCurationActor, AgentStepReport, AgentStepRequest,
@@ -2486,7 +2488,7 @@ impl DispatchHandle {
 }
 
 impl PublicationHandle {
-    fn tick(&mut self, _budget: WorkBudget) -> WorkerTickReport {
+    fn tick(&mut self, budget: WorkBudget) -> WorkerTickReport {
         let actor_id = "execution.publication";
         let (progress, outbox) = match &self.stores {
             Ok(stores) => stores,
@@ -2524,6 +2526,52 @@ impl PublicationHandle {
             budget_exhausted: false,
             waiting_on: Vec::new(),
         };
+        // Per-task publications drain first: the durable outbox the task
+        // network reducer fills on every recorded outcome, appended to the
+        // ledger through the NAG-2 bridge under deterministic record ids so
+        // retry is idempotent. Aggregate publication reads reduced state
+        // only, so ordering within the tick carries no semantic coupling.
+        let mut drained_pending = None;
+        if let Some(network) = &self.network {
+            let mut store = network.lock().unwrap_or_else(|e| e.into_inner());
+            match PublicationRuntime::new().publish_pending(
+                &mut store,
+                &self.event_append,
+                PublishPendingPublicationsRequest {
+                    session_id: self.bindings.session_id.clone(),
+                    worker_id: self.worker_id.clone(),
+                    limit: Some(budget.max_items),
+                },
+            ) {
+                Ok(bridge) => {
+                    report.items_attempted += bridge.attempted;
+                    report.items_committed += bridge.committed;
+                    report.budget_exhausted |= bridge.budget_exhausted;
+                    drained_pending = Some(bridge.attempted);
+                    for issue in bridge.retryable_errors {
+                        report.retryable_errors.push(WorkerTickIssue {
+                            item_id: issue.publication_id.clone(),
+                            code: "task_publication_append_failed".to_string(),
+                            message: issue.message,
+                        });
+                    }
+                    for issue in bridge.fatal_errors {
+                        report.fatal_errors.push(WorkerTickIssue {
+                            item_id: issue.publication_id.clone(),
+                            code: "task_publication_invalid".to_string(),
+                            message: issue.message,
+                        });
+                    }
+                }
+                Err(error) => {
+                    report.retryable_errors.push(WorkerTickIssue {
+                        item_id: None,
+                        code: "task_publication_bridge_failed".to_string(),
+                        message: error.to_string(),
+                    });
+                }
+            }
+        }
         let request = PublishAggregateRequest {
             session_id: self.bindings.session_id.clone(),
             worker_id: self.worker_id.clone(),
@@ -2560,8 +2608,31 @@ impl PublicationHandle {
                     report.items_committed += 1;
                     report.output_checkpoint.value += 1;
                 }
-                Ok(AggregatePublishResult::AlreadyPublished { .. })
-                | Ok(AggregatePublishResult::Skipped(_)) => {}
+                Ok(AggregatePublishResult::AlreadyPublished { .. }) => {}
+                Ok(AggregatePublishResult::Skipped(reason)) => {
+                    // The awaited facts travel as a waiting-on declaration
+                    // instead of being dropped: the skip reason carries
+                    // exactly what would have to exist for the aggregate to
+                    // publish.
+                    let detail = match reason {
+                        AggregateSkipReason::RunProgressNotFound => {
+                            "no durable progress exists for the package run".to_string()
+                        }
+                        AggregateSkipReason::RunNotTerminal {
+                            pending_instance_ids,
+                        } => format!(
+                            "run has no terminal outcome; pending work units: {}",
+                            pending_instance_ids.join(", ")
+                        ),
+                    };
+                    report.waiting_on.extend(execution_waiting(vec![
+                        meld_execution::WaitingOnDeclaration::about(
+                            meld_execution::waiting::conditions::AGGREGATE_RUN_NOT_TERMINAL,
+                            binding.package_run_id.clone(),
+                            detail,
+                        ),
+                    ]));
+                }
                 Ok(AggregatePublishResult::AppendFailed { error, .. }) => {
                     report.retryable_errors.push(WorkerTickIssue {
                         item_id: Some(plan_id.clone()),
@@ -2578,6 +2649,27 @@ impl PublicationHandle {
                     }
                 }
             }
+        }
+        // The hardened DBG-016 rule: a tick that absorbed nothing states
+        // what would change that. An empty outbox and an empty work list
+        // wait on the next recorded task outcome.
+        // An errored tick declares nothing quiet: the outbox emptiness was
+        // never confirmed, and the recorded issues already narrate the tick.
+        if report.items_attempted == 0
+            && report.waiting_on.is_empty()
+            && report.retryable_errors.is_empty()
+            && report.fatal_errors.is_empty()
+        {
+            let detail = match drained_pending {
+                Some(_) => "no pending task publications and no package-route runs to aggregate",
+                None => "no task network is composed; nothing records outcomes to publish",
+            };
+            report.waiting_on.extend(execution_waiting(vec![
+                meld_execution::WaitingOnDeclaration::broad(
+                    meld_execution::waiting::conditions::NO_PENDING_PUBLICATIONS,
+                    detail,
+                ),
+            ]));
         }
         report
     }
@@ -4373,5 +4465,49 @@ mod tests {
         assert_eq!(subject.domain_id, "workspace_fs");
         assert_eq!(subject.object_kind, "node");
         assert_eq!(subject.object_id, "docs");
+    }
+
+    /// The publication tick declares quiet only when the outbox emptiness
+    /// was actually confirmed: a composed empty network and an absent
+    /// network both narrate, each with its own detail.
+    #[test]
+    fn publication_tick_declares_quiet_only_when_confirmed() {
+        let harness = StewardshipHarness::new();
+        let bindings = StewardshipActorBindings::derive(&harness.binding).unwrap();
+        let store_dir = tempfile::tempdir().unwrap();
+        let execution_db = sled::open(store_dir.path().join("execution")).unwrap();
+        let progress = meld_execution::task::TaskProgressStore::open(execution_db.clone()).unwrap();
+        let outbox =
+            meld_execution::task_network::aggregate_publication::AggregatePublicationStore::open(
+                execution_db.clone(),
+            )
+            .unwrap();
+        let network =
+            SledTaskNetworkStore::open(execution_db, bindings.network_id.clone()).unwrap();
+
+        let mut handle = PublicationHandle {
+            stores: Ok((progress, outbox)),
+            event_append: crate::runtime::ports::ProductEventAppendPort::new(&harness.authority),
+            handoffs: Arc::new(PackageRouteHandoffs::default()),
+            bindings,
+            worker_id: "worker-test".to_string(),
+            network: Some(Arc::new(Mutex::new(network))),
+        };
+
+        let report = handle.tick(WorkBudget { max_items: 8 });
+        assert!(report.retryable_errors.is_empty(), "{report:?}");
+        assert_eq!(report.waiting_on.len(), 1, "{report:?}");
+        assert_eq!(report.waiting_on[0].condition, "no_pending_publications");
+        assert!(report.waiting_on[0]
+            .detail
+            .contains("no pending task publications"));
+
+        // Without a composed network the declaration carries the
+        // no-network detail instead of claiming a confirmed empty outbox.
+        handle.network = None;
+        let report = handle.tick(WorkBudget { max_items: 8 });
+        assert_eq!(report.waiting_on.len(), 1, "{report:?}");
+        assert_eq!(report.waiting_on[0].condition, "no_pending_publications");
+        assert!(report.waiting_on[0].detail.contains("no task network"));
     }
 }

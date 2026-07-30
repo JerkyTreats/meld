@@ -136,6 +136,19 @@ impl RunContext {
 
     /// Create run context from workspace root and optional config path. Uses ConfigLoader only.
     pub fn new(workspace_root: PathBuf, config_path: Option<PathBuf>) -> Result<Self, ApiError> {
+        Self::with_runtime_enablement(workspace_root, config_path, &[])
+    }
+
+    /// Create run context with operator runtime enablement.
+    ///
+    /// Each named runtime is removed from the assembly's default-disabled
+    /// set — the operator surface for the dispatch valve. Naming a runtime
+    /// that is not disabled by default is an error rather than a no-op.
+    pub fn with_runtime_enablement(
+        workspace_root: PathBuf,
+        config_path: Option<PathBuf>,
+        enable_runtime_ids: &[String],
+    ) -> Result<Self, ApiError> {
         let config = if let Some(ref cfg_path) = config_path {
             ConfigLoader::load_from_file(cfg_path)?
         } else {
@@ -153,8 +166,12 @@ impl RunContext {
             warn!(error = %err, "failed to register active branch during startup");
         }
 
-        let assembly =
-            CliRuntimeAssembly::load(&workspace_root, &config, active_branch.resolved())?;
+        let assembly = CliRuntimeAssembly::load(
+            &workspace_root,
+            &config,
+            active_branch.resolved(),
+            enable_runtime_ids,
+        )?;
         let store_path = assembly.legacy_store_path().to_path_buf();
         let frame_storage_path = assembly.frame_storage_path().to_path_buf();
         let artifact_storage_path = assembly.artifact_storage_path().to_path_buf();
