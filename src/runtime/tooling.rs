@@ -434,7 +434,8 @@ fn runtime_run(
     for diagnostic in assembly.diagnostics() {
         let line = if options.format == "json" {
             serde_json::json!({
-                "diagnostic": diagnostic.code,
+                "type": "assembly_diagnostic",
+                "code": diagnostic.code,
                 "message": diagnostic.message,
             })
             .to_string()

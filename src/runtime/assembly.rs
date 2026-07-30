@@ -2653,7 +2653,13 @@ impl PublicationHandle {
         // The hardened DBG-016 rule: a tick that absorbed nothing states
         // what would change that. An empty outbox and an empty work list
         // wait on the next recorded task outcome.
-        if report.items_attempted == 0 && report.waiting_on.is_empty() {
+        // An errored tick declares nothing quiet: the outbox emptiness was
+        // never confirmed, and the recorded issues already narrate the tick.
+        if report.items_attempted == 0
+            && report.waiting_on.is_empty()
+            && report.retryable_errors.is_empty()
+            && report.fatal_errors.is_empty()
+        {
             let detail = match drained_pending {
                 Some(_) => "no pending task publications and no package-route runs to aggregate",
                 None => "no task network is composed; nothing records outcomes to publish",
@@ -4459,5 +4465,49 @@ mod tests {
         assert_eq!(subject.domain_id, "workspace_fs");
         assert_eq!(subject.object_kind, "node");
         assert_eq!(subject.object_id, "docs");
+    }
+
+    /// The publication tick declares quiet only when the outbox emptiness
+    /// was actually confirmed: a composed empty network and an absent
+    /// network both narrate, each with its own detail.
+    #[test]
+    fn publication_tick_declares_quiet_only_when_confirmed() {
+        let harness = StewardshipHarness::new();
+        let bindings = StewardshipActorBindings::derive(&harness.binding).unwrap();
+        let store_dir = tempfile::tempdir().unwrap();
+        let execution_db = sled::open(store_dir.path().join("execution")).unwrap();
+        let progress = meld_execution::task::TaskProgressStore::open(execution_db.clone()).unwrap();
+        let outbox =
+            meld_execution::task_network::aggregate_publication::AggregatePublicationStore::open(
+                execution_db.clone(),
+            )
+            .unwrap();
+        let network =
+            SledTaskNetworkStore::open(execution_db, bindings.network_id.clone()).unwrap();
+
+        let mut handle = PublicationHandle {
+            stores: Ok((progress, outbox)),
+            event_append: crate::runtime::ports::ProductEventAppendPort::new(&harness.authority),
+            handoffs: Arc::new(PackageRouteHandoffs::default()),
+            bindings,
+            worker_id: "worker-test".to_string(),
+            network: Some(Arc::new(Mutex::new(network))),
+        };
+
+        let report = handle.tick(WorkBudget { max_items: 8 });
+        assert!(report.retryable_errors.is_empty(), "{report:?}");
+        assert_eq!(report.waiting_on.len(), 1, "{report:?}");
+        assert_eq!(report.waiting_on[0].condition, "no_pending_publications");
+        assert!(report.waiting_on[0]
+            .detail
+            .contains("no pending task publications"));
+
+        // Without a composed network the declaration carries the
+        // no-network detail instead of claiming a confirmed empty outbox.
+        handle.network = None;
+        let report = handle.tick(WorkBudget { max_items: 8 });
+        assert_eq!(report.waiting_on.len(), 1, "{report:?}");
+        assert_eq!(report.waiting_on[0].condition, "no_pending_publications");
+        assert!(report.waiting_on[0].detail.contains("no task network"));
     }
 }

@@ -399,9 +399,13 @@ where
             // satisfaction coupling's outcome, not a divergence.
             match &planning_result {
                 PlanningResult::NoApplicableMethod(no_method) => {
-                    let candidates: Vec<String> = no_method
+                    // Bounded like the diagnostic summary: the declaration
+                    // is a narration, not the full candidate report.
+                    const MAX_CANDIDATES: usize = 3;
+                    let mut candidates: Vec<String> = no_method
                         .candidates
                         .iter()
+                        .take(MAX_CANDIDATES)
                         .map(|candidate| {
                             format!(
                                 "{} {:?}: {}",
@@ -411,6 +415,12 @@ where
                             )
                         })
                         .collect();
+                    if no_method.candidates.len() > MAX_CANDIDATES {
+                        candidates.push(format!(
+                            "and {} more",
+                            no_method.candidates.len() - MAX_CANDIDATES
+                        ));
+                    }
                     report.waiting_on.push(WaitingOnDeclaration::about(
                         conditions::NO_APPLICABLE_METHOD,
                         goal.goal_id.clone(),
