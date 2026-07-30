@@ -46,9 +46,9 @@ use meld_world_model::agent::{
 use meld_world_model::belief::{
     BeliefAssessmentActor, BeliefAssessmentReport, BeliefAssessmentRequest, BeliefFamilyRegistry,
     BeliefFamilyRegistryStore, BeliefStore, BeliefSubjectBinding, BranchScope,
-    ConfiguredOutcomeMapping, EvidenceEventReplaySource, EvidenceIngestionActor,
+    ConfiguredOutcomeMappingSet, EvidenceEventReplaySource, EvidenceIngestionActor,
     EvidenceIngestionReport, EvidenceIngestionRequest, OutcomeEvidenceMapping,
-    OutcomeMappingConfig,
+    OutcomeMappingSetConfig,
 };
 use meld_world_model::world_state::graph::runtime::{GraphCatchUpBudget, GraphRuntime};
 use meld_world_model::world_state::graph::store::TraversalStore;
@@ -432,12 +432,18 @@ fn folder_unit_capability_types(expression: &str) -> Result<Vec<String>, Runtime
 /// binding instead of manufacturing behavior.
 #[derive(Default)]
 pub struct StewardshipTheoryBindings {
-    /// Installed outcome-to-evidence mapping configuration.
+    /// Installed outcome-to-evidence mapping set configuration.
+    ///
+    /// The installed unit is the mapping set: one selected identity whose
+    /// rules interpret every canonical outcome shape the expression's theory
+    /// recognizes — per-task publications plus package aggregates — so the
+    /// assembled ingestion actor never binds a narrower vocabulary than the
+    /// installed theory declares.
     ///
     /// Seam: when the world model gains its durable mapping registry
     /// (Runtime Initialization stage 2), assembly hydrates from it and this
     /// injection becomes harness-only.
-    pub outcome_mapping: Option<OutcomeMappingConfig>,
+    pub outcome_mapping: Option<OutcomeMappingSetConfig>,
     /// Planning theory: methods, catalog, afforded actions, realizations.
     pub planning: Option<PlanningTheoryBinding>,
     /// Real execution route bindings for the dispatch actor.
@@ -719,7 +725,7 @@ struct EvidenceIngestionFactory {
     family_id: String,
     replay: ProductEventReplayPort,
     cursor: EventConsumerRegistryCapability,
-    mapping: Arc<ConfiguredOutcomeMapping>,
+    mapping: Arc<ConfiguredOutcomeMappingSet>,
     perspective: PerspectiveKey,
     branch_scope: BranchScope,
 }
@@ -1802,7 +1808,7 @@ impl RuntimeSemanticHandleFactory {
                         ),
                     );
                 };
-                let mapping = match ConfiguredOutcomeMapping::new(mapping_config) {
+                let mapping = match ConfiguredOutcomeMappingSet::new(mapping_config) {
                     Ok(mapping) => Arc::new(mapping),
                     Err(error) => {
                         return unresolved(
@@ -3696,7 +3702,7 @@ mod tests {
     };
     use meld_world_model::belief::{
         configured_belief_key, OutcomeContentRule, OutcomeFieldRule, OutcomeMappingConfig,
-        OutcomeSubjectBinding, OutcomeValueSource,
+        OutcomeMappingSetConfig, OutcomeSubjectBinding, OutcomeValueSource,
     };
 
     const STEWARD_AGENT_ID: &str = "seed.docs_freshness";
@@ -3791,9 +3797,16 @@ mod tests {
         }"#
     }
 
-    fn installed_outcome_mapping() -> OutcomeMappingConfig {
-        OutcomeMappingConfig {
+    fn installed_outcome_mapping() -> OutcomeMappingSetConfig {
+        OutcomeMappingSetConfig {
             mapping_id: MAPPING_ID.to_string(),
+            rules: vec![installed_task_success_rule()],
+        }
+    }
+
+    fn installed_task_success_rule() -> OutcomeMappingConfig {
+        OutcomeMappingConfig {
+            mapping_id: "task-success-rule".to_string(),
             source_kind: "content_written".to_string(),
             match_domain_id: "execution".to_string(),
             match_event_type: "execution.task.succeeded".to_string(),
