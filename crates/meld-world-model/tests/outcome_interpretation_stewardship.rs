@@ -657,13 +657,19 @@ fn mapping_set_vocabulary_rejects_unusable_theory() {
     assert!(ConfiguredOutcomeMappingSet::new(duplicate).is_err());
 
     // Payload text supplies only the object id, so the binding must carry
-    // the owning domain.
+    // the owning domain. The folder-task rule is the payload-object-id one.
     let mut missing_domain = parsed.clone();
-    missing_domain.rules[0].subject.domain_id = None;
-    assert!(matches!(
-        missing_domain.rules[0].subject.from,
-        OutcomeSubjectSource::PayloadObjectId { .. }
-    ));
+    let folder_rule = missing_domain
+        .rules
+        .iter()
+        .position(|rule| {
+            matches!(
+                rule.subject.from,
+                OutcomeSubjectSource::PayloadObjectId { .. }
+            )
+        })
+        .unwrap();
+    missing_domain.rules[folder_rule].subject.domain_id = None;
     assert!(ConfiguredOutcomeMappingSet::new(missing_domain).is_err());
 
     // An installed constant object must be a constructible reference.

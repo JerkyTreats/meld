@@ -248,9 +248,11 @@ fn belief_config_loads_runtime_family_and_hashes() {
     let snapshot = BeliefConfigLoader::load_json(config_json()).unwrap();
     assert_eq!(snapshot.config.family_id, "docs_freshness");
     assert_eq!(snapshot.config.comparator.engine_id, "weighted_bayesian");
-    // Hash pins the serialized config shape; the observationality field
-    // added at the Gate B contract freeze changed it.
-    assert_eq!(snapshot.hash, "2ddb86575d116353");
+    // Hash pins the serialized config shape; the anchor_requirement field
+    // added for the flywheel-ignition lane changed it, as observationality
+    // did at the Gate B contract freeze. A shape change forces a one-time
+    // global reassessment on upgrade, which is the recorded consequence.
+    assert_eq!(snapshot.hash, "a8484148f6d8ef63");
     assert!(!snapshot.hash.is_empty());
 }
 
@@ -474,6 +476,7 @@ fn configured_bayesian_comparator_is_deterministic() {
         config_snapshot_hash: snapshot.hash.clone(),
         prior_revision: None,
         evidence: evidence.clone(),
+        subject_key: None,
         source_cursor_start: 1,
         source_cursor_end: 1,
     })
@@ -483,6 +486,7 @@ fn configured_bayesian_comparator_is_deterministic() {
         config_snapshot_hash: snapshot.hash,
         prior_revision: None,
         evidence,
+        subject_key: None,
         source_cursor_start: 1,
         source_cursor_end: 1,
     })
@@ -520,6 +524,7 @@ fn configured_bayesian_comparator_uses_weights_reliability_and_precision() {
         config_snapshot_hash: snapshot.hash,
         prior_revision: None,
         evidence,
+        subject_key: None,
         source_cursor_start: 1,
         source_cursor_end: 1,
     })
@@ -563,6 +568,7 @@ fn comparator_provenance_merges_duplicate_refs_once() {
         config_snapshot_hash: snapshot.hash,
         prior_revision: None,
         evidence: vec![first, second],
+        subject_key: None,
         source_cursor_start: 1,
         source_cursor_end: 1,
     })
@@ -597,6 +603,7 @@ fn configured_bayesian_comparator_reports_missing_required_evidence() {
         config_snapshot_hash: snapshot.hash,
         prior_revision: None,
         evidence,
+        subject_key: None,
         source_cursor_start: 1,
         source_cursor_end: 1,
     })
@@ -641,6 +648,7 @@ fn configured_bayesian_comparator_reports_missing_assessment() {
         config_snapshot_hash: snapshot.hash,
         prior_revision: None,
         evidence,
+        subject_key: None,
         source_cursor_start: 1,
         source_cursor_end: 1,
     })
@@ -677,6 +685,7 @@ fn configured_bayesian_comparator_uses_prior_when_no_factor_matches() {
         config_snapshot_hash: snapshot.hash,
         prior_revision: None,
         evidence,
+        subject_key: None,
         source_cursor_start: 1,
         source_cursor_end: 1,
     })
@@ -711,6 +720,7 @@ fn comparator_polarity_keeps_counterevidence_separate() {
         config_snapshot_hash: snapshot.hash,
         prior_revision: None,
         evidence,
+        subject_key: None,
         source_cursor_start: 1,
         source_cursor_end: 1,
     })
