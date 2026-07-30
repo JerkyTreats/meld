@@ -127,3 +127,88 @@ fn provisioning_writes_nothing_outside_the_config_home() {
         assert_eq!(std::fs::read_dir(workspace.path()).unwrap().count(), 0);
     });
 }
+
+/// Stewardship config selecting the shipped theory identities.
+fn write_shipped_selection_config(workspace_root: &Path) -> PathBuf {
+    let config_dir = workspace_root.join("config");
+    std::fs::create_dir_all(&config_dir).unwrap();
+    let target_root = workspace_root.canonicalize().unwrap();
+    let config = format!(
+        r#"[providers.steward-provider]
+provider_name = "steward-provider"
+provider_type = "local"
+model = "test-model"
+endpoint = "http://127.0.0.1:9"
+
+[stewardship.docs_freshness]
+expression = "docs_freshness"
+target_root = "{target_root}"
+subject = "docs"
+agent_id = "docs-writer"
+provider_id = "steward-provider"
+
+[stewardship.docs_freshness.theory]
+belief_family_id = "docs_freshness"
+evidence_mapping_id = "docs_freshness_outcome_interpretation_v1"
+curation_rule_id = "docs_freshness"
+"#,
+        target_root = target_root.display()
+    );
+    let config_path = config_dir.join("config.toml");
+    std::fs::write(&config_path, config).unwrap();
+    config_path
+}
+
+fn boot_diagnostic_codes(workspace_root: &Path, config_path: &Path) -> Vec<String> {
+    let run_context = meld::cli::RunContext::new(
+        workspace_root.to_path_buf(),
+        Some(config_path.to_path_buf()),
+    )
+    .unwrap();
+    run_context
+        .product_runtime()
+        .diagnostics()
+        .iter()
+        .map(|diagnostic| diagnostic.code.clone())
+        .collect()
+}
+
+#[test]
+fn provisioned_theory_composes_at_product_boot() {
+    let test_dir = tempfile::TempDir::new().unwrap();
+    with_xdg_env(&test_dir, || {
+        let workspace = tempfile::TempDir::new().unwrap();
+        let workspace_root = workspace.path().join("ws");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        let config_path = write_shipped_selection_config(&workspace_root);
+
+        // Before provisioning, the boot truthfully reports the planning
+        // theory gap. Evidence ingestion is gated behind the durable family
+        // installation, so its mapping diagnostic is not reachable here.
+        let codes = boot_diagnostic_codes(&workspace_root, &config_path);
+        assert!(
+            codes
+                .iter()
+                .any(|code| code == "planning_theory_unresolved"),
+            "expected planning_theory_unresolved before provisioning, got {codes:?}"
+        );
+
+        provision_theory_source(&shipped_theory_dir(), &shipped_selection()).unwrap();
+
+        // After provisioning, the same boot composes planning theory from
+        // the XDG theory root and the diagnostic dissolves.
+        let codes = boot_diagnostic_codes(&workspace_root, &config_path);
+        assert!(
+            !codes
+                .iter()
+                .any(|code| code == "planning_theory_unresolved"),
+            "planning theory stayed unresolved after provisioning: {codes:?}"
+        );
+        assert!(
+            !codes
+                .iter()
+                .any(|code| code == "evidence_mapping_unresolved"),
+            "evidence mapping stayed unresolved after provisioning: {codes:?}"
+        );
+    });
+}
