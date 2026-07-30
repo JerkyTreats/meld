@@ -942,3 +942,64 @@ fn unanchored_family_assesses_unobserved_subject_to_prior_revision() {
     assert_eq!(second.items_attempted, 0);
     assert_eq!(second.items_committed, 0);
 }
+
+/// The family's anchor declaration decides planner scope semantics: an
+/// unanchored family's maintained scope is declared accessible, so the
+/// projection carries the Accessible proposition without any anchor.
+#[test]
+fn unanchored_projection_declares_the_maintained_scope_accessible() {
+    let graph_dir = tempfile::tempdir().unwrap();
+    let belief_dir = tempfile::tempdir().unwrap();
+    let graph =
+        Arc::new(TraversalStore::new(sled::open(graph_dir.path().join("graph")).unwrap()).unwrap());
+    let belief_db = sled::open(belief_dir.path().join("belief")).unwrap();
+    let belief = Arc::new(BeliefStore::new(belief_db.clone()).unwrap());
+    let mut registry = BeliefFamilyRegistryStore::new(belief_db).unwrap();
+    let mut config = family_config("1");
+    config.anchor_requirement = meld_world_model::belief::AnchorRequirement::Unanchored;
+    let (_, revision) = registry.install(config, 1).unwrap();
+    let subject = object("workspace_fs", "node", "unobserved-node");
+    let key = configured_belief_key(
+        &revision,
+        &subject,
+        &default_perspective(),
+        &BranchScope::main(),
+    );
+
+    // Commit the prior-based revision so the projection carries a belief.
+    let mut actor = BeliefAssessmentActor::new(
+        "belief.assessment.test",
+        Arc::clone(&belief),
+        Arc::clone(&graph),
+        Arc::new(registry.clone()),
+        vec![FAMILY_ID.to_string()],
+        vec![binding(&subject)],
+        default_perspective(),
+        BranchScope::main(),
+    );
+    actor.bounded_step(&BeliefAssessmentRequest {
+        sequence: 10,
+        max_items: 4,
+    });
+
+    let planner = PlannerQuery::new(
+        BeliefQuery::new(belief.as_ref()),
+        TraversalQuery::new(graph.as_ref()),
+    );
+    let anchored_reading = planner.project_world_state_for_key(&key).unwrap();
+    let declared_reading = planner
+        .project_world_state_for_unanchored_key(&key)
+        .unwrap();
+
+    let accessible = |output: &meld_world_model::PlannerProjectionOutput| {
+        output
+            .world_state
+            .propositions()
+            .iter()
+            .any(|proposition| matches!(proposition, meld_lang::Proposition::Accessible { .. }))
+    };
+    // No anchor exists, so the anchored reading is inaccessible while the
+    // declared reading carries the maintained scope.
+    assert!(!accessible(&anchored_reading));
+    assert!(accessible(&declared_reading));
+}

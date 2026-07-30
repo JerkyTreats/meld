@@ -1081,9 +1081,17 @@ impl PlanningProjectionPort for ExactKeyPlanningProjectionPort {
             BeliefQuery::new(self.belief_store.as_ref()),
             TraversalQuery::new(self.traversal_store.as_ref()),
         );
-        let output = query
-            .project_world_state_for_key(&key)
-            .map_err(|error| ExecutionPlanningProjectionError::retryable(error.to_string()))?;
+        // The family's anchor declaration decides scope semantics on the
+        // planner side exactly as it does on the assessment side: an
+        // unanchored family's maintained scope is declared accessible.
+        let output = if revision.config.anchor_requirement
+            == meld_world_model::belief::AnchorRequirement::Unanchored
+        {
+            query.project_world_state_for_unanchored_key(&key)
+        } else {
+            query.project_world_state_for_key(&key)
+        }
+        .map_err(|error| ExecutionPlanningProjectionError::retryable(error.to_string()))?;
 
         let source_refs: Vec<String> = output.source_refs.iter().map(render_source_ref).collect();
         // Frame identity is deterministic from the consumed belief revision
@@ -1275,8 +1283,21 @@ impl PackageStepInvoker for RootCapabilityStepInvoker {
                     instance.capability_type_id, instance.capability_version
                 ))
             })?;
+        // Same event-context rule as the claimed route: capability
+        // invocations on the package route publish their task lifecycle
+        // events under the composed session partition.
+        let event_context = self.core.session_id.as_ref().map(|session_id| {
+            crate::execution::ExecutionEventContext {
+                session_id: session_id.clone(),
+            }
+        });
         invoker
-            .invoke(self.core.api.as_ref(), &runtime_init, payload, None)
+            .invoke(
+                self.core.api.as_ref(),
+                &runtime_init,
+                payload,
+                event_context.as_ref(),
+            )
             .await
             .map_err(|error| {
                 meld_execution::error::ExecutionInvariantError::GenerationFailed(error.to_string())
@@ -1324,12 +1345,20 @@ impl ClaimedTaskInvoker for CompiledTaskClaimInvoker {
             format!("dispatch_claim::{}", claim.claim_id),
         )
         .map_err(|error| DispatchPortError::fatal(error.to_string()))?;
+        // Per-task lifecycle events reach the ledger only through an event
+        // context; the route core carries the session partition the
+        // composed actors share, so the claimed route publishes under it.
+        let event_context = self.core.session_id.as_ref().map(|session_id| {
+            crate::execution::ExecutionEventContext {
+                session_id: session_id.clone(),
+            }
+        });
         match crate::task::execute_task_to_completion(
             self.core.api.as_ref(),
             &mut executor,
             &self.core.catalog,
             &self.core.registry,
-            None,
+            event_context.as_ref(),
             None,
         )
         .await
