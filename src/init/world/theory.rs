@@ -236,7 +236,7 @@ fn load_planning_json<T: serde::de::DeserializeOwned>(
 }
 
 /// Reject identities that would escape the theory directory.
-fn validate_theory_id(label: &str, id: &str) -> Result<(), ApiError> {
+pub(crate) fn validate_theory_id(label: &str, id: &str) -> Result<(), ApiError> {
     if id.trim().is_empty() {
         return Err(ApiError::ConfigError(format!("{label} must not be empty")));
     }

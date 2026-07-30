@@ -119,6 +119,45 @@ fn selection_identity_mismatch_rejects_before_any_write() {
 }
 
 #[test]
+fn method_identity_that_would_escape_the_theory_root_is_rejected() {
+    let test_dir = tempfile::TempDir::new().unwrap();
+    with_xdg_env(&test_dir, || {
+        // A source whose method body declares a path-shaped identity: the
+        // destination file name is content-derived, so it must pass the
+        // same escape guard as every selected theory id.
+        let source = tempfile::TempDir::new().unwrap();
+        for name in [
+            "belief_family.docs_freshness.json",
+            "outcome_interpretation.docs_freshness.json",
+            "curation_rule.docs_freshness.json",
+        ] {
+            std::fs::copy(shipped_theory_dir().join(name), source.path().join(name)).unwrap();
+        }
+        let methods_dir = source.path().join("methods");
+        std::fs::create_dir_all(&methods_dir).unwrap();
+        let body = std::fs::read_to_string(
+            shipped_theory_dir()
+                .join("methods")
+                .join("refresh_docs_v1.json"),
+        )
+        .unwrap()
+        .replace("refresh_docs_v1", "../../escape");
+        std::fs::write(methods_dir.join("escape.json"), body).unwrap();
+
+        let error = provision_theory_source(source.path(), &shipped_selection()).unwrap_err();
+
+        assert!(error.to_string().contains("path separators"), "{error}");
+        let planning_root = test_dir
+            .path()
+            .join("meld")
+            .join("theory")
+            .join("planning")
+            .join("docs_freshness");
+        assert!(!planning_root.join("methods").exists());
+    });
+}
+
+#[test]
 fn provisioning_writes_nothing_outside_the_config_home() {
     let workspace = tempfile::TempDir::new().unwrap();
     let test_dir = tempfile::TempDir::new().unwrap();

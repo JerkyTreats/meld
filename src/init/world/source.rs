@@ -26,7 +26,7 @@ use crate::config::SelectedStewardshipPackage;
 use crate::error::ApiError;
 use crate::init::world::theory::{
     belief_family_config_path, curation_rule_config_path, outcome_mapping_config_path,
-    planning_theory_root,
+    planning_theory_root, validate_theory_id,
 };
 
 /// Disposition of one provisioned theory body.
@@ -168,6 +168,9 @@ fn provision_planning(
             let raw = read_file(&file)?;
             let method: Method = serde_json::from_str(&raw)
                 .map_err(|error| source_error(source_dir, "method", error))?;
+            // The destination file name is content-derived identity; it must
+            // pass the same escape guard as every selected theory id.
+            validate_theory_id("method id", &method.method_id)?;
             report.bodies.push(write_body(
                 "method",
                 &planning_root
