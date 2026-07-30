@@ -428,6 +428,24 @@ fn runtime_run(
         assembly.desired_runtime_state(),
     );
 
+    // Assembly diagnostics reach the operator before the run starts: each
+    // names one unresolved binding the composed runtimes will truthfully
+    // report as unresolved. Emission is observational and never gates.
+    for diagnostic in assembly.diagnostics() {
+        let line = if options.format == "json" {
+            serde_json::json!({
+                "diagnostic": diagnostic.code,
+                "message": diagnostic.message,
+            })
+            .to_string()
+        } else {
+            format!("diagnostic {}: {}", diagnostic.code, diagnostic.message)
+        };
+        if let Err(error) = writeln!(account_writer, "{line}") {
+            tracing::debug!(error = %error, "diagnostic line write skipped");
+        }
+    }
+
     let mut supervisor = RuntimeSupervisor::start(assembly.supervisor_startup_package(), command)
         .map_err(runtime_error)?;
     let startup_status = supervisor.status_snapshot(started_at_ms);

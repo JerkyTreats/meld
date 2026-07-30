@@ -21,6 +21,11 @@ pub struct Cli {
     #[arg(long)]
     pub config: Option<PathBuf>,
 
+    /// Enable a runtime that is disabled by default, such as
+    /// execution.task_dispatch. Repeatable.
+    #[arg(long = "enable-runtime", value_name = "RUNTIME_ID")]
+    pub enable_runtime: Vec<String>,
+
     /// Enable verbose logging and mirror logs to stderr unless output is explicitly set
     #[arg(long, default_value = "false")]
     pub verbose: bool,

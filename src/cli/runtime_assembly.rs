@@ -38,6 +38,7 @@ impl CliRuntimeAssembly {
         workspace_root: &Path,
         config: &MerkleConfig,
         active_branch: &ResolvedBranch,
+        enable_runtime_ids: &[String],
     ) -> Result<Self, ApiError> {
         let (legacy_store_path, frame_storage_path, artifact_storage_path) =
             config.system.storage.resolve_paths(workspace_root)?;
@@ -69,13 +70,34 @@ impl CliRuntimeAssembly {
             }
             None => None,
         };
+        // Operator runtime enablement opens the default valve: each named
+        // runtime leaves the default-disabled set. Naming a runtime that is
+        // not disabled by default is an error rather than a silent no-op.
+        let mut runtime_config = ProductRuntimeConfig::for_product_root(product_root.clone());
+        // The physical binding validated its provider against the root
+        // provider map, so provider-requiring runtimes may compose.
+        // Reachability stays a runtime concern: an unreachable endpoint
+        // fails invocations retryably, it does not fail the boot.
+        if stewardship.is_some() {
+            runtime_config.provider.provider_available = true;
+        }
+        let default_disabled = runtime_config.disabled_runtime_ids.clone();
+        for runtime_id in enable_runtime_ids {
+            let before = runtime_config.disabled_runtime_ids.len();
+            runtime_config
+                .disabled_runtime_ids
+                .retain(|disabled| disabled != runtime_id);
+            if runtime_config.disabled_runtime_ids.len() == before {
+                return Err(ApiError::ConfigError(format!(
+                    "runtime id '{runtime_id}' is not disabled by default; \
+                     --enable-runtime accepts: {}",
+                    default_disabled.join(", ")
+                )));
+            }
+        }
         let product_runtime = Arc::new(
-            ProductRuntimeAssembly::load_composed(
-                ProductRuntimeConfig::for_product_root(product_root.clone()),
-                resolved.authority,
-                stewardship,
-            )
-            .map_err(|error| ApiError::ConfigError(error.to_string()))?,
+            ProductRuntimeAssembly::load_composed(runtime_config, resolved.authority, stewardship)
+                .map_err(|error| ApiError::ConfigError(error.to_string()))?,
         );
 
         let workflow_registry = Arc::new(parking_lot::RwLock::new(WorkflowRegistry::load(
