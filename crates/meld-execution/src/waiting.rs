@@ -26,6 +26,14 @@ pub mod conditions {
     pub const CONDITIONAL_EDGE_DEFERRED: &str = "conditional_edge_deferred";
     /// A data-flow edge waits on an upstream artifact.
     pub const UPSTREAM_ARTIFACT_UNAVAILABLE: &str = "upstream_artifact_unavailable";
+    /// The publication outbox holds no pending task publications.
+    pub const NO_PENDING_PUBLICATIONS: &str = "no_pending_publications";
+    /// An aggregate publication waits on the run's terminal outcome.
+    pub const AGGREGATE_RUN_NOT_TERMINAL: &str = "aggregate_run_not_terminal";
+    /// No verified method applied to an active goal.
+    pub const NO_APPLICABLE_METHOD: &str = "no_applicable_method";
+    /// The projected world state lacked facts a goal evaluation needs.
+    pub const WORLD_STATE_INDETERMINATE: &str = "world_state_indeterminate";
 }
 
 /// One domain-owned statement of what would make work eligible.
