@@ -874,3 +874,44 @@ fn replayed_publications_change_no_belief_state() {
         view_after_crash.current_revision_id
     );
 }
+
+/// The stage 4 genesis fact moves belief from the prior: the shipped
+/// genesis rule promotes it, the family maps its source kind, and the
+/// committed revision carries the pinned cold-start figures.
+#[test]
+fn genesis_fact_moves_belief_from_the_prior() {
+    use meld_world_model::belief::{
+        UnobservedScopeDeclaration, EPISTEMIC_GENESIS_STREAM_ID, UNOBSERVED_SCOPE_EVENT_TYPE,
+    };
+
+    let fixture = Fixture::open();
+    let scope = object("workspace_fs", "node", SCOPE_NODE_ID);
+    // The envelope is constructed exactly as the initialization pipeline's
+    // stage 4 constructs it — same constructor, stream, and graph objects.
+    let declaration = UnobservedScopeDeclaration {
+        subject: scope.clone(),
+        declared_by: "meld world init".to_string(),
+    };
+    let envelope = EventEnvelope::epistemic_genesis(
+        "genesis-motion-test".to_string(),
+        "world_model",
+        EPISTEMIC_GENESIS_STREAM_ID,
+        &declaration.scope_key(),
+        UNOBSERVED_SCOPE_EVENT_TYPE,
+        serde_json::to_value(&declaration).unwrap(),
+    )
+    .with_graph(vec![scope], Vec::new());
+    fixture.append(envelope);
+
+    let report = fixture.step();
+
+    assert_eq!(report.applicable_count, 1, "{report:?}");
+    assert_eq!(report.new_assignment_count, 1);
+    assert_eq!(report.revisions_committed, 1);
+    // Cold-start motion: prior 0.75 averaged with the genesis stale signal
+    // 1.0 gives posterior 0.875 and confidence 0.125 — under the curation
+    // threshold 0.7, so the proposing coupling ignites from genesis alone.
+    let posterior = chained_posterior(&[1.0]);
+    assert_eq!(posterior, 0.875);
+    assert!((fixture.tree_confidence() - (1.0 - posterior)).abs() < 1e-9);
+}
