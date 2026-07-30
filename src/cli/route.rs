@@ -348,6 +348,7 @@ impl RunContext {
                     WorldCommands::Init {
                         path,
                         stages,
+                        theory_source,
                         format,
                     },
             } => {
@@ -358,6 +359,7 @@ impl RunContext {
                     self.assembly.product_runtime().as_ref(),
                     path,
                     stages,
+                    theory_source.as_deref(),
                     session_id,
                 )?;
                 crate::cli::presentation::format_world_init_report(&report, format)

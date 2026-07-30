@@ -1,0 +1,20 @@
+{
+  "actions": [
+    {
+      "action_id": "docs.refresh_subtree",
+      "artifact": {
+        "artifact_type_id": "docs_patch",
+        "schema_version": 1
+      },
+      "outcome_contract": {
+        "outcome_contract_id": "execution.package.aggregate.v1"
+      },
+      "realization": {
+        "TaskPackageWorkflow": {
+          "package_id": "docs_writer",
+          "workflow_id": "docs_writer_thread_v1"
+        }
+      }
+    }
+  ]
+}

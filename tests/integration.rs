@@ -46,6 +46,7 @@ mod task_bottom_up_compile_shape;
 mod task_compiler;
 mod task_executor;
 mod test_utils;
+mod theory_source;
 mod tooling_integration;
 mod traversal_graph;
 mod tree_determinism;
