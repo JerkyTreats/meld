@@ -864,3 +864,81 @@ fn stored_records_without_theory_revision_still_load() {
     assert_eq!(legacy_projection.theory_revision, None);
     assert_eq!(legacy_projection.source_refs, projection.source_refs);
 }
+
+/// An unanchored family assesses an unobserved subject to its prior-based
+/// revision: no graph anchor exists, none is consulted, no evidence is
+/// cited, and the source cursor window is pinned to zero so the first
+/// promoted evidence re-dirties the key.
+#[test]
+fn unanchored_family_assesses_unobserved_subject_to_prior_revision() {
+    let graph_dir = tempfile::tempdir().unwrap();
+    let belief_dir = tempfile::tempdir().unwrap();
+    let graph =
+        Arc::new(TraversalStore::new(sled::open(graph_dir.path().join("graph")).unwrap()).unwrap());
+    let belief_db = sled::open(belief_dir.path().join("belief")).unwrap();
+    let belief = Arc::new(BeliefStore::new(belief_db.clone()).unwrap());
+    let mut registry = BeliefFamilyRegistryStore::new(belief_db).unwrap();
+    let mut config = family_config("1");
+    config.anchor_requirement = meld_world_model::belief::AnchorRequirement::Unanchored;
+    let (_, revision) = registry.install(config, 1).unwrap();
+    // The subject is never seeded: no fact, no anchor, nothing observed.
+    let subject = object("workspace_fs", "node", "unobserved-node");
+
+    let mut actor = BeliefAssessmentActor::new(
+        "belief.assessment.test",
+        Arc::clone(&belief),
+        Arc::clone(&graph),
+        Arc::new(registry.clone()),
+        vec![FAMILY_ID.to_string()],
+        vec![binding(&subject)],
+        default_perspective(),
+        BranchScope::main(),
+    );
+
+    let report = actor.bounded_step(&BeliefAssessmentRequest {
+        sequence: 10,
+        max_items: 4,
+    });
+
+    assert_eq!(report.items_attempted, 1);
+    assert_eq!(report.items_committed, 1);
+    assert!(report.retryable_errors.is_empty(), "{report:?}");
+    assert!(report.fatal_errors.is_empty(), "{report:?}");
+    assert!(
+        !report
+            .waiting_on
+            .iter()
+            .any(|declaration| declaration.condition == "graph_anchor_absent"),
+        "{report:?}"
+    );
+
+    let key = configured_belief_key(
+        &revision,
+        &subject,
+        &default_perspective(),
+        &BranchScope::main(),
+    );
+    let query = BeliefQuery::new(belief.as_ref());
+    let history = query.revision_history(&key).unwrap();
+    assert_eq!(history.len(), 1);
+    let committed = &history[0];
+    assert!(committed.evidence_ids.is_empty());
+    assert_eq!(committed.source_cursor_start, 0);
+    assert_eq!(committed.source_cursor_end, 0);
+    // Prior-based posture: the posterior stays at the family prior and the
+    // required aggregate schema is truthfully missing.
+    assert_eq!(committed.posterior.probability, 0.8);
+    assert!(committed.observation.is_some());
+    assert_eq!(
+        committed.theory_revision.as_ref().map(|r| r.id.as_str()),
+        Some(FAMILY_ID)
+    );
+
+    // Quiescence: the committed revision keeps the key out of selection.
+    let second = actor.bounded_step(&BeliefAssessmentRequest {
+        sequence: 11,
+        max_items: 4,
+    });
+    assert_eq!(second.items_attempted, 0);
+    assert_eq!(second.items_committed, 0);
+}

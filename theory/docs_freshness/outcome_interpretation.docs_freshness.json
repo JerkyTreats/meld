@@ -2,6 +2,29 @@
   "mapping_id": "docs_freshness_outcome_interpretation_v1",
   "rules": [
     {
+      "mapping_id": "docs_unobserved_scope_genesis_v1",
+      "source_kind": "world_model_unobserved_scope",
+      "match_domain_id": "world_model",
+      "match_event_type": "world_model.unobserved_scope",
+      "match_content": [],
+      "subject": {
+        "object_kind": "node",
+        "domain_id": "workspace_fs",
+        "from": {
+          "source": "envelope_objects"
+        }
+      },
+      "evidence_fields": [
+        {
+          "field": "tree_stale_signal",
+          "source": {
+            "source": "constant",
+            "value": 1.0
+          }
+        }
+      ]
+    },
+    {
       "mapping_id": "docs_folder_task_success_v1",
       "source_kind": "execution_folder_task_outcome",
       "match_domain_id": "execution",

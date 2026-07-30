@@ -130,6 +130,12 @@ pub struct BeliefFamilyConfig {
     /// guesses; absent in older configs, defaulting to observational.
     #[serde(default)]
     pub observationality: DimensionObservationality,
+    /// Whether initial subject assessment consumes a current graph anchor.
+    /// Declared by the owning family so the runtime never guesses; absent
+    /// in older configs, defaulting to the anchor-required semantics those
+    /// configs were written against.
+    #[serde(default)]
+    pub anchor_requirement: AnchorRequirement,
 }
 
 /// How a belief dimension can be settled.
@@ -144,6 +150,23 @@ pub enum DimensionObservationality {
     /// The dimension is derived from other evidence or beliefs and cannot
     /// be observed directly.
     Derived,
+}
+
+/// Whether initial subject assessment consumes a current graph anchor.
+///
+/// Family-declared theory: an anchor-required family stalls truthfully on
+/// an unobserved subject until an anchor exists and its `graph_anchor`
+/// source mapping normalizes it. An unanchored family never consults the
+/// graph anchor — an unobserved scope assesses to its prior-based revision
+/// and evidence arrives only through ingestion.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AnchorRequirement {
+    /// Initial assessment requires a current graph anchor for the subject
+    /// and normalizes it through the family's `graph_anchor` mapping.
+    #[default]
+    Required,
+    /// Initial assessment proceeds without consulting graph anchors.
+    Unanchored,
 }
 
 /// Evidence schema declared by runtime configuration.

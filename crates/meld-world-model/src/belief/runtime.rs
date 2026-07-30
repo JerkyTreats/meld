@@ -24,7 +24,9 @@ use std::sync::Arc;
 
 use crate::belief::comparator::{BayesianComparator, ComparatorInput};
 use crate::belief::config::{BeliefConfigLoader, ConfigSnapshot};
-use crate::belief::contracts::{AssessmentLease, BranchScope, LeaseStatus};
+use crate::belief::contracts::{
+    AnchorRequirement, AssessmentLease, BeliefKey, BranchScope, LeaseStatus,
+};
 use crate::belief::evidence::BeliefEvidenceNormalizer;
 use crate::belief::registry::{BeliefFamilyRevision, TheoryRevisionRef};
 use crate::belief::store::BeliefStore;
@@ -148,6 +150,12 @@ impl BeliefRuntime {
             &format!("active_policy_id::{}", self.config.config.family_id),
             &self.config.config.evidence_policy_id,
         )?;
+        // Family-declared anchor coupling: an unanchored family never
+        // consults graph anchors — an unobserved scope assesses to its
+        // prior-based revision and evidence arrives only through ingestion.
+        if self.config.config.anchor_requirement == AnchorRequirement::Unanchored {
+            return self.assess_unanchored_subject(subject, owner_id);
+        }
         let query = TraversalQuery::new(self.traversal_store.as_ref());
         let anchor = query
             .current_anchor_for_subject(subject, anchor_perspective_kind, anchor_perspective_id)?
@@ -205,6 +213,7 @@ impl BeliefRuntime {
             config_snapshot_hash: self.config.hash.clone(),
             prior_revision: prior,
             evidence: evidence.clone(),
+            subject_key: None,
             source_cursor_start,
             source_cursor_end,
         })?;
@@ -221,6 +230,67 @@ impl BeliefRuntime {
         self.belief_store.flush()?;
         Ok(RuntimeAssessmentResult {
             evidence_count: evidence.len(),
+            revision_id: output.revision.revision_id,
+            confidence: view.planner_projection.confidence,
+        })
+    }
+
+    /// Assess one subject of an unanchored family to its prior-based
+    /// revision.
+    ///
+    /// No graph anchor is consulted and no evidence is cited. The source
+    /// cursor window is pinned to zero so the first promoted evidence at
+    /// any ledger sequence re-dirties the key instead of being absorbed by
+    /// a window the revision never actually covered.
+    fn assess_unanchored_subject(
+        &self,
+        subject: &DomainObjectRef,
+        owner_id: &str,
+    ) -> Result<RuntimeAssessmentResult, StorageError> {
+        let config = &self.config.config;
+        let key = BeliefKey {
+            subject: subject.clone(),
+            dimension_id: config.dimension_id.clone(),
+            predicate_id: config.predicate_id.clone(),
+            perspective: self.perspective.clone(),
+            branch_scope: self.branch_scope.clone(),
+            evidence_policy_id: config.evidence_policy_id.clone(),
+        };
+        let prior = self.belief_store.current_revision(&key)?;
+        let lease = AssessmentLease {
+            lease_id: format!("lease-unanchored-{}", key.index_key()),
+            belief_key: key.clone(),
+            epoch: 0,
+            owner_id: owner_id.to_string(),
+            input_cursor_start: 0,
+            input_cursor_end: 0,
+            started_at_seq: 0,
+            expires_at_seq: 100,
+            comparator_engine_id: config.comparator.engine_id.clone(),
+            config_snapshot_hash: self.config.hash.clone(),
+            status: LeaseStatus::Queued,
+        };
+        let lease = self.belief_store.acquire_lease(lease)?;
+        let mut output = BayesianComparator::assess(ComparatorInput {
+            config: config.clone(),
+            config_snapshot_hash: self.config.hash.clone(),
+            prior_revision: prior,
+            evidence: Vec::new(),
+            subject_key: Some(key),
+            source_cursor_start: 0,
+            source_cursor_end: 0,
+        })?;
+        output.revision.theory_revision = self.theory_revision.clone();
+        self.belief_store
+            .commit_revision(&lease, &output.revision)?;
+        let view = self
+            .belief_store
+            .project_view(&output.revision, output.view_hydration);
+        self.belief_store.put_view(&view)?;
+        self.belief_store.complete_lease(&lease)?;
+        self.belief_store.flush()?;
+        Ok(RuntimeAssessmentResult {
+            evidence_count: 0,
             revision_id: output.revision.revision_id,
             confidence: view.planner_projection.confidence,
         })
@@ -294,6 +364,7 @@ impl BeliefRuntime {
             config_snapshot_hash: self.config.hash.clone(),
             prior_revision: prior,
             evidence: evidence.clone(),
+            subject_key: None,
             source_cursor_start,
             source_cursor_end,
         })?;

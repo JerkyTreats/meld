@@ -5,6 +5,13 @@
   "evidence_policy_id": "default_policy",
   "evidence_schemas": [
     {
+      "schema_id": "unobserved_scope_signal",
+      "required": false,
+      "role": "Support",
+      "reliability": 1.0,
+      "precision": 1.0
+    },
+    {
       "schema_id": "folder_task_success",
       "required": false,
       "role": "Support",
@@ -20,6 +27,14 @@
     }
   ],
   "source_mappings": [
+    {
+      "mapping_id": "unobserved_scope_to_signal",
+      "source_kind": "world_model_unobserved_scope",
+      "evidence_schema_id": "unobserved_scope_signal",
+      "subject_from": "record.subject",
+      "value_field": "tree_stale_signal",
+      "factor_id": "unobserved_scope_signal"
+    },
     {
       "mapping_id": "folder_task_success_to_selected_tree",
       "source_kind": "execution_folder_task_outcome",
@@ -42,6 +57,12 @@
     "engine_version": "1",
     "factors": [
       {
+        "factor_id": "unobserved_scope_signal",
+        "evidence_schema_id": "unobserved_scope_signal",
+        "weight": 0.1,
+        "polarity": "Supports"
+      },
+      {
         "factor_id": "folder_task_success",
         "evidence_schema_id": "folder_task_success",
         "weight": 0.2,
@@ -63,5 +84,6 @@
     "posterior_meaning": "stale_probability"
   },
   "config_version": "1",
-  "observationality": "Observational"
+  "observationality": "Observational",
+  "anchor_requirement": "Unanchored"
 }

@@ -378,10 +378,14 @@ impl StewardshipActorBindings {
             perspective: PerspectiveKey::new("default", "default")
                 .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?,
             branch_scope: BranchScope::main(),
-            // Workspace graph anchors are published by analysis frames; this
-            // is the existing graph-anchor convention, not belief theory.
+            // Workspace graph anchors are published by context head
+            // selections whose frame type derives from the agent identity —
+            // the same convention the production dispatch route publishes
+            // under, so anchor reads and frame publications share one
+            // lineage vocabulary. This is identity derivation, not belief
+            // theory.
             anchor_perspective_kind: "frame_type".to_string(),
-            anchor_perspective_id: "analysis".to_string(),
+            anchor_perspective_id: format!("context-{}", binding.agent_id),
             network_id: format!("stewardship.{expression}"),
             session_id: format!("stewardship::{expression}"),
             folder_unit_capability_types: folder_unit_capability_types(&expression)?,

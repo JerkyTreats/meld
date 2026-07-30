@@ -8,7 +8,7 @@
 
 use std::fs;
 
-use super::harness_survey_fixture::{survey_binding, survey_boot_request, SUBJECT_ID};
+use super::harness_survey_fixture::{survey_binding, survey_boot_request, AGENT_ID, SUBJECT_ID};
 use meld::harness::boot::HarnessRun;
 use meld::harness::eligibility::EligibilityChain;
 use meld::harness::walk::CausalThread;
@@ -120,7 +120,10 @@ fn the_substrate_serves_contract_types_over_loopback_for_a_live_session() {
                     "subject_object_kind": "node",
                     "subject_object_id": SUBJECT_ID,
                     "perspective_kind": "frame_type",
-                    "perspective_id": "analysis",
+                    // The perspective the composed bindings actually derive,
+                    // so the walk explains the specimen's real stall rather
+                    // than any absent anchor.
+                    "perspective_id": format!("context-{AGENT_ID}"),
                 }
             }
         }),

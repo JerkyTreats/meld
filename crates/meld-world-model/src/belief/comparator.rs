@@ -15,6 +15,7 @@
 //!     config_snapshot_hash: "config-hash".to_string(),
 //!     prior_revision: None,
 //!     evidence,
+//!     subject_key: None,
 //!     source_cursor_start: 1,
 //!     source_cursor_end: 1,
 //! };
@@ -27,10 +28,10 @@ use std::collections::BTreeSet;
 
 use crate::belief::config::stable_hash_hex;
 use crate::belief::contracts::{
-    BeliefFamilyConfig, BeliefProvenanceSummary, BeliefRevision, BeliefStatus, ContradictionReason,
-    ContradictionState, EvidenceItem, EvidencePolarity, EvidenceValue, FreshnessState,
-    HydrationRefs, ObservationOpportunity, ObservationReason, PlannerProjectionSummary,
-    PosteriorSummary,
+    BeliefFamilyConfig, BeliefKey, BeliefProvenanceSummary, BeliefRevision, BeliefStatus,
+    ContradictionReason, ContradictionState, EvidenceItem, EvidencePolarity, EvidenceValue,
+    FreshnessState, HydrationRefs, ObservationOpportunity, ObservationReason,
+    PlannerProjectionSummary, PosteriorSummary,
 };
 use crate::error::StorageError;
 
@@ -44,6 +45,11 @@ pub struct ComparatorInput {
     pub prior_revision: Option<BeliefRevision>,
     /// Evidence window assessed by this run.
     pub evidence: Vec<EvidenceItem>,
+    /// Belief key assessed when the evidence window is empty. Evidence
+    /// items carry their own candidate key; an unanchored cold start has
+    /// none, so the caller supplies the configured key here. Ignored when
+    /// evidence is present.
+    pub subject_key: Option<BeliefKey>,
     /// First source sequence included in the run.
     pub source_cursor_start: u64,
     /// Last source sequence included in the run.
@@ -66,14 +72,19 @@ pub struct BayesianComparator;
 
 impl BayesianComparator {
     /// Assess one evidence window and return a proposed revision.
+    ///
+    /// An empty window with a supplied subject key assesses to the
+    /// prior-based revision: the posterior stays at the prior, required
+    /// schemas are all missing so the status is a truthful
+    /// `NeedsObservation` with its opportunity open, and the cited
+    /// evidence set is empty.
     pub fn assess(input: ComparatorInput) -> Result<ComparatorOutput, StorageError> {
-        if input.config.comparator.engine_id != "weighted_bayesian" {
-            return missing_assessment(input);
-        }
-        let Some(first) = input.evidence.first() else {
+        let Some(key) = resolved_key(&input) else {
             return missing_observation(input);
         };
-        let key = first.candidate_key.clone();
+        if input.config.comparator.engine_id != "weighted_bayesian" {
+            return missing_assessment(input, key);
+        }
         let prior = input
             .prior_revision
             .as_ref()
@@ -243,11 +254,20 @@ impl BayesianComparator {
     }
 }
 
-fn missing_assessment(input: ComparatorInput) -> Result<ComparatorOutput, StorageError> {
-    let Some(first) = input.evidence.first() else {
-        return missing_observation(input);
-    };
-    let key = first.candidate_key.clone();
+/// Resolve the assessed key: evidence carries it, an empty window needs it
+/// supplied.
+fn resolved_key(input: &ComparatorInput) -> Option<BeliefKey> {
+    input
+        .evidence
+        .first()
+        .map(|first| first.candidate_key.clone())
+        .or_else(|| input.subject_key.clone())
+}
+
+fn missing_assessment(
+    input: ComparatorInput,
+    key: BeliefKey,
+) -> Result<ComparatorOutput, StorageError> {
     let revision_id = format!(
         "revision-{}",
         stable_hash_hex(format!("{}::missing-assessment", key.index_key()).as_bytes())
