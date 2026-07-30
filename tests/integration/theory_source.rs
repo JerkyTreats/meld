@@ -63,6 +63,22 @@ fn shipped_theory_provisions_and_loads_through_every_selection_identity() {
         assert!(matched_event_types.contains(&"execution.task.succeeded"));
         assert!(matched_event_types.contains(&"execution.package.completed"));
         assert!(matched_event_types.contains(&"execution.package.failed"));
+        // The genesis rule closes belief motion from the unobserved-scope
+        // fact: its source kind must map inside the family.
+        assert!(matched_event_types.contains(&"world_model.unobserved_scope"));
+        let genesis_rule = mapping
+            .rules
+            .iter()
+            .find(|rule| rule.match_event_type == "world_model.unobserved_scope")
+            .unwrap();
+        assert!(family
+            .source_mappings
+            .iter()
+            .any(|mapping| mapping.source_kind == genesis_rule.source_kind));
+        assert_eq!(
+            family.anchor_requirement,
+            meld_world_model::belief::AnchorRequirement::Unanchored
+        );
 
         let rule = load_curation_rule_config("docs_freshness").unwrap();
         assert_eq!(rule.dimension_id, "docs_freshness");

@@ -1,8 +1,7 @@
 //! Shared survey-configuration fixture: the stewardship composition,
-//! shipped theory body, and staged boot the stall specimen and the
-//! served-surface tests reproduce the live survey with.
+//! frozen specimen theory body, and staged boot the stall specimen and
+//! the served-surface tests reproduce the live survey with.
 
-use std::fs;
 use std::path::Path;
 
 use meld::config::{PhysicalBinding, SelectedStewardshipPackage};
@@ -19,13 +18,81 @@ pub const SUBJECT_ID: &str = "docs";
 pub const AGENT_ID: &str = "seed.docs_freshness";
 pub const FAMILY_ID: &str = "docs_freshness";
 
-/// The shipped theory body, byte for byte; no fixture-local mappings.
-pub fn shipped_family_json() -> String {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/theory/docs_freshness/belief_family.docs_freshness.json"
-    );
-    fs::read_to_string(path).expect("shipped theory body exists")
+/// The frozen specimen theory body.
+///
+/// This is the shipped docs freshness family as it stood at the 2026-07-25
+/// live survey — anchor-required with no graph_anchor mapping — preserved
+/// verbatim so the anchor stall remains reproducible as the harness
+/// validation specimen. The product body has since ignited and diverged;
+/// the specimen deliberately has not.
+pub fn specimen_family_json() -> &'static str {
+    r#"{
+  "family_id": "docs_freshness",
+  "dimension_id": "docs_freshness",
+  "predicate_id": "confidence",
+  "evidence_policy_id": "default_policy",
+  "evidence_schemas": [
+    {
+      "schema_id": "folder_task_success",
+      "required": false,
+      "role": "Support",
+      "reliability": 1.0,
+      "precision": 1.0
+    },
+    {
+      "schema_id": "aggregate_completion",
+      "required": true,
+      "role": "Support",
+      "reliability": 1.0,
+      "precision": 1.0
+    }
+  ],
+  "source_mappings": [
+    {
+      "mapping_id": "folder_task_success_to_selected_tree",
+      "source_kind": "execution_folder_task_outcome",
+      "evidence_schema_id": "folder_task_success",
+      "subject_from": "field:selected_scope",
+      "value_field": "tree_stale_signal",
+      "factor_id": "folder_task_success"
+    },
+    {
+      "mapping_id": "package_aggregate_to_selected_tree",
+      "source_kind": "execution_package_aggregate",
+      "evidence_schema_id": "aggregate_completion",
+      "subject_from": "record.subject",
+      "value_field": "tree_stale_signal",
+      "factor_id": "aggregate_completion"
+    }
+  ],
+  "comparator": {
+    "engine_id": "weighted_bayesian",
+    "engine_version": "1",
+    "factors": [
+      {
+        "factor_id": "folder_task_success",
+        "evidence_schema_id": "folder_task_success",
+        "weight": 0.2,
+        "polarity": "Supports"
+      },
+      {
+        "factor_id": "aggregate_completion",
+        "evidence_schema_id": "aggregate_completion",
+        "weight": 1.0,
+        "polarity": "Supports"
+      }
+    ],
+    "missing_evidence_uncertainty": 0.9
+  },
+  "default_prior": 0.75,
+  "planner_projection": {
+    "confidence_field": "confidence",
+    "threshold": 0.6,
+    "posterior_meaning": "stale_probability"
+  },
+  "config_version": "1",
+  "observationality": "Observational"
+}"#
 }
 
 pub fn survey_binding(
@@ -57,7 +124,7 @@ pub fn world_init() -> HarnessWorldInit {
             ],
         },
         content: WorldInitContent {
-            family_config: serde_json::from_str(&shipped_family_json()).unwrap(),
+            family_config: serde_json::from_str(specimen_family_json()).unwrap(),
             curation_rule: AgentCurationRuleConfig {
                 dimension_id: FAMILY_ID.to_string(),
                 threshold: 0.7,
