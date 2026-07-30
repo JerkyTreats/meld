@@ -242,6 +242,13 @@ impl EvidenceIngestionActor {
             CoverageTruncation::After | CoverageTruncation::Both
         );
         if page.records.is_empty() {
+            // The hardened DBG-016 rule applies to the quiet path too: an
+            // empty page is a step that absorbed nothing, and it states
+            // what would change that before returning.
+            report.waiting_on.push(WaitingOnDeclaration::broad(
+                conditions::LEDGER_QUIET_PAST_CURSOR,
+                format!("no committed events past cursor {}", report.input_after_seq),
+            ));
             return report;
         }
 
@@ -388,16 +395,11 @@ impl EvidenceIngestionActor {
             }
         }
         // The hardened DBG-016 rule: a step that absorbed nothing states
-        // what would change that. A quiet ledger waits on new committed
-        // events; a window where every record fell outside the installed
-        // mapping waits on a vocabulary intersection — the survey's
-        // publisher-to-mapping mismatch surfaces exactly here.
-        if report.events_replayed == 0 {
-            report.waiting_on.push(WaitingOnDeclaration::broad(
-                conditions::LEDGER_QUIET_PAST_CURSOR,
-                format!("no committed events past cursor {}", report.input_after_seq),
-            ));
-        } else if report.applicable_count == 0 && report.invalid_count == 0 {
+        // what would change that. The quiet-ledger declaration lands on the
+        // empty-page return above; a window where every record fell outside
+        // the installed mapping waits on a vocabulary intersection — the
+        // survey's publisher-to-mapping mismatch surfaces exactly here.
+        if report.applicable_count == 0 && report.invalid_count == 0 {
             report.waiting_on.push(WaitingOnDeclaration::broad(
                 conditions::NO_MAPPABLE_EVENTS,
                 format!(
