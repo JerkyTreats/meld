@@ -3706,8 +3706,8 @@ mod tests {
     };
 
     const STEWARD_AGENT_ID: &str = "seed.docs_freshness";
-    const FAMILY_ID: &str = "docs-freshness-family";
-    const MAPPING_ID: &str = "publication-to-freshness";
+    const FAMILY_ID: &str = "docs_freshness";
+    const MAPPING_ID: &str = "docs_freshness_outcome_interpretation_v1";
 
     fn stewardship_merkle_config(workspace: &Path, storage_root: &Path) -> MerkleConfig {
         let mut config = MerkleConfig::default();
@@ -3733,7 +3733,7 @@ mod tests {
                 theory: TheorySelection {
                     belief_family_id: FAMILY_ID.to_string(),
                     evidence_mapping_id: MAPPING_ID.to_string(),
-                    curation_rule_id: "docs-curation".to_string(),
+                    curation_rule_id: "docs_freshness".to_string(),
                 },
             }),
         };
@@ -3751,7 +3751,7 @@ mod tests {
 
     fn family_config_json() -> &'static str {
         r#"{
-            "family_id": "docs-freshness-family",
+            "family_id": "docs_freshness",
             "dimension_id": "docs_freshness",
             "predicate_id": "confidence",
             "evidence_policy_id": "default_policy",
