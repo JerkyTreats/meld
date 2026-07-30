@@ -56,7 +56,7 @@ This area does own:
 
 This area does not own implementation schedule, migration execution, or historical completion records. Those belong under `design/plan` and `design/completed`.
 
-The declarative application layer is defined separately in [Persistent Domain Stewardship](../persistent_domain_stewardship/README.md). Cognitive architecture defines how the runtime operates; stewardship packages declare what bounded domain, mandate, evidence, actions, outcomes, and authority are loaded into it.
+The declarative application layer is [Persistent Domain Stewardship](persistent_domain_stewardship.md): its settled layer — operational domain theory against the runtime — is canonical there, and its unsettled upper layers remain proposals in [Persistent Domain Stewardship Proposals](../persistent_domain_stewardship/README.md). Cognitive architecture defines how the runtime operates; stewardship declarations state what bounded domain, mandate, evidence, actions, outcomes, and authority are loaded into it.
 
 ## Crate Routing
 
@@ -99,6 +99,8 @@ The declarative application layer is defined separately in [Persistent Domain St
   planner-facing world model projection with a strict boundary to execution authority
 - [Directive Grounding](world_model/agent/directive_grounding.md)
   translation from maintained intent and trusted scope into concrete belief questions
+- [Persistent Domain Stewardship](persistent_domain_stewardship.md)
+  the canonical settled layer of PDS — operational domain theory against the runtime — and the layering discipline for the rest
 - [World Model Strategy](world_model/strategy/README.md)
   bounded reusable and novel candidate construction before Goal admission
 - [Belief Microarchitecture](world_model/belief/microarchitecture.md)
@@ -137,17 +139,18 @@ The declarative application layer is defined separately in [Persistent Domain St
 11. [World Model Planner](world_model/planner/README.md)
 12. [World Model Agent](world_model/agent/README.md)
 13. [Directive Grounding](world_model/agent/directive_grounding.md)
-14. [World Model Strategy](world_model/strategy/README.md)
-15. [Belief Microarchitecture](world_model/belief/microarchitecture.md)
-16. [Fact To Belief](world_model/belief/fact_to_belief.md)
-17. [Comparator Model](world_model/belief/comparator_model.md)
-18. [Belief Substrate](world_model/belief/substrate.md)
-19. [Curation In Belief](world_model/belief/curation.md)
-20. [Lang Domain](meld-lang/README.md)
-21. [Execution Domain](execution/README.md)
-22. [Execution Planning](execution/planning/README.md)
-23. [Events Design](events/README.md)
-24. [Further Research Prompts](../completed/world_state/further_research_prompts.md)
+14. [Persistent Domain Stewardship](persistent_domain_stewardship.md)
+15. [World Model Strategy](world_model/strategy/README.md)
+16. [Belief Microarchitecture](world_model/belief/microarchitecture.md)
+17. [Fact To Belief](world_model/belief/fact_to_belief.md)
+18. [Comparator Model](world_model/belief/comparator_model.md)
+19. [Belief Substrate](world_model/belief/substrate.md)
+20. [Curation In Belief](world_model/belief/curation.md)
+21. [Lang Domain](meld-lang/README.md)
+22. [Execution Domain](execution/README.md)
+23. [Execution Planning](execution/planning/README.md)
+24. [Events Design](events/README.md)
+25. [Further Research Prompts](../completed/world_state/further_research_prompts.md)
 
 ## Read With
 

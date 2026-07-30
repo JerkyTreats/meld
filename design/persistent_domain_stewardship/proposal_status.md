@@ -6,9 +6,11 @@ Scope: interpretation rules for Persistent Domain Stewardship design documents
 
 ## Purpose
 
-Persistent Domain Stewardship is a design proposal.
+Persistent Domain Stewardship is a design proposal, developed by continuous abstraction: layers canonicalize from the runtime upward, and this corpus holds only the layers that remain unsettled.
 
-It is not an authoritative implementation contract, crate boundary, package schema, source language, migration commitment, or accepted runtime architecture.
+The theory-to-runtime layer is no longer proposal-tier: [Persistent Domain Stewardship](../cognitive_architecture/persistent_domain_stewardship.md) canonicalizes operational domain theory, its kinds, and its authority boundaries, and [PDS Theory Runtime Layer Map](../plan/integration/pds_theory_runtime_layer.md) maps it onto the written runtime. Documents here defer to that layer where they touch it.
+
+Everything above that layer — package schema, source language, profile abstraction, facets, activation, migration commitments — is not an authoritative implementation contract, crate boundary, package schema, source language, migration commitment, or accepted runtime architecture.
 
 The proposal exists to:
 
