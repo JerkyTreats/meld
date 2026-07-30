@@ -493,9 +493,9 @@ agent_id = "docs-writer"
 provider_id = "steward-provider"
 
 [stewardship.docs_freshness.theory]
-belief_family_id = "docs-freshness-family"
-evidence_mapping_id = "docs-outcome-mapping"
-curation_rule_id = "docs-curation"
+belief_family_id = "docs_freshness"
+evidence_mapping_id = "docs_freshness_outcome_interpretation_v1"
+curation_rule_id = "docs_freshness"
 "#,
         target_root = target_root.display()
     );

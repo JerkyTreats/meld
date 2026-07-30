@@ -31,6 +31,8 @@ use serde::{Deserialize, Serialize};
 
 /// Stage execution over domain commands and the canonical append.
 pub mod pipeline;
+/// Theory-source provisioning into the XDG theory root.
+pub mod source;
 /// Authored theory file loading from the XDG config home.
 pub mod theory;
 /// CLI adapter binding the command surface to the pipeline.

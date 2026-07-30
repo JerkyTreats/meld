@@ -165,9 +165,9 @@ mod tests {
                 agent_id: "docs-steward".to_string(),
                 provider_id: "main-provider".to_string(),
                 theory: TheorySelection {
-                    belief_family_id: "docs-freshness-family".to_string(),
-                    evidence_mapping_id: "publication-to-freshness".to_string(),
-                    curation_rule_id: "docs-curation".to_string(),
+                    belief_family_id: "docs_freshness".to_string(),
+                    evidence_mapping_id: "docs_freshness_outcome_interpretation_v1".to_string(),
+                    curation_rule_id: "docs_freshness".to_string(),
                 },
             }),
         };
@@ -195,12 +195,12 @@ mod tests {
         assert_eq!(binding.agent_id, "docs-steward");
         assert_eq!(binding.provider_id, "main-provider");
         assert_eq!(binding.package.expression, "docs_freshness");
-        assert_eq!(binding.package.belief_family_id, "docs-freshness-family");
+        assert_eq!(binding.package.belief_family_id, "docs_freshness");
         assert_eq!(
             binding.package.evidence_mapping_id,
-            "publication-to-freshness"
+            "docs_freshness_outcome_interpretation_v1"
         );
-        assert_eq!(binding.package.curation_rule_id, "docs-curation");
+        assert_eq!(binding.package.curation_rule_id, "docs_freshness");
         assert!(!binding.storage_root.starts_with(&binding.workspace_root));
     }
 

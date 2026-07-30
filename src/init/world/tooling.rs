@@ -58,6 +58,7 @@ pub fn run_world_init(
     assembly: &ProductRuntimeAssembly,
     target_path: &Path,
     stage_args: &[String],
+    theory_source: Option<&Path>,
     session_id: &str,
 ) -> Result<WorldInitReport, ApiError> {
     let request = WorldInitRequest {
@@ -67,6 +68,14 @@ pub fn run_world_init(
     // Stage 0 inputs: XDG-only configuration and the physical binding.
     let config = ConfigLoader::load_global()?;
     let binding = PhysicalBinding::resolve(&config)?;
+
+    // An explicit theory source provisions the XDG theory root before the
+    // loaders resolve selection identities against it. Provisioning is
+    // config-home file placement only; durable installation stays with the
+    // staged pipeline below.
+    if let Some(source_dir) = theory_source {
+        crate::init::world::source::provision_theory_source(source_dir, &binding.package)?;
+    }
 
     let target_root = target_path.canonicalize().map_err(|error| {
         ApiError::ConfigError(format!(

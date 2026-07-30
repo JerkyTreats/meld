@@ -406,6 +406,11 @@ pub enum WorldCommands {
         #[arg(long = "stage", value_name = "STAGE")]
         stages: Vec<String>,
 
+        /// Theory source directory whose authored bodies are provisioned
+        /// into the XDG theory root before the stages resolve them
+        #[arg(long = "theory-source", value_name = "DIR")]
+        theory_source: Option<PathBuf>,
+
         /// Output format
         #[arg(long, default_value = "text")]
         format: String,
@@ -937,11 +942,13 @@ mod tests {
                     WorldCommands::Init {
                         path,
                         stages,
+                        theory_source,
                         format,
                     },
             } => {
                 assert_eq!(path, PathBuf::from("."));
                 assert!(stages.is_empty());
+                assert_eq!(theory_source, None);
                 assert_eq!(format, "text");
             }
             _ => panic!("expected world init command"),
@@ -959,6 +966,8 @@ mod tests {
             "install-theory",
             "--stage",
             "seed-epistemic-facts",
+            "--theory-source",
+            "/tmp/theory/docs_freshness",
             "--format",
             "json",
         ])
@@ -969,6 +978,7 @@ mod tests {
                     WorldCommands::Init {
                         path,
                         stages,
+                        theory_source,
                         format,
                     },
             } => {
@@ -979,6 +989,10 @@ mod tests {
                         "install-theory".to_string(),
                         "seed-epistemic-facts".to_string()
                     ]
+                );
+                assert_eq!(
+                    theory_source,
+                    Some(PathBuf::from("/tmp/theory/docs_freshness"))
                 );
                 assert_eq!(format, "json");
             }

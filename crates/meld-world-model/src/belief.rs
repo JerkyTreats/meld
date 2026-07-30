@@ -93,8 +93,8 @@ pub use ingestion::{
     ingest_promoted_evidence, PromotedEvidenceIngestionRequest, PromotedEvidenceIngestionResult,
 };
 pub use outcome::interpretation::{
-    ConfiguredOutcomeMapping, OutcomeContentRule, OutcomeFieldRule, OutcomeMappingConfig,
-    OutcomeSubjectBinding, OutcomeValueSource,
+    ConfiguredOutcomeMapping, ConfiguredOutcomeMappingSet, OutcomeContentRule, OutcomeFieldRule,
+    OutcomeMappingConfig, OutcomeMappingSetConfig, OutcomeSubjectBinding, OutcomeValueSource,
 };
 pub use outcome::mapping::{
     promoted_evidence_identity, OutcomeEvidenceMapping, OutcomeMappingDisposition,

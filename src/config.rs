@@ -746,9 +746,9 @@ agent_id = "docs-steward"
 provider_id = "main-provider"
 
 [stewardship.docs_freshness.theory]
-belief_family_id = "docs-freshness-family"
-evidence_mapping_id = "publication-to-freshness"
-curation_rule_id = "docs-curation"
+belief_family_id = "docs_freshness"
+evidence_mapping_id = "docs_freshness_outcome_interpretation_v1"
+curation_rule_id = "docs_freshness"
 "#,
             target_root.display(),
             subject
@@ -800,7 +800,7 @@ curation_rule_id = "docs-curation"
         let selection = config.stewardship.docs_freshness.as_ref().unwrap();
         assert_eq!(selection.expression, "docs_freshness");
         assert_eq!(selection.subject, "docs");
-        assert_eq!(selection.theory.belief_family_id, "docs-freshness-family");
+        assert_eq!(selection.theory.belief_family_id, "docs_freshness");
         // Loading and validation are stage 0: no state under the target.
         assert_eq!(std::fs::read_dir(&target).unwrap().count(), 0);
     }

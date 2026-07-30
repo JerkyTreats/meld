@@ -1,0 +1,7 @@
+{
+  "dimension_id": "docs_freshness",
+  "threshold": 0.7,
+  "priority_urgency": 50,
+  "desired_summary": "confidence>0.7",
+  "source_kind": "belief_divergence"
+}

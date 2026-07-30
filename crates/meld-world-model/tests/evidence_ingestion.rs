@@ -410,6 +410,42 @@ fn not_applicable_records_advance_the_cursor_without_domain_writes() {
 }
 
 #[test]
+fn every_step_that_absorbs_nothing_declares_what_it_waits_on() {
+    use meld_world_model::waiting::conditions;
+
+    let fixture = Fixture::open();
+    let mut actor = fixture.actor();
+
+    // A quiet ledger declares itself on the empty page, not only after a
+    // replayed-but-unmapped window.
+    let quiet = actor.bounded_step(&EvidenceIngestionRequest { max_events: 16 });
+    assert_eq!(quiet.events_replayed, 0);
+    assert_eq!(quiet.waiting_on.len(), 1);
+    assert_eq!(
+        quiet.waiting_on[0].condition,
+        conditions::LEDGER_QUIET_PAST_CURSOR
+    );
+
+    // A window where every record falls outside the installed mapping
+    // waits on a vocabulary intersection.
+    fixture.append(unrelated_envelope("execution.task.started"));
+    let unmapped = actor.bounded_step(&EvidenceIngestionRequest { max_events: 16 });
+    assert_eq!(unmapped.events_replayed, 1);
+    assert_eq!(unmapped.waiting_on.len(), 1);
+    assert_eq!(
+        unmapped.waiting_on[0].condition,
+        conditions::NO_MAPPABLE_EVENTS
+    );
+
+    // Once the window is absorbed, the following quiet step is quiet again.
+    let after = actor.bounded_step(&EvidenceIngestionRequest { max_events: 16 });
+    assert_eq!(
+        after.waiting_on[0].condition,
+        conditions::LEDGER_QUIET_PAST_CURSOR
+    );
+}
+
+#[test]
 fn invalid_records_are_rejected_durably_before_the_cursor_advances() {
     let fixture = Fixture::open();
     // Matched publication without any subject object: unusable content.

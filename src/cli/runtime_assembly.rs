@@ -12,7 +12,8 @@ use crate::error::{ApiError, StorageError};
 use crate::events::binding::{resolve_product_event_authority, ProductEventBindingError};
 use crate::heads::HeadIndex;
 use crate::runtime::assembly::{
-    ProductRuntimeAssembly, ProductRuntimeConfig, StewardshipComposition, StewardshipTheoryBindings,
+    PlanningTheoryBinding, ProductRuntimeAssembly, ProductRuntimeConfig, StewardshipComposition,
+    StewardshipTheoryBindings,
 };
 use crate::runtime::storage::ProductStorageLayout;
 use crate::session::{SessionRuntime, SessionStore};
@@ -51,8 +52,9 @@ impl CliRuntimeAssembly {
         // Stage 0 resolution followed by composed machine hydration: when a
         // docs freshness stewardship expression targets this workspace, the
         // product assembly derives its registration set and actor bindings
-        // from the validated physical binding. A selection that targets a
-        // different workspace leaves this invocation on the plain
+        // from the validated physical binding, and the selected theory
+        // bodies compose from the XDG theory root. A selection that targets
+        // a different workspace leaves this invocation on the plain
         // composition — that stewardship expression is not this runtime's.
         let stewardship = match config.stewardship.docs_freshness.as_ref() {
             Some(_) => {
@@ -60,9 +62,9 @@ impl CliRuntimeAssembly {
                 let canonical_workspace = workspace_root
                     .canonicalize()
                     .unwrap_or_else(|_| workspace_root.to_path_buf());
-                (binding.workspace_root == canonical_workspace).then(|| StewardshipComposition {
-                    binding,
-                    theory: StewardshipTheoryBindings::default(),
+                (binding.workspace_root == canonical_workspace).then(|| {
+                    let theory = compose_stewardship_theory(&binding);
+                    StewardshipComposition { binding, theory }
                 })
             }
             None => None,
@@ -207,6 +209,98 @@ impl CliRuntimeAssembly {
 
     pub fn graph_runtime(&self) -> Arc<crate::world_state::graph::runtime::GraphRuntime> {
         self.product_runtime.graph_runtime()
+    }
+}
+
+/// Compose the selected theory bodies for one stewardship binding.
+///
+/// Composition is best-effort by design, mirroring the production dispatch
+/// route composition: a theory kind that cannot load leaves its dependent
+/// actor a truthful unresolved required binding — with the assembly
+/// diagnostic naming the gap — instead of failing the invocation. Theory
+/// bodies resolve from the XDG theory root only, where `meld world init
+/// --theory-source` provisions them.
+fn compose_stewardship_theory(binding: &PhysicalBinding) -> StewardshipTheoryBindings {
+    let outcome_mapping = loaded(
+        "outcome mapping",
+        crate::init::world::theory::load_outcome_mapping_config(
+            &binding.package.evidence_mapping_id,
+        ),
+    );
+    StewardshipTheoryBindings {
+        outcome_mapping,
+        planning: compose_planning_theory(binding),
+        dispatch: None,
+    }
+}
+
+/// Compose the production planning theory for one stewardship binding.
+///
+/// Methods, the available-action set, and the method realizations are
+/// authored planning theory loaded by expression; the capability catalog is
+/// the workflow task-path set — the same catalog the production dispatch
+/// routes execute through, so planning resolves operators against exactly
+/// the contracts dispatch runs. Requested dimensions derive from the loaded
+/// methods' trigger dimensions: the dimensions planning asks the projection
+/// for are the ones its theory can act on.
+fn compose_planning_theory(binding: &PhysicalBinding) -> Option<PlanningTheoryBinding> {
+    use meld_lang::{Proposition, Term};
+
+    let expression = &binding.package.expression;
+    let methods = loaded(
+        "planning methods",
+        crate::init::world::theory::load_planning_methods(expression),
+    )?;
+    let available_actions = loaded(
+        "available actions",
+        crate::init::world::theory::load_available_actions(expression),
+    )?;
+    let method_realizations = loaded(
+        "method realizations",
+        crate::init::world::theory::load_method_realizations(expression),
+    )?;
+    let catalog = loaded(
+        "planning capability catalog",
+        crate::workflow::build_workflow_task_path_runtime(),
+    )?;
+
+    let mut requested_dimensions: Vec<String> = Vec::new();
+    for method in &methods {
+        if let Proposition::Holds {
+            dimension: Term::Dimension(dimension),
+            ..
+        } = &method.trigger
+        {
+            if !requested_dimensions.contains(dimension) {
+                requested_dimensions.push(dimension.clone());
+            }
+        }
+    }
+    if requested_dimensions.is_empty() {
+        tracing::warn!(
+            expression,
+            "planning theory composition skipped: no method declares a trigger dimension"
+        );
+        return None;
+    }
+
+    Some(PlanningTheoryBinding {
+        methods,
+        capability_catalog: catalog.catalog,
+        available_actions,
+        method_realizations,
+        requested_dimensions,
+    })
+}
+
+/// Unwrap one composed theory load, downgrading failure to a warning.
+fn loaded<T, E: std::fmt::Display>(label: &str, result: Result<T, E>) -> Option<T> {
+    match result {
+        Ok(value) => Some(value),
+        Err(error) => {
+            tracing::warn!(error = %error, "{label} composition skipped");
+            None
+        }
     }
 }
 
