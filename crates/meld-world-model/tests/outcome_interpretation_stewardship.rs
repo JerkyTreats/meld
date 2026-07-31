@@ -247,7 +247,15 @@ fn aggregate_envelope(run_suffix: &str, status: &str, folder_node_ids: &[&str]) 
             "object_id": SCOPE_NODE_ID
         },
         "status": status,
-        "folder_results": folder_results
+        "folder_results": folder_results,
+        // A completed aggregate carries the yield summary belief conditions
+        // on; the substantive class is the healthy-run shape.
+        "semantic_yield": {
+            "verified_yield_total": folder_node_ids.len() as u64,
+            "folder_count": folder_node_ids.len() as u64,
+            "hollow_folder_count": 0,
+            "class": "substantive"
+        }
     });
 
     let aggregate_object = exec_object("package_aggregate", &aggregate_id);
@@ -531,6 +539,32 @@ fn folder_success_maps_to_a_per_folder_fact_bound_to_the_selected_tree() {
     assert_eq!(
         promoted.fields.get("tree_stale_signal"),
         Some(&EvidenceValue::Scalar(FOLDER_SIGNAL))
+    );
+}
+
+#[test]
+fn hollow_completed_aggregate_maps_to_contradicting_staleness() {
+    let set = interpretation_set();
+
+    let mut envelope = aggregate_envelope("hollow", "Completed", &["root/a", "root/b"]);
+    envelope.data["semantic_yield"] = serde_json::json!({
+        "verified_yield_total": 0,
+        "folder_count": 2,
+        "hollow_folder_count": 2,
+        "class": "hollow"
+    });
+
+    let OutcomeMappingDisposition::Applicable {
+        record: promoted, ..
+    } = set.map_outcome(&record(envelope, 9))
+    else {
+        panic!("expected an applicable hollow-completed disposition");
+    };
+    // The regeneration loop is cut by belief: a completed run whose yield
+    // is hollow must contradict freshness, never assert it.
+    assert_eq!(
+        promoted.fields.get("tree_stale_signal"),
+        Some(&EvidenceValue::Scalar(0.9))
     );
 }
 

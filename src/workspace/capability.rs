@@ -26,6 +26,11 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Marker identifying a publish target with no frame head in propagated
+/// error text. The claim route records this terminally: the head cannot
+/// appear without regeneration, so refencing the claim would loop.
+pub const MISSING_HEAD_MARKER: &str = "Publish target missing frame head";
+
 const RESOLVE_CAPABILITY_TYPE_ID: &str = "workspace_resolve_node_id";
 const FILTER_PUBLISH_CAPABILITY_TYPE_ID: &str = "workspace_filter_frame_head_publish";
 const WRITE_FRAME_HEAD_CAPABILITY_TYPE_ID: &str = "workspace_write_frame_head";
@@ -385,19 +390,25 @@ impl CapabilityInvoker for WorkspaceFilterFrameHeadPublishCapability {
             &publish_strategy,
         )?;
 
+        // A publish target without a frame head means the turn chain this
+        // filter depends on claimed completion without persisting its
+        // frame. Nothing downstream can supply the head, so succeeding
+        // here would report a published folder that has no file.
+        if matches!(decision, PublishFilterDecision::MissingHead) {
+            return Err(ApiError::GenerationFailed(format!(
+                "{MISSING_HEAD_MARKER}: node '{}' path '{}' has no '{}' head to publish",
+                node_hex,
+                node_path.to_string_lossy(),
+                frame_type
+            )));
+        }
+
         let mut emitted_artifacts = vec![ArtifactRecord {
             artifact_id: Self::artifact_id(&payload.invocation_id, "publish_filter_result"),
             artifact_type_id: "publish_filter_result".to_string(),
             schema_version: ARTIFACT_SCHEMA_VERSION,
             content: match &decision {
-                PublishFilterDecision::MissingHead => json!({
-                    "status": "missing_head",
-                    "node_id": node_hex.clone(),
-                    "path": node_path.to_string_lossy().to_string(),
-                    "frame_type": frame_type.clone(),
-                    "file_name": file_name.clone(),
-                    "publish_strategy": publish_strategy.clone(),
-                }),
+                PublishFilterDecision::MissingHead => unreachable!("handled above"),
                 PublishFilterDecision::SkipCurrentHeadAlreadyPublished => json!({
                     "status": "skipped_up_to_date",
                     "node_id": node_hex.clone(),

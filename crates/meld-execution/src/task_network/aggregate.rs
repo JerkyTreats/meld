@@ -45,6 +45,10 @@ pub struct FolderPublicationResult {
     pub outcome_id: String,
     /// Artifact records the task produced, by identity.
     pub artifact_ids: Vec<String>,
+    /// Cardinality of the package-declared yield field for this folder;
+    /// zero when the package declares no yield source.
+    #[serde(default)]
+    pub verified_yield: u64,
 }
 
 /// Canonical outcome of one complete package run.
@@ -63,6 +67,25 @@ pub struct AggregatePackageOutcome {
     pub status: AggregatePackageStatus,
     /// Per-folder results, intact and in stable order.
     pub folder_results: Vec<FolderPublicationResult>,
+    /// Yield summary over the folder results when the package declares a
+    /// yield source. This is the observable belief conditions on to close
+    /// the regeneration loop: a completed run whose class is substantive
+    /// is evidence of freshness, a hollow one is contradicting evidence.
+    #[serde(default)]
+    pub semantic_yield: Option<SemanticYieldSummary>,
+}
+
+/// Aggregate semantic yield over one package run's folder results.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SemanticYieldSummary {
+    /// Sum of the declared yield field cardinality across folders.
+    pub verified_yield_total: u64,
+    /// Folder results contributing to this aggregate.
+    pub folder_count: u64,
+    /// Folders whose yield cardinality is zero.
+    pub hollow_folder_count: u64,
+    /// "substantive" when every folder carries yield, otherwise "hollow".
+    pub class: String,
 }
 
 impl AggregatePackageOutcome {

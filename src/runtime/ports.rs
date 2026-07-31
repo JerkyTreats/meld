@@ -1211,6 +1211,7 @@ impl ClaimedTaskInvoker for CompiledTaskClaimInvoker {
                 if message.contains(crate::context::capability::GATE_FAILURE_MARKER)
                     || message
                         .contains(crate::merkle_traversal::expansion::NOTHING_TO_REGENERATE_MARKER)
+                    || message.contains(crate::workspace::capability::MISSING_HEAD_MARKER)
                 {
                     Ok(ClaimedInvocationOutcome::Failed { error: message })
                 } else {

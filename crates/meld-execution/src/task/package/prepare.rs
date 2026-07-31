@@ -596,6 +596,7 @@ mod tests {
                     },
                 ],
             },
+            semantic_yield: None,
             expansions: vec![PackageExpansionSpec::TraversalPrerequisite(
                 TraversalPrerequisitePackageExpansionSpec {
                     expansion_kind: "traversal_prerequisite_expansion".to_string(),

@@ -59,7 +59,8 @@ use crate::task::{TaskExecutorSnapshot, TaskProgressStore};
 use crate::task_network::{
     aggregate::{
         AggregatePackageOutcome, AggregatePackageStatus, FolderPublicationResult,
-        AGGREGATE_PACKAGE_COMPLETED_EVENT_TYPE, AGGREGATE_PACKAGE_FAILED_EVENT_TYPE,
+        SemanticYieldSummary, AGGREGATE_PACKAGE_COMPLETED_EVENT_TYPE,
+        AGGREGATE_PACKAGE_FAILED_EVENT_TYPE,
     },
     contracts::has_text,
     dispatch::{Outcome, OutcomeStatus},
@@ -177,6 +178,11 @@ pub struct AggregateRunBinding {
     /// but never contribute a folder result. The classification must name at
     /// least one capability type.
     pub folder_unit_capability_types: Vec<String>,
+    /// Package-declared yield source: artifact type and array field whose
+    /// cardinality measures per-folder semantic yield. Absent for packages
+    /// without a countable yield; the aggregate outcome then carries no
+    /// yield summary.
+    pub semantic_yield_source: Option<(String, String)>,
 }
 
 /// Read-only completion projection over one durable executor snapshot.
@@ -364,6 +370,7 @@ pub fn produce_aggregate_outcome(
     // the terminal outcome; grouping by folder is the only transformation.
     // Artifacts from known non-folder units are orchestration products, not
     // per-folder facts, and stay out of the folder rows.
+    let mut folder_yields: BTreeMap<&str, u64> = BTreeMap::new();
     for artifact in &outcome.artifact_records {
         let producer = artifact.producer.capability_instance_id.as_str();
         let Some(folder) = unit_to_folder.get(producer) else {
@@ -379,6 +386,19 @@ pub fn produce_aggregate_outcome(
             .entry(folder)
             .or_default()
             .push(artifact.artifact_id.clone());
+        // Yield rides the artifact content the ledger already carries; the
+        // package declares which artifact and field measure it.
+        if let Some((yield_type, yield_field)) = &binding.semantic_yield_source {
+            if &artifact.artifact_type_id == yield_type {
+                let count = artifact
+                    .content
+                    .get(yield_field)
+                    .and_then(|value| value.as_array())
+                    .map(|items| items.len() as u64)
+                    .unwrap_or(0);
+                *folder_yields.entry(folder).or_default() += count;
+            }
+        }
     }
 
     let completed: BTreeSet<&str> = snapshot
@@ -401,8 +421,29 @@ pub fn produce_aggregate_outcome(
             task_instance_id: outcome.task_instance_id.clone(),
             outcome_id: outcome.outcome_id.clone(),
             artifact_ids: folder_artifacts.remove(folder.as_str()).unwrap_or_default(),
+            verified_yield: folder_yields.get(folder.as_str()).copied().unwrap_or(0),
         });
     }
+
+    let semantic_yield = binding.semantic_yield_source.as_ref().map(|_| {
+        let hollow_folder_count = folder_results
+            .iter()
+            .filter(|result| result.verified_yield == 0)
+            .count() as u64;
+        SemanticYieldSummary {
+            verified_yield_total: folder_results
+                .iter()
+                .map(|result| result.verified_yield)
+                .sum(),
+            folder_count: folder_results.len() as u64,
+            hollow_folder_count,
+            class: if folder_results.is_empty() || hollow_folder_count > 0 {
+                "hollow".to_string()
+            } else {
+                "substantive".to_string()
+            },
+        }
+    });
 
     Ok(AggregateProduction::Produced(AggregatePackageOutcome {
         aggregate_id: AggregatePackageOutcome::derive_aggregate_id(
@@ -414,6 +455,7 @@ pub fn produce_aggregate_outcome(
         selected_scope: binding.selected_scope.clone(),
         status,
         folder_results,
+        semantic_yield,
     }))
 }
 

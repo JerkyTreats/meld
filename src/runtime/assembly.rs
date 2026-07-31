@@ -366,6 +366,9 @@ pub struct StewardshipActorBindings {
     /// Durable capability type ids whose package work units carry
     /// per-folder work, derived from the selected package document.
     pub folder_unit_capability_types: Vec<String>,
+    /// Package-declared yield source as artifact type and array field,
+    /// derived from the selected package document.
+    pub semantic_yield_source: Option<(String, String)>,
 }
 
 impl StewardshipActorBindings {
@@ -391,9 +394,29 @@ impl StewardshipActorBindings {
             network_id: format!("stewardship.{expression}"),
             session_id: format!("stewardship::{expression}"),
             folder_unit_capability_types: folder_unit_capability_types(&expression)?,
+            semantic_yield_source: semantic_yield_source(&expression)?,
             expression,
         })
     }
+}
+
+/// Derive the package-declared semantic yield source, when one exists.
+fn semantic_yield_source(
+    expression: &str,
+) -> Result<Option<(String, String)>, RuntimeAssemblyError> {
+    let package_id = match expression {
+        "docs_freshness" => "docs_writer",
+        other => {
+            return Err(RuntimeAssemblyError::Config(format!(
+                "stewardship expression '{other}' selects no known task package"
+            )))
+        }
+    };
+    let spec = load_builtin_task_package_spec(package_id)
+        .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?;
+    Ok(spec
+        .semantic_yield
+        .map(|declared| (declared.artifact_type_id, declared.array_field)))
 }
 
 /// Derive per-folder work unit capability types from the selected package.
@@ -2586,6 +2609,7 @@ impl PublicationHandle {
                 // configuration (the selected package's stage chain), never
                 // from runtime inventory.
                 folder_unit_capability_types: self.bindings.folder_unit_capability_types.clone(),
+                semantic_yield_source: self.bindings.semantic_yield_source.clone(),
             };
             // The dispatch actor records the run's terminal outcome through
             // the task-network command boundary; publication reads it back

@@ -96,3 +96,6 @@ expansions:
       consumer_turn_id: evidence_gather
       consumer_stage_id: prepare
       consumer_input_slot_id: upstream_artifact
+semantic_yield:
+  artifact_type_id: verification_report
+  array_field: verified_claims

@@ -64,7 +64,7 @@
       ]
     },
     {
-      "mapping_id": "docs_package_completed_v1",
+      "mapping_id": "docs_package_completed_substantive_v1",
       "source_kind": "execution_package_aggregate",
       "match_domain_id": "execution",
       "match_event_type": "execution.package.completed",
@@ -73,6 +73,11 @@
           "rule": "field_equals",
           "pointer": "/status",
           "equals": "Completed"
+        },
+        {
+          "rule": "field_equals",
+          "pointer": "/semantic_yield/class",
+          "equals": "substantive"
         }
       ],
       "subject": {
@@ -89,6 +94,41 @@
           "source": {
             "source": "constant",
             "value": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "mapping_id": "docs_package_completed_hollow_v1",
+      "source_kind": "execution_package_aggregate",
+      "match_domain_id": "execution",
+      "match_event_type": "execution.package.completed",
+      "match_content": [
+        {
+          "rule": "field_equals",
+          "pointer": "/status",
+          "equals": "Completed"
+        },
+        {
+          "rule": "field_equals",
+          "pointer": "/semantic_yield/class",
+          "equals": "hollow"
+        }
+      ],
+      "subject": {
+        "object_kind": "node",
+        "domain_id": "workspace_fs",
+        "from": {
+          "source": "payload_object",
+          "pointer": "/selected_scope"
+        }
+      },
+      "evidence_fields": [
+        {
+          "field": "tree_stale_signal",
+          "source": {
+            "source": "constant",
+            "value": 0.9
           }
         }
       ]

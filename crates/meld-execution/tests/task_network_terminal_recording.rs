@@ -599,6 +599,7 @@ fn recorded_outcome_unblocks_aggregate_publication() {
         network_id: terminal.network_id.clone(),
         selected_scope: DomainObjectRef::new("workspace_fs", "node", "docs").unwrap(),
         folder_unit_capability_types: vec!["docs.write".to_string()],
+        semantic_yield_source: None,
     };
 
     let production =

@@ -25,6 +25,22 @@ pub struct TaskPackageSpec {
     pub seed: InitialSeedSpec,
     /// Expansion entries authored by this package.
     pub expansions: Vec<PackageExpansionSpec>,
+    /// Package-declared source of per-folder semantic yield: which produced
+    /// artifact carries the substance the run exists to create, and which
+    /// array field measures it. Absent for packages without a countable
+    /// yield; when declared, the aggregate outcome carries a yield summary
+    /// belief mapping can condition on.
+    #[serde(default)]
+    pub semantic_yield: Option<SemanticYieldSpec>,
+}
+
+/// Package-authored declaration of the artifact field measuring yield.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SemanticYieldSpec {
+    /// Artifact type carrying the yield array.
+    pub artifact_type_id: String,
+    /// Array field on the artifact content whose cardinality is the yield.
+    pub array_field: String,
 }
 
 /// Package-authored traversal prerequisite expansion entry.

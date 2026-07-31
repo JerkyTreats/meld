@@ -206,6 +206,7 @@ fn binding() -> AggregateRunBinding {
         network_id: NETWORK_ID.to_string(),
         selected_scope: DomainObjectRef::new("workspace_fs", "node", "root").unwrap(),
         folder_unit_capability_types: vec!["docs.write".to_string()],
+        semantic_yield_source: None,
     }
 }
 
@@ -674,6 +675,7 @@ fn per_folder_publications_coexist_and_the_aggregate_arrives_only_after_completi
         network_id: NETWORK_ID.to_string(),
         selected_scope: DomainObjectRef::new("workspace_fs", "node", "readme").unwrap(),
         folder_unit_capability_types: vec!["docs.write".to_string()],
+        semantic_yield_source: None,
     };
     let progress = open_progress(Some(&snapshot));
     let outbox = open_outbox();
@@ -919,4 +921,79 @@ fn folder_subject_minting_matches_the_task_event_workspace_node_mapping() {
         .unwrap();
 
     assert_eq!(aggregate_folder, task_event_folder);
+}
+
+fn yield_artifact(
+    artifact_id: &str,
+    capability_instance_id: &str,
+    verified_count: usize,
+) -> ArtifactRecord {
+    let claims: Vec<serde_json::Value> = (0..verified_count)
+        .map(|index| json!({ "claim_id": format!("claim-{index}") }))
+        .collect();
+    ArtifactRecord {
+        artifact_id: artifact_id.to_string(),
+        artifact_type_id: "verification_report".to_string(),
+        schema_version: 1,
+        content: json!({ "verified_claims": claims }),
+        producer: ArtifactProducerRef {
+            task_id: "task_docs_writer".to_string(),
+            capability_instance_id: capability_instance_id.to_string(),
+            invocation_id: Some(format!("invoke-{artifact_id}")),
+            output_slot_id: Some("generation_output".to_string()),
+        },
+    }
+}
+
+#[test]
+fn declared_yield_source_summarizes_per_folder_substance() {
+    let event_tempdir = tempfile::tempdir().unwrap();
+    let events = open_events(&event_tempdir);
+    let snapshot = branching_snapshot(&["write::root", "write::a", "write::b"]);
+    let progress = open_progress(Some(&snapshot));
+    let outbox = open_outbox();
+    let mut artifacts = branching_artifacts();
+    artifacts.push(yield_artifact("verify-root", "write::root", 2));
+    artifacts.push(yield_artifact("verify-a", "write::a", 1));
+    // The b folder verifies zero claims: the aggregate must classify the
+    // whole run hollow so belief receives contradicting evidence.
+    artifacts.push(yield_artifact("verify-b", "write::b", 0));
+    let outcome = terminal_outcome(OutcomeStatus::Succeeded, artifacts);
+    let mut yield_binding = binding();
+    yield_binding.semantic_yield_source = Some((
+        "verification_report".to_string(),
+        "verified_claims".to_string(),
+    ));
+
+    publish_aggregate_for_run(
+        &progress,
+        Some(&outcome),
+        &yield_binding,
+        &outbox,
+        &events,
+        &request(),
+    )
+    .unwrap();
+
+    let records = aggregate_records(&events);
+    assert_eq!(records.len(), 1);
+    let payload = &records[0].envelope.data;
+    assert_eq!(payload["semantic_yield"]["class"], "hollow");
+    assert_eq!(payload["semantic_yield"]["verified_yield_total"], 3);
+    assert_eq!(payload["semantic_yield"]["folder_count"], 3);
+    assert_eq!(payload["semantic_yield"]["hollow_folder_count"], 1);
+    let by_folder: std::collections::BTreeMap<String, u64> = payload["folder_results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|result| {
+            (
+                result["folder"]["object_id"].as_str().unwrap().to_string(),
+                result["verified_yield"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(by_folder.get("root"), Some(&2));
+    assert_eq!(by_folder.get("root/a"), Some(&1));
+    assert_eq!(by_folder.get("root/b"), Some(&0));
 }
