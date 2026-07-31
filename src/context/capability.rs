@@ -27,6 +27,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
+/// Marker identifying a gate violation in propagated error text. The claim
+/// route matches on it to record a terminal failed outcome instead of
+/// refencing the claim: a gate failure that survived the declared execute
+/// retry budget is deterministic given the recorded artifacts, so re-ticking
+/// the claim would loop without bound.
+pub const GATE_FAILURE_MARKER: &str = "Workflow gate '";
+
 const PREPARE_CAPABILITY_TYPE_ID: &str = "context_generate_prepare";
 const FINALIZE_CAPABILITY_TYPE_ID: &str = "context_generate_finalize";
 const CAPABILITY_VERSION: u32 = 1;
@@ -37,6 +44,13 @@ struct ProviderExecuteRequestArtifact {
     request: GenerationOrchestrationRequest,
     messages: Vec<ChatMessage>,
     request_kind: String,
+    /// Blocking gate carried so the execute retry loop can re-attempt a
+    /// completion that would fail finalize anyway; absent for non-blocking
+    /// gates so recorded-only verdicts never burn provider retries.
+    #[serde(default)]
+    gate: Option<WorkflowGate>,
+    #[serde(default)]
+    gate_inputs: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -697,6 +711,11 @@ impl CapabilityInvoker for ContextGeneratePrepareCapability {
             request: request.clone(),
             messages: prompt_output.messages.clone(),
             request_kind: "text_completion".to_string(),
+            gate: summary
+                .gate
+                .clone()
+                .filter(|bound_gate| bound_gate.fail_on_violation),
+            gate_inputs: summary.gate_inputs.clone(),
         };
         let producer = ArtifactProducerRef {
             task_id: payload
@@ -1089,7 +1108,7 @@ impl CapabilityInvoker for ContextGenerateFinalizeCapability {
             }
             if !gate_result.is_pass() && gate.fail_on_violation {
                 return Err(ApiError::GenerationFailed(format!(
-                    "Workflow gate '{}' failed: {}",
+                    "{GATE_FAILURE_MARKER}{}' failed: {}",
                     gate.gate_id,
                     gate_result.reasons.join(" | ")
                 )));

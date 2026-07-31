@@ -20,6 +20,7 @@ mod docs_writer_task;
 mod event_ledger;
 mod execution_projection;
 mod frame_queue;
+mod gate_retry_contract;
 mod generation_parity;
 mod goal_acceptance;
 mod harness_run;

@@ -408,6 +408,15 @@ impl DeterministicDocsProvider {
     /// Spawns the provider for a run rooted at `workspace_root`. The root
     /// is only used to normalize absolute node paths out of prompts.
     pub fn spawn(workspace_root: &Path) -> Self {
+        Self::spawn_with_evidence_sabotage(workspace_root, 0)
+    }
+
+    /// Spawns the provider with the first `sabotage_first` evidence-gather
+    /// completions replaced by prose that satisfies no gate — the
+    /// transient-bad-output shape the execute retry budget exists for.
+    /// Pass a number larger than any plausible attempt budget to model a
+    /// permanently failing turn.
+    pub fn spawn_with_evidence_sabotage(workspace_root: &Path, sabotage_first: usize) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let endpoint = format!("http://{address}");
@@ -415,6 +424,7 @@ impl DeterministicDocsProvider {
 
         let handle = thread::spawn(move || {
             let mut handled = 0usize;
+            let mut sabotaged = 0usize;
             loop {
                 let (mut stream, _) = listener.accept().unwrap();
                 let request = read_http_request(&mut stream);
@@ -424,7 +434,14 @@ impl DeterministicDocsProvider {
                         stream.write_all(b"HTTP/1.1 204 No Content\r\ncontent-length: 0\r\n\r\n");
                     break;
                 }
-                let completion = deterministic_completion(&request, &workspace_marker);
+                let is_evidence_request =
+                    request_text.contains("Build evidence for README generation");
+                let completion = if is_evidence_request && sabotaged < sabotage_first {
+                    sabotaged += 1;
+                    "I could not locate any citable claims in the provided context.".to_string()
+                } else {
+                    deterministic_completion(&request, &workspace_marker)
+                };
                 let response_body = format!(
                     r#"{{"id":"parity","object":"chat.completion","created":0,"model":"test-model","choices":[{{"index":0,"message":{{"role":"assistant","content":{}}},"finish_reason":"stop"}}],"usage":{{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}}}"#,
                     serde_json::to_string(&completion).unwrap()
@@ -580,6 +597,18 @@ pub struct WorkflowRouteBaselineRun {
 /// publication baseline. Each call is fully isolated: fresh XDG homes,
 /// fresh workspace, fresh stores.
 pub fn run_workflow_route_baseline(spec: &ParityWorkspaceSpec) -> WorkflowRouteBaselineRun {
+    try_run_workflow_route(spec, 0).expect("workflow route baseline run failed")
+}
+
+/// Fallible workflow-route run with the first `sabotage_first` evidence
+/// completions replaced by gate-failing prose. The baseline wrapper runs
+/// with zero sabotage; gate-retry tests pass small counts to prove the
+/// execute retry budget heals transients, and large counts to prove
+/// exhausted budgets fail terminally.
+pub fn try_run_workflow_route(
+    spec: &ParityWorkspaceSpec,
+    sabotage_first: usize,
+) -> Result<WorkflowRouteBaselineRun, String> {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
         meld::init::initialize_workflows(false).unwrap();
@@ -588,7 +617,8 @@ pub fn run_workflow_route_baseline(spec: &ParityWorkspaceSpec) -> WorkflowRouteB
         spec.write_to(&workspace_root);
 
         create_test_agent(PARITY_AGENT_ID, Some(PARITY_WORKFLOW_ID));
-        let provider = DeterministicDocsProvider::spawn(&workspace_root);
+        let provider =
+            DeterministicDocsProvider::spawn_with_evidence_sabotage(&workspace_root, sabotage_first);
         create_test_provider(PARITY_PROVIDER_NAME, provider.endpoint());
 
         let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
@@ -636,24 +666,25 @@ pub fn run_workflow_route_baseline(spec: &ParityWorkspaceSpec) -> WorkflowRouteB
         )
         .unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let summary = rt
-            .block_on(execute_task_to_completion(
-                run_context.api(),
-                &mut executor,
-                &catalog,
-                &registry,
-                None,
-                None,
-            ))
-            .unwrap();
+        let result = rt.block_on(execute_task_to_completion(
+            run_context.api(),
+            &mut executor,
+            &catalog,
+            &registry,
+            None,
+            None,
+        ));
 
         let provider_requests = provider.shutdown();
 
-        WorkflowRouteBaselineRun {
-            baseline: ReadmeBaseline::capture(&workspace_root),
-            provider_requests,
-            completed_instances: summary.completed_instances,
-            capability_instances: executor.compiled_task().capability_instances.len(),
+        match result {
+            Ok(summary) => Ok(WorkflowRouteBaselineRun {
+                baseline: ReadmeBaseline::capture(&workspace_root),
+                provider_requests,
+                completed_instances: summary.completed_instances,
+                capability_instances: executor.compiled_task().capability_instances.len(),
+            }),
+            Err(error) => Err(error.to_string()),
         }
     })
 }

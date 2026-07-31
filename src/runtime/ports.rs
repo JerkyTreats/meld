@@ -1197,9 +1197,20 @@ impl ClaimedTaskInvoker for CompiledTaskClaimInvoker {
             Ok(_summary) => Ok(ClaimedInvocationOutcome::Completed(
                 executor.artifact_repo().record().artifacts.clone(),
             )),
-            // An unresolved invocation keeps the claim fenced: a later tick
-            // resumes it instead of recording a premature terminal outcome.
-            Err(error) => Err(DispatchPortError::retryable(error.to_string())),
+            Err(error) => {
+                let message = error.to_string();
+                // A gate violation that survived its declared retry budget
+                // is deterministic over the recorded artifacts: terminal,
+                // recorded through the command boundary so belief learns it.
+                if message.contains(crate::context::capability::GATE_FAILURE_MARKER) {
+                    Ok(ClaimedInvocationOutcome::Failed { error: message })
+                } else {
+                    // Any other unresolved invocation keeps the claim
+                    // fenced: a later tick resumes it instead of recording
+                    // a premature terminal outcome.
+                    Err(DispatchPortError::retryable(message))
+                }
+            }
         }
     }
 }

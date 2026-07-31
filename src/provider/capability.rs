@@ -26,6 +26,14 @@ struct ProviderExecuteRequestArtifact {
     request: GenerationOrchestrationRequest,
     messages: Vec<ChatMessage>,
     request_kind: String,
+    /// Blocking gate evaluated inside the retry loop: a completion that
+    /// would fail finalize is retried here, within the declared attempt
+    /// budget, so retries stay inside one invocation and no belief-visible
+    /// event exists for a non-terminal attempt.
+    #[serde(default)]
+    gate: Option<crate::workflow::profile::WorkflowGate>,
+    #[serde(default)]
+    gate_inputs: std::collections::HashMap<String, String>,
 }
 
 /// Publishes and invokes the provider execution capability.
@@ -175,10 +183,17 @@ impl CapabilityInvoker for ProviderExecuteChatCapability {
             )
             .await?;
 
-            if validate_json
-                && !crate::context::capability::json_output_is_decodable(&response.content)
-                && attempt < max_attempts
-            {
+            let json_rejects = validate_json
+                && !crate::context::capability::json_output_is_decodable(&response.content);
+            let gate_rejects = request_artifact.gate.as_ref().is_some_and(|gate| {
+                !crate::workflow::gates::evaluate_gate(
+                    gate,
+                    &response.content,
+                    Some(&request_artifact.gate_inputs),
+                )
+                .is_pass()
+            });
+            if (json_rejects || gate_rejects) && attempt < max_attempts {
                 continue;
             }
 
