@@ -33,6 +33,7 @@ mod logging_default;
 mod model_providers;
 mod node_deletion;
 mod outcome_evidence;
+pub(crate) mod outcome_evidence_support;
 pub(crate) mod parity_fixture;
 mod parity_fixture_contract;
 mod product_event_authority_cutover;

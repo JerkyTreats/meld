@@ -147,3 +147,115 @@ fn require_non_empty(label: &str, value: &str) -> Result<(), DocsTaskSuccessEvid
     }
     Ok(())
 }
+
+use std::sync::Arc;
+
+use meld::runtime::ports::ProductEventReplayPort;
+use meld_world_model::belief::{
+    ingest_promoted_evidence, ConfigSnapshot, PromotedEvidenceIngestionRequest,
+};
+use meld_world_model::world_state::graph::store::TraversalStore;
+use meld_world_model::world_state::graph::PerspectiveKey;
+use meld_world_model::{
+    BeliefRuntime, BeliefStore, BranchScope, PromotedEvidenceIngestionResult,
+};
+
+/// Test-only replay of docs task success events into belief evidence.
+///
+/// Lifted verbatim from the removed `DocsTaskEvidenceReplayPort` so the
+/// reopen contract keeps its evidence-injection driver. The production
+/// evidence path is the world-model interpretation mapping; this helper and
+/// its hardcoded probabilities exist only for characterized contract tests.
+pub struct DocsTaskEvidenceReplayRequest {
+    pub after_seq: u64,
+    pub limit: usize,
+    pub subject: DomainObjectRef,
+    pub config: ConfigSnapshot,
+    pub perspective: PerspectiveKey,
+    pub branch_scope: BranchScope,
+    pub owner_id: String,
+    pub required_artifact_type_id: Option<String>,
+}
+
+pub struct DocsTaskEvidenceReplayReport {
+    pub input_event_seq: u64,
+    pub output_event_seq: u64,
+    pub events_attempted: usize,
+    pub promoted_evidence_count: usize,
+    pub rejected_evidence_count: usize,
+    pub normalized_evidence_count: usize,
+    pub new_assignment_count: usize,
+    pub ingestions: Vec<PromotedEvidenceIngestionResult>,
+}
+
+pub fn ingest_after_limit(
+    event_replay: &ProductEventReplayPort,
+    belief_store: &Arc<BeliefStore>,
+    traversal_store: &Arc<TraversalStore>,
+    request: DocsTaskEvidenceReplayRequest,
+) -> Result<DocsTaskEvidenceReplayReport, String> {
+    if request.owner_id.trim().is_empty() {
+        return Err("owner id must be non-empty".to_string());
+    }
+    request
+        .subject
+        .validate()
+        .map_err(|error| error.to_string())?;
+    let events = event_replay
+        .read_after_limit(request.after_seq, request.limit)
+        .map_err(|error| error.to_string())?;
+    let runtime = BeliefRuntime::new(
+        Arc::clone(belief_store),
+        Arc::clone(traversal_store),
+        request.config.clone(),
+        request.perspective.clone(),
+        request.branch_scope.clone(),
+    );
+    let mut report = DocsTaskEvidenceReplayReport {
+        input_event_seq: request.after_seq,
+        output_event_seq: request.after_seq,
+        events_attempted: events.len(),
+        promoted_evidence_count: 0,
+        rejected_evidence_count: 0,
+        normalized_evidence_count: 0,
+        new_assignment_count: 0,
+        ingestions: Vec::new(),
+    };
+
+    for event in events {
+        report.output_event_seq = report.output_event_seq.max(event.seq);
+        let promoted = build_docs_task_success_evidence(DocsTaskSuccessEvidenceRequest {
+            event,
+            subject: request.subject.clone(),
+            stale_probability: 0.0,
+            review_probability: 0.2,
+            source_kind: "content_written".to_string(),
+            required_artifact_type_id: request.required_artifact_type_id.clone(),
+        })
+        .map_err(|error| error.to_string())?;
+        let Some(record) = promoted else {
+            continue;
+        };
+        report.promoted_evidence_count += 1;
+        let ingestion = ingest_promoted_evidence(
+            belief_store.as_ref(),
+            &runtime,
+            PromotedEvidenceIngestionRequest {
+                record,
+                config: request.config.clone(),
+                perspective: request.perspective.clone(),
+                branch_scope: request.branch_scope.clone(),
+                owner_id: &request.owner_id,
+            },
+        )
+        .map_err(|error| error.to_string())?;
+        if ingestion.rejected {
+            report.rejected_evidence_count += 1;
+        }
+        report.normalized_evidence_count += ingestion.normalized_evidence_count;
+        report.new_assignment_count += ingestion.new_assignment_count;
+        report.ingestions.push(ingestion);
+    }
+
+    Ok(report)
+}

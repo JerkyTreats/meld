@@ -1,4 +1,6 @@
-use meld::execution::{build_docs_task_success_evidence, DocsTaskSuccessEvidenceRequest};
+use crate::integration::outcome_evidence_support::{
+    build_docs_task_success_evidence, DocsTaskSuccessEvidenceRequest,
+};
 use meld_execution::task_network::store::network_storage_key;
 use meld_lang::{Effect, GoalLifecycle, Proposition, StepKind, Term};
 use meld_world_model::belief::BeliefConfigLoader;

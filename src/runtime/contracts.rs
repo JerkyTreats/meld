@@ -8,7 +8,6 @@ use meld_world_model::world_state::graph::runtime::GraphCatchUpReport;
 use meld_world_model::AgentRuntimeReport;
 use serde::{Deserialize, Serialize};
 
-use crate::runtime::ports::DocsTaskEvidenceReplayReport;
 
 /// Current schema version for runtime status cache records.
 /// Version 2 embeds action records carrying waiting-on declarations
@@ -1273,37 +1272,6 @@ impl From<AgentRuntimeReport> for WorkerTickReport {
     }
 }
 
-impl From<DocsTaskEvidenceReplayReport> for WorkerTickReport {
-    fn from(report: DocsTaskEvidenceReplayReport) -> Self {
-        Self {
-            actor_id: "world_model.evidence_ingestion".to_string(),
-            scope: WorkerScope {
-                domain_id: "world_model".to_string(),
-                stream_id: None,
-                work_key: Some("docs_task_evidence".to_string()),
-                agent_id: None,
-                perspective_key: None,
-                branch_id: None,
-                subject_key: None,
-            },
-            input_checkpoint: WorkerCheckpoint {
-                name: "event_spine_seq".to_string(),
-                value: report.input_event_seq,
-            },
-            output_checkpoint: WorkerCheckpoint {
-                name: "event_spine_seq".to_string(),
-                value: report.output_event_seq,
-            },
-            items_attempted: report.events_attempted,
-            items_committed: report.new_assignment_count,
-            retryable_errors: Vec::new(),
-            fatal_errors: Vec::new(),
-            budget_exhausted: false,
-            waiting_on: Vec::new(),
-        }
-    }
-}
-
 fn string_issue(message: String) -> WorkerTickIssue {
     WorkerTickIssue {
         item_id: None,
@@ -1493,30 +1461,6 @@ mod tests {
         assert_eq!(action.object_ref.object_id, "agent-a");
         assert_eq!(action.checkpoints[0].input_name, "agent_input_sequence");
         assert_eq!(action.checkpoints[0].output_name, "agent_output_sequence");
-    }
-
-    #[test]
-    fn docs_evidence_replay_report_maps_to_worker_report() {
-        let report = DocsTaskEvidenceReplayReport {
-            input_event_seq: 30,
-            output_event_seq: 32,
-            events_attempted: 2,
-            promoted_evidence_count: 1,
-            rejected_evidence_count: 0,
-            normalized_evidence_count: 1,
-            new_assignment_count: 1,
-            ingestions: Vec::new(),
-        };
-
-        let worker: WorkerTickReport = report.into();
-
-        assert_eq!(worker.actor_id, "world_model.evidence_ingestion");
-        assert_eq!(worker.scope.work_key.as_deref(), Some("docs_task_evidence"));
-        assert_eq!(worker.input_checkpoint.value, 30);
-        assert_eq!(worker.output_checkpoint.value, 32);
-        assert_eq!(worker.items_attempted, 2);
-        assert_eq!(worker.items_committed, 1);
-        assert!(worker.made_progress());
     }
 
     #[test]

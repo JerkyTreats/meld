@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use meld::execution::{
+use crate::integration::outcome_evidence_support::{
     build_docs_task_success_evidence, DocsTaskSuccessEvidenceError, DocsTaskSuccessEvidenceRequest,
 };
 use meld_events::{DomainObjectRef, EventRecord};

@@ -6,8 +6,10 @@ mod task_network_support;
 
 use meld::runtime::assembly::{ProductRuntimeAssembly, ProductRuntimeConfig};
 use meld::runtime::contracts::WorkerTickReport;
-use meld::runtime::ports::{
-    DocsTaskEvidenceReplayRequest, ProductRuntimePorts, ProviderPortConfig,
+use meld::runtime::ports::{ProductRuntimePorts, ProviderPortConfig};
+
+use crate::integration::outcome_evidence_support::{
+    ingest_after_limit, DocsTaskEvidenceReplayRequest,
 };
 use meld::runtime::storage::{OpenProductStores, ProductStorageLayout};
 use meld_events::{AppendMode, EventAuthority, EventAuthorityOpenOptions, EventEnvelope};
@@ -189,9 +191,11 @@ fn minimal_runtime_flywheel_turn_persists_and_satisfies_goal() {
     ));
     drop(network);
 
-    let ingestion = ports
-        .docs_task_evidence()
-        .ingest_after_limit(DocsTaskEvidenceReplayRequest {
+    let ingestion = ingest_after_limit(
+        ports.event_replay(),
+        stores.belief_store.opened().unwrap(),
+        stores.traversal_store.opened().unwrap(),
+        DocsTaskEvidenceReplayRequest {
             after_seq: harness.fixture.publication_event_seq() - 1,
             limit: 1,
             subject: harness.fixture.subject(),
@@ -200,8 +204,9 @@ fn minimal_runtime_flywheel_turn_persists_and_satisfies_goal() {
             branch_scope: harness.fixture.branch_scope(),
             owner_id: WORKER_ID.to_string(),
             required_artifact_type_id: Some(REQUIRED_ARTIFACT_TYPE_ID.to_string()),
-        })
-        .unwrap();
+        },
+    )
+    .unwrap();
     assert_eq!(ingestion.events_attempted, 1);
     assert_eq!(ingestion.promoted_evidence_count, 1);
     assert_eq!(ingestion.normalized_evidence_count, 2);
@@ -433,9 +438,11 @@ fn docs_freshness_reopens_after_publication_append_before_satisfaction() {
         } if receipt.seq == event.seq
     ));
 
-    let ingestion = ports
-        .docs_task_evidence()
-        .ingest_after_limit(DocsTaskEvidenceReplayRequest {
+    let ingestion = ingest_after_limit(
+        ports.event_replay(),
+        stores.belief_store.opened().unwrap(),
+        stores.traversal_store.opened().unwrap(),
+        DocsTaskEvidenceReplayRequest {
             after_seq: event.seq - 1,
             limit: 1,
             subject: harness.fixture.subject(),
@@ -444,8 +451,9 @@ fn docs_freshness_reopens_after_publication_append_before_satisfaction() {
             branch_scope: harness.fixture.branch_scope(),
             owner_id: WORKER_ID.to_string(),
             required_artifact_type_id: Some(REQUIRED_ARTIFACT_TYPE_ID.to_string()),
-        })
-        .unwrap();
+        },
+    )
+    .unwrap();
     assert_eq!(ingestion.events_attempted, 1);
     assert_eq!(ingestion.promoted_evidence_count, 1);
     assert_eq!(ingestion.normalized_evidence_count, 2);

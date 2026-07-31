@@ -1,8 +1,10 @@
 use std::sync::Arc;
 
+use crate::integration::outcome_evidence_support::{
+    build_docs_task_success_evidence, DocsTaskSuccessEvidenceRequest,
+};
 use meld::execution::{
-    build_docs_task_success_evidence, satisfy_request_from_agent_mutation,
-    DocsTaskSuccessEvidenceRequest, GoalMutationError, GoalMutationRequest,
+    satisfy_request_from_agent_mutation, GoalMutationError, GoalMutationRequest,
 };
 use meld_events::events::test_support::{EventStore, EventStoreTestSupport as _};
 use meld_events::{DomainObjectRef, EventRecord};
