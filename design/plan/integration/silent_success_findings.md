@@ -19,7 +19,7 @@ The known five-link hollow-README chain was excluded; everything below is additi
 
 ### F1 — package path ignores `input_refs`
 
-`TurnSpec` at `crates/meld-execution/src/task/package/region.rs:45-62` has no `input_refs` field; lowering never reads the profile's declared inputs, and expansion wires only the adjacent previous turn's output at `src/merkle_traversal/expansion.rs:151-161`. The workflow sibling hard-errors on a missing declared input at `crates/meld-execution/src/workflow/resolver.rs:32-42`. Two authored YAML sources of truth are never cross-checked; a reorder fails loudly on one path and silently starves context on the other. Disposition: parity slice one.
+`TurnSpec` at `crates/meld-execution/src/task/package/region.rs:45-62` has no `input_refs` field; lowering never reads the profile's declared inputs, and expansion wires only the adjacent previous turn's output at `src/merkle_traversal/expansion.rs:151-161`. The workflow sibling hard-errors on a missing declared input at `crates/meld-execution/src/workflow/resolver.rs:32-42`. Two authored YAML sources of truth are never cross-checked; a reorder fails loudly on one path and silently starves context on the other. Disposition: parity slice one. Progress 2026-07-31: the enforcement half landed through F8 — readiness now validates declared artifact type and schema per source, which immediately exposed the docs_writer_v2 prerequisite declaring `frame_ref` while the consumed artifact is `readme_final`; both package copies corrected. Remaining: lowering-time cross-validation of package turns against profile `input_refs` so mismatches fail at load rather than at run.
 
 ### F2 — `style_gate` passes vacuously through three routes
 
@@ -47,7 +47,7 @@ Corrected 2026-07-31 during slice one: orchestration also assembles the prompt b
 
 ### F8 — intra-task readiness discards schema checks and diagnostics
 
-`task/readiness.rs:23-61` destructures away the declared `schema_version`, returns bare strings where the task-network sibling returns typed diagnostics, and evaluates `.all()` over possibly empty wiring — the direct consumer that makes the known empty-wiring filter dangerous. Disposition: parity slice one.
+`task/readiness.rs:23-61` destructures away the declared `schema_version`, returns bare strings where the task-network sibling returns typed diagnostics, and evaluates `.all()` over possibly empty wiring — the direct consumer that makes the known empty-wiring filter dangerous. Disposition: parity slice one. CLOSED 2026-07-31: readiness validates artifact type and schema version per declared source and blocked tasks narrate per-instance reasons through the run error. The empty-wiring `.all()` vacuity remains inert only while the expansion filter exists; revisit with slice-three truthfulness work.
 
 ### F9 — publish filter records `missing_head` and nothing reads it
 
