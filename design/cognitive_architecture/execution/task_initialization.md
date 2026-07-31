@@ -107,7 +107,7 @@ The full validation model has layers:
 - policy validation for scope, agent, workspace, and trust posture
 - evolution validation for deterministic schema migration
 
-The task network must enforce envelope and source validation before dispatch. Schema and semantic validators should be registered by artifact type and schema version as execution matures.
+The task network must enforce envelope and source validation before dispatch. Readiness validates each declared source's artifact type and schema version, and a blocked task narrates its per-instance reasons; semantic validators register by artifact type and schema version on the same seam.
 
 ## Dispatch Invariant
 

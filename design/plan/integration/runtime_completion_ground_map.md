@@ -88,7 +88,7 @@ The sequence is not limited to one traversal. When satisfaction remains below th
 
 ## Docs Writer Operational Parity Contract
 
-Flywheel docs freshness must produce the same operational result as workflow docs freshness. It must select and execute the existing built-in `docs_writer` task package and `docs_writer_thread_v1` workflow route. A second flywheel-specific writer, simplified single-node task, or synthetic `docs_patch` substitute does not satisfy runtime completion.
+Flywheel docs freshness must produce the same operational result as workflow docs freshness. It must select and execute the existing built-in `docs_writer` task package and `docs_writer_thread_v1` workflow route. A second flywheel-specific writer, simplified single-node task, or synthetic outcome substitute does not satisfy runtime completion.
 
 The required behavior is:
 
@@ -249,14 +249,14 @@ This is the primary runtime truthfulness defect. An inert role must be explicitl
 | Workspace scan | Real registered capability with typed artifacts and publication candidates | Independently tested | Route dispatch through it rather than synthesizing observation |
 | Docs writing | Real workflow package with provider turns and README publication path | Independently tested | Route dispatch through it with a deterministic test provider |
 | Publication | Bounded actor that emits durable outcome facts | Actor complete enough | Bind to supervisor |
-| Evidence ingestion | Docs task evidence mapper and belief ingestion seam | Partial | Select publication events through the event consumer registry and align artifact semantics |
+| Evidence ingestion | World-model interpretation mapping over published aggregate outcomes | Complete | Aggregate payloads carry the package-declared semantic yield the installed mapping discriminates on |
 | Satisfaction | Durable review, decision, and goal mutation | Library complete enough | Select changed beliefs across turns and mutate the goal only when satisfaction policy decides |
 
 ## Proof Truth
 
 `tests/integration/docs_freshness_reopen_contract.rs` is valuable characterization evidence, but it is not an end-to-end runtime proof.
 
-The test manually seeds graph state, inserts a low-confidence belief, calls goal curation, supplies a hand-built world state, calls the planner, ignores the plan result, injects a single-task mutation set, claims the task, writes a synthetic `docs_patch` artifact containing fixed text, constructs a success outcome, invokes publication, invokes evidence ingestion, and invokes satisfaction review.
+The test manually seeds graph state, inserts a low-confidence belief, calls goal curation, supplies a hand-built world state, calls the planner, ignores the plan result, injects a single-task mutation set, claims the task, writes a synthetic artifact containing fixed text, constructs a success outcome, invokes publication, drives evidence ingestion through a test-support replay helper preserved from the removed root port, and invokes satisfaction review.
 
 It does not start product assembly and let supervised actors discover and perform those handoffs. It does not run workspace scan, the provider boundary, the docs writer workflow, or the real README write path.
 
@@ -300,9 +300,9 @@ The CLI currently performs direct graph catch-up around command routing. A runti
 - The target workspace may contain user content and resulting documentation, but locks, cursors, receipts, and other runtime state remain external.
 - Diagnostics must not become satisfaction evidence or substitute for durable package progress.
 
-### Boundary defect to correct
+### Boundary defect, corrected
 
-`DocsTaskEvidenceReplayPort` currently replays events, hardcodes docs evidence probabilities and source kind, constructs belief runtime state, and performs ingestion. This direction is invalid for closure, and the replacement direction is decided: the world-model-owned mapping is installed theory selected by id under stage 2 of [Runtime Initialization](runtime_initialization.md). Docs outcome semantics must originate in the stewardship package and enter a world-model-owned evidence mapping contract. Root may adapt event transport and inject the selected typed mapping, but it must not choose probabilities, source kinds, artifact meaning, or belief runtime policy.
+`DocsTaskEvidenceReplayPort` — which replayed events, hardcoded docs evidence probabilities and source kind, constructed belief runtime state, and performed ingestion — was removed 2026-07-31; its mapper survives only as integration test support driving the reopen contract. The replacement direction is the implemented state: the world-model-owned mapping is installed theory selected by id under stage 2 of [Runtime Initialization](runtime_initialization.md), and docs outcome semantics originate in the stewardship package — including the package-declared semantic yield the completed interpretation discriminates on. Root adapts event transport and injects the selected typed mapping; it chooses no probabilities, source kinds, artifact meaning, or belief runtime policy.
 
 ## Configuration Assessment
 
@@ -330,7 +330,7 @@ The following are real semantic blockers rather than reliability enhancements:
 6. Bind the existing planning actor.
 7. Implement the bounded package-step contract, preserving the existing docs writer graph with progress persisted between ticks.
 8. Implement bounded dispatch through real workspace scan, docs writer, provider, frame publication, and workspace write paths.
-9. Align aggregate real package completion with the evidence contract without fabricating a `docs_patch` result or accepting one child output as completion.
+9. Align aggregate real package completion with the evidence contract without fabricating a synthetic result or accepting one child output as completion. Discharged 2026-07-31: the aggregate carries per-folder verified yield and a substantive-or-hollow summary computed from real artifact content, and the installed interpretation discriminates on it.
 10. Bind publication, event-backed evidence selection, and satisfaction curation.
 11. Replace manual orchestration proof with a supervisor-driven bounded package convergence proof over a branching fixture.
 12. Prove quiescence, evidence-driven wakeup, and continued foreground availability without hot-looping.

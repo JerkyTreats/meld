@@ -13,7 +13,7 @@ The sanctioning design text is [Belief Microarchitecture](../../cognitive_archit
 ## Current Truth
 
 - Prompt assembly selects prior frames by recency: `src/context/generation/prompt_collection.rs` uses `OrderingPolicy::Recency` with `max_frames: 1` for directory children and `max_frames: 10` for node scope. The policy enum in `src/context/query/view_policy.rs` offers `Recency`, `Type`, `Agent`. No selection path consults belief.
-- The `docs_writer_v2` task package assigns capability inputs at two moments: seed artifacts bound to init slots at trigger with a `source.kind` resolver, and expansion-time prerequisite edges wiring producer output slots to consumer input slots. Child `frame_ref` outputs already chain bottom-up into parent `upstream_artifact` slots.
+- The `docs_writer_v2` task package assigns capability inputs at two moments: seed artifacts bound to init slots at trigger with a `source.kind` resolver, and expansion-time prerequisite edges wiring producer output slots to consumer input slots. Child `readme_final` outputs already chain bottom-up into parent `upstream_artifact` slots, with the declaration cross-validated against the profile at lowering.
 - Goal curation records link each emitted goal to the belief revision and decision that caused it.
 - `docs_freshness` is the only loaded belief family.
 - The prompt lineage store persists rendered prompts and context payloads as digest-addressed artifacts.

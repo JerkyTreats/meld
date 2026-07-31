@@ -540,7 +540,7 @@ Global forbidden responsibilities:
 
 - No production root ordered convergence loop.
 - No root mediated goal handoff after ports are wired.
-- No root mediated outcome handoff after publication and replay ports are wired.
+- No root mediated outcome handoff after publication is wired; the root replay port is removed and ingestion consumes published events through the world-model mapping.
 - No runtime actor may reach into another domain internal modules.
 - No actor may bypass the task network command boundary for graph, claim, outcome, or publication state.
 - No actor may publish canonical execution facts except the publication runtime.

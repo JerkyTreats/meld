@@ -4,7 +4,7 @@ Date: 2026-06-06
 Status: implemented as contracts; live-composition closure carried by the flywheel-ignition lane
 Scope: contract and domain fixes that unblock end to end assembly for the minimal runtime flywheel
 
-Correction note 2026-07-25, from an assembly code survey: every NAG contract exists and is tested, but three implementation citations below have drifted from code truth. The NAG-2 per-task publication bridge in `crates/meld-execution/src/task_network/publication.rs` had no product caller — the assembled `execution.publication` actor ran only the aggregate publisher, an assembly decision this document never recorded, and per-task pending publications accumulated undrained. The NAG-3 mapper cited at `src/execution/outcome_evidence.rs` is now a compatibility quarantine marked do-not-add-callers; the production contract is the configured mapping set consumed by the world-model `EvidenceIngestionActor`. NAG-5's retry-pause-error distinction exists only as a two-valued `retryable` flag on the dispatch port error, not on the outcome contract. Closing these in the live composition is flywheel-ignition work recorded in [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md), not new NAG contract work.
+Correction note 2026-07-25, from an assembly code survey: every NAG contract exists and is tested, but three implementation citations below have drifted from code truth. The NAG-2 per-task publication bridge in `crates/meld-execution/src/task_network/publication.rs` had no product caller — the assembled `execution.publication` actor ran only the aggregate publisher, an assembly decision this document never recorded, and per-task pending publications accumulated undrained. The NAG-3 mapper formerly at `src/execution/outcome_evidence.rs` passed through compatibility quarantine and was removed from production 2026-07-31, surviving only as integration test support for the reopen contract; the production contract is the configured mapping set consumed by the world-model `EvidenceIngestionActor`. NAG-5's retry-pause-error distinction exists only as a two-valued `retryable` flag on the dispatch port error, not on the outcome contract. Closing these in the live composition is flywheel-ignition work recorded in [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md), not new NAG contract work.
 
 Correction resolved 2026-07-30: the assembled `execution.publication` actor now drains the per-task outbox through the bridge on every tick before its aggregate pass — bounded by the tick budget, appended under the bridge's deterministic record ids, sessioned by the composed stewardship partition — and the production dispatch routes pass the composed session as the execution event context, so per-task lifecycle events reach the ledger. A quiet publication tick declares `no_pending_publications`, and a skipped aggregate declares `aggregate_run_not_terminal` with the pending work units instead of dropping the reason.
 
@@ -48,9 +48,9 @@ A gap does not belong here when it is only about call order, worker lifetime, de
 | --- | --- | --- | --- |
 | NAG-1 | Producer-neutral goal acceptance | execution | Implemented at [goal API](../../../crates/meld-execution/src/goals/api.rs) and proven by `producer_neutral_goal_acceptance_stores_active_plannable_goal` |
 | NAG-2 | Outcome publication bridge | execution | Implemented at [publication bridge](../../../crates/meld-execution/src/task_network/publication.rs) and proven by `publication_bridge_appends_pending_task_outcome_once` |
-| NAG-3 | Outcome fact to belief evidence | world model | Implemented at [promoted evidence ingestion](../../../crates/meld-world-model/src/belief/ingestion.rs), [outcome evidence mapper](../../../src/execution/outcome_evidence.rs), and proven by `docs_writer_success_promotes_configured_freshness_evidence` |
+| NAG-3 | Outcome fact to belief evidence | world model | Implemented at [promoted evidence ingestion](../../../crates/meld-world-model/src/belief/ingestion.rs) over the configured interpretation mapping — the legacy mapper now lives at [test support](../../../tests/integration/outcome_evidence_support.rs) — and proven by `docs_writer_success_promotes_configured_freshness_evidence` |
 | NAG-4 | Satisfaction review | world model agent plus execution boundary | Implemented at [agent curation](../../../crates/meld-world-model/src/agent/curation.rs), [goal mutation adapter](../../../src/execution/goal_mutation.rs), and proven by `agent_satisfaction_curation_marks_goal_satisfied_only_after_world_state_match` |
-| NAG-5 | Failure outcome contract | execution | Implemented across [publication bridge](../../../crates/meld-execution/src/task_network/publication.rs), [outcome evidence mapper](../../../src/execution/outcome_evidence.rs), [agent satisfaction curation](../../../crates/meld-world-model/src/agent/curation.rs), and proven by `failure_outcome_does_not_satisfy_goal` |
+| NAG-5 | Failure outcome contract | execution | Implemented across [publication bridge](../../../crates/meld-execution/src/task_network/publication.rs), the configured interpretation mapping, [agent satisfaction curation](../../../crates/meld-world-model/src/agent/curation.rs), and proven by `failure_outcome_does_not_satisfy_goal` |
 
 ## NAG-1 Producer-Neutral Goal Acceptance
 
@@ -170,7 +170,7 @@ docs_writer_success_promotes_configured_freshness_evidence
 Implementation evidence:
 
 - [promoted evidence ingestion](../../../crates/meld-world-model/src/belief/ingestion.rs)
-- [outcome evidence mapper](../../../src/execution/outcome_evidence.rs)
+- [outcome evidence test support](../../../tests/integration/outcome_evidence_support.rs)
 - [outcome evidence test](../../../tests/integration/outcome_evidence.rs)
 - `cargo test --test integration_tests docs_writer_success_promotes_configured_freshness_evidence`
 

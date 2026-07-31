@@ -23,7 +23,7 @@ The known five-link hollow-README chain was excluded; everything below is additi
 
 ### F2 — `style_gate` passes vacuously through three routes
 
-`evaluate_no_semantic_drift` builds its required-section list dynamically and silently degrades to a pass when the list is empty: an absent input key via `unwrap_or_default` at `gates.rs:141-145`; a fence-naive JSON parse at `gates.rs:157` that rejects the fenced model output its fence-aware sibling `src/context/capability.rs:840-878` accepts; non-object JSON at `gates.rs:160-162`. A key-space mismatch — workflow path keys gate inputs by input ref, capability path by artifact type id — only coincidentally lines up today. A README that dropped every section can pass the semantic-drift gate. Disposition: [Gate Signal First Slice](gate_signal_first_slice.md).
+`evaluate_no_semantic_drift` builds its required-section list dynamically and silently degrades to a pass when the list is empty: an absent input key via `unwrap_or_default` at `gates.rs:141-145`; a fence-naive JSON parse at `gates.rs:157` that rejects the fenced model output its fence-aware sibling `src/context/capability.rs:840-878` accepts; non-object JSON at `gates.rs:160-162`. A key-space mismatch — workflow path keys gate inputs by input ref, capability path by artifact type id — only coincidentally lines up today. A README that dropped every section can pass the semantic-drift gate. Disposition: [Gate Signal First Slice](gate_signal_first_slice.md). CLOSED 2026-07-31: schema gates require decodable JSON objects through the same fence-aware decoding finalize uses, prose field mentions no longer count, and a drift gate that resolves zero required sections fails rather than passing vacuously. The key-space coincidence lost its source when the prerequisite declaration was corrected to `readme_final`.
 
 ### F3 — staleness, corrected and deepened on trace
 
@@ -33,7 +33,7 @@ Measured underneath, pinned by the incremental staleness contract: publication w
 
 ### F4 — evidence replay requires an artifact type nothing produces, and advances its cursor past skips
 
-`fresh_content` at `src/runtime/ports.rs:655-666` filters on artifact type `docs_patch`, which has zero production producers. Skips are counted neither promoted nor rejected, so a fully skipped replay reads as healthy. The cursor advances before the skip at `ports.rs:654`, making skipped events permanently unrecoverable. Every event in a batch is also attributed to one caller-supplied subject rather than its own. Disposition: liveness triage first — if the path is legacy, kill it; if live, the cursor advance is the urgent fix.
+`fresh_content` at `src/runtime/ports.rs:655-666` filters on artifact type `docs_patch`, which has zero production producers. Skips are counted neither promoted nor rejected, so a fully skipped replay reads as healthy. The cursor advances before the skip at `ports.rs:654`, making skipped events permanently unrecoverable. Every event in a batch is also attributed to one caller-supplied subject rather than its own. Disposition: liveness triage first — if the path is legacy, kill it; if live, the cursor advance is the urgent fix. KILLED 2026-07-31 per triage verdict: the port's only callers were tests, live ingestion runs through the world-model interpretation mapping, and the port was removed as a breaking change with the legacy mapper moved to integration test support where the reopen contract keeps its driver.
 
 ### F5 — completion predicates pass on zero of zero
 
@@ -41,7 +41,7 @@ Bare equality at `crates/meld-execution/src/task/executor.rs:294-296`, `task_net
 
 ### F6 — capability-path gate handling drops three sibling behaviors
 
-Relative to `workflow/executor/attempt.rs:374-441`, the capability path at `src/context/capability.rs:1071-1080` does not persist gate records, does not retry on gate failure, and ignores `stop_on_gate_fail`. Already the core of the gate slice; the `stop_on_gate_fail` omission is newly confirmed and joins it. Disposition: [Gate Signal First Slice](gate_signal_first_slice.md).
+Relative to `workflow/executor/attempt.rs:374-441`, the capability path at `src/context/capability.rs:1071-1080` does not persist gate records, does not retry on gate failure, and ignores `stop_on_gate_fail`. Already the core of the gate slice; the `stop_on_gate_fail` omission is newly confirmed and joins it. Disposition: [Gate Signal First Slice](gate_signal_first_slice.md). CLOSED 2026-07-31: every evaluated verdict is recorded through a progress event and a gate-record artifact before any failure return, gate failure retries inside the execute invocation within the declared budget and fails terminally when exhausted, and the profile stop policy folds into the bound gate at lowering.
 
 ### F7 — force-tombstone ordering drift, corrected on trace
 
@@ -57,7 +57,7 @@ Written at `src/workspace/capability.rs:394` and `:636`, read nowhere. A run can
 
 ### F10 — `no_semantic_drift` unconditional early-pass is indistinguishable from a real pass
 
-`gates.rs:123-125` returns a pass with empty reasons when no sections are configured; the durable record cannot distinguish checked-everything from checked-nothing. Disposition: [Gate Signal First Slice](gate_signal_first_slice.md) — gate records must carry what was checked.
+`gates.rs:123-125` returns a pass with empty reasons when no sections are configured; the durable record cannot distinguish checked-everything from checked-nothing. Disposition: [Gate Signal First Slice](gate_signal_first_slice.md) — gate records must carry what was checked. CLOSED 2026-07-31: a drift gate with nothing to check fails with the reason named, so a recorded pass always means at least one section was verified.
 
 ### F11 — `MissingGraphScope` warning is recorded beside the decision it should block
 

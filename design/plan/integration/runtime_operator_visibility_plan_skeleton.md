@@ -851,7 +851,6 @@ Objects:
 - changed path
 - context frame
 - docs candidate
-- docs task evidence
 - docs freshness task
 
 Actions:
@@ -862,7 +861,6 @@ Actions:
 - context frame created
 - docs candidate produced
 - task package prepared
-- docs evidence replayed
 - task dispatch requested
 - publication completed
 

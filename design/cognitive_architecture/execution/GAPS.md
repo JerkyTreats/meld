@@ -137,7 +137,7 @@ Examples of where this applies:
 Examples of where this applies:
 
 - workflow profiles currently define turn sequences that a planner would eventually derive from goals and belief; until planning exists, the user-authored profile is the plan
-- workflow gates currently define quality checks that a belief layer would eventually drive; until belief exists, the user-authored gate is the quality contract
+- workflow gates define integrity checks whose verdicts are durably recorded and whose failures retry within the declared budget before failing terminally; the belief layer drives quality above them through outcome yield evidence, so the gate is the integrity contract and belief is the quality contract
 - workflow thread policies currently define retry and failure handling that repair semantics would eventually own; until repair is fully specified, the user-authored policy is the repair strategy
 
 ### What Would Close It
@@ -147,7 +147,7 @@ A mapping document that walks through each major workflow subsystem and classifi
 | Workflow subsystem | Lines (approx) | Strategy | Target execution area | Integration path |
 |---|---|---|---|---|
 | turn executor | 800 | extend | task network / runtime | turn execution becomes task-network-driven dispatch with workflow profiles as task package specs |
-| gate evaluation | 225 | extend | program / repair | gates become guard bindings or observation-wait conditions in control programs |
+| gate evaluation | 225 | extend | program / repair | gates already record verdicts and retry within the execute invocation; they become guard bindings or observation-wait conditions in control programs |
 | state persistence | 250 | extend | runtime / continuation | workflow thread state becomes continuation state in the durable runtime model |
 | prompt resolution | 290 | keep | capability | prompt resolution is a capability-level concern that survives as-is |
 | generation orchestration | 500 | extend | task network | level-by-level queue submission becomes task-network dispatch |

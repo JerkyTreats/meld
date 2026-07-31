@@ -15,7 +15,7 @@ Each Meld coupling consumes operational domain theory through one seam. The matr
 | Theory kind | Artifact form | Selection identity | Seam | Durability |
 |---|---|---|---|---|
 | Belief family | `belief_family.<id>.json` | `theory.belief_family_id` | stage 2 install into the belief family registry; actors resolve per tick | durable registry, content-hash revisions |
-| Evidence mapping set | `outcome_interpretation.<id>.json` | `theory.evidence_mapping_id` | composed at CLI assembly load into the ingestion actor | composition injection until the durable mapping registry lands |
+| Evidence mapping set | `outcome_interpretation.<id>.json` | `theory.evidence_mapping_id` | composed at CLI assembly load into the ingestion actor; rules may discriminate on outcome payload content, first exercised by the completed interpretation splitting on the package-declared semantic yield class | composition injection until the durable mapping registry lands |
 | Curation rule | `curation_rule.<id>.json` | `theory.curation_rule_id` | stage 3 binds the rule to the agent record by content hash | durable on the agent record |
 | Planning methods | `methods/*.json` | keyed by expression | composed at CLI assembly load into the planning theory binding | composition injection, no durable registry |
 | Available actions | `available_actions.<expression>.json` | keyed by expression | composed at CLI assembly load into the planning theory binding | composition injection |

@@ -1,7 +1,7 @@
 # Flywheel Parity Workstream
 
 Date: 2026-07-31
-Status: active
+Status: at the Strategy pause — every implementable slice landed or escalated with a decision brief; live validation awaits a reachable provider
 Scope: everything up to Strategy — the bounded slices that bring the docs_freshness flywheel to truthful operation and loose output parity readiness, pausing at the Strategy boundary
 
 ## Goal
@@ -14,13 +14,11 @@ The hollow-README diagnosis and the [Silent Success Findings](silent_success_fin
 
 ### Slice One — Context Parity
 
-The root-cause fix. Restore file-content context on the capability path, mirroring the resolver semantics the task-package path silently dropped — filesystem fallback for frameless directory children with bounded excerpts, and the explicit insufficient-context marker for genuinely empty directories. Close the structural accomplices: the empty-wiring filter, the non-required upstream slot, readiness discarding schema versions and diagnostics per F8, force-tombstone ordering per F7, and the missing `input_refs` cross-check between profile and package per F1.
-
-Acceptance: a cold run on the fixture corpus produces prompts containing file-derived context at the deepest directories, and live `evidence_map.claims` is non-empty.
+Complete 2026-07-31. Frameless file children fall back to bounded on-disk source and empty directories prompt from the literal insufficient-context marker — resolver-sibling semantics restored on the capability path, with the old leaf-uniformity characterization inverted to assert distinct leaf content. The accomplices closed across the workstream: readiness validates declared artifact type and schema and narrates blocked tasks, F8 closed; the profile-versus-package cross-check landed at lowering, F1 closed; F7 was corrected on trace to a metadata-snapshot residual with no code change. The live-run half of acceptance — non-empty `evidence_map.claims` on a cold lab run — rides slice seven.
 
 ### Slice Two — Gate Signal
 
-Per [Gate Signal First Slice](gate_signal_first_slice.md), under the canonical [Failure Signal](../../cognitive_architecture/execution/failure_signal.md) semantics: gate verdicts recorded on the package route, bounded retry at the execution tier, terminal failure through the installed failed-outcome interpretation, gates tightened against the vacuous-pass routes in F2 and F10, config flipped after slice one lands.
+Complete 2026-07-31 per [Gate Signal First Slice](gate_signal_first_slice.md), under the canonical [Failure Signal](../../cognitive_architecture/execution/failure_signal.md) semantics: every verdict recorded before any failure return, gate failure retrying inside the execute invocation within the declared budget, exhausted budgets failing terminally through the installed failed-outcome interpretation, the vacuous-pass routes of F2 and F10 closed, and the shipped config enforcing with attempt budget three. The gate retry contract proves heal-within-budget at exactly the sabotaged cost and terminal failure naming the gate.
 
 ### Slice Three — Staleness And Completion Truthfulness
 
@@ -40,29 +38,31 @@ The decision is therefore coupled: comparator weight semantics, theory factor we
 
 ### Slice Six — Declared-Effect Characterization
 
-A test proving declared effects alone cannot satisfy: run the method with dispatch producing nothing and assert the dimension never crosses the satisfaction threshold from the declared update value. If it fails, the minimal guard enters scope and observationality gains its first reader early; the settlement transform proper remains Strategy work past the pause.
+Characterized 2026-07-31; the guard is deliberately not in scope. The pinned test `declared_effects_alone_currently_satisfy_goal` proves the hole exists: applying the method's declared update flips an evidence-free goal from Indeterminate to Satisfied. The existing evaluation-loop test asserts that same behavior as intended plan-time projection, so the guard is not a patch but a separation of plan-time projection from settlement satisfaction — the opening agenda item of the Strategy sync, where the settlement transform owns the seam.
 
 ### Slice Seven — Validation And Pause
 
-Fixture-based structural parity assertions in CI over the resurrected baseline corpus, one full cold lab run asserting non-hollow content, one forced-failure run asserting truthful non-satisfaction. Then the workstream pauses for the Strategy sync.
+Partially complete. The fixture half landed as contract tests in CI: structural parity assertions over the resurrected corpus with the hollow specimen pinned as a permanent must-fail, the gate retry contract, and the incremental staleness contract. The live half — one full cold lab-gateway run asserting non-hollow content through the new yield path, and one forced-failure run asserting truthful non-satisfaction — awaits a reachable provider. The workstream is otherwise at the pause.
 
 ## Baseline Corpus
 
-Resurrected from the deleted eval harness at `0cf93df^:eval/readme/` — frozen input filesystems, golden expected READMEs, and per-fixture expected properties, including pinned github-docs subtrees researched for good-README shape. Take the synthetic nested case plus two github-docs cases into a Rust-test-owned fixtures directory; port the expected-properties assertions and the heading-coverage idea into a Rust assertion helper. The Python runner, promptfoo integration, tuning loop, and optimization weights stay dead.
+Resurrected 2026-07-31 from the deleted eval harness at `0cf93df^:eval/readme/`: the synthetic nested case plus two github-docs cases live at `tests/fixtures/readme_parity/` with frozen input filesystems, golden expected READMEs, and provenance metadata, and the expected-properties assertions plus heading coverage at a 0.70 floor live in the readme parity assertion helper. The hollow-README specimen is pinned as a must-fail case. The Python runner, promptfoo integration, tuning loop, and optimization weights stay dead; the remaining three fixtures stay recoverable from history.
 
 ## Triage Before Sequencing
 
-The F4 replay path — evidence promotion filtered on an artifact type nothing produces, with its cursor advanced past skips — needs a liveness verdict before slice work begins: kill it if legacy, fix the cursor advance immediately if live.
+Resolved 2026-07-31: the F4 replay path proved legacy — its only callers were tests — and was killed as a breaking change, with the legacy mapper preserved as integration test support for the reopen contract.
 
 ## Pre-Strategy Exit Criteria
 
-- Cold run yields real content at every actionable directory.
-- Empty output cannot satisfy the goal.
-- Gate verdicts are durably recorded; terminal failure narrates truthfully.
-- Source change re-fires regeneration without force.
-- Zero-work and zero-file runs cannot report success.
-- Solo-window comparator behavior reconciled with theory intent.
-- Declared-effects characterization test green.
+Scored at the pause, 2026-07-31:
+
+- Cold run yields real content at every actionable directory — met at fixture level; live confirmation rides slice seven.
+- Empty output cannot satisfy the goal — met: hollow completions map to contradicting evidence, pinned at the interpretation layer.
+- Gate verdicts are durably recorded; terminal failure narrates truthfully — met, proven by the gate retry contract.
+- Source change re-fires regeneration without force — met: content-addressed identity regenerates exactly the mutated ancestor chain.
+- Zero-work and zero-file runs cannot report success — met: refusal markers, completion guards, and the terminal missing-head error.
+- Solo-window comparator behavior reconciled with theory intent — escalated with a measured decision brief in slice five; cancel semantics remain pinned in force.
+- Declared-effects characterization test green — pinned as the hole rather than the guard; the separation is the Strategy sync's opening item per slice six.
 
 ## Out Of Scope
 

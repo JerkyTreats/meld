@@ -180,9 +180,9 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 - [events/event_foundation_closeout_program.md](events/event_foundation_closeout_program.md) - closed event foundation closeout
 - [integration/runtime_completion_ground_map.md](integration/runtime_completion_ground_map.md) - current operational-parity runtime completion authority
 - [integration/runtime_completion_implementation_workstreams.md](integration/runtime_completion_implementation_workstreams.md) - current build-facing workstream decomposition
-- [integration/flywheel_parity_workstream.md](integration/flywheel_parity_workstream.md) - active everything-up-to-Strategy workstream: slices, exit criteria, and the Strategy pause boundary
-- [integration/silent_success_findings.md](integration/silent_success_findings.md) - confirmed silent-success bug-class findings with slice dispositions
-- [integration/gate_signal_first_slice.md](integration/gate_signal_first_slice.md) - proposed bounded slice making gate outcomes recorded signals on the package route
+- [integration/flywheel_parity_workstream.md](integration/flywheel_parity_workstream.md) - everything-up-to-Strategy workstream at the Strategy pause: slice outcomes, scored exit criteria, and the sync agenda
+- [integration/silent_success_findings.md](integration/silent_success_findings.md) - silent-success bug-class findings register, all dispositions resolved
+- [integration/gate_signal_first_slice.md](integration/gate_signal_first_slice.md) - completed slice making gate outcomes recorded signals with bounded retry on the package route
 - [world_model/strategy/ground_map.md](world_model/strategy/ground_map.md) - current Strategy primitive inventory, concept-to-ground map, and construction delta
 - [integration/agent_native_debugger_requirements.md](integration/agent_native_debugger_requirements.md) - requirements gathering for the agent-native runtime debugger, gated by runtime completion
 - [integration/runtime_harness_plan.md](integration/runtime_harness_plan.md) - phased delivery of the interactive runtime harness over the three-customer information model
