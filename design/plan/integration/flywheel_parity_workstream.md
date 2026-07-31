@@ -34,7 +34,9 @@ Complete 2026-07-31 — the flywheel's epistemic cut. The package document decla
 
 ### Slice Five — Comparator Reconciliation
 
-The recorded residual: factor weights cancel in per-event solo windows, so a single event swings the posterior regardless of declared weight. Characterize with a comparator test, reconcile comparator behavior with theory-author intent. Load-bearing once slice four makes evidence values vary.
+Escalated 2026-07-31 to a design decision for the Strategy sync, with a failed candidate measured. The residual: solo evidence windows cancel declared weight, reliability, and precision — `weighted / total_weight` — so one event swings the posterior at full strength regardless of theory declaration. The candidate reconciliation let the prior retain undeclared mass below full coverage: `weighted + (1 - total_weight) * prior`, preserving full-coverage behavior exactly. Result, measured against the installed theory: the satisfaction arc breaks. Damped genesis and folder posteriors leave the pre-completion revision near 0.70 stale, and the completed event's averaging step can only halve it — a substantive completion lands at confidence 0.659, below the 0.7 satisfaction threshold, and the loop never cuts. The shipped theory numbers are implicitly calibrated to cancel semantics; every intent-honoring damping variant reproduces the break.
+
+The decision is therefore coupled: comparator weight semantics, theory factor weights, and the satisfaction threshold move together, and the sequential per-event averaging that gives the posterior its inertia is the deeper cause of order and count sensitivity. This is comparator-and-theory calibration — Strategy-sync material, not a parity patch. The candidate and its measurements are preserved in this section; current cancel semantics stay in force and are pinned by the solo-window characterization.
 
 ### Slice Six — Declared-Effect Characterization
 

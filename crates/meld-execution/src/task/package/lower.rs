@@ -71,6 +71,7 @@ pub fn lower_workflow_region_template(
     gates: &HashMap<String, WorkflowGate>,
 ) -> Result<WorkflowRegionTemplate, ApiError> {
     validate_supported_stage_chain(profile, expansion)?;
+    validate_turns_against_profile(profile, expansion)?;
 
     Ok(WorkflowRegionTemplate {
         workflow_id: profile.workflow_id.clone(),
@@ -127,6 +128,95 @@ pub fn lower_workflow_region_template(
     })
 }
 
+/// Cross-validates the package's authored turn list against the workflow
+/// profile it names. The two documents duplicate turn declarations, and the
+/// capability route wires only the adjacent previous turn's output into each
+/// turn — so a reorder or output-type drift between documents fails loudly
+/// on the workflow route and silently starves context here. Mismatches must
+/// fail at load, not at run.
+fn validate_turns_against_profile(
+    profile: &WorkflowProfile,
+    expansion: &TraversalPrerequisitePackageExpansionSpec,
+) -> Result<(), ApiError> {
+    let package_turns = &expansion.repeated_region.turns;
+    if package_turns.len() != profile.turns.len() {
+        return Err(ApiError::ConfigError(format!(
+            "Package '{}' declares {} turns but workflow '{}' declares {}",
+            expansion.template_ref,
+            package_turns.len(),
+            profile.workflow_id,
+            profile.turns.len()
+        )));
+    }
+    for (index, (package_turn, profile_turn)) in
+        package_turns.iter().zip(profile.turns.iter()).enumerate()
+    {
+        if package_turn.turn_id != profile_turn.turn_id {
+            return Err(ApiError::ConfigError(format!(
+                "Package '{}' turn {} is '{}' but workflow '{}' orders '{}' there",
+                expansion.template_ref,
+                index,
+                package_turn.turn_id,
+                profile.workflow_id,
+                profile_turn.turn_id
+            )));
+        }
+        if package_turn.output_type != profile_turn.output_type {
+            return Err(ApiError::ConfigError(format!(
+                "Turn '{}' output type '{}' in package '{}' disagrees with workflow '{}' output type '{}'",
+                package_turn.turn_id,
+                package_turn.output_type,
+                expansion.template_ref,
+                profile.workflow_id,
+                profile_turn.output_type
+            )));
+        }
+        if package_turn.gate_id != profile_turn.gate_id {
+            return Err(ApiError::ConfigError(format!(
+                "Turn '{}' gate '{}' in package '{}' disagrees with workflow '{}' gate '{}'",
+                package_turn.turn_id,
+                package_turn.gate_id,
+                expansion.template_ref,
+                profile.workflow_id,
+                profile_turn.gate_id
+            )));
+        }
+        // The capability route supplies each turn only the previous turn's
+        // output plus the traversal target context; a declared input the
+        // route cannot supply must fail here rather than starve silently.
+        let previous_output = index
+            .checked_sub(1)
+            .map(|previous| profile.turns[previous].output_type.as_str());
+        for input_ref in &profile_turn.input_refs {
+            let suppliable =
+                input_ref == "target_context" || Some(input_ref.as_str()) == previous_output;
+            if !suppliable {
+                return Err(ApiError::ConfigError(format!(
+                    "Turn '{}' declares input_ref '{}' that the package route cannot supply: only 'target_context' or the previous turn's output '{}' are wired",
+                    profile_turn.turn_id,
+                    input_ref,
+                    previous_output.unwrap_or("<none>")
+                )));
+            }
+        }
+    }
+    let prerequisite = &expansion.prerequisite;
+    let producer_output = package_turns
+        .iter()
+        .find(|turn| turn.turn_id == prerequisite.producer_turn_id)
+        .map(|turn| turn.output_type.as_str());
+    if producer_output != Some(prerequisite.producer_artifact_type_id.as_str()) {
+        return Err(ApiError::ConfigError(format!(
+            "Prerequisite in package '{}' declares producer artifact type '{}' but turn '{}' produces '{}'",
+            expansion.template_ref,
+            prerequisite.producer_artifact_type_id,
+            prerequisite.producer_turn_id,
+            producer_output.unwrap_or("<missing turn>")
+        )));
+    }
+    Ok(())
+}
+
 fn validate_supported_stage_chain(
     profile: &WorkflowProfile,
     expansion: &TraversalPrerequisitePackageExpansionSpec,
@@ -176,7 +266,17 @@ mod tests {
                 dedupe_key_fields: Vec::new(),
                 max_turn_retries: 1,
             },
-            turns: Vec::new(),
+            turns: vec![crate::workflow::profile::WorkflowTurn {
+                turn_id: "style_refine".to_string(),
+                seq: 1,
+                title: "Refine Style".to_string(),
+                prompt_ref: "prompts/docs_writer/style_refine.md".to_string(),
+                input_refs: vec!["target_context".to_string()],
+                output_type: "readme_final".to_string(),
+                gate_id: "style_gate".to_string(),
+                retry_limit: 1,
+                timeout_ms: 60_000,
+            }],
             gates: Vec::new(),
             artifact_policy: WorkflowArtifactPolicy {
                 store_output: true,
@@ -264,7 +364,7 @@ mod tests {
                 producer_turn_id: "style_refine".to_string(),
                 producer_stage_id: "finalize".to_string(),
                 producer_output_slot_id: "generation_output".to_string(),
-                producer_artifact_type_id: "frame_ref".to_string(),
+                producer_artifact_type_id: "readme_final".to_string(),
                 consumer_turn_id: "style_refine".to_string(),
                 consumer_stage_id: "prepare".to_string(),
                 consumer_input_slot_id: "upstream_artifact".to_string(),
@@ -293,6 +393,57 @@ mod tests {
             traversal_expansion: expansion(),
             belief_init_slot_id: None,
         }
+    }
+
+    #[test]
+    fn lowering_rejects_output_type_drift_between_package_and_profile() {
+        let mut drifted = expansion();
+        drifted.repeated_region.turns[0].output_type = "readme_draft".to_string();
+
+        let error = lower_workflow_region_template(
+            &profile(),
+            &request(),
+            &drifted,
+            &context().prompts_by_turn_id,
+            &context().gates_by_id,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("disagrees with workflow"));
+    }
+
+    #[test]
+    fn lowering_rejects_prerequisite_artifact_type_drift() {
+        let mut drifted = expansion();
+        drifted.prerequisite.producer_artifact_type_id = "frame_ref".to_string();
+
+        let error = lower_workflow_region_template(
+            &profile(),
+            &request(),
+            &drifted,
+            &context().prompts_by_turn_id,
+            &context().gates_by_id,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("declares producer artifact type"));
+    }
+
+    #[test]
+    fn lowering_rejects_input_refs_the_package_route_cannot_supply() {
+        let mut orphaned = profile();
+        orphaned.turns[0].input_refs = vec!["verification_report".to_string()];
+
+        let error = lower_workflow_region_template(
+            &orphaned,
+            &request(),
+            &expansion(),
+            &context().prompts_by_turn_id,
+            &context().gates_by_id,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("cannot supply"));
     }
 
     #[test]
