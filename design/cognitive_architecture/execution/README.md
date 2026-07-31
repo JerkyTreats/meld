@@ -92,6 +92,8 @@ flowchart TD
   stateful orchestration over compiled tasks, command acceptance, and event-driven dispatch
 - [Task Initialization](task_initialization.md)
   seed artifacts, data flow materialization, and validation authority before task dispatch
+- [Failure Signal](failure_signal.md)
+  failure as signal: the retry versus terminal boundary and the single belief-visible outcome per unit of work
 
 ### Supporting
 
