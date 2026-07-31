@@ -44,20 +44,100 @@ pub fn compute_ready_capability_instances(
 }
 
 fn source_is_available(artifact_repo: &TaskArtifactRepo, source: &BoundInputWiringSource) -> bool {
-    match source {
-        BoundInputWiringSource::TaskInitSlot { init_slot_id, .. } => artifact_repo
-            .artifacts_for_output_slot("__task_init__", init_slot_id)
-            .last()
-            .is_some(),
+    source_unavailability(artifact_repo, source).is_none()
+}
+
+/// Why a wiring source is not satisfiable, or `None` when it is. The declared
+/// artifact type and schema version are part of the contract: a present
+/// artifact of the wrong shape must read as unavailable, matching the
+/// task-network readiness sibling, not as satisfied.
+fn source_unavailability(
+    artifact_repo: &TaskArtifactRepo,
+    source: &BoundInputWiringSource,
+) -> Option<String> {
+    let (producer, slot, expected_type, expected_schema) = match source {
+        BoundInputWiringSource::TaskInitSlot {
+            init_slot_id,
+            artifact_type_id,
+            schema_version,
+        } => (
+            "__task_init__",
+            init_slot_id.as_str(),
+            artifact_type_id,
+            *schema_version,
+        ),
         BoundInputWiringSource::UpstreamOutput {
             capability_instance_id,
             output_slot_id,
-            ..
-        } => artifact_repo
-            .artifacts_for_output_slot(capability_instance_id, output_slot_id)
-            .last()
-            .is_some(),
+            artifact_type_id,
+            schema_version,
+        } => (
+            capability_instance_id.as_str(),
+            output_slot_id.as_str(),
+            artifact_type_id,
+            *schema_version,
+        ),
+    };
+    let artifacts = artifact_repo.artifacts_for_output_slot(producer, slot);
+    let Some(artifact) = artifacts.last() else {
+        return Some(format!("no artifact from '{producer}' slot '{slot}'"));
+    };
+    if &artifact.artifact_type_id != expected_type {
+        return Some(format!(
+            "artifact from '{producer}' slot '{slot}' has type '{}', expected '{expected_type}'",
+            artifact.artifact_type_id
+        ));
     }
+    if artifact.schema_version != expected_schema {
+        return Some(format!(
+            "artifact from '{producer}' slot '{slot}' has schema version {}, expected {expected_schema}",
+            artifact.schema_version
+        ));
+    }
+    None
+}
+
+/// Human-readable reasons each non-terminal instance is blocked. Empty for
+/// instances that are ready; used to make a blocked task narrate its cause
+/// instead of reporting only that no instance is ready.
+pub fn blocked_instance_diagnostics(
+    compiled_task: &CompiledTaskRecord,
+    artifact_repo: &TaskArtifactRepo,
+    completed_instances: &HashSet<String>,
+    in_flight_instances: &HashSet<String>,
+) -> Vec<String> {
+    let mut diagnostics = Vec::new();
+    for instance in &compiled_task.capability_instances {
+        if completed_instances.contains(&instance.capability_instance_id)
+            || in_flight_instances.contains(&instance.capability_instance_id)
+        {
+            continue;
+        }
+        let unmet_dependencies: Vec<&str> = compiled_task
+            .dependency_edges
+            .iter()
+            .filter(|edge| edge.to_capability_instance_id == instance.capability_instance_id)
+            .filter(|edge| !completed_instances.contains(&edge.from_capability_instance_id))
+            .map(|edge| edge.from_capability_instance_id.as_str())
+            .collect();
+        for dependency in unmet_dependencies {
+            diagnostics.push(format!(
+                "'{}' waits on incomplete dependency '{dependency}'",
+                instance.capability_instance_id
+            ));
+        }
+        for wiring in &instance.input_wiring {
+            for source in &wiring.sources {
+                if let Some(reason) = source_unavailability(artifact_repo, source) {
+                    diagnostics.push(format!(
+                        "'{}' slot '{}': {reason}",
+                        instance.capability_instance_id, wiring.slot_id
+                    ));
+                }
+            }
+        }
+    }
+    diagnostics
 }
 
 #[cfg(test)]
@@ -333,6 +413,45 @@ mod tests {
             compute_ready_capability_instances(&compiled_task, &repo, &completed, &in_flight);
 
         assert_eq!(ready, vec!["capinst_second".to_string()]);
+    }
+
+    #[test]
+    fn readiness_rejects_type_and_schema_mismatched_artifacts() {
+        let compiled_task = chain_task();
+        let mut repo = TaskArtifactRepo::new("repo_docs_writer");
+        let completed = HashSet::from(["capinst_child".to_string()]);
+        let in_flight = HashSet::new();
+
+        let mut wrong_type = artifact("artifact_wrong_type", "capinst_child", "readme_summary");
+        wrong_type.artifact_type_id = "frame_ref".to_string();
+        repo.append_artifact(wrong_type).unwrap();
+        assert!(
+            compute_ready_capability_instances(&compiled_task, &repo, &completed, &in_flight)
+                .is_empty(),
+            "type-mismatched artifact must not satisfy readiness"
+        );
+        let diagnostics =
+            blocked_instance_diagnostics(&compiled_task, &repo, &completed, &in_flight);
+        assert!(diagnostics
+            .iter()
+            .any(|reason| reason.contains("has type 'frame_ref'")));
+
+        let mut wrong_schema =
+            artifact("artifact_wrong_schema", "capinst_child", "readme_summary");
+        wrong_schema.schema_version = 2;
+        repo.append_artifact(wrong_schema).unwrap();
+        assert!(
+            compute_ready_capability_instances(&compiled_task, &repo, &completed, &in_flight)
+                .is_empty(),
+            "schema-mismatched artifact must not satisfy readiness"
+        );
+
+        repo.append_artifact(artifact("artifact_ok", "capinst_child", "readme_summary"))
+            .unwrap();
+        assert_eq!(
+            compute_ready_capability_instances(&compiled_task, &repo, &completed, &in_flight),
+            vec!["capinst_parent".to_string()]
+        );
     }
 
     #[test]

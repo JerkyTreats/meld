@@ -300,6 +300,16 @@ impl TaskExecutor {
         self.completed_instances.len()
     }
 
+    /// Completed capability instance ids, for blocked-task diagnostics.
+    pub fn completed_instances(&self) -> &HashSet<String> {
+        &self.completed_instances
+    }
+
+    /// In-flight capability instance ids, for blocked-task diagnostics.
+    pub fn in_flight_instances(&self) -> &HashSet<String> {
+        &self.in_flight_instances
+    }
+
     /// Releases all currently ready capability invocations.
     pub fn release_ready_invocations(
         &mut self,

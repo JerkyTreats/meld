@@ -92,7 +92,7 @@ expansions:
       producer_turn_id: style_refine
       producer_stage_id: finalize
       producer_output_slot_id: generation_output
-      producer_artifact_type_id: frame_ref
+      producer_artifact_type_id: readme_final
       consumer_turn_id: evidence_gather
       consumer_stage_id: prepare
       consumer_input_slot_id: upstream_artifact

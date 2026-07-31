@@ -107,9 +107,20 @@ where
         let ready = executor.release_ready_invocations(CapabilityExecutionContext::default())?;
         emit_new_task_events(api, event_context, executor, &mut emitted_task_event_count);
         if ready.is_empty() {
+            let reasons = crate::task::readiness::blocked_instance_diagnostics(
+                executor.compiled_task(),
+                executor.artifact_repo(),
+                executor.completed_instances(),
+                executor.in_flight_instances(),
+            );
             return Err(E::from(ExecutionInvariantError::GenerationFailed(format!(
-                "Task '{}' is blocked with no ready capability instances",
-                executor.compiled_task().task_id
+                "Task '{}' is blocked with no ready capability instances: {}",
+                executor.compiled_task().task_id,
+                if reasons.is_empty() {
+                    "no blocked-instance diagnostics available".to_string()
+                } else {
+                    reasons.join("; ")
+                }
             ))));
         }
 
