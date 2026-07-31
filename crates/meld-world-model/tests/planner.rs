@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use meld_lang::{
     condition::Condition,
+    effect::Effect,
     evaluate::{evaluate, EvalResult},
     proposition::Proposition,
     term::{Literal, Term},
@@ -566,6 +567,46 @@ fn planner_typed_loop_handoff() {
 
     assert_eq!(
         evaluate(&output.world_state, &goal_target),
+        EvalResult::Satisfied
+    );
+}
+
+// Characterization for slice six (flywheel parity workstream): this is the
+// hole the slice guards. A method's declared Update effect, applied to the
+// planner projection when no evidence has been admitted, satisfies the goal
+// target by itself — declared effects currently stand in for observation.
+#[test]
+fn declared_effects_alone_currently_satisfy_goal() {
+    let projected = project_world_state(projection_input(None)).unwrap();
+    let goal_target = Proposition::Holds {
+        subject: Term::Object(subject()),
+        dimension: Term::Dimension("docs_freshness".to_string()),
+        condition: Condition::Above(Term::Literal(Literal::Number(0.7))),
+    };
+
+    // With no admitted evidence the projection carries no Holds proposition,
+    // so the goal is indeterminate rather than satisfied.
+    assert!(matches!(
+        evaluate(&projected.world_state, &goal_target),
+        EvalResult::Indeterminate { .. }
+    ));
+    assert!(projected
+        .warnings
+        .contains(&PlannerProjectionWarning::MissingBelief { subject: subject() }));
+
+    // refresh_docs_v1's declared effect Update(?node, docs_freshness, 0.95),
+    // grounded to the projection subject.
+    let after_declared = projected
+        .world_state
+        .apply(&[Effect::Update {
+            subject: Term::Object(subject()),
+            dimension: Term::Dimension("docs_freshness".to_string()),
+            value: Term::Literal(Literal::Number(0.95)),
+        }])
+        .unwrap();
+
+    assert_eq!(
+        evaluate(&after_declared, &goal_target),
         EvalResult::Satisfied
     );
 }

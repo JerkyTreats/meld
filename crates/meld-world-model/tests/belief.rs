@@ -187,6 +187,98 @@ fn content_config_json() -> &'static str {
     }"#
 }
 
+// Mirrors the docs_freshness theory family factor shape: a low-weight factor
+// beside the weight-1.0 aggregate_completion factor, prior 0.75, threshold 0.6.
+fn weighted_factor_config_json() -> &'static str {
+    r#"{
+        "family_id": "docs_freshness",
+        "dimension_id": "docs_freshness",
+        "predicate_id": "confidence",
+        "evidence_policy_id": "default_policy",
+        "evidence_schemas": [
+            {
+                "schema_id": "unobserved_scope_signal",
+                "required": false,
+                "role": "Support",
+                "reliability": 1.0,
+                "precision": 1.0
+            },
+            {
+                "schema_id": "aggregate_completion",
+                "required": false,
+                "role": "Support",
+                "reliability": 1.0,
+                "precision": 1.0
+            }
+        ],
+        "source_mappings": [
+            {
+                "mapping_id": "scope_to_signal",
+                "source_kind": "execution_package_aggregate",
+                "evidence_schema_id": "unobserved_scope_signal",
+                "subject_from": "record.subject",
+                "value_field": "scope_signal",
+                "factor_id": "unobserved_scope_signal"
+            },
+            {
+                "mapping_id": "aggregate_to_signal",
+                "source_kind": "execution_package_aggregate",
+                "evidence_schema_id": "aggregate_completion",
+                "subject_from": "record.subject",
+                "value_field": "aggregate_signal",
+                "factor_id": "aggregate_completion"
+            }
+        ],
+        "comparator": {
+            "engine_id": "weighted_bayesian",
+            "engine_version": "1",
+            "factors": [
+                {
+                    "factor_id": "unobserved_scope_signal",
+                    "evidence_schema_id": "unobserved_scope_signal",
+                    "weight": 0.1,
+                    "polarity": "Supports"
+                },
+                {
+                    "factor_id": "aggregate_completion",
+                    "evidence_schema_id": "aggregate_completion",
+                    "weight": 1.0,
+                    "polarity": "Supports"
+                }
+            ],
+            "missing_evidence_uncertainty": 0.9
+        },
+        "default_prior": 0.75,
+        "planner_projection": {
+            "confidence_field": "confidence",
+            "threshold": 0.6,
+            "posterior_meaning": "stale_probability"
+        },
+        "config_version": "1"
+    }"#
+}
+
+fn weighted_promoted_record(node: DomainObjectRef, seq: u64) -> PromotedEvidenceRecord {
+    let mut fields = BTreeMap::new();
+    fields.insert("scope_signal".to_string(), EvidenceValue::Scalar(1.0));
+    fields.insert("aggregate_signal".to_string(), EvidenceValue::Scalar(0.0));
+    PromotedEvidenceRecord {
+        source_kind: "execution_package_aggregate".to_string(),
+        source_id: format!("package-aggregate-{seq}"),
+        subject: node.clone(),
+        source_fact_ids: vec![format!("spine-aggregate-{seq}")],
+        graph_anchor_ids: Vec::new(),
+        objects: vec![node],
+        relations: Vec::new(),
+        source_cursor_start: seq,
+        source_cursor_end: seq,
+        reference_time: None,
+        transaction_seq: seq,
+        content_hash: None,
+        fields,
+    }
+}
+
 fn seeded_graph() -> (tempfile::TempDir, Arc<TraversalStore>, DomainObjectRef) {
     let temp_dir = tempfile::tempdir().unwrap();
     let store =
@@ -736,6 +828,95 @@ fn comparator_polarity_keeps_counterevidence_separate() {
     assert_eq!(output.revision.contradicted_evidence_ids.len(), 1);
     assert_close(output.revision.posterior.probability, 0.775);
     assert_close(output.revision.planner_projection.confidence, 0.225);
+}
+
+// Characterization for the slice five residual (flywheel parity workstream):
+// in a per-event solo window `evidence_probability = weighted / total_weight`,
+// so the declared factor weight cancels and a 0.1-weight event swings the
+// posterior exactly as a 1.0-weight event would. This pins current behavior,
+// not theory-author intent.
+#[test]
+fn comparator_solo_window_posterior_ignores_factor_weight() {
+    let node = object("workspace_fs", "node", "node-a");
+    let low_weight = BeliefConfigLoader::load_json(weighted_factor_config_json()).unwrap();
+    let full_weight_json =
+        weighted_factor_config_json().replace("\"weight\": 0.1", "\"weight\": 1.0");
+    let full_weight = BeliefConfigLoader::load_json(&full_weight_json).unwrap();
+    let normalizer = BeliefEvidenceNormalizer::new(
+        low_weight.config.clone(),
+        PerspectiveKey::new("default", "default").unwrap(),
+        BranchScope::main(),
+    );
+    let solo_window: Vec<_> = normalizer
+        .normalize_promoted(&weighted_promoted_record(node, 1))
+        .unwrap()
+        .into_iter()
+        .filter(|item| item.evidence_schema_id == "unobserved_scope_signal")
+        .collect();
+    assert_eq!(solo_window.len(), 1);
+
+    let low = BayesianComparator::assess(ComparatorInput {
+        config: low_weight.config,
+        config_snapshot_hash: low_weight.hash,
+        prior_revision: None,
+        subject_key: None,
+        evidence: solo_window.clone(),
+        source_cursor_start: 1,
+        source_cursor_end: 1,
+    })
+    .unwrap();
+    let full = BayesianComparator::assess(ComparatorInput {
+        config: full_weight.config,
+        config_snapshot_hash: full_weight.hash,
+        prior_revision: None,
+        subject_key: None,
+        evidence: solo_window,
+        source_cursor_start: 1,
+        source_cursor_end: 1,
+    })
+    .unwrap();
+
+    // (prior 0.75 + solo value 1.0) / 2 at either declared weight.
+    assert_close(low.revision.posterior.probability, 0.875);
+    assert_close(full.revision.posterior.probability, 0.875);
+    // The declared weight only survives into coverage-derived uncertainty.
+    assert_close(low.revision.uncertainty, 0.9);
+    assert_close(full.revision.uncertainty, 0.0);
+}
+
+// Contrast case for the slice five residual: once two factors share a window
+// the declared weights do apply as a weighted average.
+#[test]
+fn comparator_multi_factor_window_applies_relative_weights() {
+    let node = object("workspace_fs", "node", "node-a");
+    let snapshot = BeliefConfigLoader::load_json(weighted_factor_config_json()).unwrap();
+    let normalizer = BeliefEvidenceNormalizer::new(
+        snapshot.config.clone(),
+        PerspectiveKey::new("default", "default").unwrap(),
+        BranchScope::main(),
+    );
+    let evidence = normalizer
+        .normalize_promoted(&weighted_promoted_record(node, 1))
+        .unwrap();
+    assert_eq!(evidence.len(), 2);
+
+    let output = BayesianComparator::assess(ComparatorInput {
+        config: snapshot.config,
+        config_snapshot_hash: snapshot.hash,
+        prior_revision: None,
+        subject_key: None,
+        evidence,
+        source_cursor_start: 1,
+        source_cursor_end: 1,
+    })
+    .unwrap();
+
+    // scope_signal 1.0 at weight 0.1 against aggregate_signal 0.0 at weight
+    // 1.0, averaged with prior 0.75.
+    assert_close(
+        output.revision.posterior.probability,
+        (0.75 + 0.1 / 1.1) / 2.0,
+    );
 }
 
 #[test]

@@ -41,9 +41,9 @@ Bare equality at `crates/meld-execution/src/task/executor.rs:294-296`, `task_net
 
 Relative to `workflow/executor/attempt.rs:374-441`, the capability path at `src/context/capability.rs:1071-1080` does not persist gate records, does not retry on gate failure, and ignores `stop_on_gate_fail`. Already the core of the gate slice; the `stop_on_gate_fail` omission is newly confirmed and joins it. Disposition: [Gate Signal First Slice](gate_signal_first_slice.md).
 
-### F7 — force tombstones the head after prompt assembly on the capability path
+### F7 — force-tombstone ordering drift, corrected on trace
 
-Orchestration tombstones before assembly at `src/context/generation/orchestration.rs:100-102`; the capability path tombstones in finalize at `src/context/capability.rs:1105-1107`, so a forced regeneration can condition on the stale README it is replacing. Disposition: parity slice one.
+Corrected 2026-07-31 during slice one: orchestration also assembles the prompt before tombstoning — `orchestration.rs:48` builds messages, `:101` tombstones — so both paths condition a forced prompt on the old head and the original failure scenario does not distinguish them. The remaining drift is the previous-metadata snapshot: orchestration snapshots after the tombstone, the capability path snapshots in prepare before it. The capability path's late tombstone at finalize is the safer ordering since the old head survives a failed run. Disposition: no code change in slice one; the metadata-snapshot difference is recorded as a residual for whoever consumes previous-digest fields.
 
 ### F8 — intra-task readiness discards schema checks and diagnostics
 
