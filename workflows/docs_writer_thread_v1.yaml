@@ -57,13 +57,17 @@ gates:
     gate_type: schema_required_fields
     required_fields:
       - claims
-    rules: null
+    rules:
+      non_empty_arrays:
+        - claims
     fail_on_violation: false
   - gate_id: verification_gate
     gate_type: schema_required_fields
     required_fields:
       - verified_claims
-    rules: null
+    rules:
+      non_empty_arrays:
+        - verified_claims
     fail_on_violation: false
   - gate_id: struct_gate
     gate_type: required_sections

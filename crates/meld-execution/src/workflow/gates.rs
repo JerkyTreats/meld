@@ -50,20 +50,24 @@ pub fn evaluate_gate(
 }
 
 fn evaluate_schema_required_fields(gate: &WorkflowGate, output: &str) -> GateEvaluationResult {
-    let parsed = serde_json::from_str::<Value>(output).ok();
     let mut reasons = Vec::new();
 
-    for field in &gate.required_fields {
-        let has_field_in_json = parsed
-            .as_ref()
-            .and_then(|value| value.as_object())
-            .map(|object| object.contains_key(field))
-            .unwrap_or(false);
-        let has_field_in_text = output.to_lowercase().contains(&field.to_lowercase());
-
-        if !has_field_in_json && !has_field_in_text {
-            reasons.push(format!("missing required field '{}'", field));
+    match decode_json_lenient(output).as_ref().and_then(Value::as_object) {
+        Some(object) => {
+            for field in &gate.required_fields {
+                if !object.contains_key(field) {
+                    reasons.push(format!("missing required field '{}'", field));
+                }
+            }
+            for field in non_empty_array_fields(gate) {
+                if let Some(Value::Array(items)) = object.get(field) {
+                    if items.is_empty() {
+                        reasons.push(format!("required array '{}' is empty", field));
+                    }
+                }
+            }
         }
+        None => reasons.push("output is not a decodable JSON object".to_string()),
     }
 
     if reasons.is_empty() {
@@ -71,6 +75,65 @@ fn evaluate_schema_required_fields(gate: &WorkflowGate, output: &str) -> GateEva
     } else {
         GateEvaluationResult::fail(reasons)
     }
+}
+
+fn non_empty_array_fields(gate: &WorkflowGate) -> Vec<&str> {
+    gate.rules
+        .get("non_empty_arrays")
+        .and_then(Value::as_array)
+        .map(|fields| fields.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default()
+}
+
+/// Decodes model output as JSON, tolerating a fenced code block or leading
+/// and trailing prose around one JSON object — the same shapes the finalize
+/// path accepts. Presence of a field name in surrounding prose never counts.
+fn decode_json_lenient(output: &str) -> Option<Value> {
+    if let Ok(value) = serde_json::from_str::<Value>(output.trim()) {
+        return Some(value);
+    }
+    if let Some(fenced) = extract_fenced_block(output) {
+        if let Ok(value) = serde_json::from_str::<Value>(fenced.trim()) {
+            return Some(value);
+        }
+    }
+    extract_first_json_object(output)
+        .and_then(|slice| serde_json::from_str::<Value>(slice).ok())
+}
+
+fn extract_fenced_block(output: &str) -> Option<&str> {
+    let open = output.find("```")?;
+    let after_marker = &output[open + 3..];
+    let body_start = after_marker.find('\n')? + 1;
+    let body = &after_marker[body_start..];
+    let close = body.find("```")?;
+    Some(&body[..close])
+}
+
+fn extract_first_json_object(output: &str) -> Option<&str> {
+    let start = output.find('{')?;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (offset, ch) in output[start..].char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' if in_string => escaped = true,
+            '"' => in_string = !in_string,
+            '{' if !in_string => depth += 1,
+            '}' if !in_string => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&output[start..start + offset + 1]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn evaluate_required_sections(
@@ -120,8 +183,13 @@ fn evaluate_no_semantic_drift(
         return GateEvaluationResult::fail(vec!["output is empty".to_string()]);
     }
 
-    if gate.required_fields.is_empty() && gate.rules.get("required_sections_from_input").is_none() {
-        return GateEvaluationResult::pass();
+    // A drift gate with nothing to check is a configuration or wiring
+    // failure, not a pass: a vacuous pass is indistinguishable from a real
+    // one in the durable record.
+    if required_sections_for_gate(gate, input_values).is_empty() {
+        return GateEvaluationResult::fail(vec![
+            "no required sections resolved; gate has nothing to check against".to_string(),
+        ]);
     }
 
     evaluate_required_sections(gate, output, input_values)
@@ -154,7 +222,7 @@ fn required_sections_for_gate<'a>(
 }
 
 fn collect_required_sections_from_input(input: &str) -> Vec<&'static str> {
-    let Ok(value) = serde_json::from_str::<Value>(input) else {
+    let Some(value) = decode_json_lenient(input) else {
         return Vec::new();
     };
     let Some(object) = value.as_object() else {
@@ -251,11 +319,37 @@ mod tests {
     }
 
     #[test]
-    fn schema_required_fields_accepts_json_or_text_presence() {
+    fn schema_required_fields_requires_json_and_rejects_text_presence() {
         let gate = gate("schema_required_fields", vec!["claims", "evidence"]);
 
         assert!(evaluate_gate(&gate, r#"{"claims":[],"evidence":[]}"#, None).is_pass());
-        assert!(evaluate_gate(&gate, "Claims\nEvidence", None).is_pass());
+        // Fenced model output decodes; prose mentioning field names does not.
+        assert!(evaluate_gate(
+            &gate,
+            "```json\n{\"claims\":[],\"evidence\":[]}\n```",
+            None
+        )
+        .is_pass());
+        assert!(!evaluate_gate(&gate, "Claims\nEvidence", None).is_pass());
+    }
+
+    #[test]
+    fn schema_required_fields_rejects_empty_arrays_when_rule_named() {
+        let mut gate = gate("schema_required_fields", vec!["claims"]);
+        gate.rules = json!({ "non_empty_arrays": ["claims"] });
+
+        assert!(!evaluate_gate(&gate, r#"{"claims":[]}"#, None).is_pass());
+        assert!(evaluate_gate(&gate, r#"{"claims":[{"claim_id":"c1"}]}"#, None).is_pass());
+    }
+
+    #[test]
+    fn no_semantic_drift_fails_when_no_sections_resolve() {
+        let mut gate = gate("no_semantic_drift", vec![]);
+        gate.rules = json!({ "required_sections_from_input": "readme_struct" });
+
+        // Input key absent entirely: nothing to check must fail, not pass.
+        let result = evaluate_gate(&gate, "# A README\nBody", Some(&HashMap::new()));
+        assert!(!result.is_pass());
     }
 
     #[test]
@@ -512,7 +606,8 @@ mod tests {
             json!({
                 "api_surface": {
                     "path": "lib.rs"
-                }
+                },
+                "purpose": "Document behavior"
             })
             .to_string(),
         )]);
@@ -533,7 +628,8 @@ mod tests {
             json!({
                 "api_surface": [
                     { "path": "lib.rs" }
-                ]
+                ],
+                "purpose": "Document behavior"
             })
             .to_string(),
         )]);

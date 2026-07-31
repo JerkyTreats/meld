@@ -101,12 +101,18 @@ pub fn lower_workflow_region_template(
                         profile.workflow_id, turn.turn_id
                     ))
                 })?;
-                let gate = gates.get(&turn.gate_id).cloned().ok_or_else(|| {
+                let mut gate = gates.get(&turn.gate_id).cloned().ok_or_else(|| {
                     ApiError::ConfigError(format!(
                         "Workflow '{}' missing gate '{}'",
                         profile.workflow_id, turn.gate_id
                     ))
                 })?;
+                // The capability route sees only the bound gate, so the
+                // profile-level stop policy folds into the gate here —
+                // same effective condition the attempt route computes as
+                // fail_on_violation || stop_on_gate_fail.
+                gate.fail_on_violation =
+                    gate.fail_on_violation || profile.failure_policy.stop_on_gate_fail;
                 Ok(WorkflowTurnTemplate {
                     turn_id: turn.turn_id.clone(),
                     prompt_text,

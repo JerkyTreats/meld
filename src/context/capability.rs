@@ -1051,7 +1051,7 @@ impl CapabilityInvoker for ContextGenerateFinalizeCapability {
         api: &dyn ExecutionRuntimeContext,
         runtime_init: &crate::capability::CapabilityRuntimeInit,
         payload: &CapabilityInvocationPayload,
-        _event_context: Option<&crate::execution::ExecutionEventContext>,
+        event_context: Option<&crate::execution::ExecutionEventContext>,
     ) -> Result<CapabilityInvocationResult, ApiError> {
         payload.validate_against(runtime_init)?;
 
@@ -1068,8 +1068,25 @@ impl CapabilityInvoker for ContextGenerateFinalizeCapability {
                 )
             })?;
 
+        // Every evaluated gate verdict is recorded — pass or fail — before
+        // any failure return, so a discarded verdict cannot impersonate an
+        // unevaluated gate in the causal record.
+        let mut gate_record_artifact = None;
         if let Some(gate) = summary.gate.as_ref() {
             let gate_result = evaluate_gate(gate, output_text, Some(&summary.gate_inputs));
+            let verdict = json!({
+                "gate_id": gate.gate_id,
+                "gate_type": gate.gate_type,
+                "outcome": if gate_result.is_pass() { "pass" } else { "fail" },
+                "reasons": gate_result.reasons,
+                "turn_id": summary.turn_id,
+                "output_type": summary.output_type,
+                "workflow_id": summary.workflow_id,
+                "fail_on_violation": gate.fail_on_violation,
+            });
+            if let Some(ctx) = event_context {
+                api.emit_progress_event(ctx, "workflow_gate_evaluated", verdict.clone())?;
+            }
             if !gate_result.is_pass() && gate.fail_on_violation {
                 return Err(ApiError::GenerationFailed(format!(
                     "Workflow gate '{}' failed: {}",
@@ -1077,6 +1094,7 @@ impl CapabilityInvoker for ContextGenerateFinalizeCapability {
                     gate_result.reasons.join(" | ")
                 )));
             }
+            gate_record_artifact = Some(verdict);
         }
 
         let output_value = Self::shaped_output_value(&output_type, output_text)?;
@@ -1100,6 +1118,18 @@ impl CapabilityInvoker for ContextGenerateFinalizeCapability {
                 ..producer.clone()
             },
         }];
+        if let Some(verdict) = gate_record_artifact {
+            emitted_artifacts.push(ArtifactRecord {
+                artifact_id: Self::artifact_id(&payload.invocation_id, "gate_record"),
+                artifact_type_id: "gate_record".to_string(),
+                schema_version: ARTIFACT_SCHEMA_VERSION,
+                content: verdict,
+                producer: ArtifactProducerRef {
+                    output_slot_id: Some("gate_record".to_string()),
+                    ..producer.clone()
+                },
+            });
+        }
 
         if persist_frame {
             if summary.request.force {
