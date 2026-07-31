@@ -102,20 +102,20 @@ fn workflow_route_baseline_is_reproducible() {
     let beta_readme = first.baseline.content("tree/beta/README.md").unwrap();
     assert_ne!(root_readme, alpha_readme);
     assert_ne!(alpha_readme, beta_readme);
-    // Route characterization the proof implementer must know: leaf-folder
-    // turn prompts carry no folder identity (directory context is built
-    // only from child frames, and files never have frames), so every
-    // frame-less leaf folder receives byte-identical README content under
-    // any provider that is a pure function of its input. Placement of leaf
-    // READMEs is therefore covered by path-set equality, not content.
+    // Route characterization: leaf-folder turn prompts carry folder
+    // identity through on-disk file-child source (the cold-run fallback),
+    // so leaves with distinct files produce distinct README content, and
+    // an empty leaf prompts from the insufficient-context marker instead
+    // of an absent context block.
     let core = first.baseline.content("tree/alpha/core/README.md").unwrap();
     let util = first.baseline.content("tree/alpha/util/README.md").unwrap();
     let hollow = first
         .baseline
         .content("tree/gamma/hollow/README.md")
         .unwrap();
-    assert_eq!(core, util);
-    assert_eq!(core, hollow);
+    assert_ne!(core, util);
+    assert_ne!(core, hollow);
+    assert_ne!(util, hollow);
 }
 
 #[test]

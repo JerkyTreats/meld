@@ -21,6 +21,12 @@ use crate::views::{FrameFilter, OrderingPolicy};
 
 const FILE_CONTEXT_MAX_BYTES: usize = 128 * 1024;
 
+/// Rendered verbatim as the directory context payload when no child frames,
+/// no file-child source, and no node-scoped frames exist. Sibling contract
+/// with the workflow resolver: the model must be told context is missing
+/// rather than receive a prompt with no context block at all.
+pub const INSUFFICIENT_CONTEXT_MARKER: &str = "Insufficient context";
+
 /// Builds prompt messages with belief conditioning disabled. Byte-identical
 /// to pre-`belief_context` behavior.
 pub fn build_prompt_messages(
@@ -70,7 +76,7 @@ pub fn build_prompt_messages_with_belief(
                 let node_context_text =
                     collect_scoped_node_frame_context(api, request, belief_bundle)?;
                 if node_context_text.is_empty() {
-                    None
+                    Some(INSUFFICIENT_CONTEXT_MARKER.to_string())
                 } else {
                     Some(node_context_text)
                 }
@@ -219,9 +225,19 @@ fn collect_directory_child_context_text(
     let mut child_sections: Vec<(u8, usize, String)> = Vec::new();
     for (child_order, child_id) in node_record.children.iter().enumerate() {
         let child_context = api.get_node(*child_id, child_view.clone())?;
-        if child_context.frames.is_empty() {
-            continue;
-        }
+        // Frameless file children fall back to on-disk source so a cold run
+        // still sees real content — sibling contract with the workflow
+        // resolver. Frameless directory children stay skipped: bottom-up
+        // ordering guarantees a traversed subdirectory has frames by the
+        // time its parent assembles.
+        let child_text = if child_context.frames.is_empty() {
+            match child_context.node_record.node_type {
+                NodeType::File { .. } => file_source_text(&child_context.node_record)?,
+                NodeType::Directory => continue,
+            }
+        } else {
+            joined_frame_text(&child_context.frames)
+        };
 
         let child_kind = match child_context.node_record.node_type {
             NodeType::File { .. } => "File",
@@ -247,7 +263,6 @@ fn collect_directory_child_context_text(
                     )
                 }
                 (_, assertion) => {
-                    let child_text = joined_frame_text(&child_context.frames);
                     match assertion {
                         Some(assertion) if class != BeliefSelectionClass::Uncovered => format!(
                             "Path: {}\nType: {}\n{}\nContent:\n{}",
@@ -265,7 +280,6 @@ fn collect_directory_child_context_text(
             };
             child_sections.push((class.rank(), child_order, section));
         } else {
-            let child_text = joined_frame_text(&child_context.frames);
             child_sections.push((
                 0,
                 child_order,
@@ -341,6 +355,16 @@ fn collect_file_source_context(node_record: &NodeRecord) -> Result<String, ApiEr
         return Ok(String::new());
     }
 
+    Ok(format!(
+        "Path: {}\nType: File\nContent:\n{}",
+        node_record.path.display(),
+        file_source_text(node_record)?
+    ))
+}
+
+/// Bounded on-disk source read shared by file-target context and the
+/// frameless file-child fallback.
+fn file_source_text(node_record: &NodeRecord) -> Result<String, ApiError> {
     let bytes = std::fs::read(&node_record.path).map_err(|e| {
         ApiError::StorageError(crate::error::StorageError::IoError(std::io::Error::new(
             e.kind(),
@@ -366,9 +390,5 @@ fn collect_file_source_context(node_record: &NodeRecord) -> Result<String, ApiEr
         ));
     }
 
-    Ok(format!(
-        "Path: {}\nType: File\nContent:\n{}",
-        node_record.path.display(),
-        text
-    ))
+    Ok(text)
 }
