@@ -30,9 +30,7 @@ The incremental staleness contract proves the machinery and measures the post-pu
 
 ### Slice Four — Semantic Yield And Publication Truthfulness
 
-Content becomes observable to belief, and publication stops impersonating success. Finalize stamps a verified-claims cardinality on the outcome; the per-folder aggregate carries it through `FolderPublicationResult` into the package-completed payload; the completed-outcome interpretation swaps its constant for a `DataScalar` over the yield pointer — theory declares which observable, code provides it, no new engine machinery. The publish filter's missing-head result becomes an acted-upon signal per F9 rather than a written-and-never-read artifact.
-
-Acceptance: an empty-yield run produces contradicting evidence and the goal stays open; a run that writes zero files cannot report success.
+Complete 2026-07-31 — the flywheel's epistemic cut. The package document declares which artifact and array field measure per-folder yield; assembly derives the declaration alongside folder classification; the aggregate counts yield from artifact content the ledger already carries and publishes a summary classing the run substantive or hollow. The installed theory splits its completed interpretation on that observable: substantive asserts freshness and satisfies the goal, cutting the regeneration loop; hollow is contradicting evidence at 0.9 and the goal stays truthfully open. No new engine machinery — the mapping vocabulary's content rules carry the whole discrimination. The publish filter's missing-head result became a terminal marked error recorded through the claim route, closing F9 primary. The yield declaration is package-authored data and one settlement route; the mapping value vocabulary is untouched, so settlement-by-acquisition slots in beside it later.
 
 ### Slice Five — Comparator Reconciliation
 

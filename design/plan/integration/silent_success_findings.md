@@ -53,7 +53,7 @@ Corrected 2026-07-31 during slice one: orchestration also assembles the prompt b
 
 ### F9 — publish filter records `missing_head` and nothing reads it
 
-Written at `src/workspace/capability.rs:394` and `:636`, read nowhere. A run can report success having written zero README files. Secondary: `already_published` compares frame ids only, never file content, at `src/workspace/publish.rs:285-291`, so an externally clobbered README is skipped as current. Disposition: primary to parity slice four; secondary recorded as residual.
+Written at `src/workspace/capability.rs:394` and `:636`, read nowhere. A run can report success having written zero README files. Secondary: `already_published` compares frame ids only, never file content, at `src/workspace/publish.rs:285-291`, so an externally clobbered README is skipped as current. Disposition: primary CLOSED 2026-07-31 in slice four — a missing head is a terminal marked error recorded through the claim route, never a success-status artifact; secondary remains a residual.
 
 ### F10 — `no_semantic_drift` unconditional early-pass is indistinguishable from a real pass
 
