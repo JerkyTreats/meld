@@ -1,7 +1,7 @@
 # Gate Signal First Slice
 
 Date: 2026-07-31
-Status: proposed
+Status: in progress — items one, four, and five landed 2026-07-31; the retry tier, terminal flow, and config flip remain and land together
 Scope: the bounded code work to make gate outcomes act as signals on the package dispatch route, per [Failure Signal](../../cognitive_architecture/execution/failure_signal.md); part of the docs_freshness flywheel parity workstream
 
 ## Problem
