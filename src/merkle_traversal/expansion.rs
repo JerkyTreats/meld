@@ -24,6 +24,12 @@ pub use meld_execution::traversal::{
     WorkflowTurnTemplate,
 };
 
+/// Marker identifying an all-fresh zero-work expansion in propagated error
+/// text. The claim route matches on it to record a terminal outcome rather
+/// than refencing the claim into an unbounded retry of a run that has no
+/// work by construction.
+pub const NOTHING_TO_REGENERATE_MARKER: &str = "Nothing to regenerate";
+
 /// Compiles a traversal prerequisite expansion into a task delta.
 pub fn compile_traversal_prerequisite_expansion(
     api: &(impl ContextReadPort + ?Sized),
@@ -65,6 +71,18 @@ pub fn compile_traversal_prerequisite_expansion(
         })
         .filter(|batch| !batch.is_empty())
         .collect::<Vec<_>>();
+    // Node identity is content-addressed, so a node carrying a current frame
+    // is fresh by construction. All nodes fresh means there is nothing to
+    // regenerate: expanding to zero instances would let bare-equality
+    // completion checks record a phantom success for a run that did nothing.
+    if active_batches.is_empty() && !content.node_batches.is_empty() {
+        return Err(ApiError::ConfigError(format!(
+            "{NOTHING_TO_REGENERATE_MARKER}: all {} traversal nodes carry current '{}' frames for expansion '{}'",
+            nodes_by_id.len(),
+            content.repeated_region.frame_type,
+            expansion.expansion_id
+        )));
+    }
     let active_ids = active_batches
         .iter()
         .flat_map(|batch| batch.iter().map(|node| node.node_id.clone()))

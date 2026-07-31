@@ -688,3 +688,146 @@ pub fn try_run_workflow_route(
         }
     })
 }
+
+/// Outcome of the four-phase incremental staleness scenario.
+pub struct IncrementalScenarioOutcome {
+    /// Provider requests served by the initial forced full run.
+    pub full_run_requests: usize,
+    /// Provider requests served by an unforced run with published READMEs
+    /// still present in the workspace.
+    pub feedback_requests: usize,
+    /// Error from the unforced run after published READMEs were removed.
+    pub zero_work_error: String,
+    /// Provider requests served by the unforced run after one source
+    /// mutation, with published READMEs removed.
+    pub mutation_requests: usize,
+}
+
+/// Runs four workflow-route phases over ONE workspace to separate the
+/// staleness machinery from the published-artifact feedback blocker:
+///
+/// 1. forced full generation;
+/// 2. unforced rerun with published READMEs in place — pins the blocker:
+///    publication mutated the tree, every node re-identified, everything
+///    regenerates;
+/// 3. published READMEs deleted, rescan — node ids revert to their
+///    source-scoped values, every head is found, and the run refuses to
+///    fabricate work;
+/// 4. one source file mutated — exactly the mutated ancestor chain
+///    regenerates.
+pub fn run_incremental_workflow_scenario(
+    spec: &ParityWorkspaceSpec,
+    mutate: impl FnOnce(&Path),
+) -> IncrementalScenarioOutcome {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        meld::init::initialize_workflows(false).unwrap();
+
+        let workspace_root = temp_dir.path().join("workspace");
+        spec.write_to(&workspace_root);
+        create_test_agent(PARITY_AGENT_ID, Some(PARITY_WORKFLOW_ID));
+
+        let mut catalog = CapabilityCatalog::new();
+        let mut registry = CapabilityExecutorRegistry::new();
+        register_docs_writer_capabilities(&mut catalog, &mut registry);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        let mut phase = |force: bool, session_id: &str| -> (usize, Result<(), String>) {
+            let provider = DeterministicDocsProvider::spawn(&workspace_root);
+            create_test_provider(PARITY_PROVIDER_NAME, provider.endpoint());
+            let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
+            run_context
+                .execute(&Commands::Scan { force: true })
+                .unwrap();
+            let registered_profile = run_context
+                .workflow_registry()
+                .read()
+                .get(PARITY_WORKFLOW_ID)
+                .unwrap()
+                .clone();
+            let result = prepare_registered_workflow_task_run(
+                run_context.api(),
+                &workspace_root,
+                &registered_profile,
+                &WorkflowPackageTriggerRequest {
+                    package_id: PARITY_PACKAGE_ID.to_string(),
+                    workflow_id: PARITY_WORKFLOW_ID.to_string(),
+                    node_id: None,
+                    path: Some(spec.target_path()),
+                    agent_id: PARITY_AGENT_ID.to_string(),
+                    provider: ProviderExecutionBinding::new(
+                        PARITY_PROVIDER_NAME,
+                        ProviderRuntimeOverrides::default(),
+                    )
+                    .unwrap(),
+                    frame_type: PARITY_FRAME_TYPE.to_string(),
+                    force,
+                    session_id: Some(session_id.to_string()),
+                },
+                &catalog,
+            )
+            .map_err(|error| error.to_string())
+            .and_then(|prepared| {
+                let mut executor = TaskExecutor::new(
+                    prepared.compiled_task.clone(),
+                    prepared.init_payload.clone(),
+                    format!("repo_{session_id}"),
+                )
+                .map_err(|error| error.to_string())?;
+                rt.block_on(execute_task_to_completion(
+                    run_context.api(),
+                    &mut executor,
+                    &catalog,
+                    &registry,
+                    None,
+                    None,
+                ))
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+            });
+            (provider.shutdown(), result)
+        };
+
+        let (full_run_requests, first) = phase(true, "session_incremental_full");
+        first.expect("forced full run must complete");
+
+        let (feedback_requests, second) = phase(false, "session_incremental_feedback");
+        second.expect("unforced rerun with READMEs present must complete");
+
+        remove_published_readmes(&workspace_root);
+        let (fresh_requests, third) = phase(false, "session_incremental_fresh");
+        let zero_work_error =
+            third.expect_err("unforced run over a source-fresh workspace must refuse");
+        assert_eq!(
+            fresh_requests, 0,
+            "a zero-work refusal must not consume provider requests"
+        );
+
+        mutate(&workspace_root);
+        let (mutation_requests, fourth) = phase(false, "session_incremental_delta");
+        fourth.expect("unforced run after mutation must complete");
+
+        IncrementalScenarioOutcome {
+            full_run_requests,
+            feedback_requests,
+            zero_work_error,
+            mutation_requests,
+        }
+    })
+}
+
+/// Removes every published `README.md` under the workspace tree so node
+/// identity reverts to its source-scoped value.
+fn remove_published_readmes(workspace_root: &Path) {
+    fn walk(dir: &Path) {
+        for entry in fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path);
+            } else if path.file_name().and_then(|name| name.to_str()) == Some("README.md") {
+                fs::remove_file(&path).unwrap();
+            }
+        }
+    }
+    walk(workspace_root);
+}

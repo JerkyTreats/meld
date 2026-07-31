@@ -106,7 +106,9 @@ pub trait PackageStep {
     /// Returns true when every known work unit completed.
     fn is_complete(&self) -> bool {
         let progress = self.progress();
-        progress.completed_units == progress.known_units
+        // Zero known units is never complete, matching the aggregate
+        // publication guard: zero-of-zero is absent work, not finished work.
+        progress.known_units > 0 && progress.completed_units == progress.known_units
     }
 
     /// Advances the package run by at most one bounded ready wave.

@@ -1157,7 +1157,10 @@ where
 /// The snapshot's compiled task already contains every applied expansion, so
 /// this comparison covers expanded units, not only the base graph.
 fn snapshot_is_complete(snapshot: &TaskExecutorSnapshot) -> bool {
-    snapshot.completed_instance_ids.len() == snapshot.compiled_task.capability_instances.len()
+    // Zero instances is never complete — the aggregate sibling's
+    // known-units guard, applied to the durable snapshot.
+    !snapshot.compiled_task.capability_instances.is_empty()
+        && snapshot.completed_instance_ids.len() == snapshot.compiled_task.capability_instances.len()
 }
 
 fn command_request(state: &NetworkState, command_id: String, command: Command) -> CommandRequest {

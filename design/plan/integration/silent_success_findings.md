@@ -25,9 +25,11 @@ The known five-link hollow-README chain was excluded; everything below is additi
 
 `evaluate_no_semantic_drift` builds its required-section list dynamically and silently degrades to a pass when the list is empty: an absent input key via `unwrap_or_default` at `gates.rs:141-145`; a fence-naive JSON parse at `gates.rs:157` that rejects the fenced model output its fence-aware sibling `src/context/capability.rs:840-878` accepts; non-object JSON at `gates.rs:160-162`. A key-space mismatch — workflow path keys gate inputs by input ref, capability path by artifact type id — only coincidentally lines up today. A README that dropped every section can pass the semantic-drift gate. Disposition: [Gate Signal First Slice](gate_signal_first_slice.md).
 
-### F3 — staleness digests computed and discarded
+### F3 — staleness, corrected and deepened on trace
 
-`collect_existing_frame_refs` at `src/merkle_traversal/expansion.rs:416-450` treats head-frame presence as done and never compares the stored context digest against the freshly computed one; no call site in the repo performs that comparison — digests are loaded only to populate validation event fields. Emptied batches are dropped without flagging at `expansion.rs:66` and no guard exists for an empty active-batch set. Source changes under a documented directory produce zero work without `--force`. The re-fire half of docs_freshness is currently dead. Disposition: parity slice three, new.
+Corrected 2026-07-31 during slice three. Node ids are content-addressed — `NodeID` hashes path and content, directories hash children — so head-frame presence IS a freshness check by construction and no digest comparison is needed: a source change re-identifies the mutated ancestor chain, which regenerates while unchanged subtrees keep their frames. The original zero-work failure scenario was masked in production anyway because the dispatch preparer forced regeneration of the whole scope every turn.
+
+The real blocker found underneath, pinned by the incremental staleness contract: **publication writes README.md files back into the tree that node identity is keyed on**, so every published folder re-identifies on the next scan and an unforced rerun regenerates everything — the self-recursion issue, now measured. Unforced incrementality works exactly when identity is source-scoped: with published artifacts removed, a fresh workspace refuses to fabricate work and one mutation regenerates precisely its three-folder ancestor chain. Source-scoped node identity — excluding published artifacts from the identity hash while keeping them readable as context — is the open work, and it is prerequisite to the convergence proof's drift-wakeup arc. Disposition: zero-work refusal and completion guards landed in slice three; source-scoped identity recorded as the workstream's new open item.
 
 ### F4 — evidence replay requires an artifact type nothing produces, and advances its cursor past skips
 
@@ -35,7 +37,7 @@ The known five-link hollow-README chain was excluded; everything below is additi
 
 ### F5 — completion predicates pass on zero of zero
 
-Bare equality at `crates/meld-execution/src/task/executor.rs:294-296`, `task_network/dispatch_actor.rs:1159-1161`, and `task_network/package_step.rs:107-110`, while the sibling `aggregate_publication.rs:205-207` carries the correct `known_units > 0` guard. Combined with F3, a zero-work run records a Succeeded task outcome and only the aggregate layer later disagrees with a misleading `PrematureCompletion`. Disposition: parity slice three, new.
+Bare equality at `crates/meld-execution/src/task/executor.rs:294-296`, `task_network/dispatch_actor.rs:1159-1161`, and `task_network/package_step.rs:107-110`, while the sibling `aggregate_publication.rs:205-207` carries the correct `known_units > 0` guard. Combined with F3, a zero-work run records a Succeeded task outcome and only the aggregate layer later disagrees with a misleading `PrematureCompletion`. Disposition: parity slice three, new. CLOSED 2026-07-31: all three predicates carry the known-greater-than-zero guard, an all-fresh expansion refuses with the nothing-to-regenerate marker instead of expanding to zero instances, and the claim route records that refusal as a terminal outcome rather than refencing it into unbounded retries.
 
 ### F6 — capability-path gate handling drops three sibling behaviors
 

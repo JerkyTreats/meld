@@ -290,9 +290,12 @@ impl TaskExecutor {
         )
     }
 
-    /// Returns true when all compiled capability instances completed successfully.
+    /// Returns true when all compiled capability instances completed
+    /// successfully. Zero instances is never complete: zero-of-zero would
+    /// record a phantom success for a run that did nothing.
     pub fn is_complete(&self) -> bool {
-        self.completed_instances.len() == self.compiled_task.capability_instances.len()
+        !self.compiled_task.capability_instances.is_empty()
+            && self.completed_instances.len() == self.compiled_task.capability_instances.len()
     }
 
     /// Returns the current completed capability instance count.

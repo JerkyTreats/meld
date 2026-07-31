@@ -29,6 +29,7 @@ mod harness_stall_specimen;
 pub(crate) mod harness_survey_fixture;
 mod harness_three_altitudes;
 mod hasher_verification;
+mod incremental_staleness_contract;
 mod init_command;
 mod logging_default;
 mod model_providers;

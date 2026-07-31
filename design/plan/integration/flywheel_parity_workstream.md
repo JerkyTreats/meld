@@ -24,9 +24,9 @@ Per [Gate Signal First Slice](gate_signal_first_slice.md), under the canonical [
 
 ### Slice Three — Staleness And Completion Truthfulness
 
-New, from F3 and F5. Traversal compares the stored context digest against the freshly computed digest instead of treating head presence as done; emptied batches are flagged rather than dropped; the three bare-equality completion predicates gain the `known > 0` guard their aggregate sibling already carries. This slice revives the re-fire half of docs_freshness — staleness detection is what makes freshness a maintained condition rather than a one-shot generation.
+Complete 2026-07-31, with the diagnosis corrected on trace. Node identity is content-addressed, so head presence is a freshness check by construction and no digest comparison was needed. Landed: the three bare-equality completion predicates carry the known-greater-than-zero guard their aggregate sibling had; an all-fresh expansion refuses with a nothing-to-regenerate marker instead of expanding to zero instances; the claim route records that refusal terminally; and the production dispatch preparer stopped forcing whole-scope regeneration every turn, making runs incremental by identity.
 
-Acceptance: changing source under a documented directory produces regeneration work without force; a zero-work expansion is reported truthfully, not as success.
+The incremental staleness contract proves the machinery and pins the remaining blocker in one test: with published READMEs removed, a fresh workspace refuses to fabricate work and one source mutation regenerates exactly its ancestor chain — but while published READMEs sit in the tree, publication feedback re-identifies every folder and an unforced rerun regenerates the whole scope. **Source-scoped node identity** — excluding published artifacts from the identity hash while keeping them readable as context — is the open item this slice surfaces, prerequisite to the convergence proof's drift-wakeup arc.
 
 ### Slice Four — Semantic Yield And Publication Truthfulness
 

@@ -1062,7 +1062,11 @@ impl PackageRunPreparer for WorkflowPackageRunPreparer {
             agent_id: self.core.agent_id.clone(),
             provider: self.core.provider.clone(),
             frame_type: self.core.frame_type.clone(),
-            force: true,
+            // Incremental by identity: node ids are content-addressed, so a
+            // node holding a current frame is fresh by construction and only
+            // changed subtrees expand into work. Forcing here would
+            // regenerate the whole scope on every flywheel turn.
+            force: false,
             session_id: self.core.session_id.clone(),
         };
         let prepared = crate::task::prepare_registered_workflow_task_run(
@@ -1200,9 +1204,14 @@ impl ClaimedTaskInvoker for CompiledTaskClaimInvoker {
             Err(error) => {
                 let message = error.to_string();
                 // A gate violation that survived its declared retry budget
-                // is deterministic over the recorded artifacts: terminal,
-                // recorded through the command boundary so belief learns it.
-                if message.contains(crate::context::capability::GATE_FAILURE_MARKER) {
+                // is deterministic over the recorded artifacts, and an
+                // all-fresh expansion has no work by construction: both are
+                // terminal, recorded through the command boundary so belief
+                // learns them, never refenced into unbounded retries.
+                if message.contains(crate::context::capability::GATE_FAILURE_MARKER)
+                    || message
+                        .contains(crate::merkle_traversal::expansion::NOTHING_TO_REGENERATE_MARKER)
+                {
                     Ok(ClaimedInvocationOutcome::Failed { error: message })
                 } else {
                     // Any other unresolved invocation keeps the claim
