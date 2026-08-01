@@ -126,6 +126,14 @@ Goal drafts must derive from reconciled belief questions instantiated by Directi
 
 Strategy must not invent missing persistent belief questions while constructing executable work. Missing epistemic grounding returns to the Directive Agent and belief domains.
 
+### STR-016 Projection completeness
+
+For every belief question grounded in the input frame's scope, the frame must contain either that question's settlement vocabulary or a typed absence marker.
+
+Construction must fail closed on absent vocabulary. The affected obligation becomes indeterminate with a missing-verdict ground. Absent vocabulary must never read as unsatisfied and must never read as settled.
+
+A missing projection emission must remain distinguishable in the construction result from an unsettled question.
+
 ## Construction requirements
 
 ### STR-020 Obligation graph
@@ -133,6 +141,12 @@ Strategy must not invent missing persistent belief questions while constructing 
 Strategy must expand the Goal draft desired state into an internal Strategy obligation graph before constructing executable work.
 
 Every obligation must cite the domain-theory rule, Goal target, concrete subject, and world-model revision that introduced it.
+
+Decomposition is per conjunct. An unsatisfied proposition and an indeterminate proposition produce distinct typed obligations. An indeterminate obligation may be discharged only through a settlement route, never by an assertion effect.
+
+A scoped negative obligation evaluates against admitted evidence at the declared source-set revision. Unassessed is never settled clean.
+
+Collapsing an indeterminate, disjunctive, or negated target into one opaque obligation is invalid decomposition.
 
 ### STR-021 Evidence paths
 
@@ -382,6 +396,14 @@ New evidence, Goal revision, capability change, Method inventory change, authori
 
 Abstention and its durable wake registration must commit atomically with the quiescent Strategy-association transition. Wake registration must preserve dependency references, source cursors, dependency epochs, and attempt generation so restart replays every relevant change without a lost-wake gap.
 
+### STR-057 Expansion progress and typed exhaustion
+
+Construction must reject a discharge chain that reintroduces an equivalent obligation, meaning the same subject, question, and evidence revision, unless the chain passes through a settlement route that changes evidence state.
+
+Bound exhaustion is a typed result. `NoMethodAvailable` and abstention must each distinguish an exhausted search bound from the absence of any eligible producer, naming the obligations left unexpanded when a bound was reached.
+
+An exhausted bound is grounds to reconsider search budget. It is never evidence that no theory of action exists.
+
 ## Execution handoff requirements
 
 ### STR-060 Scoped visibility
@@ -478,6 +500,8 @@ Tests must prove that an initial Goal cannot enter Execution without a nonempty 
 
 Each worked domain example must include metamorphic controls that change declared semantics, graph relations, authority, capacity, and evidence admission and then prove that candidate topology changes for the declared reason.
 
+Removing a projection emission must change the result to a typed missing-verdict outcome rather than to a different candidate topology.
+
 ### STR-072 Replay verification
 
 Exact input lineage and Strategy version must reconstruct the decision or identify the recorded nondeterministic artifact needed for replay.
@@ -497,6 +521,12 @@ Only Agent satisfaction curation over reconciled authoritative outcome evidence 
 At least one non-documentation domain must construct a correct Strategy with a structurally distinct candidate topology from the same schema and construction procedure, using declared semantics, without docs-specific Strategy branches or runtime grammar changes.
 
 Similarity is not the success criterion. A schema that only reproduces the topology it was derived from proves nothing. The paired worked examples are [Docs Freshness Strategy](docs_freshness.md) and [CVE Freshness Strategy](cve_freshness.md).
+
+### STR-076 Settlement regression verification
+
+Tests must prove that a candidate whose only support for an observational proposition is a declared assertion effect fails validation.
+
+Tests must prove that plan-time effect projection alone cannot satisfy a Goal target whose conditions are observational. Satisfaction requires settlement through admitted evidence.
 
 ## Non-goals
 

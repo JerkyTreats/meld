@@ -41,6 +41,8 @@ Family configuration supplies:
 
 The observationality declaration states whether a dimension's value is established only by admitted evidence that arrives after action. The Strategy settlement transform reads it per [Strategy Requirements](../strategy/requirements.md).
 
+A dimension without an observationality declaration is observational. The permissive derived form must be declared explicitly, never assumed from absence.
+
 Revisions must record the config id or config snapshot hash used for assessment so replay is stable when runtime configuration changes.
 
 ## Shared Grounding Types

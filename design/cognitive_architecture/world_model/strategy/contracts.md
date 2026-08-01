@@ -408,10 +408,13 @@ NoMethodAvailable
   novel_candidate_refs
   rejection_grounds
   missing_semantics
+  exhausted_bounds
   created_at
 ```
 
 This is a visible runtime error rather than quiescence. The Goal draft remains outside Execution. An empty known Strategy catalog is not sufficient grounds because novel construction must also have been attempted under the available PDS affordances.
+
+`exhausted_bounds` distinguishes a search bound reached before any eligible candidate from the absence of any eligible producer. When a bound was reached it names the obligations left unexpanded, so the reader can tell a budget problem from a missing theory of action.
 
 ## Abstention
 

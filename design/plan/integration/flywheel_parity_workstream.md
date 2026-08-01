@@ -40,6 +40,8 @@ The decision is therefore coupled: comparator weight semantics, theory factor we
 
 Characterized 2026-07-31; the guard is deliberately not in scope. The pinned test `declared_effects_alone_currently_satisfy_goal` proves the hole exists: applying the method's declared update flips an evidence-free goal from Indeterminate to Satisfied. The existing evaluation-loop test asserts that same behavior as intended plan-time projection, so the guard is not a patch but a separation of plan-time projection from settlement satisfaction — the opening agenda item of the Strategy sync, where the settlement transform owns the seam.
 
+The separation gained its normative anchor on 2026-08-01: [Strategy Requirements](../../cognitive_architecture/world_model/strategy/requirements.md) STR-076 requires tests proving assertion-only support fails validation and plan-time projection alone cannot satisfy an observational target. Landing the guard therefore inverts the pinned characterization rather than deleting it.
+
 ### Slice Seven — Validation And Pause
 
 Partially complete. The fixture half landed as contract tests in CI: structural parity assertions over the resurrected corpus with the hollow specimen pinned as a permanent must-fail, the gate retry contract, and the incremental staleness contract. The live half — one full cold lab-gateway run asserting non-hollow content through the new yield path, and one forced-failure run asserting truthful non-satisfaction — awaits a reachable provider. The workstream is otherwise at the pause.
