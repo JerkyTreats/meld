@@ -60,7 +60,7 @@ This area may describe action relevance, but it must not drift into execution po
 
 `world_model/strategy` is a first-class consumer of planner projection.
 
-Strategy may request a projection over a bound candidate Composition and exact world-model frame. Planner projection assembles typed causal, efficacy, uncertainty, risk, information-gain, relevance, admission, and abstention views from their owning domains. Strategy combines those authoritative views under Agent authority but must not replace them with private epistemic judgments.
+Strategy consumes the exact current planner projection for the proposed Goal. It may use that authoritative context but must not replace it with private epistemic judgments.
 
 PDS declares evidence policy. Belief owns evidence admission and epistemic relevance verdicts. Planner projection scopes and exposes those verdicts for the requested decision context. The Agent selects decision context and normative relevance but cannot override admission.
 
@@ -116,7 +116,6 @@ Its responsibility is to present those concerns in decision-relevant form withou
 - `SensitivitySummary`
 - `AssumptionSet`
 - `HydrationHandle`
-- `StrategyProjection`
 
 `ExpectedInformationGain` and `DecisionRelevance` are not durable planner entities.
 They are scoring fields carried by observation opportunities, belief summaries, causal summaries, regime summaries, and risk projections.
@@ -127,8 +126,6 @@ The planner-facing output should prefer `ObservationOpportunityView`, because ex
 `ExecutionPreconditions` should be expressed as `PreconditionAssessment`.
 The planner assesses world-facing conditions.
 Execution owns method applicability, task readiness, and dispatch.
-
-Candidate-Composition projection must preserve the exact candidate hash, input frame, assumptions, and source revisions. A projection is a forecast, not evidence that the candidate succeeded.
 
 ## Deterministic Projection Rule
 

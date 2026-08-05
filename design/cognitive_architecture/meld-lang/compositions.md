@@ -8,7 +8,7 @@ Scope: Composition graph, Step, Edge, structural validation
 
 A Composition is a directed graph of steps with typed edges. It is the language representation of a semantic theory of action. Strategy constructs episode candidates and Execution compiles an Agent-authorized candidate into a task-network subgraph.
 
-Compositions are data. Candidate construction may use authored assets, model-backed capabilities, deterministic programs, or reusable Method templates. All paths produce the same type and pass through Strategy validation and Agent authorization. Execution preserves source lineage but does not reinterpret semantic meaning.
+Compositions are data. The current Strategy slice constructs one by instantiating a configured Method template. Execution preserves authorization lineage but does not reinterpret semantic meaning.
 
 ## Composition
 
@@ -37,8 +37,7 @@ pub enum StepKind {
     /// An operator to resolve and dispatch.
     Op(Operator),
 
-    /// A sub-goal whose exact authorized realization accompanies the
-    /// Strategy candidate before Execution lowering.
+    /// A sub-goal represented in the shared language.
     Goal(Proposition),
 }
 ```
@@ -80,13 +79,6 @@ pub enum EdgeKind {
         guard: Condition,
     },
 
-    /// Downstream work waits for an owning-domain evidence verdict
-    /// that binds one prospective contract to exact artifact content.
-    EvidenceAdmission {
-        prospective_contract_ref: String,
-        admission_authority_ref: String,
-        expected_content_identity: String,
-    },
 }
 ```
 

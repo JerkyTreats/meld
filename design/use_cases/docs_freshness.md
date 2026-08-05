@@ -34,12 +34,12 @@ The conversion is worked at full canonical depth in [Docs Freshness Strategy](..
 
 For this use case to be usable on paper, the following must hold. Standing is given per entry.
 
-1. **Containment relations are projected into planning frames.** Grounding and construction key off folder containment, so the projection must emit typed relation propositions. Canonical requirement exists; projection enrichment is delta work.
-2. **Capacity is a typed fit verdict.** Whether assembled evidence fits the generation bound must arrive as a per-folder, per-path verdict computed outside construction. Canonical requirement exists; no code ground.
-3. **Evaluator settlement over exact bytes.** Evaluation identity must bind published content digest, graph revision, evidence set, evaluator revision, dimensions, threshold, and provenance. Canonical requirement exists; evaluator route is unbuilt.
-4. **Two-tier evidence with admission authority.** A summary artifact must be distinguishable from settled coverage, and only an authoritative admission verdict may let coverage discharge a subtree obligation. Canonical contracts exist; verdict records are delta work.
-5. **Prospective evidence gating.** Future artifacts must be usable as obligation discharge only through prospective contracts gated on later admission. Canonical contracts exist.
-6. **Settlement regression.** Candidates must regress against settlement of the correctness question rather than asserting scores. Canonical as STR-029.
+1. **Containment relations are projected into planning frames.** Grounding and construction may eventually need typed containment propositions. This is outside the minimal slice.
+2. **Capacity is a typed fit verdict.** Per-folder context fit is a design hypothesis with no current code ground.
+3. **Evaluator settlement over exact bytes.** Exact-byte evaluation is a use-case requirement whose route is not established by Strategy.
+4. **Two-tier evidence with admission authority.** Summary production must remain distinct from settled coverage. A dedicated admission-verdict mechanism is unproven.
+5. **Prospective evidence gating.** The minimal contract requires a prospective evidence route. Obligation-discharge machinery is not canonical.
+6. **Settlement regression.** The minimal contract requires evidence separation. Regression against a settlement question remains an unproven mechanism rather than canonical design.
 
 ## Read with
 

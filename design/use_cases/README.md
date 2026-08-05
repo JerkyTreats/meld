@@ -20,14 +20,14 @@ Worked Strategy derivations, when a use case has been proven at that depth, live
 
 [Persistent Domain Stewardship](../persistent_domain_stewardship/use_case_decomposition.md) owns the qualification rubric: whether a use case is stewardship-shaped at all and whether a simpler deterministic baseline suffices. This catalog assumes that rubric and applies it per case.
 
-[Strategy Requirements](../cognitive_architecture/world_model/strategy/requirements.md) STR-075 requires that the schema derive structurally distinct topologies across domains. The catalog is where candidate domains for that proof are compared before one is worked at full depth.
+The catalog compares candidate domains before one is worked at full depth. Contrasting examples can expose assumptions inherited from the first domain without making a second-domain proof a prerequisite for the minimal Strategy slice.
 
 ## Index
 
 | Use case | Maintained condition | Axes stressed | Status |
 |---|---|---|---|
 | [Docs freshness](docs_freshness.md) | folder READMEs correct against code | containment obligations, bounded context, produced-artifact evaluation, bottom-up compression | worked canonical example; historical first proof |
-| [CVE freshness](cve_freshness.md) | dependencies free of admitted advisories within policy | acquisition settlement, scoped negatives, constraint coupling, shared-artifact scoping, external drift | worked canonical example; STR-075 pair |
+| [CVE freshness](cve_freshness.md) | dependencies free of admitted advisories within policy | acquisition settlement, scoped negatives, constraint coupling, shared-artifact scoping, external drift | worked contrasting example |
 | [Test flakiness](test_flakiness.md) | per-test flakiness below threshold at confidence | statistical settlement, repeated observation, divergent-value alternatives, convergence in place of conditionals | proposed |
 | [Commenting style](commenting_style.md) | code files comply with commenting policy | flat trivial topology as control, policy-revision mass invalidation, judgment evaluators | proposed control |
 | [Podcast series](podcast_series.md) | a coherent teachable series exists for a topic | created subjects, staged grounding, sequence obligations, top-down constraint artifacts | frontier |

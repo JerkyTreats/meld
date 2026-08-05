@@ -62,10 +62,9 @@ Scope: functional, structural, and nonfunctional requirements for `meld-lang`
 ### Compositions
 
 - Define `Composition` as a directed graph of steps with typed edges.
-- Steps are either Operators or subgoals. A Strategy proposal must resolve each subgoal to an exact child Composition or an exact reusable Method revision, bindings, and expanded hash. Agent judgment authorizes the complete resolved candidate.
-- Edges carry ordering, dataflow, conditional, or evidence-admission semantics.
-- An evidence-admission edge must identify the prospective artifact contract, admission authority, and expected content identity. It is satisfied only by a matching authoritative admitted verdict.
-- Compositions are constructed at runtime. Construction may use authored assets, model-backed capabilities, deterministic programs, or Agent-authorized Strategy. Novel semantic construction belongs to Strategy.
+- Steps are either Operators or subgoals. The minimal Strategy slice uses a configured Method whose concrete Composition requires no recursive subgoal expansion.
+- Edges carry ordering, dataflow, or conditional semantics.
+- Compositions are runtime values. The current Strategy contract establishes configured Method instantiation and Agent authorization before Execution realization.
 - All construction paths produce the same `Composition` type.
 
 ### Goals

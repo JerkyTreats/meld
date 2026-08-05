@@ -257,24 +257,19 @@ Agent authority, operational domain theory, trusted scope, typed planner project
 
 Primary concepts:
 
-- `GoalDraft`
-- `KnownStrategyCatalog`
-- `StrategyConstructionAttempt`
-- `StrategyAlternative`
-- `StrategyProjection`
-- `StrategyDecision`
-- `StrategyAbstention`
-- `StrategyInvalidation`
-- `GoalStrategyAssociation`
+- proposed Goal
+- Strategy candidate
+- Agent authorization
+- prospective evidence route
+- settled operational replay
 
-Directive grounding creates the concrete belief questions that precede Goal curation. Strategy creates candidate `Composition` values for Goal drafts and gates initial Execution admission. It does not settle beliefs, mutate admitted Goal lifecycle, resolve capabilities, or commit task-network work.
+Agent curation creates the proposed Goal. Strategy creates a candidate course of action and gates initial Execution admission through Agent authorization. It does not settle beliefs, mutate admitted Goal lifecycle, resolve capabilities, or commit task-network work.
 
 Design:
 
 - [World Model Strategy](strategy/README.md)
 - [Directive Grounding](agent/directive_grounding.md)
-- [Strategy Requirements](strategy/requirements.md)
-- [Strategy Contracts](strategy/contracts.md)
+- [Strategy Boundary Contracts](strategy/contracts.md)
 - [Docs Freshness Strategy](strategy/docs_freshness.md)
 
 ## Layer Rules

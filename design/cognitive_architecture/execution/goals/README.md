@@ -218,7 +218,7 @@ The prior `Superseded { by: GoalId }` variant is absorbed into `Abandoned` — s
 
 Lifecycle transitions are initiated by the world model Agent and persisted by Execution through public Goal APIs. Planning may observe that a target appears satisfied or that no candidate is currently realizable, but it does not own satisfaction or suspension mutations.
 
-The Goal lifecycle epoch advances on every lifecycle, replacement, or content transition that changes operational eligibility. This includes activation, suspension, resume, satisfaction, reopening, abandonment, removal, supersession, and replacement. The transition serializes against task-network commitment and dispatch claims, preventing work authorized under the prior Goal state from beginning afterward.
+Execution validates current Goal lifecycle before committing or dispatching work. Work for an inactive Goal must not begin.
 
 ### Goal priority
 
@@ -233,7 +233,7 @@ GoalPriority {
 
 **Urgency**: lower number = higher urgency. 0 is most urgent. Set by the agent based on belief context — the value-to-cost ratio from the agent's cost-benefit evaluation (see [Goal Curation](../../world_model/agent/goal_curation.md)) determines the urgency level. This replaces the prior separate `urgency`/`importance` fields — importance is now expressed through urgency ordering, which is itself derived from the agent's cost-benefit posterior.
 
-**Cost ceiling**: optional upper bound on effort expressed as a `CostEstimate`. Strategy projection determines semantic candidate eligibility against the ceiling. Execution rechecks current operational cost and rejects a candidate that no longer fits. The Agent may adjust the ceiling, suspend, or abandon.
+**Cost ceiling**: optional upper bound on effort expressed as a `CostEstimate`. Strategy uses it when constructing the candidate. Execution rechecks current operational cost and rejects a candidate that no longer fits. The Agent may adjust the ceiling, suspend, or abandon.
 
 The prior `preemption_policy` field is deferred. Preemption behavior will be derived from urgency ordering and cost-aware plan transition logic as those mechanisms mature.
 

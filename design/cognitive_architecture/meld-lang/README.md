@@ -20,7 +20,7 @@ Previous design iterations attempted to have execution interpret semantic goals 
 
 The resolution: define a formal language that both domains speak natively. The world model constructs Goals as typed propositions and Strategy constructs candidate Compositions. Execution evaluates propositions and compiles Agent-authorized Compositions mechanically. Meaning and intention live in the world model where they belong.
 
-A critical property of this language is **runtime composition**. The system cannot know at compile time the full scope of Goals, Methods, or Operators that Agent-authorized [World Model Strategy](../world_model/strategy/README.md) will construct. The language provides primitives. Goals, Operators, and Compositions are assembled from those primitives at runtime. Known decompositions may be cached as Methods for reuse, but novel Compositions remain the same pure language values and pass the same validation.
+A critical property of this language is **runtime composition**. Goals, Methods, Operators, and Compositions are runtime values rather than compile-time action enums. The current [World Model Strategy](../world_model/strategy/README.md) slice instantiates a configured Method into a concrete Composition and passes it through the same validation used by Execution.
 
 ## Core Design
 

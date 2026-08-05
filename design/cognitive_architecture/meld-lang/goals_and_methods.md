@@ -174,8 +174,8 @@ pub struct Method {
     pub composition: Composition,
 
     /// Net effects of the full composition.
-    /// Used by Strategy to screen projected settlement of the Goal
-    /// target before expanding the full Composition.
+    /// Used for counterfactual projection only. Projected effects do not
+    /// establish an observed outcome or Goal satisfaction.
     pub net_effects: Vec<Effect>,
 
     /// Estimated cost of the full composition.
@@ -188,57 +188,29 @@ pub struct Method {
 
 ### Method Design Rules
 
-- Methods are optional. The system must function without any methods. Methods are a performance optimization: known decompositions should not be re-derived every planning cycle.
-- Episode-specific Compositions are constructed by [World Model Strategy](../world_model/strategy/README.md) and authorized by the Directive Agent or explicit delegate. They do not require Method registration.
+- Methods provide reusable decomposition templates. The current Strategy slice instantiates one configured Method into one concrete candidate.
 - Methods are serializable. A method library is a directory of serialized method files loaded at runtime. New methods do not require recompilation.
 - `Method.trigger` uses `Term::Variable` in positions that should bind against the goal. When `unify(method.trigger, goal.target)` succeeds, it produces `Bindings` that map variable names to concrete terms from the goal.
 - `Method.preconditions` are checked after trigger unification. Bindings from the trigger are substituted into preconditions before evaluation against world state. This enables preconditions like "scope ?node must be accessible" where `?node` was bound from the trigger.
 - `Method.composition` is a template. It contains `Term::Variable` references matching the trigger's variables. `substitute(composition, bindings)` produces a concrete composition ready for validation and runtime compilation.
-- `Method.net_effects` allow Strategy to screen projected settlement of the Goal target before expanding the full Composition. Regression targets `settlement(goal.target)` rather than the raw target, because an observational condition cannot be asserted by any honest effect model. Authoritative world-model projections remain the semantic proof surface.
-- `Method.preference` is a reusable source hint when several Methods match. Strategy may use it during bounded construction but Agent authorization applies to the resulting concrete candidate.
-
-### Settlement Transform
-
-The shared language owns `settlement`, a pure transform over a ground Goal target and the settlement proposition shape it emits.
-
-For each proposition whose belief dimension is declared observational by its owning belief family, the transform substitutes the proposition that the owning question is settled with admitted evidence bound to the subject revision of the referenced frame. Non-observational propositions pass through unchanged. The language evaluates the transformed target; the observationality declaration and the settlement verdicts come from world-model domains.
-
-Strategy regression and Method screening evaluate `settlement(goal.target)`. The untransformed target remains the satisfaction condition owned by Agent curation. See [Strategy Contracts](../world_model/strategy/contracts.md).
+- `Method.net_effects` support counterfactual projection. They may establish mechanical candidate eligibility, but they do not establish that an observational Goal condition became true.
+- `Method.preference` is current Method metadata. The minimal Strategy contract does not require ranking or comparison behavior.
 
 ### Strategy Method Instantiation Flow
 
 ```
-Accepted Goal revision arrives at Strategy
+Proposed Goal arrives at Strategy
     |
-    | For each verified Method revision in the visible inventory:
-    |     1. unify(method.trigger, goal.target) → Option<Bindings>
-    |        MISS → skip
-    |        HIT  → bindings
+    | 1. Resolve the configured Method.
+    | 2. Unify its trigger with the Goal target.
+    | 3. Evaluate bound preconditions against the exact world state.
+    | 4. Substitute bindings into the Composition template.
+    | 5. Validate the concrete Composition and evidence route.
+    | 6. Present the candidate for Agent authorization.
+    | 7. Admit only the exact authorized meaning.
     |
-    |     2. substitute(method.preconditions, bindings) → Vec<Proposition>
-    |        evaluate each against world_state
-    |        ANY UNSATISFIED → skip (or plan to satisfy preconditions)
-    |
-    |     3. Verify net_effects settle the goal target:
-    |        world_state.apply(net_effects) → projected_state
-    |        evaluate(projected_state, settlement(goal.target)) → Satisfied?
-    |        NOT SATISFIED → skip
-    |
-    |     4. Check cost:
-    |        method.cost.exceeds(goal.priority.cost_ceiling)?
-    |        EXCEEDS → skip
-    |
-    |     5. substitute(method.composition, bindings) → Composition
-    |        validate(composition) → must be valid
-    |
-    |     6. Preserve Method revision, bindings, and Composition hash
-    |     7. Include concrete Composition in a Strategy proposal
-    |     8. Agent judgment authorizes an exact candidate subset
-    |     9. Execution realizes only the authorized concrete candidate
-    |
-    | No Method matched:
-    |     Strategy may construct an episode-specific Composition
-    |     OR Strategy records abstention
+    | Any required input fails:
+    |     produce no eligible candidate
 ```
 
 ### Unification

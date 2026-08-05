@@ -83,35 +83,32 @@ The planning loop produces task-network commands carrying graph mutation sets. I
 
 ## Planning Loop
 
-The planning loop is a continuous process that maintains an intended task-network graph. It reads admitted Goals, Agent-authorized Strategy inventory, world-model projections, capability state, and committed task-network state. It issues commands when an authorized candidate should be realized or the operational plan should change.
+The planning loop reads admitted Goals, their Agent-authorized candidate, world-model projections, capability state, and committed task-network state. It issues commands when the exact authorized candidate can be realized.
 
 ### Inputs
 
 All planning loop inputs are expressed in the shared language [`meld-lang`](../../meld-lang/README.md):
 
-- **Goal Set**: admitted desired belief states as `Proposition` targets. Every initial Goal arrived with a nonempty authorized Strategy inventory. See [Goals and Methods](../../meld-lang/goals_and_methods.md).
-- **Strategy inventory**: concrete episode Compositions, including candidates derived from exact reusable Method revisions and bindings, scoped to admitted Goal revisions. See [World Model Strategy](../../world_model/strategy/README.md).
+- **Goal Set**: admitted desired belief states as `Proposition` targets. Every initial Goal arrived with one nonempty Agent authorization. See [Goals and Methods](../../meld-lang/goals_and_methods.md).
+- **Strategy candidate**: the exact Method, bindings, Composition, action meaning, and evidence route authorized for the Goal. See [World Model Strategy](../../world_model/strategy/README.md).
 - **world state**: `WorldState` — ground propositions published by the world model's planner-facing projection. The planning loop evaluates goals and preconditions against this. See [World State and Evaluation](../../meld-lang/world_state.md).
 - **capability catalog**: available compiled and synthesized capabilities. Resolution queries from `Operator.resolution` match against registered `CapabilityTypeContract` values.
-- **Method lineage**: zero or more exact Method-instance derivations already instantiated by Strategy into the concrete candidate. See [Goals and Methods](../../meld-lang/goals_and_methods.md).
+- **Method lineage**: the configured Method instantiated by Strategy into the concrete candidate. See [Goals and Methods](../../meld-lang/goals_and_methods.md).
 - **task network state**: what is currently running, completed, pending, failed
 
 ### Authorized Composition Realization
 
-Execution Planning realizes one candidate from the exact authorized Strategy inventory:
+Execution Planning realizes the exact authorized Strategy candidate:
 
-1. Read the immutable Goal revision and authorized Strategy inventory.
-2. Reject stale authority, input lineage, world-frame requirements, or invalidation dependencies.
-3. Select only among the authorized alternatives using the allowed operational criteria.
-4. Apply only explicitly authorized operational bindings and exact reuse contracts.
-5. Evaluate current preconditions and resolve each Operator against the capability catalog.
-6. Wrap the concrete Composition with Strategy lineage, planning context, validation reports, bindings, world-frame provenance, diagnostics, and resolution reports.
-7. Lower the execution Composition into a task-network mutation set.
-8. Submit the mutation set against an exact task-network revision and state hash.
+1. Read the admitted Goal and settled authorization.
+2. Reject stale or mismatched input lineage and world-frame requirements.
+3. Apply only permitted operational bindings.
+4. Evaluate current preconditions and resolve each Operator against the capability catalog.
+5. Wrap the concrete Composition with authorization lineage, planning context, diagnostics, and resolution reports.
+6. Lower the execution Composition into a task-network mutation set.
+7. Submit the mutation set through existing task-network contracts.
 
-Reusable Methods remain a supported Strategy input. Strategy performs matching and substitution before proposal, preserving exact Method revision, bindings, and resulting Composition hash. Execution receives only the concrete Agent-authorized candidate. If no candidate is applicable, Execution reports typed rejection or no useful operational change.
-
-`NoApplicableMethod` is therefore not ordinary initial Goal discovery. `NoMethodAvailable` already prevented initial admission when world-model Strategy could construct no reusable or novel candidate. An Execution no-applicable result indicates stale, inconsistent, or no-longer-realizable authorized inventory and returns to the Agent and Strategy loop.
+Strategy performs Method matching and substitution before authorization, preserving exact Method revision, bindings, and resulting Composition meaning. Execution receives only the concrete Agent-authorized candidate. If it is no longer realizable, Execution reports typed rejection and creates no task-network mutation.
 
 The output of execution composition lowering is a task network mutation set carried by a command. The mutation set contains tasks as nodes, dependency edges between them, lineage, and task init source plans. Dependencies encode:
 
@@ -144,11 +141,6 @@ enum DependencyKind {
     DataFlow { artifact_type: ArtifactTypeId },
     Ordering,
     Conditional { guard: GuardExpression },
-    EvidenceAdmission {
-        prospective_contract_ref: String,
-        admission_authority_ref: String,
-        expected_content_identity: String,
-    },
 }
 ```
 
@@ -166,28 +158,14 @@ pub struct TaskNetworkCommandRequest {
 
 pub enum TaskNetworkCommand {
     ApplyMutationSet(TaskNetworkMutationSet),
-    RecordEvidenceAdmissionVerdict(EvidenceAdmissionVerdict),
     ClaimReadyTask(TaskNetworkDispatchRequest),
     RecordTaskOutcome(TaskNetworkDispatchOutcome),
     MarkPublication(TaskNetworkPublication),
 }
 
-pub struct EvidenceAdmissionVerdict {
-    pub verdict_ref: String,
-    pub owning_domain_ref: String,
-    pub owning_domain_revision: String,
-    pub prospective_contract_ref: String,
-    pub artifact_content_identity: String,
-    pub subject_ref: String,
-    pub scope_ref: String,
-    pub schema_ref: String,
-    pub admission_authority_ref: String,
-    pub decision: EvidenceAdmissionDecision,
-}
-
 pub struct TaskNetworkMutationSet {
     pub source_execution_composition_id: String,
-    pub planning_commitment_intent: PlanningCommitmentIntent,
+    pub authorization_ref: String,
     pub mutations: Vec<TaskNetworkMutation>,
     pub lineage: HtnLineage,
     pub diagnostics: Vec<PlanningDiagnostic>,
@@ -210,13 +188,7 @@ pub struct TaskInjectMutation {
 }
 ```
 
-`PlanningCommitmentIntent` carries planning request identity and idempotency key, immutable Strategy decision, alternative, Goal revision, Composition hash, complete Method-derivation inventory, world frame, PDS lineage, effective authority, activation, capability catalog, authority epoch, Goal epoch, Strategy eligibility epoch, and event identity seed.
-
-Task-network acceptance validates authority, Goal, and Strategy eligibility epoch fences alongside network revision and state hash. The reducer persists graph mutations, `CommitRecord`, derived planning commitment, accepted planning response, and publication outbox obligation atomically.
-
-Evidence-admission verdicts enter through their own authority-preserving command. The reducer validates owning-domain lineage and exact edge identity, then persists an accepted verdict record in the same monotonic task-network revision stream before recomputing readiness. Duplicate verdict identity returns the prior accepted record. Conflicting reuse of that identity is rejected.
-
-For Strategy-originated mutation commands, the reducer uses `network_id` plus `planning_request_idempotency_key` as the uniqueness key. Command identity is derived from that key. Acceptance atomically persists the command mapping, graph commit, planning commitment, terminal planning response, and publication outbox. A retry with a different supplied command identity but the same uniqueness key returns the existing terminal response and cannot create another graph commit.
+Strategy-originated mutation commands preserve the admitted authorization and exact Goal, Method, Composition, and world-frame lineage. Existing task-network command identity and atomic acceptance rules remain authoritative for mutation replay.
 
 Dispatch consumes the ready set after command acceptance. The execution composition does not carry task runtime state.
 
@@ -251,7 +223,6 @@ Control flow is encoded in graph structure. No separate compiled control program
 | sequential dispatch | dependency edge from B to A |
 | parallel dispatch | independent nodes with no dependency path between them |
 | observation wait | a task whose output artifact is a dependency for downstream tasks |
-| epistemic wait | an evidence-admission edge satisfied only by an owning-domain verdict |
 | conditional branch | conditional dependency edge with guard expression |
 | join barrier | a task with multiple incoming dependency edges |
 | loop | planning loop re-emits tasks into the network on the next iteration |
@@ -351,7 +322,7 @@ Execution lineage records Strategy decision, candidate Composition, zero or more
 
 ### Scoping plan changes
 
-When a relevant source changes, the planning loop uses lineage to identify affected operational work. Strategy owns any new semantic topology. Execution scopes a replacement to the affected authorized subtree and produces only the required mutations.
+When a relevant source changes, Execution uses lineage to identify affected operational work. Any new semantic meaning requires a new Agent authorization.
 
 ### Explaining execution
 
@@ -359,13 +330,13 @@ Every task in the network maps back through an accepted commitment to the Strate
 
 ### Guiding candidate selection
 
-When a task outcome changes current applicability, lineage identifies the authorized alternatives and affected work. Execution may select another still-valid authorized alternative. A semantically new alternative requires renewed Strategy authorization.
+When a task outcome changes current applicability, Execution may reject the admitted candidate. It must not choose another candidate without a new Agent authorization.
 
 ## Synthesis Integration
 
 When realization reaches an authorized Operator with no matching capability, Execution emits a typed rejection. It does not inject synthesis automatically.
 
-Synthesis may enter the task network only when the active Strategy decision explicitly authorizes a synthesis affordance and concrete candidate path. After a synthesized capability is admitted to the catalog, the resulting catalog revision may wake or invalidate Strategy. Execution then rechecks an authorized candidate against that revision.
+Synthesis is outside the minimal Strategy contract. Execution reports an unavailable realization rather than creating new semantic meaning.
 
 ## What Exists Today
 

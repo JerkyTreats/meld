@@ -6,7 +6,7 @@ Scope: everything up to Strategy — the bounded slices that bring the docs_fres
 
 ## Goal
 
-Long term, the flywheel reaches loose output parity with the static docs_freshness workflow: non-empty claims per actionable folder, children consumed into parent READMEs, structural fidelity to the workflow's output shape — without recreating static configuration inside PDS or theory. Medium term, this workstream delivers everything up to Strategy, then pauses for a sync. Strategy work — the settlement transform, learned ranking, efficacy — is explicitly not in this workstream. Parity finalization follows Strategy.
+Long term, the flywheel reaches loose output parity with the static docs_freshness workflow: non-empty claims per actionable folder, children consumed into parent READMEs, structural fidelity to the workflow's output shape — without recreating static configuration inside PDS or theory. Medium term, this workstream delivers everything up to Strategy, then pauses for a sync. Strategy construction and the observational evidence boundary are explicitly not in this workstream. Ranking and efficacy remain open capability hypotheses. Parity finalization follows Strategy.
 
 The hollow-README diagnosis and the [Silent Success Findings](silent_success_findings.md) define the work. The through-line: no layer may report success it cannot support, and no output may satisfy a goal without observable substance.
 
@@ -38,9 +38,9 @@ The decision is therefore coupled: comparator weight semantics, theory factor we
 
 ### Slice Six — Declared-Effect Characterization
 
-Characterized 2026-07-31; the guard is deliberately not in scope. The pinned test `declared_effects_alone_currently_satisfy_goal` proves the hole exists: applying the method's declared update flips an evidence-free goal from Indeterminate to Satisfied. The existing evaluation-loop test asserts that same behavior as intended plan-time projection, so the guard is not a patch but a separation of plan-time projection from settlement satisfaction — the opening agenda item of the Strategy sync, where the settlement transform owns the seam.
+Characterized 2026-07-31; the guard is deliberately not in scope. The pinned test `declared_effects_alone_currently_satisfy_goal` proves the hole exists: applying the method's declared update flips an evidence-free goal from Indeterminate to Satisfied. The existing evaluation-loop test asserts that same behavior as intended plan-time projection, so the guard is not a patch but a separation of plan-time projection from evidence-backed satisfaction — the opening agenda item of the Strategy sync.
 
-The separation gained its normative anchor on 2026-08-01: [Strategy Requirements](../../cognitive_architecture/world_model/strategy/requirements.md) STR-076 requires tests proving assertion-only support fails validation and plan-time projection alone cannot satisfy an observational target. Landing the guard therefore inverts the pinned characterization rather than deleting it.
+The separation is anchored by the [Strategy Boundary Contracts](../../cognitive_architecture/world_model/strategy/contracts.md): a prospective route is not evidence, and projected effects cannot satisfy an observational Goal. Landing the guard therefore inverts the pinned characterization rather than deleting it.
 
 ### Slice Seven — Validation And Pause
 
@@ -68,7 +68,7 @@ Scored at the pause, 2026-07-31:
 
 ## Out Of Scope
 
-Strategy construction, the settlement transform, learned ranking, cost record, failure-signal expansion beyond terminal mapping, the workflow's self-recursion flaw, CVE stewardship implementation, and full parity finalization — the last resumes after Strategy.
+Strategy construction, the observational evidence guard, open ranking and efficacy hypotheses, cost record, failure-signal expansion beyond terminal mapping, the workflow's self-recursion flaw, CVE stewardship implementation, and full parity finalization — the last resumes after Strategy.
 
 ## Related Documentation
 

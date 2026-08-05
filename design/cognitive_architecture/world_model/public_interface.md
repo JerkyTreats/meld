@@ -136,29 +136,19 @@ They must return view records with provenance and hydration handles, not free-fo
 
 ### Strategy
 
-Owned by `world_model/strategy`. These operations expose known reusable Strategy knowledge, bounded construction for a Goal draft, and the exact Agent-authorized inventory admitted with one Goal revision.
+Owned by `world_model/strategy`. This operation constructs one bounded candidate for a proposed Goal and exact world-model context.
 
 ```
-construct_strategy(request: StrategyConstructionRequest) -> StrategyConstructionResult
-
-judge_strategy_proposal(request: AgentStrategyJudgmentRequest) -> AgentStrategyJudgment
-
-query_known_strategies(query: KnownStrategyQuery) -> Vec<KnownStrategyCatalogEntry>
-
-query_strategy_decision(decision_ref: StrategyDecisionRef) -> StrategyDecision
-
-query_authorized_inventory(goal_ref: GoalSnapshotRef, agent_ref: AgentRef) -> AuthorizedStrategyInventory
-
-invalidate_strategy(request: StrategyInvalidationRequest) -> StrategyInvalidation
+construct_strategy_candidate(request: StrategyCandidateRequest) -> StrategyCandidateResult
 ```
 
 Strategy construction consumes planner projections through their public contracts. It does not expose or import lower inference internals.
 
-Only the Goal-owning Agent or an explicit delegate may authorize a Strategy decision and initial Goal admission. Persistence custody does not confer authority.
+The Goal-owning Agent authorizes the candidate before initial Goal admission. Persistence custody does not confer authority.
 
-Execution consumes the Goal admission bundle and authorized inventory through explicit contracts, then returns planning acceptance or rejection. Execution must not mutate Strategy records directly.
+Execution consumes the admitted authorization through explicit contracts, then returns realization acceptance or rejection. Execution must not reinterpret the candidate.
 
-These Strategy routes define the canonical public contract for the boundary. Implementation readiness for the routes lives in [Strategy Ground Map](../../plan/world_model/strategy/ground_map.md).
+This route defines the current public Strategy surface. Implementation readiness lives in [Strategy Ground Map](../../plan/world_model/strategy/ground_map.md).
 
 ## Capability Invocation Pattern
 

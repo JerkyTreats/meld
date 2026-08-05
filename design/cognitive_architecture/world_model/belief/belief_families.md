@@ -39,7 +39,7 @@ Family configuration supplies:
 - observationality declaration per dimension
 - config version
 
-The observationality declaration states whether a dimension's value is established only by admitted evidence that arrives after action. The Strategy settlement transform reads it per [Strategy Requirements](../strategy/requirements.md).
+The observationality declaration states whether a dimension's value is established only by admitted evidence that arrives after action. Strategy consumes that meaning when identifying a prospective evidence route, as required by the [Strategy Boundary Contracts](../strategy/contracts.md).
 
 A dimension without an observationality declaration is observational. The permissive derived form must be declared explicitly, never assumed from absence.
 

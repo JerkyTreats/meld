@@ -19,7 +19,7 @@ This conversion is fluid and has not been worked at canonical depth.
 - Subjects are tests, test runs, suites, and commits; relations are contains, executes, and affects.
 - The maintained condition holds each test's flakiness posterior below threshold at a declared confidence.
 - Flakiness is an observational dimension whose settlement is statistical: the belief family declares the settlement criterion — minimum samples or credible-interval width — and settled means the comparator reports confidence above that criterion, mapping to the existing settled belief status.
-- The settling affordance is run test N times; choosing N is an information-gain decision. The first-slice answer is a configured N in the family; the mature answer consumes an information-gain projection.
+- The settling action is run test N times. Choosing N remains a domain-policy question outside the minimal Strategy slice.
 - Alternatives diverge in value posture, not just path: quarantine settles suite reliability cheaply but abandons the test's evidence value; diagnose-and-fix is expensive and preserves it; retry-wrapping masks the question and a sound value posture rejects it.
 - Diagnosis is not encoded as in-plan branching. A diagnosis candidate is a bounded observation plan; its outcome reconciles; the next bounded attempt constructs the fix from revised beliefs. The convergence loop absorbs what a workflow would express as conditionals.
 
@@ -27,10 +27,10 @@ This conversion is fluid and has not been worked at canonical depth.
 
 For this use case to be usable on paper, the following must hold. Standing is given per entry.
 
-1. **Family-declared settlement criteria.** Settlement of a statistical dimension must be definable by the owning family as a confidence condition over accumulated samples, not as a single evaluation event. The belief status vocabulary supports this; the settlement transform's binding to family criteria is an open amendment.
+1. **Family-declared settlement criteria.** Settlement of a statistical dimension must be definable by the owning family as a confidence condition over accumulated samples, not as a single evaluation event. How Strategy consumes that meaning remains open.
 2. **Repeated-observation affordances with sample budgets.** An affordance must express acquire N more samples with cost proportional to N, and construction must consume the budget as a typed capacity fact. New affordance shape; fits the fit-verdict pattern.
-3. **Convergence in place of conditionals.** Multi-phase diagnose-then-fix work must be expressible as successive bounded attempts over reconciled outcomes, without conditional edges inside one candidate. Canonical convergence loop supports this; stating it as the sanctioned pattern is an open amendment.
-4. **Value-posture-sensitive ranking.** Alternatives with equal feasibility but opposed value consequences must be ranked by the Agent posture, and a masking alternative must be rejectable on posture grounds alone. Canonical as STR-033; no code ground.
+3. **Convergence in place of conditionals.** Successive bounded attempts over reconciled outcomes are a design hypothesis, not current Strategy behavior.
+4. **Value-posture-sensitive ranking.** Alternatives with equal feasibility but opposed value consequences may require Agent posture to distinguish them. This is a design hypothesis outside the minimal Strategy slice.
 5. **Invalidation on code change.** A commit touching the code under test must invalidate settled flakiness beliefs for affected tests. Requires the affects relation projected into frames; same enrichment delta as other domains.
 
 ## Read with

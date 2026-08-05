@@ -142,9 +142,7 @@ Mutations are the graph delta interface between planning and execution. Executio
 
 Task network mutation sets are accepted atomically. A command either commits every graph mutation in the set or commits none of them.
 
-Each Strategy-originated mutation set carries immutable planning-commitment intent with planning request identity, idempotency key, exact Strategy, Goal, world-frame, PDS, authority, activation, capability-catalog, Method, and Composition lineage. Acceptance validates Agent authority, Goal lifecycle, and Strategy eligibility epoch fences. The reducer persists graph mutations, `CommitRecord`, derived planning commitment, accepted planning response, and publication outbox obligation in one atomic commit.
-
-Dispatch claims validate the same three epoch fences. Authority revocation and Strategy invalidation advance their owning epochs. The Goal lifecycle epoch advances on every lifecycle, replacement, or content transition that changes work eligibility, including activation, suspension, resume, satisfaction, reopening, abandonment, removal, supersession, and replacement. These transitions serialize against commits and claims, so stale work cannot begin new dispatch.
+Each Strategy-originated mutation set preserves the admitted authorization, Goal, world frame, Method, and Composition lineage needed to show that operational work realizes the settled Agent judgment. Acceptance validates current Goal lifecycle and ordinary task-network preconditions.
 
 Lowering from an execution composition must not leave partial executable subgraphs in the authoritative task network. When one executable operator step cannot be lowered, the lowerer reports diagnostics and submits no executable graph changes for that composition.
 
@@ -159,11 +157,6 @@ For each task that is NOT completed and NOT in-flight:
 2. For `DataFlow` edges: the upstream task must have produced the required artifact
 3. For `Ordering` edges: the upstream task must be completed
 4. For `Conditional` edges: the upstream task must be completed AND the guard expression must evaluate to true
-5. For `EvidenceAdmission` edges: an authoritative admitted verdict must bind the exact prospective contract, artifact content identity, subject, scope, schema, and admission authority
-
-Artifact availability never satisfies an evidence-admission edge by itself. The task network consumes the verdict as an authority-preserving input and does not reinterpret it.
-
-The owning domain submits each verdict through `RecordEvidenceAdmissionVerdict`. Acceptance verifies owning-domain revision, prospective contract, exact content identity, subject, scope, schema, and admission authority against a pending edge. The reducer persists an immutable accepted-verdict record in the task-network revision stream and only then advances dependency state. Verdict identity is idempotent, while conflicting reuse is rejected. Replay therefore reconstructs the same evidence-admission readiness decision without consulting mutable external state.
 
 Tasks whose dependencies are all satisfied enter the ready set and may be dispatched to workers.
 

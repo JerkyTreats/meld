@@ -1,7 +1,7 @@
 # Use Case: CVE Freshness
 
 Date: 2026-07-24
-Status: worked canonical example; STR-075 pair
+Status: worked contrasting example
 Scope: keep a project's dependencies free of known vulnerabilities and within currency policy
 
 ## Use case
@@ -14,24 +14,23 @@ The deterministic baseline is strong: automated dependency bots open upgrade pul
 
 ## Meld semantics conversion
 
-The conversion is worked at full canonical depth in [CVE Freshness Strategy](../cognitive_architecture/world_model/strategy/cve_freshness.md), which is authoritative for this use case. In summary:
+The conversion is a contrasting design exploration alongside [CVE Freshness Strategy](../cognitive_architecture/world_model/strategy/cve_freshness.md). It is not implementation authority. In summary:
 
 - Subjects are dependency declarations, resolved versions, advisories, advisory sources, the manifest, and the lockfile; relations are declares, constrains, resolves to, affects, and fixed in.
 - The maintained condition is a scoped negative: no advisory admitted from the declared source set at its admitted revision affects any resolved version at or above the severity threshold, within currency policy, under passing verification.
 - Advisory status is an observational dimension settled by acquisition: observation of external sources, not evaluation of produced bytes.
-- Candidate scope is derived: independent dependencies yield independent candidates; resolver satisfiability verdicts derive coupled batches, and the cross-dependency edge cites the verdict.
-- No fixed version yields typed abstention with a wake registration on advisory revision.
+- Candidate scope may need to reflect dependency coupling. The minimal Strategy slice does not establish this behavior.
 
 ## Required semantics
 
 For this use case to be usable on paper, the following must hold. Standing is given per entry.
 
-1. **Settlement by acquisition.** Observationality must cover dimensions settled by observing an authoritative external source, not only by evaluating produced artifacts. Canonical wording updated 2026-07-24.
+1. **Settlement by acquisition.** Observationality must cover dimensions settled by observing an authoritative external source, not only by evaluating produced artifacts. This is a use-case requirement, not a current Strategy contract.
 2. **Scoped negative obligations.** The system must express and evaluate claims of the form no admitted evidence of kind K affects subject S, with unassessed distinct from settled clean, and must not treat closed-world absence as truth. The shared-language negation semantics currently collapse indeterminate cases; this is named delta work in the ground map.
 3. **External evaluator authority for feasibility.** A resolver must be declarable as the authority whose satisfiability verdicts are feasibility grounds, consumed as typed propositions. New declaration surface; fits the fit-verdict pattern.
 4. **Candidate scoping over a shared artifact.** Curation and Strategy must be able to aggregate coupled divergences into one Goal or one candidate, and to keep uncoupled ones separate with serialization left to Execution. Aggregation is currently under-specified anywhere in the schema; this is an open finding.
-5. **Wake on external evidence revision.** Abstention must register durable wakes on advisory-source revisions so an unfixed advisory converts to action the moment a fixed release is admitted. Canonical contracts exist as wake registration.
-6. **Evidence non-substitution.** Verification outcomes, resolver verdicts, and advisory observations must remain typed and mutually non-substitutable. Canonical as STR-012.
+5. **External evidence revision.** An unfixed advisory motivates later reconsideration when advisory evidence changes. The minimal Strategy slice establishes no durable mechanism for this behavior.
+6. **Evidence non-substitution.** Verification outcomes, resolver verdicts, and advisory observations must remain typed and mutually non-substitutable. Required by domain ownership; implementation ground is not assessed here.
 
 ## Read with
 

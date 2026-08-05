@@ -163,7 +163,7 @@ event authority and observability hardening
 20. `execution` — full integration deferred
 21. runtime completion with initialization and emission — current operational-parity authority
 22. composition-path parity — chartered as Workstream Eight under runtime completion, gating Strategy end-to-end execution
-23. world-model Strategy first slice — pure-language track unblocked now, integration track per-workstream gated per the Strategy ground map
+23. world-model Strategy first slice — active scope in [Strategy Minimal Slice Requirements](world_model/strategy/minimal_slice_requirements.md), cross-domain ownership in [Strategy Assessment By Domain](world_model/strategy/assessment_by_domain.md), and current evidence in [Strategy Ground Map](world_model/strategy/ground_map.md)
 24. agent-native debugger — requirements now, isolate prototyping per registration set, full sessions after runtime completion
 
 ## Implementation Plans
