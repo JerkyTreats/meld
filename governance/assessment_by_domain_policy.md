@@ -10,6 +10,8 @@ Assessment By Domain is a structured review method for architectural concerns th
 
 The goal is to make cross domain impact explicit without violating the maxim that each domain must remain true to its own source truth, behavior, and storage concerns.
 
+The method uses two bounded passes. The first is a complete top-level domain sweep. The second is affected-domain decomposition one level inside every domain whose needed integration is not `none`.
+
 This policy is a review method. It does not create a requirement that every architectural concern integrate with every domain.
 
 ## When To Use
@@ -28,6 +30,10 @@ Do not use it to force needless integration. A correct answer for a domain may b
 - Define what the concern does and does not do.
 - Assess each domain by its own responsibilities.
 - Record non integration explicitly when no integration is needed.
+- Freeze the affected-domain set after the top-level sweep.
+- Decompose every affected domain one level into major concerns, subdomains, or components.
+- Do not decompose domains marked `none`.
+- Stop after the affected-domain decomposition unless another independently owned boundary is discovered.
 - Separate current state from required state.
 - Use evidence from code, tests, design artifacts, or runtime behavior.
 - Do not move domain behavior into the substrate being assessed.
@@ -92,6 +98,25 @@ Use this table for each assessed concern.
 | `own` | The domain owns part of the concern implementation or source truth |
 | `adapter` | The domain only exposes, routes, formats, or wires another domain contract |
 
+## Affected-Domain Decomposition
+
+Affected-domain decomposition is the second breadth pass. It prevents a coherent design inside one domain from hiding missed handoffs within another affected domain.
+
+For each top-level domain marked above `none`, identify one level of major concerns from current public contracts and domain organization. Prefer behavior names over generic technical layers.
+
+| Domain concern | Owner | Current ground | Required relationship | Change posture | Boundary risk | Evidence |
+| --- | --- | --- | --- | --- | --- | --- |
+
+Use these change postures:
+
+- `reuse unchanged`
+- `extend existing`
+- `new local behavior`
+- `adapter only`
+- `not needed`
+
+This pass is not a file inventory. File and function scope belongs to implementation planning.
+
 ## Procedure
 
 1. State the concern in one paragraph.
@@ -101,9 +126,12 @@ Use this table for each assessed concern.
 5. Fill one row per top level domain.
 6. Mark domains as `none` when integration would be false to the domain.
 7. Record evidence for every `partial`, `complete`, and `blocked` row.
-8. Extract only the rows with real needed integration into implementation work.
-9. Keep adapter work separate from authoritative domain behavior.
-10. Update the assessment if a new top level domain is added during the change.
+8. Freeze the affected-domain set from rows marked above `none`.
+9. Decompose every affected domain one level and assess its major concerns.
+10. Separate domains traversed at runtime from domains whose behavior changes.
+11. Extract only real change owners into implementation work.
+12. Keep adapter work separate from authoritative domain behavior.
+13. Update the assessment if a new top level domain is added or ownership moves during the change.
 
 ## Required Output
 
@@ -113,6 +141,9 @@ An Assessment By Domain artifact must include:
 - In scope list.
 - Out of scope list.
 - Domain assessment table.
+- Frozen affected-domain set.
+- One-level affected-domain decomposition.
+- Ownership summary that separates changed behavior, adapters, and reuse unchanged.
 - Gaps and follow ups.
 - Explicit non integration notes for domains where `none` is not obvious.
 - Evidence date.
@@ -126,4 +157,6 @@ An Assessment By Domain artifact must include:
 - Calling a concern complete without saying which domains are not started, partial, complete, blocked, or not needed.
 - Making a CLI, API, or formatting adapter the authoritative implementation of domain truth.
 - Reusing a table from an old assessment without regenerating the domain list.
-
+- Stopping after the top-level sweep when affected domains contain several distinct ownership concerns.
+- Recursing through files and functions instead of stopping after one affected-domain decomposition level.
+- Treating every runtime participant as implementation write scope.
