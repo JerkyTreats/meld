@@ -77,6 +77,15 @@ This interpretation remains subject to the open decisions and experiments in thi
 
 ## Examples
 
+- [PDS Expression Catalog](examples/pds_expression_catalog.md)  
+  Normalizes documentation freshness, CVE exposure, roleplay continuity, lore/canon stewardship, codebase quality, game faction strategy, service reliability, learner mastery, portfolio thesis/risk, and physical asset maintenance against one comparative expression surface.
+
+- [Roleplay Character Continuity Steward](examples/roleplay_character.md)  
+  Detailed decomposition of a persistent interactive character that separates canon truth, character knowledge, commitments, relationships, narrative threads, and response authority.
+
+- [Lore Transcriber And Canon Steward](examples/lore_transcriber.md)  
+  Detailed decomposition of persistent entity and claim curation, including alias resolution, merge/split lineage, provenance, contradiction, supersession, and derived-definition freshness.
+
 - [Software Quality Stewardship](examples/software_quality.md)  
   Full expert decomposition across reliability, persistence, performance, usability, maintainability, and documentation.
 
@@ -113,7 +122,8 @@ The current recommendations are:
 - use a small structured customer profile with generated visual and conversational editing;
 - reuse existing cognitive-runtime contracts;
 - treat workflows as compatibility methods where useful rather than deleting proven mechanics;
-- start with documentation freshness, then test software performance and one non-software steward.
+- start with documentation freshness, then test software performance and one non-software steward;
+- use dissimilar expression cards to reject false-positive PDS use cases before freezing a package source schema.
 
 ## Current Non-Decisions
 
