@@ -88,10 +88,10 @@ This slice does not migrate the package workflow or require general Composition 
 
 The first slice contains seven bounded changes.
 
-1. Add a world-model Strategy constructor for one ground Goal, one exact planner frame, one configured Method, one available action, and one prospective evidence route. It reuses current shared-language operations and produces at most one candidate.
+1. Add a world-model Strategy constructor for one ground Goal, one exact planner frame, activated theory, one bounded Capability contract snapshot, optional configured Methods, and one prospective evidence route. It performs a deterministic bounded backward walk from settlement obligations, closes required Capability inputs, reuses current shared-language operations, and retains at most one eligible candidate. A Method may seed this walk but direct Capability construction must work without one.
 2. Extend Agent curation contracts and runtime so the Agent authorizes the exact candidate after Goal drafting and before durable decision persistence. Recovery reuses that settled payload without constructing or choosing again.
 3. Carry the authorization through the existing `CurationGoalSetPort`. Extend Execution Goal acceptance and the existing Goal record to validate and retain the accepted operational copy.
-4. Add an authorized-candidate path to Execution planning. It bypasses Method search, revalidates the exact Method, bindings, Composition, action, and realization, then uses existing lowering.
+4. Add an authorized-candidate path to Execution planning. It bypasses semantic search, revalidates the exact Capability contracts, optional Method lineage, bindings, Composition, actions, and realizations, then uses existing lowering.
 5. Map current planning and outcome theory into a neutral world-model Strategy input in root runtime assembly. Root copies contracts and wires owners without deciding Strategy validity.
 6. Correct docs-freshness theory. The Method must stop asserting an observational docs-freshness value. The curation rule identifies the one Strategy policy and the prospective route from action outcome to required evidence.
 7. Add focused Strategy, Agent, Goal admission, and authorized-planning tests plus one assembled docs-freshness product proof.
@@ -100,7 +100,7 @@ No first-slice change is required in `meld-lang`, planner projection, belief ass
 
 ### Delta sequencing
 
-Freeze two contracts first: the authorization payload shared by Agent and Execution, and the neutral Strategy theory input produced by root assembly.
+Freeze two contracts first: the authorization payload shared by Agent and Execution, and the immutable Strategy problem input produced by root assembly.
 
 After those contracts settle, world-model construction and Execution admission may proceed independently. Root wiring follows both. The authored-theory correction and focused tests may proceed with their owning components. The assembled product proof closes the slice.
 

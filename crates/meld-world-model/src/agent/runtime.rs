@@ -11,6 +11,7 @@ use crate::agent::contracts::{
 };
 use crate::agent::curation::{curate_goal_satisfaction, curate_threshold_rule, AgentCuration};
 use crate::agent::store::AgentStore;
+use crate::agent::strategy::{authorize_curation_outcome, AgentStrategyRuntimeConfig};
 use crate::agent::subscription::AgentSubscription;
 use crate::belief::BeliefQuery;
 use crate::planner::PlannerQuery;
@@ -185,12 +186,30 @@ impl AgentRuntimeReport {
 /// Runtime facade for agent goal curation deliveries.
 pub struct AgentGoalCurationRuntime<'a> {
     store: &'a AgentStore,
+    strategy: Option<AgentStrategyRuntimeConfig>,
 }
 
 impl<'a> AgentGoalCurationRuntime<'a> {
     /// Bind the runtime facade to durable agent storage.
+    ///
+    /// This constructor preserves the compatibility path for assemblies that
+    /// have not installed an authored Strategy theory snapshot.
     pub fn new(store: &'a AgentStore) -> Self {
-        Self { store }
+        Self {
+            store,
+            strategy: None,
+        }
+    }
+
+    /// Bind curation to a supplied minimal Strategy problem template.
+    ///
+    /// Per-delivery Goal and planner state replace the corresponding template
+    /// fields before bounded construction begins.
+    pub fn new_with_strategy(store: &'a AgentStore, strategy: AgentStrategyRuntimeConfig) -> Self {
+        Self {
+            store,
+            strategy: Some(strategy),
+        }
     }
 
     /// Curate one delivery, submit any goal command, and advance the cursor.
@@ -380,13 +399,38 @@ impl<'a> AgentGoalCurationRuntime<'a> {
                 return None;
             }
         };
-        let outcome = match curate_threshold_rule(input) {
+        let strategy_world_state = input.planner_projection.world_state.clone();
+        let strategy_snapshot_id = planner_snapshot_identity(&input.planner_projection);
+        let mut outcome = match curate_threshold_rule(input) {
             Ok(outcome) => outcome,
             Err(error) => {
                 report.fatal_error(error.to_string());
                 return None;
             }
         };
+        if let Some(strategy) = &self.strategy {
+            if outcome.goal_command.is_some() {
+                let mut problem = strategy.problem.clone();
+                problem.world_state = strategy_world_state;
+                problem.planner_snapshot_id = strategy_snapshot_id;
+                outcome =
+                    match authorize_curation_outcome(outcome, problem, strategy.bounds.clone()) {
+                        Ok(outcome) => outcome,
+                        Err(mut failure) => {
+                            // Failure to authorize is an Agent abstention, not
+                            // an execution error and not permission to submit
+                            // the original unaudited Goal command.
+                            failure.outcome.decision.decision = AgentDecisionKind::Indeterminate;
+                            failure.outcome.decision.reason = format!(
+                                "Strategy produced no authorization under {:?}: {:?}",
+                                failure.completion, failure.grounds
+                            );
+                            failure.outcome.goal_command = None;
+                            failure.outcome
+                        }
+                    };
+            }
+        }
         let persisted = match self.store.put_decision(&outcome.decision) {
             Ok(persisted) => persisted,
             Err(error) => {
@@ -748,4 +792,17 @@ fn push_goal_query_error(report: &mut AgentRuntimeReport, error: AgentActiveGoal
     } else {
         report.fatal_error(error.message);
     }
+}
+
+fn planner_snapshot_identity(projection: &crate::planner::PlannerProjectionOutput) -> String {
+    projection
+        .source_refs
+        .iter()
+        .find_map(|source| match source {
+            crate::planner::PlannerSourceRef::BeliefRevision { revision_id } => {
+                Some(format!("belief-revision::{revision_id}"))
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| "unassessed::strategy-input".to_string())
 }

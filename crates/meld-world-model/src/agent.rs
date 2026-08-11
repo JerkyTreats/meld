@@ -9,6 +9,7 @@ pub mod registration;
 pub mod runtime;
 pub mod selection;
 pub mod store;
+pub mod strategy;
 pub mod subscription;
 
 pub use actor::*;
@@ -20,4 +21,5 @@ pub use registration::AgentRegistration;
 pub use runtime::*;
 pub use selection::*;
 pub use store::AgentStore;
+pub use strategy::*;
 pub use subscription::AgentSubscription;

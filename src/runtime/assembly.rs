@@ -473,6 +473,11 @@ pub struct StewardshipTheoryBindings {
     /// (Runtime Initialization stage 2), assembly hydrates from it and this
     /// injection becomes harness-only.
     pub outcome_mapping: Option<OutcomeMappingSetConfig>,
+    /// Activated world-model Strategy problem template for Goal curation.
+    ///
+    /// `None` deliberately retains compatibility curation until root assembly
+    /// can supply an authored, content-identified theory snapshot.
+    pub strategy: Option<meld_world_model::AgentStrategyRuntimeConfig>,
     /// Planning theory: methods, catalog, afforded actions, realizations.
     pub planning: Option<PlanningTheoryBinding>,
     /// Real execution route bindings for the dispatch actor.
@@ -777,6 +782,7 @@ struct AgentActorFactory {
     goal_store: Arc<PersistentGoalSetStore>,
     goal_command: ExecutionGoalCommandPort,
     goal_mutation: ExecutionGoalMutationPort,
+    strategy: Option<meld_world_model::AgentStrategyRuntimeConfig>,
 }
 
 #[derive(Clone)]
@@ -1930,6 +1936,7 @@ impl RuntimeSemanticHandleFactory {
                     goal_store: Arc::clone(goal_store),
                     goal_command: goal_command.clone(),
                     goal_mutation: goal_mutation.clone(),
+                    strategy: composed.theory.strategy.clone(),
                 })))
             }
             "execution.planning" => {
@@ -2085,16 +2092,26 @@ impl RuntimeSemanticHandleFactory {
             }
             Self::AgentActor(factory) => {
                 let (curation, satisfaction) = match factory.kind {
-                    AgentActorKind::GoalCuration => (
-                        Some(AgentGoalCurationActor::new(
-                            factory.runtime_id.clone(),
-                            factory.agent_id.clone(),
-                            Arc::clone(&factory.agent_store),
-                            Arc::clone(&factory.belief_store),
-                            Arc::clone(&factory.traversal_store),
-                        )),
-                        None,
-                    ),
+                    AgentActorKind::GoalCuration => {
+                        let actor = match factory.strategy.clone() {
+                            Some(strategy) => AgentGoalCurationActor::new_with_strategy(
+                                factory.runtime_id.clone(),
+                                factory.agent_id.clone(),
+                                Arc::clone(&factory.agent_store),
+                                Arc::clone(&factory.belief_store),
+                                Arc::clone(&factory.traversal_store),
+                                strategy,
+                            ),
+                            None => AgentGoalCurationActor::new(
+                                factory.runtime_id.clone(),
+                                factory.agent_id.clone(),
+                                Arc::clone(&factory.agent_store),
+                                Arc::clone(&factory.belief_store),
+                                Arc::clone(&factory.traversal_store),
+                            ),
+                        };
+                        (Some(actor), None)
+                    }
                     AgentActorKind::SatisfactionCuration => (
                         None,
                         Some(AgentSatisfactionCurationActor::new(
@@ -3764,6 +3781,7 @@ mod tests {
                 lifecycle: GoalLifecycle::Proposed,
             },
             dedupe_key,
+            strategy_authorization: None,
         }
     }
 

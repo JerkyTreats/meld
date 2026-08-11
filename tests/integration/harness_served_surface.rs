@@ -27,6 +27,15 @@ fn post(addr: std::net::SocketAddr, path: &str, body: serde_json::Value) -> ureq
         })
 }
 
+fn get(addr: std::net::SocketAddr, path: &str) -> ureq::Response {
+    ureq::get(&format!("http://{addr}{path}"))
+        .call()
+        .unwrap_or_else(|error| match error {
+            ureq::Error::Status(_, response) => response,
+            other => panic!("transport failure on {path}: {other}"),
+        })
+}
+
 #[test]
 fn the_substrate_serves_contract_types_over_loopback_for_a_live_session() {
     let session = tempfile::tempdir().unwrap();
@@ -65,6 +74,10 @@ fn the_substrate_serves_contract_types_over_loopback_for_a_live_session() {
     for now_ms in [1_100, 1_200, 1_300] {
         driver.step(now_ms).unwrap();
     }
+
+    let served_ledger_id: meld_events::LedgerIdentity =
+        get(addr, "/v1/ledger").into_json().unwrap();
+    assert_eq!(served_ledger_id, ledger_id);
 
     // Watermark: the genesis fact is durable and visible over the wire.
     let watermark: EventWatermark = post(

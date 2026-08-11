@@ -11,6 +11,9 @@ pub struct ExecutionGoalRecord {
     pub source_command_id: Option<String>,
     /// Non-empty producer identity used to dedupe retries across command ids.
     pub source_identity: Option<String>,
+    /// Exact Strategy authorization retained at guarded Goal admission.
+    #[serde(default)]
+    pub strategy_authorization: Option<ExecutionStrategyAuthorization>,
     /// Lifecycle epoch of the stable goal identity. Reopening a satisfied
     /// goal advances the epoch in place; satisfaction evidence binds the
     /// epoch it was produced under, so satisfied is never an absorbing
@@ -21,6 +24,31 @@ pub struct ExecutionGoalRecord {
     pub created_at_seq: u64,
     /// Monotonic sequence observed when the record was last changed.
     pub updated_at_seq: u64,
+}
+
+/// Execution-owned operational copy of an Agent Strategy authorization.
+///
+/// Execution retains only the fields needed to revalidate and realize the
+/// exact graph. Strategy theory, search traces, and Agent judgment remain
+/// owned by the world model.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExecutionStrategyAuthorization {
+    /// Exact authorization identity assigned by the Agent.
+    pub authorization_id: String,
+    /// Agent decision that owns the authorization.
+    pub agent_decision_id: String,
+    /// Exact verified Strategy candidate identity.
+    pub candidate_id: String,
+    /// Goal to which the candidate is anchored.
+    pub goal_id: String,
+    /// Planner snapshot against which the candidate was constructed.
+    pub planner_snapshot_id: String,
+    /// Exact authorized semantic action graph.
+    pub composition: meld_lang::Composition,
+    /// Exact Capability contract identities selected by Strategy.
+    pub capability_contract_ids: Vec<String>,
+    /// Optional reusable Method lineage.
+    pub method_id: Option<String>,
 }
 
 /// Common metadata attached to idempotent goal commands.

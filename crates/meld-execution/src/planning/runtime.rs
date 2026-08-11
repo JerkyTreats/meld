@@ -1,7 +1,7 @@
 //! First-slice execution planning runtime.
 
 use crate::capability::CapabilityCatalog;
-use crate::goals::ActiveGoalQuery;
+use crate::goals::{ActiveGoalQuery, ExecutionStrategyAuthorization};
 use crate::planning::action::{ActionRealizationRoute, AvailableActionSet};
 use crate::planning::contracts::{
     CandidateStatus, ExecutionComposition, InvalidMethodReport, MethodCandidateReport,
@@ -325,7 +325,7 @@ where
 
         for record in active_goals {
             report.attempted += 1;
-            self.process_goal(task_network, projection, &request, record.goal, &mut report);
+            self.process_goal(task_network, projection, &request, record, &mut report);
         }
 
         report.output_revision = task_network.state().revision;
@@ -337,11 +337,13 @@ where
         task_network: &mut SledTaskNetworkStore,
         projection: &mut P,
         request: &PlanningRuntimeActorRequest,
-        goal: meld_lang::Goal,
+        record: crate::goals::ExecutionGoalRecord,
         report: &mut PlanningRuntimeActorReport,
     ) where
         P: PlanningProjectionPort,
     {
+        let goal = record.goal;
+        let strategy_authorization = record.strategy_authorization;
         let projection_request = projection_request_for_goal(request, &goal);
         let projected = match projection.project(projection_request.clone()) {
             Ok(projected) => projected,
@@ -374,7 +376,13 @@ where
             world_state_frame: projected.frame,
             world_state_request: projection_request,
         };
-        let planning_result = match self.runtime.plan_goal(planning_request) {
+        let planning_result = match strategy_authorization.as_ref() {
+            Some(authorization) => self
+                .runtime
+                .plan_authorized_goal(planning_request, authorization),
+            None => self.runtime.plan_goal(planning_request),
+        };
+        let planning_result = match planning_result {
             Ok(result) => result,
             Err(error) => {
                 report.fatal_errors.push(PlanningRuntimeActorIssue {
@@ -848,6 +856,110 @@ impl PlanningRuntime {
             )],
         }))
     }
+
+    /// Revalidate and realize one exact Agent-authorized Strategy candidate.
+    ///
+    /// This path does not search the Method library. It preserves the exact
+    /// authorized composition while rechecking its Goal and frame anchors,
+    /// current preconditions, structure, and live Capability resolution.
+    pub fn plan_authorized_goal(
+        &self,
+        request: PlanningRequest,
+        authorization: &ExecutionStrategyAuthorization,
+    ) -> Result<PlanningResult, PlanningInputError> {
+        validate_request(&request)?;
+        if authorization.goal_id != request.goal.goal_id
+            || authorization.planner_snapshot_id != request.world_state_frame.frame_id
+        {
+            return Ok(invalid_authorized_candidate(
+                authorization,
+                "authorization does not match the Goal or planner frame",
+            ));
+        }
+        let validation = validate(&authorization.composition);
+        if !validation.valid {
+            return Ok(invalid_authorized_candidate(
+                authorization,
+                "authorized Composition failed structural revalidation",
+            ));
+        }
+        for step in &authorization.composition.steps {
+            if let StepKind::Op(operator) = &step.kind {
+                for precondition in &operator.preconditions {
+                    if evaluate(&request.world_state, precondition) != EvalResult::Satisfied {
+                        return Ok(invalid_authorized_candidate(
+                            authorization,
+                            "authorized operator precondition is no longer satisfied",
+                        ));
+                    }
+                }
+            }
+        }
+        let operator_resolutions =
+            operator_resolutions(&authorization.composition, &self.capability_catalog);
+        if operator_resolutions
+            .iter()
+            .any(|report| report.status != crate::planning::OperatorResolutionStatus::Resolved)
+        {
+            return Ok(invalid_authorized_candidate(
+                authorization,
+                "authorized Capability contract is unavailable or incompatible",
+            ));
+        }
+        let projected_effects = authorization
+            .composition
+            .steps
+            .iter()
+            .filter_map(|step| match &step.kind {
+                StepKind::Op(operator) => Some(operator.effects.clone()),
+                StepKind::Goal(_) => None,
+            })
+            .flatten()
+            .collect();
+        let method_id = authorization
+            .method_id
+            .clone()
+            .unwrap_or_else(|| authorization.candidate_id.clone());
+        let diagnostics = operator_resolutions
+            .iter()
+            .flat_map(|report| report.diagnostics.clone())
+            .collect();
+        Ok(PlanningResult::Composed(ExecutionComposition {
+            composition_id: composition_id(
+                &request.request_id,
+                &request.goal.goal_id,
+                &method_id,
+                &Bindings::empty(),
+                &authorization.composition,
+                &request.world_state_frame,
+            ),
+            goal: request.goal,
+            world_state_frame: request.world_state_frame,
+            method_id,
+            bindings: Bindings::empty(),
+            composition: authorization.composition.clone(),
+            projected_effects,
+            operator_resolutions,
+            validation,
+            diagnostics,
+        }))
+    }
+}
+
+fn invalid_authorized_candidate(
+    authorization: &ExecutionStrategyAuthorization,
+    message: &str,
+) -> PlanningResult {
+    // Use the existing invalid-candidate result surface so actor reporting and
+    // retry behavior remain identical across Method and Strategy inputs.
+    PlanningResult::InvalidMethod(InvalidMethodReport {
+        source_ref: Some(authorization.authorization_id.clone()),
+        method_id: authorization.method_id.clone(),
+        diagnostics: vec![PlanningDiagnostic::new(
+            PlanningDiagnosticCode::CompositionValidationFailed,
+            message,
+        )],
+    })
 }
 
 enum CandidateEvaluation {

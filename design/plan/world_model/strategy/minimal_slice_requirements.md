@@ -12,7 +12,7 @@ The cognitive architecture [World Model Strategy](../../../cognitive_architectur
 
 ## Objective
 
-Strategy must turn one Agent-curated Goal draft into one evidence-backed concrete course of action before that Goal enters Execution.
+Strategy must turn one Agent-curated Goal draft into one evidence-backed concrete course of action before that Goal enters Execution. It must be able to construct that course directly from declared Capability contracts. A configured Method may seed the same construction path but is not required for Strategy to function.
 
 The slice proves the authority boundary and the complete product path:
 
@@ -31,7 +31,7 @@ belief divergence
 
 ## Product proof
 
-The proof uses one ground docs-freshness Goal, one exact planner frame, one configured Method, one available action, and one prospective evidence route.
+The proof uses one ground docs-freshness Goal, one exact planner frame, activated theory, a bounded Capability contract snapshot, and one prospective evidence route. The direct construction path must find and close the required action graph without depending on a configured Method. A second focused proof may show that a configured Method seeds an equivalent candidate through the same constructor.
 
 The configured action runs through the existing docs-writer package route and produces a real `README.md`. A substantive package outcome enters the existing evidence and belief path. Only Agent satisfaction over reconciled belief closes the Goal.
 
@@ -80,38 +80,42 @@ The Strategy attempt accepts only:
 ```text
 one ground proposed Goal
 one exact planner frame
-one configured Method
-one Method-to-action realization
-one action outcome contract
+one activated theory snapshot
+one bounded Capability contract snapshot
+zero or more configured Methods
 one prospective evidence route
-one configured Agent judgment policy
+one deterministic evaluation policy
+explicit structural search bounds
 ```
 
-The attempt produces at most one candidate and performs no recursive Goal expansion.
+The attempt uses deterministic bounded traversal, retains at most one eligible candidate, and performs no recursive Goal expansion. It may introduce upstream Capability obligations needed to close required artifacts and bindings.
 
 ### SMSR-011 Candidate construction
 
-Strategy must reuse existing shared-language unification, substitution, evaluation, and Composition validation.
+Strategy must reuse existing shared-language unification, substitution, evaluation, and Composition validation. It starts from Goal settlement obligations and walks backward through Capability outputs, recursively closing required inputs from the planner frame, admissible existing artifacts, or other Capability outputs.
 
 The candidate is eligible only when:
 
 - the Goal is ground and proposed
 - the frame has exact identity and matches the Goal scope
-- the Method trigger binds the Goal target
-- every precondition is satisfied
+- every selected action has declared contribution to a Goal settlement obligation
+- every selected Capability input and required binding is closed
+- every world-state precondition is satisfied
 - every binding is ground
 - the concrete Composition is structurally valid
-- the Method resolves to exactly one available action
-- the action has a valid existing realization route
+- every selected Capability contract has exact identity and a valid existing realization route
 - the prospective evidence route is valid for the Goal dimension
+
+A configured Method may propose an initial action graph. That graph passes the same closure and eligibility path as a directly constructed graph. A trigger miss or unavailable Method must not prevent direct Capability construction.
 
 ### SMSR-012 Prospective evidence route
 
 For the configured observational dimension, the candidate must identify:
 
 ```text
-Method identity
-action identity
+optional Method lineage
+semantic action identities
+Capability contract identities
 outcome contract identity
 outcome mapping identity
 substantive outcome rule identity
@@ -123,7 +127,7 @@ The route is a prediction that execution can produce admissible evidence. It is 
 
 ### SMSR-013 No candidate
 
-When the configured Method cannot produce one eligible candidate, Strategy returns a typed no-candidate result. The Agent decision may be persisted, but no Goal command is submitted.
+When bounded construction finds no eligible candidate, Strategy returns typed rejection and exhaustion grounds. The result must distinguish proven exhaustion of the bounded finite space from termination with an unexplored frontier. The Agent decision may be persisted, but no Goal command is submitted.
 
 ### SMSR-014 Agent judgment payload
 
@@ -134,10 +138,10 @@ authorization identity
 Agent decision identity
 Goal identity and target digest
 planner frame identity and source references
-Method identity and content identity
+optional Method lineage and content identity
 ground bindings
 concrete Composition and content identity
-action identity and outcome contract
+Capability contract identities and outcome contracts
 prospective evidence route
 policy identity and version
 ```
@@ -181,11 +185,28 @@ The first slice adds no:
 - compatibility system
 - generalized Strategy framework
 
+### SMSR-019A Explicit deferrals
+
+The first slice does not implement:
+
+- Pareto-frontier retention
+- global optimality claims
+- exhaustive search certificates beyond bounded completion posture
+- branch-and-bound or admissible pruning
+- stochastic exploration
+- multiple search engines
+- transposition tables or durable search state
+- learned evaluation policy
+- parallel search
+- Strategy catalogs or Strategy-specific stores
+
+These are valid cognitive-architecture extensions. They become delivery requirements only through a later active plan.
+
 ## Acceptance evidence
 
 ### SMSR-020 Construction proof
 
-Focused world-model tests prove one eligible candidate and typed rejection for trigger miss, unsatisfied or indeterminate preconditions, unbound substitution, invalid Composition, ambiguous realization, stale frame, and invalid prospective evidence route.
+Focused world-model tests prove direct construction of one eligible candidate from Capability contracts without a configured Method. They also prove typed rejection for unsatisfied or indeterminate preconditions, unclosed inputs, unbound substitution, invalid Composition, ambiguous realization, stale frame, invalid prospective evidence route, and exceeded bounds with an honest frontier posture. A Method-seeded test proves reuse enters the same construction and verification path.
 
 ### SMSR-021 Judgment and replay proof
 
@@ -197,7 +218,7 @@ Execution Goal tests prove rejection of missing, empty, mismatched, and content-
 
 ### SMSR-023 Realization proof
 
-Execution planning tests prove that only the admitted Method, bindings, Composition, and action can run. Altered or unavailable inputs fail before task-network mutation.
+Execution planning tests prove that only the admitted Capability contracts, optional Method lineage, bindings, Composition, and actions can run. Altered or unavailable inputs fail before task-network mutation.
 
 ### SMSR-024 Outcome separation proof
 

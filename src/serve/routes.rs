@@ -65,6 +65,9 @@ pub struct RouteError {
 /// Dispatch one request against the served sources.
 pub fn dispatch(sources: &ServeSources, method: &str, path: &str, body: &[u8]) -> RouteResponse {
     match (method, path) {
+        ("GET", "/v1/ledger") => {
+            respond(Ok::<_, std::convert::Infallible>(sources.ledger_identity()))
+        }
         ("POST", "/v1/events/durable_append") => handle(body, |request: DurableAppendRequest| {
             sources.events.durable_append(request)
         }),

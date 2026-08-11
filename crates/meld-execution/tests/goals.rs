@@ -1,18 +1,73 @@
 use meld_events::DomainObjectRef;
 use meld_execution::goals::{
-    ActiveGoalQuery, AddGoalCommand, ExecutionGoalRecord, GoalAcceptanceLifecycle,
-    GoalAcceptanceRequest, GoalCommandMetadata, GoalCommandOutcome, GoalSetApi, GoalSetApiError,
-    GoalSetQuery, GoalSetStore, ModifyGoalCommand, PersistentGoalSetStore, RemoveGoalCommand,
-    ReopenGoalCommand, ResumeGoalCommand, SatisfyGoalCommand, StaleGoalCommandReason,
-    SuspendGoalCommand,
+    ActiveGoalQuery, AddGoalCommand, ExecutionGoalRecord, ExecutionStrategyAuthorization,
+    GoalAcceptanceLifecycle, GoalAcceptanceRequest, GoalCommandMetadata, GoalCommandOutcome,
+    GoalSetApi, GoalSetApiError, GoalSetQuery, GoalSetStore, ModifyGoalCommand,
+    PersistentGoalSetStore, RemoveGoalCommand, ReopenGoalCommand, ResumeGoalCommand,
+    SatisfyGoalCommand, StaleGoalCommandReason, SuspendGoalCommand,
 };
 use meld_lang::{
-    Condition, Goal, GoalLifecycle, GoalPriority, GoalSource, Literal, Proposition, Term,
+    CapabilityRef, Composition, Condition, CostEstimate, Goal, GoalLifecycle, GoalPriority,
+    GoalSource, Literal, Operator, Proposition, Resolution, Step, StepKind, Term,
 };
 use proptest::prelude::*;
 
 fn node(id: &str) -> Term {
     Term::Object(DomainObjectRef::new("workspace", "node", id).unwrap())
+}
+
+fn strategy_authorization(goal_id: &str) -> ExecutionStrategyAuthorization {
+    ExecutionStrategyAuthorization {
+        authorization_id: "authorization-1".into(),
+        agent_decision_id: "decision-1".into(),
+        candidate_id: "candidate-1".into(),
+        goal_id: goal_id.into(),
+        planner_snapshot_id: "frame-1".into(),
+        composition: Composition {
+            steps: vec![Step {
+                step_id: "write".into(),
+                kind: StepKind::Op(Operator {
+                    operator_id: "write".into(),
+                    preconditions: Vec::new(),
+                    effects: Vec::new(),
+                    cost: CostEstimate::zero(),
+                    resolution: Resolution {
+                        requires_inputs: Vec::new(),
+                        requires_outputs: Vec::new(),
+                        scope_kind: None,
+                        tags: Vec::new(),
+                        specific: Some(CapabilityRef {
+                            capability_type_id: "docs.write".into(),
+                            capability_version: 1,
+                        }),
+                    },
+                }),
+            }],
+            edges: Vec::new(),
+        },
+        capability_contract_ids: vec!["docs.write-v1".into()],
+        method_id: None,
+    }
+}
+
+#[test]
+fn guarded_acceptance_retains_exact_strategy_authorization() {
+    let mut store = GoalSetStore::new();
+    let authorization = strategy_authorization("goal-strategy");
+    let outcome = GoalSetApi::new(&mut store)
+        .accept_goal(GoalAcceptanceRequest {
+            metadata: metadata("command-strategy", Some("source-strategy"), 9),
+            goal: goal("goal-strategy", GoalLifecycle::Proposed),
+            lifecycle_policy: GoalAcceptanceLifecycle::RequireProposedThenActivate,
+            strategy_authorization: Some(authorization.clone()),
+        })
+        .unwrap();
+    let GoalCommandOutcome::Applied(record) = outcome else {
+        panic!("expected applied authorization");
+    };
+
+    assert_eq!(record.strategy_authorization, Some(authorization));
+    assert_eq!(record.goal.lifecycle, GoalLifecycle::Active);
 }
 
 fn goal(goal_id: &str, lifecycle: GoalLifecycle) -> Goal {
@@ -54,6 +109,7 @@ fn acceptance_request(
         metadata: metadata(command_id, source_identity, seq),
         goal,
         lifecycle_policy,
+        strategy_authorization: None,
     }
 }
 
@@ -624,6 +680,7 @@ fn persistent_goal_store_recovers_applied_outcome_from_split_record_write() {
         goal: command.goal.clone(),
         source_command_id: Some(command.metadata.command_id.clone()),
         source_identity: command.metadata.source_identity.clone(),
+        strategy_authorization: None,
         lifecycle_epoch: 0,
         created_at_seq: command.metadata.seq,
         updated_at_seq: command.metadata.seq,
@@ -1137,6 +1194,7 @@ fn persistent_store_recovers_applied_reopen_from_split_record_write() {
         goal: goal("goal-1", GoalLifecycle::Active),
         source_command_id: Some("cmd-reopen".to_string()),
         source_identity: None,
+        strategy_authorization: None,
         lifecycle_epoch: 1,
         created_at_seq: 1,
         updated_at_seq: 3,

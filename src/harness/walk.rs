@@ -1095,6 +1095,7 @@ mod tests {
                 decision: AgentDecisionKind::GoalCommand,
                 goal_command_id: Some(COMMAND_ID.to_string()),
                 goal_mutation_command_id: None,
+                strategy_authorization: None,
                 dedupe_key: AgentCurationDedupeKey {
                     agent_id: "seed.docs_freshness".to_string(),
                     subject_key: subject().index_key(),

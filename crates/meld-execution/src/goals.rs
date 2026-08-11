@@ -40,6 +40,7 @@
 //!     },
 //!     goal: goal.clone(),
 //!     lifecycle_policy: GoalAcceptanceLifecycle::RequireProposedThenActivate,
+//!     strategy_authorization: None,
 //! }).unwrap();
 //!
 //! assert!(matches!(outcome, GoalCommandOutcome::Applied(_)));
@@ -61,9 +62,9 @@ pub mod store;
 
 pub use api::{GoalAcceptanceLifecycle, GoalAcceptanceRequest, GoalSetApi, GoalSetApiError};
 pub use contracts::{
-    AddGoalCommand, ExecutionGoalRecord, GoalCommandMetadata, GoalCommandOutcome,
-    ModifyGoalCommand, RemoveGoalCommand, ReopenGoalCommand, ResumeGoalCommand, SatisfyGoalCommand,
-    StaleGoalCommandReason, SuspendGoalCommand,
+    AddGoalCommand, ExecutionGoalRecord, ExecutionStrategyAuthorization, GoalCommandMetadata,
+    GoalCommandOutcome, ModifyGoalCommand, RemoveGoalCommand, ReopenGoalCommand, ResumeGoalCommand,
+    SatisfyGoalCommand, StaleGoalCommandReason, SuspendGoalCommand,
 };
 pub use persistent_store::PersistentGoalSetStore;
 pub use query::{ActiveGoalQuery, ActiveGoalQueryError, GoalSetQuery};

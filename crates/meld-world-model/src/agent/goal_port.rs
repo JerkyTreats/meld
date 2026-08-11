@@ -2,8 +2,8 @@
 //!
 //! Owner: agent domain. Curation output crosses into execution-owned goal
 //! storage through this port and nowhere else. The Strategy goal draft gate
-//! and admission bundle later insert at this port without rewiring curation
-//! or the goal set, which is why the seam is named rather than left as two
+//! and admission bundle insert at this port without rewiring curation or the
+//! goal set, which is why the seam is named rather than left as two
 //! anonymous sink bounds at each call site.
 
 use crate::agent::runtime::{AgentGoalCommandSink, AgentGoalMutationSink};

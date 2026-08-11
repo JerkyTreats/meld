@@ -354,6 +354,7 @@ pub fn curate_threshold_rule(
         command_id: command_id.clone(),
         goal,
         dedupe_key: dedupe_key.clone(),
+        strategy_authorization: None,
     };
     command.validate()?;
     let decision = decision(
@@ -679,6 +680,7 @@ fn decision(
         decision: kind,
         goal_command_id,
         goal_mutation_command_id: None,
+        strategy_authorization: None,
         dedupe_key,
         input_refs: input.input_refs,
         reason: reason.to_string(),
@@ -715,6 +717,7 @@ fn satisfaction_decision(
         decision: kind,
         goal_command_id: None,
         goal_mutation_command_id,
+        strategy_authorization: None,
         dedupe_key,
         input_refs: input.input_refs,
         reason: reason.to_string(),

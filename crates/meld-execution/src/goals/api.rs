@@ -6,8 +6,9 @@
 
 use crate::error::ExecutionInvariantError;
 use crate::goals::contracts::{
-    AddGoalCommand, GoalCommandMetadata, GoalCommandOutcome, ModifyGoalCommand, RemoveGoalCommand,
-    ReopenGoalCommand, ResumeGoalCommand, SatisfyGoalCommand, SuspendGoalCommand,
+    AddGoalCommand, ExecutionStrategyAuthorization, GoalCommandMetadata, GoalCommandOutcome,
+    ModifyGoalCommand, RemoveGoalCommand, ReopenGoalCommand, ResumeGoalCommand, SatisfyGoalCommand,
+    SuspendGoalCommand,
 };
 use crate::goals::persistent_store::PersistentGoalSetStore;
 use crate::goals::store::GoalSetStore;
@@ -24,6 +25,9 @@ pub struct GoalAcceptanceRequest {
     pub goal: meld_lang::Goal,
     /// Contract for how execution should interpret the incoming lifecycle.
     pub lifecycle_policy: GoalAcceptanceLifecycle,
+    /// Exact Strategy authorization for guarded Agent-curated admission.
+    #[serde(default)]
+    pub strategy_authorization: Option<ExecutionStrategyAuthorization>,
 }
 
 /// Lifecycle contract enforced before an accepted goal reaches storage.
@@ -55,6 +59,13 @@ pub trait GoalSetCommandStore {
     fn add_goal_command(
         &mut self,
         command: AddGoalCommand,
+    ) -> Result<GoalCommandOutcome, ExecutionInvariantError>;
+
+    /// Persist or replay an admitted Goal with its exact Strategy authorization.
+    fn add_authorized_goal_command(
+        &mut self,
+        command: AddGoalCommand,
+        authorization: ExecutionStrategyAuthorization,
     ) -> Result<GoalCommandOutcome, ExecutionInvariantError>;
 
     /// Persist or replay a complete goal replacement.
@@ -100,6 +111,14 @@ impl GoalSetCommandStore for GoalSetStore {
         command: AddGoalCommand,
     ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
         self.add_goal(command)
+    }
+
+    fn add_authorized_goal_command(
+        &mut self,
+        command: AddGoalCommand,
+        authorization: ExecutionStrategyAuthorization,
+    ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
+        self.add_goal_with_authorization(command, Some(authorization))
     }
 
     fn modify_goal_command(
@@ -151,6 +170,14 @@ impl GoalSetCommandStore for PersistentGoalSetStore {
         command: AddGoalCommand,
     ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
         self.add_goal(command)
+    }
+
+    fn add_authorized_goal_command(
+        &mut self,
+        command: AddGoalCommand,
+        authorization: ExecutionStrategyAuthorization,
+    ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
+        self.add_goal_with_authorization(command, Some(authorization))
     }
 
     fn modify_goal_command(
@@ -215,8 +242,15 @@ where
         &mut self,
         request: GoalAcceptanceRequest,
     ) -> Result<GoalCommandOutcome, GoalSetApiError> {
+        let authorization = request.strategy_authorization.clone();
         let command = build_acceptance_add_goal_command(request)?;
-        self.add_goal(command)
+        match authorization {
+            Some(authorization) => self
+                .store
+                .add_authorized_goal_command(command, authorization)
+                .map_err(map_store_error),
+            None => self.add_goal(command),
+        }
     }
 
     /// Apply an execution-native add-goal command through the same error surface.
@@ -297,6 +331,7 @@ fn build_acceptance_add_goal_command(
         metadata,
         mut goal,
         lifecycle_policy,
+        strategy_authorization,
     } = request;
     require_non_empty("goal command id", &metadata.command_id)?;
     if let Some(source_identity) = &metadata.source_identity {
@@ -308,6 +343,9 @@ fn build_acceptance_add_goal_command(
         return Err(GoalSetApiError::InvalidCommand(format!(
             "goal target must be ground: {variable}"
         )));
+    }
+    if let Some(authorization) = &strategy_authorization {
+        validate_strategy_authorization(&goal, authorization)?;
     }
 
     match lifecycle_policy {
@@ -329,6 +367,43 @@ fn build_acceptance_add_goal_command(
     }
 
     Ok(AddGoalCommand { metadata, goal })
+}
+
+fn validate_strategy_authorization(
+    goal: &meld_lang::Goal,
+    authorization: &ExecutionStrategyAuthorization,
+) -> Result<(), GoalSetApiError> {
+    // Admission validates the transport envelope and structural graph. Live
+    // capability resolution and preconditions belong to planning, where the
+    // current execution projection is available.
+    require_non_empty("Strategy authorization id", &authorization.authorization_id)?;
+    require_non_empty(
+        "Strategy Agent decision id",
+        &authorization.agent_decision_id,
+    )?;
+    require_non_empty("Strategy candidate id", &authorization.candidate_id)?;
+    require_non_empty(
+        "Strategy planner snapshot id",
+        &authorization.planner_snapshot_id,
+    )?;
+    if authorization.goal_id != goal.goal_id {
+        return Err(GoalSetApiError::InvalidCommand(
+            "Strategy authorization goal does not match accepted goal".to_string(),
+        ));
+    }
+    if authorization.capability_contract_ids.is_empty() {
+        return Err(GoalSetApiError::InvalidCommand(
+            "Strategy authorization must select at least one Capability contract".to_string(),
+        ));
+    }
+    if authorization.composition.steps.is_empty()
+        || !meld_lang::validate(&authorization.composition).valid
+    {
+        return Err(GoalSetApiError::InvalidCommand(
+            "Strategy authorization Composition is invalid".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 fn require_non_empty(label: &str, value: &str) -> Result<(), GoalSetApiError> {

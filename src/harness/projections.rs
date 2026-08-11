@@ -174,9 +174,56 @@ pub struct CouplingStatus {
     pub latest_action_id: Option<String>,
 }
 
+/// One stable station in the first operational cognitive flywheel.
+///
+/// This is cross-domain topology owned by the harness, not runtime state.
+/// A station names the domain vocabulary it presents and the runtime roles
+/// whose reports can provide machinery evidence for it. Empty role lists
+/// are truthful for semantic boundaries that currently have no supervised
+/// actor of their own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FlywheelStation {
+    /// Stable presentation-neutral station identity.
+    pub station_id: String,
+    /// Domain that owns the station's semantic truth.
+    pub domain_id: String,
+    /// Short operator-facing name.
+    pub label: String,
+    /// Supervised runtime roles that contribute machinery observations.
+    pub runtime_ids: Vec<String>,
+}
+
+/// One directed semantic handoff in the operational flywheel topology.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FlywheelHandoff {
+    /// Stable handoff identity.
+    pub handoff_id: String,
+    /// Upstream station identity.
+    pub from_station_id: String,
+    /// Downstream station identity.
+    pub to_station_id: String,
+    /// Domain-language description of what crosses the boundary.
+    pub carries: String,
+}
+
+/// Revisioned topology for the first operational flywheel slice.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FlywheelTopology {
+    /// Stable topology identity.
+    pub topology_id: String,
+    /// Contract revision for comparison and playback.
+    pub revision: u16,
+    /// Stations in canonical flywheel order.
+    pub stations: Vec<FlywheelStation>,
+    /// Directed handoffs between stations.
+    pub handoffs: Vec<FlywheelHandoff>,
+}
+
 /// The user's whole-loop view: flow per coupling plus queue depths.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UserProjection {
+    /// Canonical cross-domain shape for the first operational flywheel.
+    pub topology: FlywheelTopology,
     /// One row per runtime observed in the retained window.
     pub couplings: Vec<CouplingStatus>,
     /// Dirty belief keys currently queued, when the store is readable.
@@ -317,10 +364,153 @@ pub fn user(sources: &ProjectionSources<'_>) -> Result<UserProjection, HarnessEr
         None => (None, false),
     };
     Ok(UserProjection {
+        topology: first_operational_flywheel_topology(),
         couplings: couplings.into_values().collect(),
         dirty_key_depth,
         dirty_key_depth_saturated,
     })
+}
+
+/// Publish the current first-slice topology from the harness authority.
+///
+/// The dashboard must never reconstruct this order from runtime names. The
+/// harness records it beside the readings because it owns the cross-domain
+/// loop definition while every station continues to own its local meaning.
+fn first_operational_flywheel_topology() -> FlywheelTopology {
+    let station =
+        |station_id: &str, domain_id: &str, label: &str, runtime_ids: &[&str]| FlywheelStation {
+            station_id: station_id.to_string(),
+            domain_id: domain_id.to_string(),
+            label: label.to_string(),
+            runtime_ids: runtime_ids
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect(),
+        };
+    let handoff = |handoff_id: &str, from: &str, to: &str, carries: &str| FlywheelHandoff {
+        handoff_id: handoff_id.to_string(),
+        from_station_id: from.to_string(),
+        to_station_id: to.to_string(),
+        carries: carries.to_string(),
+    };
+
+    FlywheelTopology {
+        topology_id: "docs_freshness_operational_flywheel".to_string(),
+        revision: 1,
+        stations: vec![
+            station("observation", "workspace", "Observe", &[]),
+            station(
+                "events",
+                "events",
+                "Events",
+                &["event.append", "event.replay"],
+            ),
+            station(
+                "graph",
+                "world_model",
+                "Graph",
+                &["world_model.graph_replay"],
+            ),
+            station(
+                "belief",
+                "world_model",
+                "Belief",
+                &["world_model.belief_assessment"],
+            ),
+            station(
+                "agent",
+                "world_model",
+                "Agent",
+                &["world_model.agent_goal_curation"],
+            ),
+            station("goals", "execution", "Goals", &["execution.goal_set"]),
+            station("planning", "execution", "Planning", &["execution.planning"]),
+            station(
+                "task_network",
+                "execution",
+                "Task network",
+                &["execution.task_network_command"],
+            ),
+            station(
+                "execution",
+                "execution",
+                "Execute",
+                &["execution.task_dispatch"],
+            ),
+            station(
+                "publication",
+                "execution",
+                "Publish",
+                &["execution.publication"],
+            ),
+            station(
+                "evidence",
+                "world_model",
+                "Evidence",
+                &["world_model.evidence_ingestion"],
+            ),
+            station(
+                "satisfaction",
+                "world_model",
+                "Satisfaction",
+                &["world_model.satisfaction_curation"],
+            ),
+        ],
+        handoffs: vec![
+            handoff(
+                "observation_events",
+                "observation",
+                "events",
+                "observation facts",
+            ),
+            handoff("events_graph", "events", "graph", "ordered semantic events"),
+            handoff(
+                "graph_belief",
+                "graph",
+                "belief",
+                "current anchors and provenance",
+            ),
+            handoff("belief_agent", "belief", "agent", "belief revisions"),
+            handoff("agent_goals", "agent", "goals", "authorized goal commands"),
+            handoff("goals_planning", "goals", "planning", "active goals"),
+            handoff(
+                "planning_network",
+                "planning",
+                "task_network",
+                "composed task networks",
+            ),
+            handoff(
+                "network_execution",
+                "task_network",
+                "execution",
+                "ready task claims",
+            ),
+            handoff(
+                "execution_publication",
+                "execution",
+                "publication",
+                "task outcomes and artifacts",
+            ),
+            handoff(
+                "publication_evidence",
+                "publication",
+                "evidence",
+                "published outcome events",
+            ),
+            handoff(
+                "evidence_satisfaction",
+                "evidence",
+                "satisfaction",
+                "revised outcome beliefs",
+            ),
+            handoff(
+                "satisfaction_goals",
+                "satisfaction",
+                "goals",
+                "goal satisfaction mutations",
+            ),
+        ],
+    }
 }
 
 /// Bounded scoped ledger diff: records after the watermark whose subject
@@ -438,5 +628,37 @@ fn push_streak(
             consecutive_ticks: action_ids.len(),
             action_ids,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use super::first_operational_flywheel_topology;
+
+    #[test]
+    fn operational_topology_is_closed_and_references_known_stations() {
+        let topology = first_operational_flywheel_topology();
+        let station_ids: BTreeSet<&str> = topology
+            .stations
+            .iter()
+            .map(|station| station.station_id.as_str())
+            .collect();
+        let handoff_ids: BTreeSet<&str> = topology
+            .handoffs
+            .iter()
+            .map(|handoff| handoff.handoff_id.as_str())
+            .collect();
+
+        assert_eq!(station_ids.len(), topology.stations.len());
+        assert_eq!(handoff_ids.len(), topology.handoffs.len());
+        assert!(topology.handoffs.iter().all(|handoff| {
+            station_ids.contains(handoff.from_station_id.as_str())
+                && station_ids.contains(handoff.to_station_id.as_str())
+        }));
+        assert!(topology.handoffs.iter().any(|handoff| {
+            handoff.from_station_id == "satisfaction" && handoff.to_station_id == "goals"
+        }));
     }
 }

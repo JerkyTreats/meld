@@ -251,6 +251,7 @@ fn compose_stewardship_theory(binding: &PhysicalBinding) -> StewardshipTheoryBin
     );
     StewardshipTheoryBindings {
         outcome_mapping,
+        strategy: None,
         planning: compose_planning_theory(binding),
         dispatch: None,
     }

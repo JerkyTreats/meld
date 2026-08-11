@@ -2,9 +2,9 @@
 
 use crate::error::ExecutionInvariantError;
 use crate::goals::contracts::{
-    AddGoalCommand, ExecutionGoalRecord, GoalCommandMetadata, GoalCommandOutcome,
-    ModifyGoalCommand, RemoveGoalCommand, ReopenGoalCommand, ResumeGoalCommand, SatisfyGoalCommand,
-    StaleGoalCommandReason, SuspendGoalCommand,
+    AddGoalCommand, ExecutionGoalRecord, ExecutionStrategyAuthorization, GoalCommandMetadata,
+    GoalCommandOutcome, ModifyGoalCommand, RemoveGoalCommand, ReopenGoalCommand, ResumeGoalCommand,
+    SatisfyGoalCommand, StaleGoalCommandReason, SuspendGoalCommand,
 };
 use crate::goals::query::{ActiveGoalQuery, ActiveGoalQueryError};
 use crate::goals::store::{
@@ -57,6 +57,15 @@ impl PersistentGoalSetStore {
         &self,
         command: AddGoalCommand,
     ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
+        self.add_goal_with_authorization(command, None)
+    }
+
+    /// Validate and durably store a Goal with optional Strategy authorization.
+    pub fn add_goal_with_authorization(
+        &self,
+        command: AddGoalCommand,
+        strategy_authorization: Option<ExecutionStrategyAuthorization>,
+    ) -> Result<GoalCommandOutcome, ExecutionInvariantError> {
         if let Some(outcome) = self.replayed_outcome(&command.metadata)? {
             return Ok(outcome);
         }
@@ -67,6 +76,7 @@ impl PersistentGoalSetStore {
             goal: command.goal.clone(),
             source_command_id: Some(command.metadata.command_id.clone()),
             source_identity: command.metadata.source_identity.clone(),
+            strategy_authorization,
             lifecycle_epoch: 0,
             created_at_seq: command.metadata.seq,
             updated_at_seq: command.metadata.seq,
@@ -194,6 +204,7 @@ impl PersistentGoalSetStore {
             goal: command.goal.clone(),
             source_command_id: Some(command.metadata.command_id.clone()),
             source_identity: source_identity.clone(),
+            strategy_authorization: existing.strategy_authorization.clone(),
             // Modification revises content under the same identity; only the
             // reopen command may advance the epoch.
             lifecycle_epoch: existing.lifecycle_epoch,

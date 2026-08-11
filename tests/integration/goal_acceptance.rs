@@ -198,6 +198,7 @@ fn acceptance_request_from_agent_command(
         },
         goal: command.goal,
         lifecycle_policy: GoalAcceptanceLifecycle::RequireProposedThenActivate,
+        strategy_authorization: None,
     }
 }
 

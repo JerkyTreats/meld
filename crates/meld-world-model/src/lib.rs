@@ -7,6 +7,7 @@ pub use meld_events as events;
 pub mod agent;
 pub mod belief;
 pub mod planner;
+pub mod strategy;
 pub mod waiting;
 pub mod world_state;
 
@@ -21,8 +22,8 @@ pub use agent::{
     AgentGoalMutationKind, AgentGoalMutationSink, AgentGoalSatisfactionInput, AgentId, AgentQuery,
     AgentRecord, AgentRegistration, AgentRuntimeReport, AgentSatisfactionCurationRuntime,
     AgentSatisfactionReview, AgentSinkError, AgentSinkReceipt, AgentSinkReceiptId,
-    AgentSinkReceiptKind, AgentSinkSubmission, AgentStatus, AgentStore, AgentSubscription,
-    AgentSubscriptionId, AgentSubscriptionRecord, AgentSubscriptionStatus,
+    AgentSinkReceiptKind, AgentSinkSubmission, AgentStatus, AgentStore, AgentStrategyRuntimeConfig,
+    AgentSubscription, AgentSubscriptionId, AgentSubscriptionRecord, AgentSubscriptionStatus,
     RecordCurationDecisionCommand, SeedAgentRegistration, SubscribeAgentCommand,
 };
 pub use belief::{
@@ -39,4 +40,5 @@ pub use planner::{
     PlannerProjectionOutput, PlannerProjectionWarning, PlannerQuery, PlannerSourceRef,
     PLANNER_PROJECTION_VERSION,
 };
+pub use strategy::*;
 pub use world_state::*;

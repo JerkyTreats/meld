@@ -554,6 +554,24 @@ impl ExecutionGoalCommandPort {
             },
             goal: command.goal,
             lifecycle_policy: GoalAcceptanceLifecycle::RequireProposedThenActivate,
+            strategy_authorization: command.strategy_authorization.map(|authorization| {
+                let method_id = match authorization.candidate.origin {
+                    meld_world_model::StrategyCandidateOrigin::Direct => None,
+                    meld_world_model::StrategyCandidateOrigin::Method { method_id } => {
+                        Some(method_id)
+                    }
+                };
+                meld_execution::goals::ExecutionStrategyAuthorization {
+                    authorization_id: authorization.authorization_id,
+                    agent_decision_id: authorization.agent_decision_id,
+                    candidate_id: authorization.candidate.candidate_id,
+                    goal_id: authorization.candidate.goal_id,
+                    planner_snapshot_id: authorization.candidate.planner_snapshot_id,
+                    composition: authorization.candidate.composition,
+                    capability_contract_ids: authorization.candidate.capability_contract_ids,
+                    method_id,
+                }
+            }),
         };
         self.accept_goal(request)
     }
@@ -1341,6 +1359,7 @@ mod tests {
             },
             goal: goal(goal_id),
             lifecycle_policy: GoalAcceptanceLifecycle::RequireProposedThenActivate,
+            strategy_authorization: None,
         };
         ExecutionGoalCommandPort::new(Arc::clone(store))
             .accept_goal(command)

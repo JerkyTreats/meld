@@ -1,13 +1,13 @@
 # Strategy Assessment By Domain
 
-Date: 2026-08-05
+Date: 2026-08-07
 Status: active
-Evidence basis: current `runtime-completion` checkout and Strategy minimal-slice assessment
+Evidence basis: current `implementation/minimal-strategy-search` checkout and Strategy minimal-slice implementation
 Scope: cross-domain impact of the first runnable world-model Strategy slice
 
 ## Concern definition
 
-The Strategy minimal slice turns one Agent-curated docs-freshness Goal draft into one evidence-backed concrete candidate, records the exact Agent authorization, admits the Goal with that candidate, and lets Execution realize only the authorized meaning.
+The Strategy minimal slice turns one Agent-curated docs-freshness Goal draft into one evidence-backed concrete candidate by closing declared Capability contracts, records the exact Agent authorization, admits the Goal with that candidate, and lets Execution realize only the authorized meaning.
 
 The concern crosses many domains at runtime. This assessment distinguishes domains that own new behavior from domains that participate unchanged in the product path.
 
@@ -15,9 +15,12 @@ The concern crosses many domains at runtime. This assessment distinguishes domai
 
 - one ground docs-freshness Goal
 - one exact planner frame
-- one configured Method and available action
+- one activated theory snapshot
+- one bounded Capability contract snapshot
+- optional configured Methods
 - one prospective evidence route
-- one bounded candidate
+- one deterministic bounded construction walk
+- at most one retained candidate
 - durable Agent authorization
 - Strategy-gated Goal admission
 - authorized Execution realization
@@ -26,7 +29,9 @@ The concern crosses many domains at runtime. This assessment distinguishes domai
 
 ## Out of scope
 
-- construction beyond one configured Method and action
+- Pareto-frontier retention, global optimality, and advanced search certificates
+- alternate engines, stochastic exploration, learned policy, and parallel search
+- transposition tables and durable search state
 - Strategy-specific storage
 - new crates, services, actors, or dependencies
 - generalized lifecycle or coordination machinery
@@ -130,13 +135,13 @@ meld-events
 
 | Domain | Needed integration | Current integration | Completeness | Evidence | Follow-up |
 | --- | --- | --- | --- | --- | --- |
-| World-model Strategy | `own` | No runtime module | not started | No `strategy` module exists | Add one bounded constructor and contracts |
-| World-model Agent | `own` and `consume` | Goal drafting, durable decisions, and named goal port exist | partial | `crates/meld-world-model/src/agent` | Persist exact authorization before sink submission |
+| World-model Strategy | `own` | Pure bounded constructor and independent verifier exist | partial | `crates/meld-world-model/src/strategy` | Inspect semantics and extend only after the minimal engine is accepted |
+| World-model Agent | `own` and `consume` | Goal drafting, durable decisions, Strategy authorization, and named goal port exist | partial | `crates/meld-world-model/src/agent` | Activate only when root supplies installed Strategy theory |
 | World-model belief | `publish` | Observationality, evidence schemas, mappings, comparison, and reconciliation exist | complete | `crates/meld-world-model/src/belief` | Reuse unchanged |
 | World-model planner | `publish` | Exact ground planner frame exists | complete | `crates/meld-world-model/src/planner` | Reuse unchanged |
 | Shared language | `consume` | Goal, Method, Composition, unification, substitution, evaluation, and validation exist | complete | `crates/meld-lang/src` | Reuse unchanged |
-| Execution goals | `consume` | Producer-neutral acceptance and durable lifecycle exist | partial | `crates/meld-execution/src/goals` | Enforce and store authorized admission |
-| Execution planning | `consume` | Method verification, realization, lowering, and actor path exist | partial | `crates/meld-execution/src/planning` | Add exact authorized-candidate realization path |
+| Execution goals | `consume` | Guarded acceptance validates and durably retains exact authorization | complete | `crates/meld-execution/src/goals` | Inspect compatibility posture before requiring authorization universally |
+| Execution planning | `consume` | Exact authorized-candidate path bypasses Method search and revalidates current mechanics | partial | `crates/meld-execution/src/planning` | Prove the production package realization path under installed Strategy theory |
 | Execution task network | `publish` and `consume` | Durable mutation and execution path exists | complete | `crates/meld-execution/src/task_network` | Reuse unchanged |
 | Execution publication | `publish` | Package aggregate outcomes exist | complete | `crates/meld-execution/src/task_network` | Reuse unchanged |
 | Events | `publish` and `consume` | Canonical append and replay exist | complete | `crates/meld-events/src` | Reuse unchanged |
@@ -176,22 +181,23 @@ This second pass maps one level of major concerns inside each affected domain. I
 
 | Component | Current state | Required change |
 | --- | --- | --- |
-| Contracts | absent | Define bounded input, candidate, prospective evidence route, authorization, and typed rejection |
-| Construction | absent | Bind one configured Method to one Goal and exact frame |
-| Evidence-route validation | absent | Validate action outcome to admitted evidence meaning |
-| Identity and replay | absent | Derive exact payload identity and preserve settled judgment |
+| Contracts | implemented | Inspect immutable problem input, bounds, candidate, prospective evidence route, authorization, and typed rejection |
+| Construction | implemented minimum | Inspect deterministic backward closure from settlement obligations through Capability contracts and optional Method seeding |
+| Candidate verification | implemented minimum | Inspect independent closure, applicability, Goal contribution, evidence route, identity, and evaluation checks |
+| Evidence-route validation | implemented minimum | Inspect exact outcome-contract match to prospective evidence meaning |
+| Identity and replay | implemented minimum | Inspect content-derived candidate and authorization identities plus settled payload reuse |
 | Persistence | absent | no Strategy store |
 
 ### World-model Agent
 
 | Component | Current state | Required change |
 | --- | --- | --- |
-| Curation contracts | partial | Add configured Strategy policy and authorization payload |
+| Curation contracts | extended | Inspect configured Strategy input and authorization payload |
 | Threshold Goal drafting | complete | reuse unchanged |
-| Goal-curation runtime | partial | Invoke Strategy after draft creation and before decision persistence |
-| Goal-curation actor | partial | Receive bounded Strategy inputs from assembly |
-| Curation decision | partial | Persist exact authorization |
-| Goal command | partial | Carry authorization through the named port |
+| Goal-curation runtime | implemented behind activation seam | Inspect Strategy invocation after draft creation and before decision persistence |
+| Goal-curation actor | implemented behind activation seam | Inspect bounded Strategy input supplied by assembly |
+| Curation decision | implemented | Inspect exact authorization persistence and no-candidate decision posture |
+| Goal command | implemented | Inspect authorization carried through the named port |
 | Store and query | complete substrate | Persist and inspect the extended decision |
 | Registration and subscription | complete | reuse unchanged |
 | Satisfaction curation | complete | reuse unchanged |
@@ -210,10 +216,10 @@ This second pass maps one level of major concerns inside each affected domain. I
 
 | Component | Current state | Required change |
 | --- | --- | --- |
-| Acceptance request | partial | Carry authorized candidate payload |
-| Acceptance validation | partial | Reject missing, empty, mismatched, or invalid authorization |
-| Goal record | partial | Retain accepted operational copy |
-| In-memory and persistent stores | partial | Persist and replay extended record |
+| Acceptance request | implemented | Inspect producer-neutral authorized candidate payload |
+| Acceptance validation | implemented for guarded requests | Inspect empty, mismatched, and invalid authorization rejection |
+| Goal record | implemented | Inspect retained operational authorization copy |
+| In-memory and persistent stores | implemented | Inspect persistence and replay of the extended record |
 | Goal query | complete | Return authorization with record |
 | Lifecycle mutations | complete | reuse unchanged |
 
@@ -221,10 +227,10 @@ This second pass maps one level of major concerns inside each affected domain. I
 
 | Component | Current state | Required change |
 | --- | --- | --- |
-| Actor request and result | partial | Carry Strategy and candidate identity |
-| Candidate search | first applicable Method | Bypass for Strategy-gated Goals |
-| Method library | complete | Resolve and reverify exact authorized Method |
-| Mechanical validation | complete | Reuse precondition, binding, cost, and structure checks |
+| Actor request and result | extended | Inspect Strategy authorization recovered from the Goal record |
+| Candidate search | first applicable Method compatibility path | Authorized Goals bypass semantic search |
+| Method library | complete | Reuse only for compatibility Goals and optional lineage |
+| Mechanical validation | extended | Inspect exact frame, precondition, Capability resolution, and structure revalidation |
 | Action and realization | complete | Reuse exact association and package route |
 | Lowering and task-network mutation | complete | reuse unchanged |
 
@@ -232,9 +238,9 @@ This second pass maps one level of major concerns inside each affected domain. I
 
 | Component | Current state | Required change |
 | --- | --- | --- |
-| Stewardship theory binding | planning and outcome theory are composed | Expose a neutral Strategy input to the Agent factory |
-| Agent factory and handle | no Strategy input | Supply Strategy during goal-curation ticks |
-| Curation Goal port | direct Agent-to-Execution mapping | Preserve and map authorization |
+| Stewardship theory binding | optional Strategy injection exists | Install a truthful authored Strategy snapshot before production activation |
+| Agent factory and handle | optional Strategy input is wired | Inspect activated and compatibility construction paths |
+| Curation Goal port | authorization mapping implemented | Inspect lossless world-model to Execution mapping |
 | Planning factory | complete | reuse current Method and action theory |
 | Registration | complete | no new runtime role |
 | Storage | complete | no new store |
@@ -283,7 +289,7 @@ This second pass maps one level of major concerns inside each affected domain. I
 - Execution goals own admitted operational custody and lifecycle enforcement
 - Execution planning owns exact mechanical realization
 - root runtime owns type mapping and wiring only
-- authored theory owns the configured Method, action, outcome, and evidence relationship
+- authored theory owns action, outcome, evidence, and optional Method meaning
 
 ### Reused unchanged
 
@@ -301,19 +307,23 @@ This second pass maps one level of major concerns inside each affected domain. I
 
 ## Gaps and follow-ups
 
-### Gap one: authorization payload
+### Closed gap one: authorization payload
 
-Define the smallest payload that lets Agent persist its exact judgment and lets Execution recover and realize the accepted candidate without querying Agent storage.
+Agent persists the exact verified candidate and Execution retains an operational copy on the Goal record without querying Agent storage.
 
 The default posture is the same complete payload in the Agent decision and Execution Goal record, joined by one content identity.
 
-### Gap two: neutral Strategy theory input
+### Closed gap two: neutral Strategy theory input seam
 
-World-model must not depend on Execution types. Root assembly must map current Method, action, realization, outcome, and evidence declarations into a world-model-owned input without deciding semantic validity.
+World model owns the neutral Strategy problem types and root assembly accepts an optional activated problem template without importing Execution types into world model.
 
 ### Gap three: observational Method correction
 
 The shipped Method currently asserts a docs-freshness value. The first slice must remove that assertion and authorize the action through its prospective evidence route.
+
+### Gap four: production theory activation
+
+The CLI leaves the Strategy injection empty because no installed authored surface yet supplies the complete settlement, Capability, outcome, and evidence snapshot. Inventing that meaning from planning Methods or adapter-local conventions would violate the ownership boundary. Inspection must settle the authored source and operational realization lineage before production activation and the assembled product proof.
 
 ## Extracted implementation spine
 

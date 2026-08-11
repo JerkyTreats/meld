@@ -21,6 +21,7 @@ use crate::agent::runtime::{
 };
 use crate::agent::selection::AgentWorkSelector;
 use crate::agent::store::AgentStore;
+use crate::agent::strategy::AgentStrategyRuntimeConfig;
 use crate::agent::AgentSinkReceipt;
 use crate::belief::{BeliefQuery, BeliefStore};
 use crate::error::StorageError;
@@ -157,6 +158,7 @@ impl AgentActorCore {
 /// Bounded actor that discovers and curates goal deliveries from durable state.
 pub struct AgentGoalCurationActor {
     core: AgentActorCore,
+    strategy: Option<AgentStrategyRuntimeConfig>,
 }
 
 impl AgentGoalCurationActor {
@@ -176,6 +178,28 @@ impl AgentGoalCurationActor {
                 belief_store,
                 traversal_store,
             },
+            strategy: None,
+        }
+    }
+
+    /// Bind the actor to stores and an activated minimal Strategy configuration.
+    pub fn new_with_strategy(
+        actor_id: impl Into<String>,
+        agent_id: impl Into<String>,
+        agent_store: Arc<AgentStore>,
+        belief_store: Arc<BeliefStore>,
+        traversal_store: Arc<TraversalStore>,
+        strategy: AgentStrategyRuntimeConfig,
+    ) -> Self {
+        Self {
+            core: AgentActorCore {
+                actor_id: actor_id.into(),
+                agent_id: agent_id.into(),
+                agent_store,
+                belief_store,
+                traversal_store,
+            },
+            strategy: Some(strategy),
         }
     }
 
@@ -260,7 +284,13 @@ impl AgentGoalCurationActor {
             });
         }
 
-        let runtime = AgentGoalCurationRuntime::new(&self.core.agent_store);
+        let runtime = match &self.strategy {
+            Some(strategy) => AgentGoalCurationRuntime::new_with_strategy(
+                &self.core.agent_store,
+                strategy.clone(),
+            ),
+            None => AgentGoalCurationRuntime::new(&self.core.agent_store),
+        };
         for delivery in selection.items {
             report.items_attempted += 1;
             let item_id = delivery.subscription_id.clone();

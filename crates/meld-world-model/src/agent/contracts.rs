@@ -414,6 +414,9 @@ pub struct AgentCurationDecision {
     /// Goal mutation command emitted by the decision, when present.
     #[serde(default)]
     pub goal_mutation_command_id: Option<AgentGoalMutationCommandId>,
+    /// Exact Strategy authorization settled with this decision.
+    #[serde(default)]
+    pub strategy_authorization: Option<crate::strategy::StrategyAuthorization>,
     /// Dedupe key that defines the command family.
     pub dedupe_key: AgentCurationDedupeKey,
     /// References to belief and planner inputs used by the decision.
@@ -623,6 +626,9 @@ pub struct AgentGoalCommand {
     pub goal: Goal,
     /// Dedupe key that must match the goal target and agent.
     pub dedupe_key: AgentCurationDedupeKey,
+    /// Exact Strategy authorization required for guarded Goal admission.
+    #[serde(default)]
+    pub strategy_authorization: Option<crate::strategy::StrategyAuthorization>,
 }
 
 impl AgentGoalCommand {
@@ -641,6 +647,16 @@ impl AgentGoalCommand {
             ));
         }
         require_goal_matches_dedupe(&self.goal, &self.dedupe_key)?;
+        if let Some(authorization) = &self.strategy_authorization {
+            if authorization.candidate.goal_id != self.goal.goal_id
+                || authorization.agent_decision_id.trim().is_empty()
+                || authorization.authorization_id.trim().is_empty()
+            {
+                return Err(StorageError::InvalidPath(
+                    "Strategy authorization does not match the goal command".to_string(),
+                ));
+            }
+        }
         Ok(())
     }
 }

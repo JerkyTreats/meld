@@ -3,7 +3,9 @@ use meld_execution::capability::{
     ArtifactSchemaVersionRange, CapabilityCatalog, CapabilityTypeContract, ExecutionClass,
     ExecutionContract, InputCardinality, InputSlotSpec, OutputSlotSpec, ScopeContract,
 };
-use meld_execution::goals::{AddGoalCommand, GoalCommandMetadata, PersistentGoalSetStore};
+use meld_execution::goals::{
+    AddGoalCommand, ExecutionStrategyAuthorization, GoalCommandMetadata, PersistentGoalSetStore,
+};
 use meld_execution::planning::{
     ActionArtifactMeaning, ActionOutcomeContractRef, ActionRealizationRoute,
     AvailableActionBinding, AvailableActionSet, CandidateStatus, ExecutionCompositionLowerer,
@@ -16,9 +18,9 @@ use meld_execution::planning::{
 use meld_execution::task::TaskCompiler;
 use meld_execution::task_network::{Response, SledTaskNetworkStore};
 use meld_lang::{
-    Composition, Condition, CostEstimate, Effect, Goal, GoalLifecycle, GoalPriority, GoalSource,
-    Literal, Method, Operator, Proposition, Resolution, SlotConstraint, Step, StepKind, Term,
-    WorldState,
+    CapabilityRef, Composition, Condition, CostEstimate, Effect, Goal, GoalLifecycle, GoalPriority,
+    GoalSource, Literal, Method, Operator, Proposition, Resolution, SlotConstraint, Step, StepKind,
+    Term, WorldState,
 };
 
 fn node(id: &str) -> Term {
@@ -179,6 +181,65 @@ fn runtime(methods: Vec<Method>) -> PlanningRuntime {
     let catalog = catalog();
     let library = MethodLibrary::from_methods(methods, &catalog);
     PlanningRuntime::new(library, catalog)
+}
+
+#[test]
+fn authorized_planning_bypasses_method_search_and_revalidates_exact_composition() {
+    let runtime = runtime(Vec::new());
+    let goal = goal_with_ceiling(None);
+    let composition = Composition {
+        steps: vec![Step {
+            step_id: "write".into(),
+            kind: StepKind::Op(Operator {
+                operator_id: "write".into(),
+                preconditions: vec![Proposition::Accessible {
+                    scope: node("readme"),
+                }],
+                effects: vec![Effect::Assert(Proposition::Exists {
+                    scope: node("readme"),
+                    artifact_type: Term::ArtifactType("docs_patch".into()),
+                })],
+                cost: CostEstimate::zero(),
+                resolution: Resolution {
+                    requires_inputs: Vec::new(),
+                    requires_outputs: vec![SlotConstraint {
+                        artifact_type: Term::ArtifactType("docs_patch".into()),
+                        required: true,
+                    }],
+                    scope_kind: Some("filesystem".into()),
+                    tags: Vec::new(),
+                    specific: Some(CapabilityRef {
+                        capability_type_id: "docs.write".into(),
+                        capability_version: 1,
+                    }),
+                },
+            }),
+        }],
+        edges: Vec::new(),
+    };
+    let authorization = ExecutionStrategyAuthorization {
+        authorization_id: "authorization-1".into(),
+        agent_decision_id: "decision-1".into(),
+        candidate_id: "candidate-1".into(),
+        goal_id: goal.goal_id.clone(),
+        planner_snapshot_id: frame().frame_id,
+        composition: composition.clone(),
+        capability_contract_ids: vec!["docs.write-v1".into()],
+        method_id: None,
+    };
+    let world_state = WorldState::new(vec![Proposition::Accessible {
+        scope: node("readme"),
+    }])
+    .unwrap();
+    let result = runtime
+        .plan_authorized_goal(request(goal, world_state), &authorization)
+        .unwrap();
+    let PlanningResult::Composed(composed) = result else {
+        panic!("expected exact authorized composition");
+    };
+
+    assert_eq!(composed.composition, composition);
+    assert_eq!(composed.method_id, "candidate-1");
 }
 
 fn planning_actor() -> PlanningRuntimeActor<TaskCompiler> {
