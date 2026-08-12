@@ -8,6 +8,8 @@ Correction note 2026-07-25, from an assembly code survey: every NAG contract exi
 
 Correction resolved 2026-07-30: the assembled `execution.publication` actor now drains the per-task outbox through the bridge on every tick before its aggregate pass — bounded by the tick budget, appended under the bridge's deterministic record ids, sessioned by the composed stewardship partition — and the production dispatch routes pass the composed session as the execution event context, so per-task lifecycle events reach the ledger. A quiet publication tick declares `no_pending_publications`, and a skipped aggregate declares `aggregate_run_not_terminal` with the pending work units instead of dropping the reason.
 
+Note 2026-08-12: the flywheel-ignition lane that carried live closure has itself closed. The NAG-5 retry-pause-error flag drift observation remains the only open residual from this document.
+
 ## Purpose
 
 This document breaks out the gaps that prevent the runtime flywheel from being assembled end to end, while avoiding the assembly work itself.

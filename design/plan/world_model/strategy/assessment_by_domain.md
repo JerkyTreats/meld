@@ -1,8 +1,8 @@
 # Strategy Assessment By Domain
 
 Date: 2026-08-07
-Status: active
-Evidence basis: current `implementation/minimal-strategy-search` checkout and Strategy minimal-slice implementation
+Status: implemented 2026-08-12
+Evidence basis: the `implementation/minimal-strategy-search` checkout, which predates the convergence landing on `implementation/docs-freshness-strategy-runtime`
 Scope: cross-domain impact of the first runnable world-model Strategy slice
 
 ## Concern definition
@@ -321,9 +321,13 @@ World model owns the neutral Strategy problem types and root assembly accepts an
 
 The shipped Method currently asserts a docs-freshness value. The first slice must remove that assertion and authorize the action through its prospective evidence route.
 
+Disposition 2026-08-12: resolved by bypass. Commit 4894b73 deleted planning-theory provisioning, so the Method file is dead on the product path and the landed route settles through the prospective evidence route as required. The stale on-disk artifact `theory/docs_freshness/methods/refresh_docs_v1.json` is retired under the [Theory Elevation Program](../../integration/theory_elevation_program.md).
+
 ### Gap four: production theory activation
 
 The CLI leaves the Strategy injection empty because no installed authored surface yet supplies the complete settlement, Capability, outcome, and evidence snapshot. Inventing that meaning from planning Methods or adapter-local conventions would violate the ownership boundary. Inspection must settle the authored source and operational realization lineage before production activation and the assembled product proof.
+
+Disposition 2026-08-12: transformed, not closed. The injection is no longer empty — root assembly composes the docs stewardship image in code under `src/docs/pds.rs`. That satisfies activation but supplies the snapshot from compiled constants rather than installed authored theory, which is exactly the ownership concern this gap named. The open remainder is theory elevation, carried by the [Theory Elevation Program](../../integration/theory_elevation_program.md) steps one and two.
 
 ## Extracted implementation spine
 

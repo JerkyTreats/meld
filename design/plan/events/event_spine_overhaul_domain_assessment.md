@@ -1,9 +1,11 @@
 # Event Spine Overhaul Assessment By Domain
 
 Date: 2026-07-08
-Status: active
+Status: historical evidence
 Evidence date: 2026-07-08
 Method: [Assessment By Domain Policy](../../../governance/assessment_by_domain_policy.md)
+
+Note 2026-08-12: the owning program completed; see [Event Spine Overhaul Program](event_spine_overhaul_program.md). This assessment stands as evidence for the domain state the program worked from.
 
 ## Concern Definition
 

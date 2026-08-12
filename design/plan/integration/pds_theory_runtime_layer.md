@@ -4,6 +4,8 @@ Date: 2026-07-30
 Status: active
 Scope: the implementation-readiness map of the settled PDS layer — operational domain theory against the written Meld runtime — including the scaffolding matrix, the current seams, and the layer-settlement rule for the next layer up
 
+Note 2026-08-12: commit 4894b73 deleted the authored planning-theory provisioning from `src/init/world/source.rs`, and the live path now composes the docs stewardship image in code. Elevation of that hand-lowered image into durable theory registries and declaration lowering proceeds under [Theory Elevation Program](theory_elevation_program.md).
+
 ## Purpose
 
 [Persistent Domain Stewardship](../../cognitive_architecture/persistent_domain_stewardship.md) canonicalizes the theory-to-runtime layer as intent. This document maps that layer onto the written runtime: which coupling consumes which theory kind through which seam, what artifact form each kind takes today, and where the compatibility forms sit that the next layer's compiler will replace. It is the reality check the declaration-to-theory layer must canonicalize against.

@@ -85,6 +85,8 @@ Key seams: projections present only what durable records confirm; the served sur
 
 ### Phase 4 — Consumer contract and reference consumer
 
+Status: open 2026-08-12 — the only remaining harness phase; unblocked and paced by capacity per the current delivery order.
+
 Goal: the substrate published as a consumable contract, proven by one external reference consumer.
 
 Tasks:
@@ -102,6 +104,8 @@ Exit criteria:
 Key seams: the reference consumer lives outside the product guarantee and consumes public contracts only; a session that behaves differently between live and playback is a defect of the harness, and a consumer that renders what the substrate does not serve is a defect of the consumer.
 
 ### Phase 5 — Runtime program reintegration
+
+Status: delivered in substance 2026-08-12, one conjunct unverified. The ignition-lane corrections closed 2026-07-30 and 2026-07-31, and the bounded convergence behavior landed with the Strategy slice on `implementation/docs-freshness-strategy-runtime` — the flywheel settles to quiescence in `tests/integration/runtime_cli.rs`. No record confirms the convergence proof ran with the harness attached as the exit criterion below specifies; that verification, live through the served surface, is the phase's one open item and folds naturally into phase four's consumer work.
 
 Goal: the runtime completion endgame runs under the harness.
 

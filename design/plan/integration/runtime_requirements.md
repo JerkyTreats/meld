@@ -10,6 +10,8 @@ This document links the detailed runtime requirements for the first durable flyw
 
 Current runtime completion authority is [Runtime Completion Ground Map](runtime_completion_ground_map.md), followed by [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md). Those documents replace the earlier one-turn proof, activation-heavy configuration, synthetic patch, and production-closure assumptions. Domain requirement documents remain useful contract evidence where they do not conflict with the current completion authority.
 
+Update 2026-08-12: the runtime-completion ground map closed with the strategy landing. Current forward authority is [Theory Elevation Program](theory_elevation_program.md).
+
 The product flywheel remains:
 
 ```text

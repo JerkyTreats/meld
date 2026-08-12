@@ -4,6 +4,8 @@ Date: 2026-07-31
 Status: triage
 Scope: confirmed findings from the 2026-07-31 bug-class hunt over the flywheel path, with dispositions into the [Flywheel Parity Workstream](flywheel_parity_workstream.md)
 
+Re-triage 2026-08-12: still open are the F3 per-turn regeneration cost residual, the F7 previous-digest metadata snapshot residual, the F8 inert all-quantifier vacuity, the F9 secondary already-published content comparison, and F11 MissingGraphScope, whose revisit trigger — the strategy pause — has now arrived. All other findings remain closed or killed as recorded below.
+
 ## Method
 
 The hunt swept for four signatures of one failure class — independent focused implementations missing cross-cutting nuance a sibling path carries:

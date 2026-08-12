@@ -1,8 +1,10 @@
 # Strategy Ground Map
 
 Date: 2026-08-05
-Status: active
+Status: delivered 2026-08-12, retained as ground evidence
 Scope: implementation readiness for world-model Strategy construction, mapping each Strategy concept to verified existing runtime primitives and naming the remaining construction delta
+
+The construction delta below was delivered in full by commits b48c09d, 4894b73, and 5056b46. Two sections are superseded by that landing and are annotated in place: the known limits of the planning path, and the existing execution route.
 
 ## Purpose
 
@@ -71,6 +73,8 @@ The family, curation, and projection layers are structurally domain-agnostic. Wi
 
 ## Known limits of the current planning path
 
+Superseded 2026-08-12: the authorized-candidate path landed in b48c09d and 4894b73 bypasses Method selection entirely, dispatch flows through the product capability runtime, and the docs theory activation question resolved into the compiled stewardship image whose elevation proceeds under the [Theory Elevation Program](../../integration/theory_elevation_program.md). The limits below scoped the readiness claims as written and stand as dated evidence.
+
 These limits scope every readiness claim above.
 
 - Method selection returns on the first applicable entry at `crates/meld-execution/src/planning/runtime.rs:648`. There is no candidate set output, no backtracking, and no depth bound because there is no recursion.
@@ -79,6 +83,8 @@ These limits scope every readiness claim above.
 - There is no committed product belief-family file or method directory. The authored meaning surface exists as loader schemas and one test fixture. Correction 2026-07-25: a committed belief-family body now exists at `theory/docs_freshness/belief_family.docs_freshness.json` with observationality authored, but nothing on the product load path resolves it — the loader reads the XDG theory root, and the committed selection id `docs-freshness-family` does not match the file's `docs_freshness` family id. The method-directory half still holds. Line numbers throughout this document are advisory; `BeliefFamilyConfig` gained the observationality field after this map was written.
 
 ## Existing execution route
+
+Superseded 2026-08-12: the landed slice went further than this section planned. Commit 4894b73 composes the docs course of action from atomic capability contracts with no Method and no workflow route, so the package is no longer the realization of the authorized action. The package route remains only as legacy characterization.
 
 The docs writer already runs through the task package expansion path. The first Strategy slice treats that package as the realization of one configured semantic action.
 

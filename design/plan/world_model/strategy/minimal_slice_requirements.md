@@ -1,8 +1,10 @@
 # Strategy Minimal Slice Requirements
 
 Date: 2026-08-05
-Status: active
+Status: implemented 2026-08-12
 Scope: first runnable world-model Strategy proof through the docs-freshness product path
+
+Delivered in commits b48c09d, 4894b73, and 5056b46. One deviation strengthens the spec: the landed product path composes the docs course of action directly from Capability contracts with no Method and no workflow route, whereas the product-proof text below still describes the docs-writer package route. The package-route sentence stands as the spec as written; the landed path superseded it.
 
 ## Authority
 

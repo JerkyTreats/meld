@@ -4,6 +4,8 @@ Date: 2026-07-06
 Status: draft
 Scope: experiment infrastructure measuring accumulated belief as an intelligence multiplier across model tiers and horizon lengths
 
+Note 2026-08-12: the turning flywheel and belief injection dependencies are now met on the strategy branch. The program remains draft pending its Ollama validation.
+
 ## Purpose
 
 Measure the project's core bet as a curve family rather than a binary. The hypothesis, stated precisely: quality of a small actor model operating on the flywheel with belief injection approaches quality of a large actor model operating stateless, as flywheel cycles accumulate — and the quality-versus-horizon slope of the flywheel configuration exceeds the stateless configuration, which plateaus or degrades.

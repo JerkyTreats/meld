@@ -1,9 +1,11 @@
 # Strategy Implementation Plan Index
 
-Date: 2026-08-05
-Status: active
+Date: 2026-08-12
+Status: implemented
 
-Start with [Strategy Minimal Slice Requirements](minimal_slice_requirements.md). It is the active authority for first-slice implementation scope.
+The first Strategy slice is delivered. Bounded candidate search, Agent authorization, guarded Goal admission, and exact authorized realization landed in commits b48c09d, 4894b73, and 5056b46, with the docs flywheel converging to quiescence on claim-validated true publication. Forward work proceeds under the [Theory Elevation Program](../../integration/theory_elevation_program.md); residuals are recorded in the documents below and in that program's residual register.
+
+Start with [Strategy Minimal Slice Requirements](minimal_slice_requirements.md). It records the implemented first-slice scope.
 
 Use [Strategy Assessment By Domain](assessment_by_domain.md) to identify cross-domain ownership, component changes, explicit reuse, and non-integration.
 

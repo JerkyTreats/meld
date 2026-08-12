@@ -104,6 +104,6 @@ The scenario can be translated directly into one `meld-lang` integration test.
 - task network command acceptance
 - plan diffing
 - switching cost model
-- capability catalog bridge
-- outcome publication bridge
+- capability catalog bridge — landed 2026-08-12 note: delivered in commit 4894b73 via the product capability runtime
+- outcome publication bridge — landed 2026-08-12 note: delivered in commit 4894b73 via the product capability runtime
 - workflow integration strategy

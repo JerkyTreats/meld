@@ -1,7 +1,8 @@
 # Flywheel Parity Workstream
 
 Date: 2026-07-31
-Status: at the Strategy pause — every implementable slice landed or escalated with a decision brief; live validation awaits a reachable provider
+Status: resuming from the Strategy pause 2026-08-12 — the Strategy landing on `implementation/docs-freshness-strategy-runtime` ended the pause; open slices need reassessment against the rewritten docs theory data
+Resumption note 2026-08-12: commits 4894b73 and 5056b46 rewrote `theory/docs_freshness/belief_family.docs_freshness.json` and `outcome_interpretation.docs_freshness.json` to evidence-driven settlement, so the slice-five comparator calibration brief must be re-measured against the new theory numbers before its escalation stands. The slice-six declared-effects pin remains unchanged in `crates/meld-world-model/tests/planner.rs`. The slice-seven live provider runs remain unrecorded. Parity finalization, which this workstream deferred until after Strategy, is now unblocked; forward sequencing lives in the [Theory Elevation Program](theory_elevation_program.md) and this document's Strategy-sync agenda is due.
 Scope: everything up to Strategy — the bounded slices that bring the docs_freshness flywheel to truthful operation and loose output parity readiness, pausing at the Strategy boundary
 
 ## Goal

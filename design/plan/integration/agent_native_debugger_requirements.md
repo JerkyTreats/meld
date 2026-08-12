@@ -1,7 +1,9 @@
 # Agent-Native Debugger Requirements
 
 Date: 2026-07-24
-Status: register frozen 2026-07-25 — every entry dispositioned, interaction modes selected; the two specimen exit conjuncts remain open
+Status: register frozen 2026-07-25 — every entry dispositioned, interaction modes selected; one specimen exit conjunct remains open
+
+Conjunct note 2026-08-12: the cross-process stall-presentation conjunct discharged at harness phase three on 2026-07-26. The Goal-and-Belief prototype conjunct's stated precondition, Strategy first-slice development, has landed on `implementation/docs-freshness-strategy-runtime`, but no prototype session artifact proving the drive side — boot, inject, step, watch a posterior move through the harness — is recorded. The conjunct stays open until that session exists.
 Scope: interaction model for agentic tooling driving isolated and composed Meld domain runtimes as part of the development workflow
 
 Amendment date: 2026-07-25 — the information model and customer taxonomy added from the live runtime survey discussion, register entries DBG-015 through DBG-019 added, and the presentation posture revised: the user-facing visual projection joins this workstream, anchored on the information model and designed last.

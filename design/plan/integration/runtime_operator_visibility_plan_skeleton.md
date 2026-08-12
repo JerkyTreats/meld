@@ -1,8 +1,10 @@
 # Runtime Operator Visibility Plan Skeleton
 
 Date: 2026-07-02
-Status: skeleton
+Status: superseded
 Scope: runtime startup, action observability, status cache, and operator command behavior
+
+Note 2026-08-12: superseded by [Runtime Harness Plan](runtime_harness_plan.md), which carries operator visibility forward.
 
 ## Purpose
 

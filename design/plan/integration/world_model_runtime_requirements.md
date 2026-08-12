@@ -1,8 +1,10 @@
 # World Model Runtime Requirements
 
 Date: 2026-06-17
-Status: proposed
+Status: superseded
 Scope: world model runtime actors only
+
+Note 2026-08-12: superseded. [Runtime Requirements Index](runtime_requirements.md) recorded the replacement of this document by the runtime completion authority chain.
 
 ## Purpose
 

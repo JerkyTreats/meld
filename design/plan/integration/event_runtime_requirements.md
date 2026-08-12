@@ -4,6 +4,8 @@ Date: 2026-07-12
 Status: event-owned foundation implemented; runtime hosting remains downstream
 Scope: event runtime actors for the first durable flywheel
 
+Note 2026-08-12: the downstream runtime hosting this document deferred to was delivered by the runtime-completion waves. The document stands as completed foundation evidence.
+
 ## Purpose
 
 This document defines detailed requirements for the event runtime only.

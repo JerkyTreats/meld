@@ -1,6 +1,6 @@
 # Cognitive Architecture Implementation Plan
 
-Date: 2026-06-02
+Date: 2026-08-12
 Status: active
 Scope: declarative implementation readiness and dependency order for the cognitive architecture
 
@@ -14,26 +14,28 @@ Each assessment named as current authority states current truth. Historical and 
 
 When this plan conflicts with `design/cognitive_architecture`, treat the architecture document as intent and this plan as an implementation readiness snapshot that needs reconciliation.
 
-## Current Runtime Completion Authority
+## Current Authority
 
-The active runtime-completion objective is [Runtime Completion Ground Map](integration/runtime_completion_ground_map.md), with build-facing decomposition in [Runtime Completion Implementation Workstreams](integration/runtime_completion_implementation_workstreams.md).
+The active forward objective is the [Theory Elevation Program](integration/theory_elevation_program.md): elevate the hand-lowered docs stewardship image into durable installed theory, remove root expression dispatch, and prove runtime agnosticism through a second dissimilar expression.
 
-The runtime completion endgame — the flywheel-ignition lane and the bounded convergence proof — executes under the [Runtime Harness Plan](integration/runtime_harness_plan.md), which delivers the served observation substrate defined by the frozen [Agent-Native Debugger Requirements](integration/agent_native_debugger_requirements.md). The substrate boundary is recorded there: served machine-readable contracts as the product surface, all visualization external. The standing storage posture behind that substrate is the [Storage Substrate Decision Record](integration/storage_substrate_decision_record.md).
+The runtime completion program it succeeds is delivered. The [Runtime Completion Ground Map](integration/runtime_completion_ground_map.md) and [Runtime Completion Implementation Workstreams](integration/runtime_completion_implementation_workstreams.md) closed with every wave and the flywheel-ignition lane complete, and the Strategy first slice landed the dynamic loop: bounded candidate search, Agent authorization, authorized realization with no Method or workflow route, claim-validated publication, and evidence-driven settlement to quiescence.
+
+The observation substrate delivered under the [Runtime Harness Plan](integration/runtime_harness_plan.md) serves the frozen [Agent-Native Debugger Requirements](integration/agent_native_debugger_requirements.md); its phase four consumer contract remains open. The standing storage posture behind that substrate is the [Storage Substrate Decision Record](integration/storage_substrate_decision_record.md).
 
 ## Current Delivery Order
 
-The order below is the active program sequence as of 2026-07-25, grounded in an assembly code survey of the same date. Two facts order everything. First, the domain contracts are substantially built and tested — goal acceptance, publication, evidence mapping, satisfaction ownership are all implemented, and the [Non Assembly Gap Fix Requirements](integration/non_assembly_gap_requirements.md) are closed as contracts — but the live product composition does not turn: theory is never injected, event vocabularies do not intersect, dispatch is disabled, and every such defect is recorded in the flywheel-ignition lane of [Runtime Completion Implementation Workstreams](integration/runtime_completion_implementation_workstreams.md). Second, the one live stall was found by manual survey because no shipped surface can observe a running runtime; the operator-visibility program that would have built one is superseded. The order therefore builds the observation instrument first and drives every semantic correction through it.
+The order below is the active program sequence as of 2026-08-12, grounded in the strategy landing. The prior sequence — instrument first, ignition through the instrument, Strategy inside the harness — completed: harness phases one through three closed with the three-altitude gate passed, the ignition lane closed, and the Strategy first slice landed the dynamic loop with a bounded convergence to quiescence and claim-validated true publication. What orders the work now is a single fact: the runtime kernel is domain-agnostic but the docs theory package is hand-lowered Rust composed from root, so widening to any second domain is blocked on theory elevation, not on machinery.
 
-1. Harness phases one and two, parallel lanes: the session record with the guarded temp-root boot and causal thread walk, and the waiting-on declarations with the eligibility walk. These make stalls diagnosable as per-tick declarations instead of archaeology.
-2. Harness phase three: the served HTTP substrate over the running foreground process, including the store-lock concurrent-observation fix. Gate: one real stall presented at all three customer altitudes by a separate process consuming the served surface. From this point Meld has a stall detector.
-3. Harness phase five: the flywheel-ignition lane — the five survey findings plus the assembly-survey extension — each validated live through the harness, then the bounded convergence proof with the harness attached. This closes the runtime completion program and is the first time the full loop turns semantically. Harness phase four, the published consumer contract and single non-authoritative reference consumer, proceeds in parallel, as do the Strategy delta's pure-language items from the [Strategy Ground Map](world_model/strategy/ground_map.md).
-4. The merged train reaches master as one unit at the proof, per branch discipline.
-5. Strategy first-slice construction proceeds inside the harness as its first development customer, landing the Goal-and-Belief prototype session that closes the debugger register's final exit conjunct. The [Multiplier Harness Program](integration/multiplier_harness_program.md) unlocks in parallel once its Ollama validation joins — its other dependencies, the turning flywheel and belief injection, are delivered by step three and the already-landed [Generation Read Path First Slice](integration/generation_read_path_first_slice.md).
+1. Theory elevation steps one and two under the [Theory Elevation Program](integration/theory_elevation_program.md): durable theory registries following the belief-family pattern, then declaration lowering that removes the root expression dispatch. These convert the docs stewardship image from compiled constants into installed theory.
+2. Parity reassessment: the [Flywheel Parity Workstream](integration/flywheel_parity_workstream.md) resumes from its Strategy pause, re-measuring comparator calibration and the satisfaction threshold against the rewritten docs theory data, and recording the live provider runs its slice seven still lacks.
+3. Standing maintained condition and authority contracts, elevation steps three and four, landing the runtime seams the stewardship corpus requires before any declaration layer may depend on them.
+4. The second expression proof: CVE freshness as the designed inverse domain, rejected as a generality proof if it needs any expression-named root branch. This is the evidence gate before stewardship schemas freeze.
+5. Settled replay and strategy promotion, closing the elevation program. The [Multiplier Harness Program](integration/multiplier_harness_program.md) proceeds in parallel once its Ollama validation joins; its other dependencies are delivered. Harness phase four, the published consumer contract, proceeds in parallel as capacity allows.
 6. Observation widens: the sensory promotion contract replaces the genesis substitute at the first coupling, claim re-entry closes the outer knowledge loop, and the measurement-gated deferred programs — spine compaction, causation, regime — activate on metrics the harness user projection is the instrument for.
 
-Why this order: the instrument precedes the ignition because the ignition corrections must be validated live rather than reported second-hand; ignition precedes Strategy because Strategy develops inside the harness against a turning loop; and everything measurement-gated waits because its own activation criteria are observations only the harness can produce.
+Why this order: registries precede declaration lowering because lowering needs somewhere durable to land; seams precede the second expression because the CVE semantics require maintained conditions and authority the docs slice never exercised; and the second expression precedes schema freezing because the stewardship corpus requires dissimilar-expression evidence before its package model hardens.
 
-Flywheel docs freshness must run the existing docs writer package over a selected branching workspace tree, preserve sibling fan-out and child-finalization-before-parent-preparation dependencies, materialize one `README.md` per actionable folder, and advance package progress through bounded durable runtime turns. Earlier one-turn, synthetic-patch, activation-heavy, and production-closure plans are retained only as historical characterization.
+Flywheel docs freshness now composes its five-capability chain dynamically from the stewardship catalog with no Method or workflow route; the docs writer package path and its earlier one-turn, synthetic-patch, activation-heavy, and production-closure plans are retained only as historical characterization.
 
 ## Historical Strategy
 
@@ -145,7 +147,7 @@ event authority and observability hardening
 2. event authority and observability hardening — complete, E1 through E4
 3. product event authority cutover — complete, E5 closed 2026-07-12
 4. event foundation closure — closed 2026-07-12, E6
-5. runtime completion ground map and implementation workstreams — current operational-parity authority
+5. runtime completion ground map and implementation workstreams — delivered, all waves and the ignition lane closed
 6. `meld-lang` — complete, Phase 1
 7. `world_model/graph` — complete, Phase 2
 8. `world_model/belief` — complete, Phase 3
@@ -161,10 +163,11 @@ event authority and observability hardening
 18. `world_model/regime` — deferred past vertical slice
 19. `world_model` — full integration deferred
 20. `execution` — full integration deferred
-21. runtime completion with initialization and emission — current operational-parity authority
-22. composition-path parity — chartered as Workstream Eight under runtime completion, gating Strategy end-to-end execution
-23. world-model Strategy first slice — active scope in [Strategy Minimal Slice Requirements](world_model/strategy/minimal_slice_requirements.md), cross-domain ownership in [Strategy Assessment By Domain](world_model/strategy/assessment_by_domain.md), and current evidence in [Strategy Ground Map](world_model/strategy/ground_map.md)
-24. agent-native debugger — requirements now, isolate prototyping per registration set, full sessions after runtime completion
+21. runtime completion with initialization and emission — delivered
+22. composition-path parity — Workstream Eight closed 2026-07-25
+23. world-model Strategy first slice — implemented, scope in [Strategy Minimal Slice Requirements](world_model/strategy/minimal_slice_requirements.md), cross-domain ownership in [Strategy Assessment By Domain](world_model/strategy/assessment_by_domain.md), and delivery evidence in [Strategy Ground Map](world_model/strategy/ground_map.md)
+24. agent-native debugger — register frozen, exit conjuncts discharged with harness phase three and the Strategy landing, phase four consumer contract open
+25. theory elevation — current forward authority in [Theory Elevation Program](integration/theory_elevation_program.md)
 
 ## Implementation Plans
 
@@ -178,16 +181,17 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 - [execution/task_network/PLAN.md](execution/task_network/PLAN.md) — first slice implemented
 - [execution/task_network/PHASE8.md](execution/task_network/PHASE8.md) — implemented
 - [events/event_foundation_closeout_program.md](events/event_foundation_closeout_program.md) - closed event foundation closeout
-- [integration/runtime_completion_ground_map.md](integration/runtime_completion_ground_map.md) - current operational-parity runtime completion authority
-- [integration/runtime_completion_implementation_workstreams.md](integration/runtime_completion_implementation_workstreams.md) - current build-facing workstream decomposition
-- [integration/flywheel_parity_workstream.md](integration/flywheel_parity_workstream.md) - everything-up-to-Strategy workstream at the Strategy pause: slice outcomes, scored exit criteria, and the sync agenda
-- [integration/silent_success_findings.md](integration/silent_success_findings.md) - silent-success bug-class findings register, all dispositions resolved
+- [integration/theory_elevation_program.md](integration/theory_elevation_program.md) - current forward authority: theory registries, declaration lowering, maintained conditions, authority, second expression proof, settled replay
+- [integration/runtime_completion_ground_map.md](integration/runtime_completion_ground_map.md) - delivered runtime completion authority, retained as ground evidence
+- [integration/runtime_completion_implementation_workstreams.md](integration/runtime_completion_implementation_workstreams.md) - delivered workstream decomposition, all waves closed
+- [integration/flywheel_parity_workstream.md](integration/flywheel_parity_workstream.md) - everything-up-to-Strategy workstream, resuming from the Strategy pause for calibration re-measurement and live-run evidence
+- [integration/silent_success_findings.md](integration/silent_success_findings.md) - silent-success bug-class findings register with open residuals F3, F7, F8, F9, and F11
 - [integration/gate_signal_first_slice.md](integration/gate_signal_first_slice.md) - completed slice making gate outcomes recorded signals with bounded retry on the package route
-- [world_model/strategy/ground_map.md](world_model/strategy/ground_map.md) - current Strategy primitive inventory, concept-to-ground map, and construction delta
-- [integration/agent_native_debugger_requirements.md](integration/agent_native_debugger_requirements.md) - requirements gathering for the agent-native runtime debugger, gated by runtime completion
+- [world_model/strategy/ground_map.md](world_model/strategy/ground_map.md) - Strategy primitive inventory and construction delta, delivered
+- [integration/agent_native_debugger_requirements.md](integration/agent_native_debugger_requirements.md) - frozen debugger register with exit conjuncts discharged
 - [integration/runtime_harness_plan.md](integration/runtime_harness_plan.md) - phased delivery of the interactive runtime harness over the three-customer information model
 - [integration/runtime_initialization.md](integration/runtime_initialization.md) - staged initialization contract owning theory installation, identity genesis, and epistemic seeding
-- [integration/pds_theory_runtime_layer.md](integration/pds_theory_runtime_layer.md) - implementation-readiness map of the settled PDS layer: theory kinds, seams, and the layer-settlement rule
+- [integration/pds_theory_runtime_layer.md](integration/pds_theory_runtime_layer.md) - implementation-readiness map of the settled PDS layer: theory kinds, seams, and the layer-settlement rule, continued by the theory elevation program
 - [integration/production_cognitive_runtime_closure_program.md](integration/production_cognitive_runtime_closure_program.md) - superseded production runtime closure proposal
 - [integration/production_cognitive_runtime_closure_delivery_ledger.md](integration/production_cognitive_runtime_closure_delivery_ledger.md) - superseded production-closure delivery ledger
 - [integration/minimal_runtime_flywheel.md](integration/minimal_runtime_flywheel.md) — historical one-turn template
@@ -204,9 +208,9 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 - [integration/docs_freshness_flywheel_next_iteration_report.md](integration/docs_freshness_flywheel_next_iteration_report.md) - superseded one-turn iteration report
 - [integration/docs_freshness_flywheel_domain_spec_skeleton.md](integration/docs_freshness_flywheel_domain_spec_skeleton.md) - superseded one-turn domain skeleton
 - [integration/docs_freshness_flywheel_implementation_guide.md](integration/docs_freshness_flywheel_implementation_guide.md) - superseded one-turn implementation guide
-- [integration/world_model_runtime_requirements.md](integration/world_model_runtime_requirements.md) - proposed world model runtime requirements
-- [integration/execution_runtime_requirements.md](integration/execution_runtime_requirements.md) - proposed execution runtime requirements
-- [integration/event_runtime_requirements.md](integration/event_runtime_requirements.md) - proposed event runtime requirements
+- [integration/world_model_runtime_requirements.md](integration/world_model_runtime_requirements.md) - superseded world model runtime requirements
+- [integration/execution_runtime_requirements.md](integration/execution_runtime_requirements.md) - superseded execution runtime requirements
+- [integration/event_runtime_requirements.md](integration/event_runtime_requirements.md) - delivered event runtime foundation requirements
 - [integration/supervisor_runtime_requirements.md](integration/supervisor_runtime_requirements.md) - historical supervisor contract evidence
 - [integration/durable_flywheel_vertical_proof_requirements.md](integration/durable_flywheel_vertical_proof_requirements.md) - historical synthetic one-turn proof requirements
 
