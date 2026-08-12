@@ -430,6 +430,7 @@ fn stewardship_boot_composes_production_dispatch_routes() {
         for capability_type in [
             "docs.inspect_scope",
             "docs.draft_patch_set",
+            "docs.validate_patch_set",
             "docs.publish_patch_set",
             "docs.assess_published_scope",
         ] {

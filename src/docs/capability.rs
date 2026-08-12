@@ -15,19 +15,25 @@ use crate::capability::{
     ScopeContract, SuppliedValueRef,
 };
 use crate::context::generation::contracts::GenerationOrchestrationRequest;
+use crate::docs::claim_validation::{
+    validate_patch_set, verify_validated_patch_set, DocsClaimPolicy, ValidatedDocsPatchSet,
+};
 use crate::error::ApiError;
 use crate::execution::{ExecutionEventContext, ExecutionRuntimeContext};
 use crate::provider::executor::{execute_completion, prepare_provider_for_request};
 use crate::provider::{ChatMessage, MessageRole, ProviderExecutionBinding};
 use crate::task::{ArtifactProducerRef, ArtifactRecord};
+use meld_execution::error::TERMINAL_CAPABILITY_FAILURE_MARKER;
 
 pub const INSPECT_SCOPE: &str = "docs.inspect_scope";
 pub const DRAFT_PATCH_SET: &str = "docs.draft_patch_set";
+pub const VALIDATE_PATCH_SET: &str = "docs.validate_patch_set";
 pub const PUBLISH_PATCH_SET: &str = "docs.publish_patch_set";
 pub const ASSESS_PUBLISHED_SCOPE: &str = "docs.assess_published_scope";
 
 pub const EVIDENCE_BUNDLE: &str = "docs_evidence_bundle";
 pub const PATCH_SET: &str = "docs_patch_set";
+pub const VALIDATED_PATCH_SET: &str = "docs_validated_patch_set";
 pub const PUBLICATION_RECEIPT: &str = "docs_publication_receipt";
 pub const FRESHNESS_ASSESSMENT: &str = "docs_freshness_assessment";
 
@@ -79,9 +85,14 @@ pub struct PublishedReadme {
     pub changed: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DocsPublicationReceipt {
     pub source_fingerprint: String,
+    pub policy_identity: String,
+    pub validation_fingerprint: String,
+    pub weighted_groundedness: f64,
+    pub unsupported_claim_mass: f64,
+    pub contradiction_claim_mass: f64,
     pub published: Vec<PublishedReadme>,
 }
 
@@ -92,6 +103,11 @@ pub struct DocsFreshnessAssessment {
     pub stale_probability: f64,
     pub expected_readmes: usize,
     pub verified_readmes: usize,
+    pub policy_identity: String,
+    pub validation_fingerprint: String,
+    pub weighted_groundedness: f64,
+    pub unsupported_claim_mass: f64,
+    pub contradiction_claim_mass: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -105,8 +121,15 @@ pub struct DraftPatchSetCapability {
 }
 
 #[derive(Debug, Clone)]
+pub struct ValidatePatchSetCapability {
+    config: DocsCapabilityConfig,
+    policy: DocsClaimPolicy,
+}
+
+#[derive(Debug, Clone)]
 pub struct PublishPatchSetCapability {
     config: DocsCapabilityConfig,
+    policy: DocsClaimPolicy,
 }
 
 #[derive(Debug, Clone)]
@@ -126,9 +149,15 @@ impl DraftPatchSetCapability {
     }
 }
 
+impl ValidatePatchSetCapability {
+    pub fn new(config: DocsCapabilityConfig, policy: DocsClaimPolicy) -> Self {
+        Self { config, policy }
+    }
+}
+
 impl PublishPatchSetCapability {
-    pub fn new(config: DocsCapabilityConfig) -> Self {
-        Self { config }
+    pub fn new(config: DocsCapabilityConfig, policy: DocsClaimPolicy) -> Self {
+        Self { config, policy }
     }
 }
 
@@ -144,7 +173,7 @@ impl CapabilityInvoker for InspectScopeCapability {
     type ExecutionApi = dyn ExecutionRuntimeContext;
 
     fn contract(&self) -> CapabilityTypeContract {
-        contract(INSPECT_SCOPE, None, EVIDENCE_BUNDLE, EffectKind::Emit)
+        contract(INSPECT_SCOPE, &[], EVIDENCE_BUNDLE, EffectKind::Emit)
     }
 
     async fn invoke(
@@ -155,7 +184,7 @@ impl CapabilityInvoker for InspectScopeCapability {
         _event_context: Option<&ExecutionEventContext>,
     ) -> Result<CapabilityInvocationResult, ApiError> {
         payload.validate_against(runtime_init)?;
-        let bundle = inspect_scope(&self.config.target_root)?;
+        let bundle = inspect_scope(&self.config.target_root).map_err(terminalize_docs_error)?;
         Ok(single_artifact(
             payload,
             runtime_init,
@@ -173,7 +202,7 @@ impl CapabilityInvoker for DraftPatchSetCapability {
     fn contract(&self) -> CapabilityTypeContract {
         contract(
             DRAFT_PATCH_SET,
-            Some(EVIDENCE_BUNDLE),
+            &[EVIDENCE_BUNDLE],
             PATCH_SET,
             EffectKind::Emit,
         )
@@ -188,12 +217,57 @@ impl CapabilityInvoker for DraftPatchSetCapability {
     ) -> Result<CapabilityInvocationResult, ApiError> {
         payload.validate_against(runtime_init)?;
         let bundle: DocsEvidenceBundle = decode_input(payload, EVIDENCE_BUNDLE)?;
-        let patches = draft_patch_set(api, &self.config, &bundle, event_context).await?;
+        let patches = draft_patch_set(api, &self.config, &bundle, event_context)
+            .await
+            .map_err(terminalize_docs_error)?;
         Ok(single_artifact(
             payload,
             runtime_init,
             PATCH_SET,
             to_value(patches)?,
+        ))
+    }
+}
+
+#[async_trait]
+impl CapabilityInvoker for ValidatePatchSetCapability {
+    type Error = ApiError;
+    type ExecutionApi = dyn ExecutionRuntimeContext;
+
+    fn contract(&self) -> CapabilityTypeContract {
+        contract(
+            VALIDATE_PATCH_SET,
+            &[EVIDENCE_BUNDLE, PATCH_SET],
+            VALIDATED_PATCH_SET,
+            EffectKind::Emit,
+        )
+    }
+
+    async fn invoke(
+        &self,
+        api: &dyn ExecutionRuntimeContext,
+        runtime_init: &CapabilityRuntimeInit,
+        payload: &CapabilityInvocationPayload,
+        event_context: Option<&ExecutionEventContext>,
+    ) -> Result<CapabilityInvocationResult, ApiError> {
+        payload.validate_against(runtime_init)?;
+        let bundle: DocsEvidenceBundle = decode_input(payload, EVIDENCE_BUNDLE)?;
+        let patches: DocsPatchSet = decode_input(payload, PATCH_SET)?;
+        let validated = validate_patch_set(
+            api,
+            &self.config,
+            &self.policy,
+            &bundle,
+            &patches,
+            event_context,
+        )
+        .await
+        .map_err(terminalize_docs_error)?;
+        Ok(single_artifact(
+            payload,
+            runtime_init,
+            VALIDATED_PATCH_SET,
+            to_value(validated)?,
         ))
     }
 }
@@ -206,7 +280,7 @@ impl CapabilityInvoker for PublishPatchSetCapability {
     fn contract(&self) -> CapabilityTypeContract {
         contract(
             PUBLISH_PATCH_SET,
-            Some(PATCH_SET),
+            &[VALIDATED_PATCH_SET],
             PUBLICATION_RECEIPT,
             EffectKind::Write,
         )
@@ -220,8 +294,9 @@ impl CapabilityInvoker for PublishPatchSetCapability {
         _event_context: Option<&ExecutionEventContext>,
     ) -> Result<CapabilityInvocationResult, ApiError> {
         payload.validate_against(runtime_init)?;
-        let patches: DocsPatchSet = decode_input(payload, PATCH_SET)?;
-        let receipt = publish_patch_set(&self.config.target_root, &patches)?;
+        let patches: ValidatedDocsPatchSet = decode_input(payload, VALIDATED_PATCH_SET)?;
+        let receipt = publish_patch_set(&self.config.target_root, &self.policy, &patches)
+            .map_err(terminalize_docs_error)?;
         Ok(single_artifact(
             payload,
             runtime_init,
@@ -239,7 +314,7 @@ impl CapabilityInvoker for AssessPublishedScopeCapability {
     fn contract(&self) -> CapabilityTypeContract {
         contract(
             ASSESS_PUBLISHED_SCOPE,
-            Some(PUBLICATION_RECEIPT),
+            &[PUBLICATION_RECEIPT],
             FRESHNESS_ASSESSMENT,
             EffectKind::Emit,
         )
@@ -255,7 +330,8 @@ impl CapabilityInvoker for AssessPublishedScopeCapability {
         payload.validate_against(runtime_init)?;
         let receipt: DocsPublicationReceipt = decode_input(payload, PUBLICATION_RECEIPT)?;
         let assessment =
-            assess_published_scope(&self.config.target_root, &self.config.subject_id, &receipt)?;
+            assess_published_scope(&self.config.target_root, &self.config.subject_id, &receipt)
+                .map_err(terminalize_docs_error)?;
         Ok(single_artifact(
             payload,
             runtime_init,
@@ -267,7 +343,7 @@ impl CapabilityInvoker for AssessPublishedScopeCapability {
 
 fn contract(
     capability_type_id: &str,
-    input_artifact: Option<&str>,
+    input_artifacts: &[&str],
     output_artifact: &str,
     effect_kind: EffectKind,
 ) -> CapabilityTypeContract {
@@ -281,11 +357,11 @@ fn contract(
             allow_fan_out: false,
         },
         binding_contract: Vec::new(),
-        input_contract: input_artifact
-            .into_iter()
+        input_contract: input_artifacts
+            .iter()
             .map(|artifact| InputSlotSpec {
-                slot_id: artifact.to_string(),
-                accepted_artifact_type_ids: vec![artifact.to_string()],
+                slot_id: (*artifact).to_string(),
+                accepted_artifact_type_ids: vec![(*artifact).to_string()],
                 schema_versions: ArtifactSchemaVersionRange { min: 1, max: 1 },
                 required: true,
                 cardinality: InputCardinality::One,
@@ -304,19 +380,36 @@ fn contract(
             exclusive: matches!(effect_kind, EffectKind::Write),
         }],
         execution_contract: ExecutionContract {
-            execution_class: if capability_type_id == DRAFT_PATCH_SET {
+            execution_class: if is_provider_capability(capability_type_id) {
                 ExecutionClass::Queued
             } else {
                 ExecutionClass::Inline
             },
             completion_semantics: "artifact_or_failure".to_string(),
-            retry_class: if capability_type_id == DRAFT_PATCH_SET {
+            retry_class: if is_provider_capability(capability_type_id) {
                 "bounded_provider_io".to_string()
             } else {
                 "deterministic_local".to_string()
             },
-            cancellation_supported: capability_type_id == DRAFT_PATCH_SET,
+            cancellation_supported: is_provider_capability(capability_type_id),
         },
+    }
+}
+
+fn is_provider_capability(capability_type_id: &str) -> bool {
+    matches!(capability_type_id, DRAFT_PATCH_SET | VALIDATE_PATCH_SET)
+}
+
+fn terminalize_docs_error(error: ApiError) -> ApiError {
+    match error {
+        retryable @ (ApiError::ProviderError(_)
+        | ApiError::ProviderRequestFailed(_)
+        | ApiError::ProviderRateLimit(_)
+        | ApiError::StorageError(_)
+        | ApiError::GenerationFailed(_)) => retryable,
+        terminal => {
+            ApiError::ConfigError(format!("{TERMINAL_CAPABILITY_FAILURE_MARKER}: {terminal}"))
+        }
     }
 }
 
@@ -680,8 +773,10 @@ fn generation_request(
 
 pub fn publish_patch_set(
     root: &Path,
-    patches: &DocsPatchSet,
+    policy: &DocsClaimPolicy,
+    patches: &ValidatedDocsPatchSet,
 ) -> Result<DocsPublicationReceipt, ApiError> {
+    verify_validated_patch_set(policy, patches)?;
     let root = root.canonicalize().map_err(io_error)?;
     let mut published = Vec::new();
     for patch in &patches.patches {
@@ -718,6 +813,11 @@ pub fn publish_patch_set(
     }
     Ok(DocsPublicationReceipt {
         source_fingerprint: patches.source_fingerprint.clone(),
+        policy_identity: patches.policy_identity.clone(),
+        validation_fingerprint: patches.validation_fingerprint.clone(),
+        weighted_groundedness: patches.weighted_groundedness,
+        unsupported_claim_mass: patches.unsupported_claim_mass,
+        contradiction_claim_mass: patches.contradiction_claim_mass,
         published,
     })
 }
@@ -739,13 +839,24 @@ pub fn assess_published_scope(
     }
     let complete = current.source_fingerprint == receipt.source_fingerprint
         && verified == receipt.published.len()
-        && !receipt.published.is_empty();
+        && !receipt.published.is_empty()
+        && !receipt.policy_identity.is_empty()
+        && !receipt.validation_fingerprint.is_empty()
+        && receipt.weighted_groundedness.is_finite()
+        && receipt.weighted_groundedness > 0.0
+        && receipt.unsupported_claim_mass == 0.0
+        && receipt.contradiction_claim_mass == 0.0;
     Ok(DocsFreshnessAssessment {
         subject_id: subject_id.to_string(),
         source_fingerprint: current.source_fingerprint,
         stale_probability: if complete { 0.0 } else { 1.0 },
         expected_readmes: receipt.published.len(),
         verified_readmes: verified,
+        policy_identity: receipt.policy_identity.clone(),
+        validation_fingerprint: receipt.validation_fingerprint.clone(),
+        weighted_groundedness: receipt.weighted_groundedness,
+        unsupported_claim_mass: receipt.unsupported_claim_mass,
+        contradiction_claim_mass: receipt.contradiction_claim_mass,
     })
 }
 
@@ -825,6 +936,73 @@ fn normalize_markdown(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::docs::claim_validation::{
+        extract_claims, CitationScope, ClaimAssessment, ClaimCitation, ClaimVerdict,
+        ReadmeClaimReport,
+    };
+
+    fn claim_policy() -> DocsClaimPolicy {
+        DocsClaimPolicy {
+            policy_id: "test-policy".to_string(),
+            minimum_claim_confidence: 0.8,
+            minimum_groundedness: 0.8,
+            maximum_unsupported_claim_mass: 0.0,
+            maximum_contradiction_claim_mass: 0.0,
+            maximum_revision_attempts: 1,
+            title_weight: 1.0,
+            prose_weight: 1.0,
+            list_item_weight: 1.0,
+            code_line_weight: 1.0,
+            table_row_weight: 1.0,
+        }
+    }
+
+    fn validated_patch_set(source_fingerprint: String, content: String) -> ValidatedDocsPatchSet {
+        let policy = claim_policy();
+        let content_hash = blake3::hash(content.as_bytes()).to_hex().to_string();
+        let assessments = extract_claims("README.md", &content)
+            .into_iter()
+            .map(|claim| ClaimAssessment {
+                claim,
+                verdict: ClaimVerdict::Supported,
+                confidence: 1.0,
+                citations: vec![ClaimCitation {
+                    scope: CitationScope::Direct,
+                    quote: "pub fn run".to_string(),
+                }],
+                rationale: "supported".to_string(),
+            })
+            .collect::<Vec<_>>();
+        let reports = vec![ReadmeClaimReport {
+            path: "README.md".to_string(),
+            content_hash: content_hash.clone(),
+            revision_attempts: 0,
+            assessments,
+            weighted_groundedness: 1.0,
+            unsupported_claim_mass: 0.0,
+            contradiction_claim_mass: 0.0,
+            accepted: true,
+        }];
+        let patches = vec![ReadmePatch {
+            path: "README.md".to_string(),
+            content_hash,
+            content,
+        }];
+        let policy_identity = policy.content_identity();
+        let seed = serde_json::to_vec(&(&source_fingerprint, &policy_identity, &patches, &reports))
+            .unwrap();
+        ValidatedDocsPatchSet {
+            source_fingerprint,
+            policy_id: policy.policy_id,
+            policy_identity,
+            validation_fingerprint: blake3::hash(&seed).to_hex().to_string(),
+            patches,
+            reports,
+            weighted_groundedness: 1.0,
+            unsupported_claim_mass: 0.0,
+            contradiction_claim_mass: 0.0,
+        }
+    }
 
     #[test]
     fn managed_readmes_do_not_change_source_fingerprint() {
@@ -844,20 +1022,44 @@ mod tests {
         std::fs::write(root.path().join("lib.rs"), "pub fn run() {}\n").unwrap();
         let inspection = inspect_scope(root.path()).unwrap();
         let content = "# Example\n\nGenerated documentation.\n".to_string();
-        let patches = DocsPatchSet {
-            source_fingerprint: inspection.source_fingerprint,
-            patches: vec![ReadmePatch {
-                path: "README.md".to_string(),
-                content_hash: blake3::hash(content.as_bytes()).to_hex().to_string(),
-                content,
-            }],
-        };
-        let receipt = publish_patch_set(root.path(), &patches).unwrap();
+        let patches = validated_patch_set(inspection.source_fingerprint, content);
+        let receipt = publish_patch_set(root.path(), &claim_policy(), &patches).unwrap();
         let fresh = assess_published_scope(root.path(), "subject", &receipt).unwrap();
         assert_eq!(fresh.stale_probability, 0.0);
         std::fs::write(root.path().join("README.md"), "# Drifted\n").unwrap();
         let stale = assess_published_scope(root.path(), "subject", &receipt).unwrap();
         assert_eq!(stale.stale_probability, 1.0);
+    }
+
+    #[test]
+    fn publication_rejects_a_tampered_validation_artifact_before_writing() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("lib.rs"), "pub fn run() {}\n").unwrap();
+        let inspection = inspect_scope(root.path()).unwrap();
+        let mut patches = validated_patch_set(
+            inspection.source_fingerprint,
+            "# Example\n\nGenerated documentation.\n".to_string(),
+        );
+        patches.validation_fingerprint = "forged".to_string();
+
+        assert!(publish_patch_set(root.path(), &claim_policy(), &patches).is_err());
+        assert!(!root.path().join("README.md").exists());
+    }
+
+    #[test]
+    fn final_assessment_refuses_invalid_claim_metrics() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("lib.rs"), "pub fn run() {}\n").unwrap();
+        let inspection = inspect_scope(root.path()).unwrap();
+        let patches = validated_patch_set(
+            inspection.source_fingerprint,
+            "# Example\n\nGenerated documentation.\n".to_string(),
+        );
+        let mut receipt = publish_patch_set(root.path(), &claim_policy(), &patches).unwrap();
+        receipt.unsupported_claim_mass = 0.1;
+
+        let assessment = assess_published_scope(root.path(), "subject", &receipt).unwrap();
+        assert_eq!(assessment.stale_probability, 1.0);
     }
 
     #[test]
@@ -871,6 +1073,20 @@ mod tests {
         assert!(is_context_limit_error("maximum context length exceeded"));
         assert!(is_context_limit_error("too many tokens"));
         assert!(!is_context_limit_error("connection refused"));
+    }
+
+    #[test]
+    fn deterministic_docs_failure_is_terminal_but_provider_transport_can_retry() {
+        let terminal = terminalize_docs_error(ApiError::ConfigError("invalid claims".to_string()));
+        assert!(terminal
+            .to_string()
+            .contains(TERMINAL_CAPABILITY_FAILURE_MARKER));
+
+        let retryable =
+            terminalize_docs_error(ApiError::ProviderRequestFailed("offline".to_string()));
+        assert!(!retryable
+            .to_string()
+            .contains(TERMINAL_CAPABILITY_FAILURE_MARKER));
     }
 
     #[test]

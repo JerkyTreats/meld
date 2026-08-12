@@ -1,0 +1,1777 @@
+//! Claim-level validation for generated documentation artifacts.
+
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+
+use serde::{Deserialize, Serialize};
+
+use crate::context::generation::contracts::GenerationOrchestrationRequest;
+use crate::docs::capability::{
+    DirectoryEvidence, DocsCapabilityConfig, DocsEvidenceBundle, DocsPatchSet, ReadmePatch,
+};
+use crate::error::ApiError;
+use crate::execution::{ExecutionEventContext, ExecutionRuntimeContext};
+use crate::provider::executor::{execute_completion, prepare_provider_for_request};
+use crate::provider::{ChatMessage, MessageRole};
+
+const CLAIM_BATCH_SIZE: usize = 6;
+const MAX_EVIDENCE_QUOTE_CHARS: usize = 160;
+const MAX_REVISION_REPORT_CHARS: usize = 8 * 1024;
+const MAX_CHILD_README_BYTES: usize = 3 * 1024;
+
+/// PDS-owned policy for accepting a generated documentation artifact.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DocsClaimPolicy {
+    pub policy_id: String,
+    pub minimum_claim_confidence: f64,
+    pub minimum_groundedness: f64,
+    pub maximum_unsupported_claim_mass: f64,
+    pub maximum_contradiction_claim_mass: f64,
+    pub maximum_revision_attempts: usize,
+    pub title_weight: f64,
+    pub prose_weight: f64,
+    pub list_item_weight: f64,
+    pub code_line_weight: f64,
+    pub table_row_weight: f64,
+}
+
+impl DocsClaimPolicy {
+    pub fn validate(&self) -> Result<(), ApiError> {
+        if self.policy_id.trim().is_empty() {
+            return Err(ApiError::ConfigError(
+                "docs claim policy id must not be empty".to_string(),
+            ));
+        }
+        for (name, value) in [
+            ("minimum claim confidence", self.minimum_claim_confidence),
+            ("minimum groundedness", self.minimum_groundedness),
+            (
+                "maximum unsupported claim mass",
+                self.maximum_unsupported_claim_mass,
+            ),
+            (
+                "maximum contradiction claim mass",
+                self.maximum_contradiction_claim_mass,
+            ),
+        ] {
+            if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+                return Err(ApiError::ConfigError(format!(
+                    "docs claim policy {name} must be between zero and one"
+                )));
+            }
+        }
+        for (name, value) in [
+            ("title weight", self.title_weight),
+            ("prose weight", self.prose_weight),
+            ("list item weight", self.list_item_weight),
+            ("code line weight", self.code_line_weight),
+            ("table row weight", self.table_row_weight),
+        ] {
+            if !value.is_finite() || value <= 0.0 {
+                return Err(ApiError::ConfigError(format!(
+                    "docs claim policy {name} must be finite and positive"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn content_identity(&self) -> String {
+        let bytes = serde_json::to_vec(self).expect("claim policy serialization is infallible");
+        format!("docs-claim-policy-{}", blake3::hash(&bytes).to_hex())
+    }
+
+    fn weight(&self, kind: ClaimKind) -> f64 {
+        match kind {
+            ClaimKind::Title => self.title_weight,
+            ClaimKind::Prose => self.prose_weight,
+            ClaimKind::ListItem => self.list_item_weight,
+            ClaimKind::CodeLine => self.code_line_weight,
+            ClaimKind::TableRow => self.table_row_weight,
+        }
+    }
+}
+
+/// Deterministically extracted assertion kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClaimKind {
+    Title,
+    Prose,
+    ListItem,
+    CodeLine,
+    TableRow,
+}
+
+/// One complete assertion extracted from a candidate README.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadmeClaim {
+    pub claim_id: String,
+    pub statement: String,
+    pub kind: ClaimKind,
+    pub source_line_start: usize,
+    pub source_line_end: usize,
+    pub literal_requirements: Vec<String>,
+}
+
+/// Semantic relationship between one README claim and admitted evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClaimVerdict {
+    Supported,
+    Unsupported,
+    Contradicted,
+}
+
+/// Evidence partition cited by the semantic verifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CitationScope {
+    Inventory,
+    Direct,
+    Descendant,
+}
+
+/// Exact quotation from one admitted evidence partition.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClaimCitation {
+    pub scope: CitationScope,
+    pub quote: String,
+}
+
+/// Durable verdict for one deterministically extracted claim.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ClaimAssessment {
+    pub claim: ReadmeClaim,
+    pub verdict: ClaimVerdict,
+    pub confidence: f64,
+    pub citations: Vec<ClaimCitation>,
+    pub rationale: String,
+}
+
+/// Claim validation result for one candidate README.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReadmeClaimReport {
+    pub path: String,
+    pub content_hash: String,
+    pub revision_attempts: usize,
+    pub assessments: Vec<ClaimAssessment>,
+    pub weighted_groundedness: f64,
+    pub unsupported_claim_mass: f64,
+    pub contradiction_claim_mass: f64,
+    pub accepted: bool,
+}
+
+/// Patch set whose exact bytes are fenced to successful claim reports.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ValidatedDocsPatchSet {
+    pub source_fingerprint: String,
+    pub policy_id: String,
+    pub policy_identity: String,
+    pub validation_fingerprint: String,
+    pub patches: Vec<ReadmePatch>,
+    pub reports: Vec<ReadmeClaimReport>,
+    pub weighted_groundedness: f64,
+    pub unsupported_claim_mass: f64,
+    pub contradiction_claim_mass: f64,
+}
+
+/// Reconcile a validation-bearing patch set before any filesystem mutation.
+pub fn verify_validated_patch_set(
+    policy: &DocsClaimPolicy,
+    validated: &ValidatedDocsPatchSet,
+) -> Result<(), ApiError> {
+    policy.validate()?;
+    if validated.policy_id != policy.policy_id
+        || validated.policy_identity != policy.content_identity()
+    {
+        return Err(ApiError::ConfigError(
+            "docs validation policy identity does not match the active PDS policy".to_string(),
+        ));
+    }
+    if validated.patches.is_empty() || validated.patches.len() != validated.reports.len() {
+        return Err(ApiError::ConfigError(
+            "docs validation must cover every README patch".to_string(),
+        ));
+    }
+
+    let mut patch_paths = BTreeSet::new();
+    for patch in &validated.patches {
+        if !patch_paths.insert(patch.path.as_str()) {
+            return Err(ApiError::ConfigError(format!(
+                "docs validation contains duplicate README patch '{}'",
+                patch.path
+            )));
+        }
+        let content_hash = blake3::hash(patch.content.as_bytes()).to_hex().to_string();
+        if patch.content_hash != content_hash {
+            return Err(ApiError::ConfigError(format!(
+                "docs validation content hash is invalid for '{}'",
+                patch.path
+            )));
+        }
+    }
+
+    let mut report_paths = BTreeSet::new();
+    for report in &validated.reports {
+        if !report_paths.insert(report.path.as_str()) || !patch_paths.contains(report.path.as_str())
+        {
+            return Err(ApiError::ConfigError(format!(
+                "docs validation report path is invalid for '{}'",
+                report.path
+            )));
+        }
+        let patch = validated
+            .patches
+            .iter()
+            .find(|patch| patch.path == report.path)
+            .expect("report path membership was checked");
+        if report.content_hash != patch.content_hash || report.assessments.is_empty() {
+            return Err(ApiError::ConfigError(format!(
+                "docs validation report does not fence exact bytes for '{}'",
+                report.path
+            )));
+        }
+        if !report.accepted
+            || report.assessments.iter().any(|assessment| {
+                assessment.verdict != ClaimVerdict::Supported
+                    || assessment.confidence < policy.minimum_claim_confidence
+                    || assessment.citations.is_empty()
+            })
+        {
+            return Err(ApiError::ConfigError(format!(
+                "docs validation report is not accepted for '{}'",
+                report.path
+            )));
+        }
+        let aggregates = aggregate_assessments(policy, &report.assessments);
+        if aggregates
+            != (
+                report.weighted_groundedness,
+                report.unsupported_claim_mass,
+                report.contradiction_claim_mass,
+            )
+        {
+            return Err(ApiError::ConfigError(format!(
+                "docs validation report aggregates are invalid for '{}'",
+                report.path
+            )));
+        }
+    }
+    if patch_paths != report_paths {
+        return Err(ApiError::ConfigError(
+            "docs validation reports do not cover every README patch".to_string(),
+        ));
+    }
+
+    let aggregates = aggregate_reports(policy, &validated.reports);
+    if aggregates
+        != (
+            validated.weighted_groundedness,
+            validated.unsupported_claim_mass,
+            validated.contradiction_claim_mass,
+        )
+    {
+        return Err(ApiError::ConfigError(
+            "docs validation aggregate claim metrics are invalid".to_string(),
+        ));
+    }
+    let seed = serde_json::to_vec(&(
+        &validated.source_fingerprint,
+        &validated.policy_identity,
+        &validated.patches,
+        &validated.reports,
+    ))
+    .map_err(|error| ApiError::ConfigError(format!("cannot encode docs validation: {error}")))?;
+    if validated.validation_fingerprint != blake3::hash(&seed).to_hex().to_string() {
+        return Err(ApiError::ConfigError(
+            "docs validation fingerprint is invalid".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct EvidencePartitions {
+    inventory: String,
+    direct: String,
+    descendant: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ProviderAssessmentBatch {
+    assessments: Vec<ProviderClaimAssessment>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct ProviderClaimAssessment {
+    claim_id: String,
+    verdict: ClaimVerdict,
+    confidence: f64,
+    citations: Vec<ClaimCitation>,
+    rationale: String,
+}
+
+/// Validate and, when needed, revise every candidate README within policy bounds.
+pub async fn validate_patch_set(
+    api: &dyn ExecutionRuntimeContext,
+    config: &DocsCapabilityConfig,
+    policy: &DocsClaimPolicy,
+    bundle: &DocsEvidenceBundle,
+    patches: &DocsPatchSet,
+    event_context: Option<&ExecutionEventContext>,
+) -> Result<ValidatedDocsPatchSet, ApiError> {
+    policy.validate()?;
+    if bundle.source_fingerprint != patches.source_fingerprint {
+        return Err(ApiError::ConfigError(
+            "docs evidence and patch source fingerprints do not match".to_string(),
+        ));
+    }
+
+    let mut pending = patches
+        .patches
+        .iter()
+        .map(|patch| (patch.path.clone(), patch.clone()))
+        .collect::<BTreeMap<_, _>>();
+    if pending.len() != patches.patches.len() {
+        return Err(ApiError::ConfigError(
+            "docs patch set contains duplicate README paths".to_string(),
+        ));
+    }
+
+    let mut accepted_by_directory = BTreeMap::<String, String>::new();
+    let mut accepted_patches = Vec::new();
+    let mut reports = Vec::new();
+    for directory in &bundle.directories {
+        let path = readme_path(&directory.path);
+        let mut patch = pending.remove(&path).ok_or_else(|| {
+            ApiError::ConfigError(format!(
+                "docs patch set is missing expected README '{path}'"
+            ))
+        })?;
+        let partitions = evidence_partitions(directory, &accepted_by_directory);
+        let mut accepted_report = None;
+        for revision_attempt in 0..=policy.maximum_revision_attempts {
+            let report = assess_readme(
+                api,
+                config,
+                policy,
+                directory,
+                &patch,
+                &partitions,
+                revision_attempt,
+                event_context,
+            )
+            .await?;
+            if report.accepted {
+                accepted_report = Some(report);
+                break;
+            }
+            if revision_attempt == policy.maximum_revision_attempts {
+                return Err(ApiError::ConfigError(format!(
+                    "README claim validation exhausted for '{}': {}",
+                    patch.path,
+                    rejection_summary(&report)
+                )));
+            }
+            let next_revision_attempt = revision_attempt + 1;
+            if next_revision_attempt == policy.maximum_revision_attempts {
+                let (pruned_patch, pruned_report) = prune_rejected_claims(
+                    policy,
+                    directory,
+                    &partitions,
+                    &patch,
+                    &report,
+                    next_revision_attempt,
+                )?;
+                patch = pruned_patch;
+                accepted_report = Some(pruned_report);
+                break;
+            }
+            patch = revise_readme(
+                api,
+                config,
+                directory,
+                &patch,
+                &partitions,
+                &report,
+                next_revision_attempt,
+                event_context,
+            )
+            .await?;
+        }
+        let report = accepted_report.expect("accepted report is set before loop exit");
+        accepted_by_directory.insert(directory.path.clone(), patch.content.clone());
+        accepted_patches.push(patch);
+        reports.push(report);
+    }
+    if !pending.is_empty() {
+        return Err(ApiError::ConfigError(format!(
+            "docs patch set contains unexpected README paths: {}",
+            pending.keys().cloned().collect::<Vec<_>>().join(", ")
+        )));
+    }
+
+    accepted_patches.sort_by(|left, right| left.path.cmp(&right.path));
+    reports.sort_by(|left, right| left.path.cmp(&right.path));
+    let (groundedness, unsupported, contradiction) = aggregate_reports(policy, &reports);
+    let policy_identity = policy.content_identity();
+    let validation_seed = serde_json::to_vec(&(
+        &bundle.source_fingerprint,
+        &policy_identity,
+        &accepted_patches,
+        &reports,
+    ))
+    .map_err(|error| ApiError::ConfigError(format!("cannot encode docs validation: {error}")))?;
+    Ok(ValidatedDocsPatchSet {
+        source_fingerprint: bundle.source_fingerprint.clone(),
+        policy_id: policy.policy_id.clone(),
+        policy_identity,
+        validation_fingerprint: blake3::hash(&validation_seed).to_hex().to_string(),
+        patches: accepted_patches,
+        reports,
+        weighted_groundedness: groundedness,
+        unsupported_claim_mass: unsupported,
+        contradiction_claim_mass: contradiction,
+    })
+}
+
+async fn assess_readme(
+    api: &dyn ExecutionRuntimeContext,
+    config: &DocsCapabilityConfig,
+    policy: &DocsClaimPolicy,
+    directory: &DirectoryEvidence,
+    patch: &ReadmePatch,
+    evidence: &EvidencePartitions,
+    revision_attempt: usize,
+    event_context: Option<&ExecutionEventContext>,
+) -> Result<ReadmeClaimReport, ApiError> {
+    let claims = extract_claims(&patch.path, &patch.content);
+    if claims.is_empty() {
+        return Err(ApiError::ConfigError(format!(
+            "README '{}' contains no assessable claims",
+            patch.path
+        )));
+    }
+    let mut assessments = Vec::new();
+    let mut pending_batches = claims
+        .chunks(CLAIM_BATCH_SIZE)
+        .map(|batch| batch.to_vec())
+        .collect::<VecDeque<_>>();
+    let mut batch_attempt = 0;
+    while let Some(batch) = pending_batches.pop_front() {
+        match assess_claim_batch(
+            api,
+            config,
+            directory,
+            patch,
+            evidence,
+            &batch,
+            revision_attempt,
+            batch_attempt,
+            event_context,
+        )
+        .await
+        {
+            Ok(batch_assessments) => assessments.extend(batch_assessments),
+            Err(ApiError::ConfigError(_)) if batch.len() > 1 => {
+                let right = batch[batch.len() / 2..].to_vec();
+                let left = batch[..batch.len() / 2].to_vec();
+                pending_batches.push_front(right);
+                pending_batches.push_front(left);
+            }
+            Err(ApiError::ConfigError(message))
+                if batch.len() == 1 && is_structurally_invalid_claim_response(&message) =>
+            {
+                assessments.push(ClaimAssessment {
+                    claim: batch[0].clone(),
+                    verdict: ClaimVerdict::Unsupported,
+                    confidence: 1.0,
+                    citations: Vec::new(),
+                    rationale: "verifier response was structurally invalid".to_string(),
+                });
+            }
+            Err(error) => return Err(error),
+        }
+        batch_attempt += 1;
+    }
+    assessments.sort_by(|left, right| left.claim.claim_id.cmp(&right.claim.claim_id));
+    apply_deterministic_guards(policy, evidence, &mut assessments);
+    let (groundedness, unsupported, contradiction) = aggregate_assessments(policy, &assessments);
+    let accepted = groundedness >= policy.minimum_groundedness
+        && unsupported <= policy.maximum_unsupported_claim_mass
+        && contradiction <= policy.maximum_contradiction_claim_mass
+        && assessments.iter().all(|assessment| {
+            assessment.verdict == ClaimVerdict::Supported
+                && assessment.confidence >= policy.minimum_claim_confidence
+        });
+    Ok(ReadmeClaimReport {
+        path: patch.path.clone(),
+        content_hash: patch.content_hash.clone(),
+        revision_attempts: revision_attempt,
+        assessments,
+        weighted_groundedness: groundedness,
+        unsupported_claim_mass: unsupported,
+        contradiction_claim_mass: contradiction,
+        accepted,
+    })
+}
+
+fn is_structurally_invalid_claim_response(message: &str) -> bool {
+    message.starts_with("provider returned invalid claim assessment JSON")
+        || message.starts_with("claim verifier returned unknown claim id")
+        || message.starts_with("claim verifier returned duplicate claim id")
+        || message.starts_with("claim verifier returned invalid confidence")
+        || message.starts_with("claim verifier omitted claim ids")
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn assess_claim_batch(
+    api: &dyn ExecutionRuntimeContext,
+    config: &DocsCapabilityConfig,
+    directory: &DirectoryEvidence,
+    patch: &ReadmePatch,
+    evidence: &EvidencePartitions,
+    claims: &[ReadmeClaim],
+    revision_attempt: usize,
+    batch_index: usize,
+    event_context: Option<&ExecutionEventContext>,
+) -> Result<Vec<ClaimAssessment>, ApiError> {
+    let request = validation_request(
+        config,
+        directory,
+        &patch.content_hash,
+        revision_attempt,
+        batch_index,
+        "docs-claim-validation",
+    );
+    let preparation = prepare_provider_for_request(api, &request)?;
+    let claim_json = serde_json::to_string(claims)
+        .map_err(|error| ApiError::ConfigError(format!("cannot encode README claims: {error}")))?;
+    let messages = vec![
+        ChatMessage {
+            role: MessageRole::System,
+            content: "You are an evidence entailment verifier. Judge every supplied claim against only the partitioned evidence. A supported verdict requires the evidence to justify the entire claim. A contradicted verdict requires evidence that conflicts with the claim. Otherwise use unsupported. Return compact JSON only and preserve every claim id exactly. Keep each rationale under twelve words.".to_string(),
+        },
+        ChatMessage {
+            role: MessageRole::User,
+            content: format!(
+                "Assess every claim in this JSON array:\n{claim_json}\n\nEvidence inventory:\n{}\n\nDirect source evidence:\n{}\n\nDescendant README evidence:\n{}\n\nReturn one JSON object with an assessments array. Each assessment must contain claim_id, verdict, confidence from zero to one, citations, and rationale. Verdict must be supported, unsupported, or contradicted. Each citation must contain scope and quote. Scope must be inventory, direct, or descendant. A supported verdict requires one to three shortest exact quotes of at most 160 characters from the cited partitions. Cite every independent clause, including text after and, then, or except. Unsupported verdicts need no citation. Never use outside knowledge. Never infer ownership from a repository URL. A filename alone does not establish its purpose. A route without an authentication dependency is not authenticated merely because neighboring routes are authenticated. Include each supplied claim exactly once and no others. Keep every rationale under twelve words and emit no Markdown.",
+                evidence.inventory, evidence.direct, evidence.descendant
+            ),
+        },
+    ];
+    let response = execute_completion(api, &request, &preparation, messages, event_context).await?;
+    let decoded = decode_provider_assessments(&response.content)?;
+    reconcile_provider_assessments(claims, decoded)
+}
+
+fn decode_provider_assessments(content: &str) -> Result<Vec<ProviderClaimAssessment>, ApiError> {
+    if let Ok(batch) = decode_json_response::<ProviderAssessmentBatch>(content, "claim assessment")
+    {
+        return Ok(batch.assessments);
+    }
+    if let Ok(assessments) =
+        decode_json_response::<Vec<ProviderClaimAssessment>>(content, "claim assessment")
+    {
+        return Ok(assessments);
+    }
+    decode_json_response::<ProviderClaimAssessment>(content, "claim assessment")
+        .map(|assessment| vec![assessment])
+}
+
+fn reconcile_provider_assessments(
+    claims: &[ReadmeClaim],
+    provider: Vec<ProviderClaimAssessment>,
+) -> Result<Vec<ClaimAssessment>, ApiError> {
+    let expected = claims
+        .iter()
+        .map(|claim| (claim.claim_id.as_str(), claim))
+        .collect::<BTreeMap<_, _>>();
+    let mut seen = BTreeSet::new();
+    let mut assessments = Vec::new();
+    let recover_singleton_id = expected.len() == 1 && provider.len() == 1;
+    for assessment in provider {
+        let claim = expected
+            .get(assessment.claim_id.as_str())
+            .copied()
+            .or_else(|| recover_singleton_id.then(|| *expected.values().next().unwrap()))
+            .ok_or_else(|| {
+                ApiError::ConfigError(format!(
+                    "claim verifier returned unknown claim id '{}'",
+                    assessment.claim_id
+                ))
+            })?;
+        if !seen.insert(claim.claim_id.clone()) {
+            return Err(ApiError::ConfigError(format!(
+                "claim verifier returned duplicate claim id '{}'",
+                assessment.claim_id
+            )));
+        }
+        if !assessment.confidence.is_finite() || !(0.0..=1.0).contains(&assessment.confidence) {
+            return Err(ApiError::ConfigError(format!(
+                "claim verifier returned invalid confidence for '{}'",
+                assessment.claim_id
+            )));
+        }
+        assessments.push(ClaimAssessment {
+            claim: claim.clone(),
+            verdict: assessment.verdict,
+            confidence: assessment.confidence,
+            citations: assessment.citations,
+            rationale: assessment.rationale,
+        });
+    }
+    if seen.len() != expected.len() {
+        let missing = expected
+            .keys()
+            .filter(|claim_id| !seen.contains(**claim_id))
+            .copied()
+            .collect::<Vec<_>>();
+        return Err(ApiError::ConfigError(format!(
+            "claim verifier omitted claim ids: {}",
+            missing.join(", ")
+        )));
+    }
+    Ok(assessments)
+}
+
+fn apply_deterministic_guards(
+    policy: &DocsClaimPolicy,
+    evidence: &EvidencePartitions,
+    assessments: &mut [ClaimAssessment],
+) {
+    for assessment in assessments {
+        let mut failures = Vec::new();
+        if assessment.verdict == ClaimVerdict::Supported && assessment.citations.is_empty() {
+            failures.push("supported verdict has no evidence citation".to_string());
+        }
+        for citation in &assessment.citations {
+            if citation.quote.trim().is_empty() {
+                failures.push("evidence citation is empty".to_string());
+                continue;
+            }
+            if citation.quote.chars().count() > MAX_EVIDENCE_QUOTE_CHARS {
+                failures.push("evidence citation exceeds the quote bound".to_string());
+            }
+            let partition = match citation.scope {
+                CitationScope::Inventory => &evidence.inventory,
+                CitationScope::Direct => &evidence.direct,
+                CitationScope::Descendant => &evidence.descendant,
+            };
+            if !partition.contains(&citation.quote) {
+                failures.push(format!(
+                    "citation is absent from the {:?} evidence partition",
+                    citation.scope
+                ));
+            }
+        }
+        let literal_evidence = format!(
+            "{}\n{}\n{}",
+            evidence.inventory, evidence.direct, evidence.descendant
+        );
+        for literal in &assessment.claim.literal_requirements {
+            if !literal_evidence.contains(literal) {
+                failures.push(format!(
+                    "literal '{literal}' is absent from admitted evidence"
+                ));
+            }
+        }
+        if assessment.claim.kind == ClaimKind::CodeLine
+            && !evidence.direct.contains(assessment.claim.statement.trim())
+        {
+            failures.push("code or command line is absent from direct source evidence".to_string());
+        }
+        if assessment.verdict == ClaimVerdict::Supported
+            && !citations_cover_each_clause(&assessment.claim.statement, &assessment.citations)
+        {
+            failures.push("citations do not cover every independent claim clause".to_string());
+        }
+        if assessment.confidence < policy.minimum_claim_confidence {
+            failures.push(format!(
+                "verifier confidence {} is below {}",
+                assessment.confidence, policy.minimum_claim_confidence
+            ));
+        }
+        if !failures.is_empty() {
+            assessment.verdict = ClaimVerdict::Unsupported;
+            assessment.confidence = 1.0;
+            assessment.rationale = failures.join("; ");
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn revise_readme(
+    api: &dyn ExecutionRuntimeContext,
+    config: &DocsCapabilityConfig,
+    directory: &DirectoryEvidence,
+    patch: &ReadmePatch,
+    evidence: &EvidencePartitions,
+    report: &ReadmeClaimReport,
+    revision_attempt: usize,
+    event_context: Option<&ExecutionEventContext>,
+) -> Result<ReadmePatch, ApiError> {
+    let request = validation_request(
+        config,
+        directory,
+        &patch.content_hash,
+        revision_attempt,
+        0,
+        "docs-readme-revision",
+    );
+    let preparation = prepare_provider_for_request(api, &request)?;
+    let rejected = report
+        .assessments
+        .iter()
+        .filter(|assessment| assessment.verdict != ClaimVerdict::Supported)
+        .map(|assessment| {
+            format!(
+                "- {}: {}\n  reason: {}",
+                assessment.claim.claim_id, assessment.claim.statement, assessment.rationale
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let messages = vec![
+        ChatMessage {
+            role: MessageRole::System,
+            content: "Revise a Markdown README so every factual claim is supported by the supplied evidence. Remove unsupported claims instead of replacing them with guesses. Preserve exact identifiers and return the complete Markdown README only.".to_string(),
+        },
+        ChatMessage {
+            role: MessageRole::User,
+            content: format!(
+                "Current directory: {}\n\nRejected claim report:\n{}\n\nEvidence inventory:\n{}\n\nDirect source evidence:\n{}\n\nDescendant README evidence:\n{}\n\nCurrent README:\n{}\n\nRewrite the complete README. Do not add any fact, command, path, URL, filename purpose, ownership claim, authentication claim, license claim, or installation instruction unless the admitted evidence supports it.",
+                directory.path,
+                truncate_chars(&rejected, MAX_REVISION_REPORT_CHARS),
+                evidence.inventory,
+                evidence.direct,
+                evidence.descendant,
+                patch.content
+            ),
+        },
+    ];
+    let response = execute_completion(api, &request, &preparation, messages, event_context).await?;
+    let content = normalize_markdown(&response.content);
+    if !content.starts_with('#') || content.len() < 32 {
+        return Err(ApiError::ConfigError(format!(
+            "README revision for '{}' is invalid or empty",
+            patch.path
+        )));
+    }
+    Ok(ReadmePatch {
+        path: patch.path.clone(),
+        content_hash: blake3::hash(content.as_bytes()).to_hex().to_string(),
+        content,
+    })
+}
+
+fn prune_rejected_claims(
+    policy: &DocsClaimPolicy,
+    directory: &DirectoryEvidence,
+    evidence: &EvidencePartitions,
+    patch: &ReadmePatch,
+    report: &ReadmeClaimReport,
+    revision_attempt: usize,
+) -> Result<(ReadmePatch, ReadmeClaimReport), ApiError> {
+    let canonical_title = canonical_directory_title(&directory.path);
+    let rejected_title_lines = report
+        .assessments
+        .iter()
+        .filter(|assessment| {
+            assessment.verdict != ClaimVerdict::Supported
+                && assessment.claim.kind == ClaimKind::Title
+        })
+        .map(|assessment| assessment.claim.source_line_start)
+        .collect::<BTreeSet<_>>();
+    let rejected_lines = report
+        .assessments
+        .iter()
+        .filter(|assessment| {
+            assessment.verdict != ClaimVerdict::Supported
+                && assessment.claim.kind != ClaimKind::Title
+        })
+        .flat_map(|assessment| {
+            assessment.claim.source_line_start..=assessment.claim.source_line_end
+        })
+        .collect::<BTreeSet<_>>();
+    let mut content = patch
+        .content
+        .lines()
+        .enumerate()
+        .filter(|(index, _)| !rejected_lines.contains(&(index + 1)))
+        .map(|(index, line)| {
+            if rejected_title_lines.contains(&(index + 1)) {
+                canonical_title.as_str()
+            } else {
+                line
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    content = normalize_pruned_markdown(&content);
+    if !content.starts_with('#') || content.len() < 32 || content == patch.content {
+        return Err(ApiError::ConfigError(format!(
+            "deterministic README pruning made no valid progress for '{}'",
+            patch.path
+        )));
+    }
+    let pruned_patch = ReadmePatch {
+        path: patch.path.clone(),
+        content_hash: blake3::hash(content.as_bytes()).to_hex().to_string(),
+        content,
+    };
+    let mut supported_by_statement = report
+        .assessments
+        .iter()
+        .filter(|assessment| assessment.verdict == ClaimVerdict::Supported)
+        .cloned()
+        .fold(
+            BTreeMap::<String, VecDeque<ClaimAssessment>>::new(),
+            |mut supported, assessment| {
+                supported
+                    .entry(claim_statement_key(&assessment.claim))
+                    .or_default()
+                    .push_back(assessment);
+                supported
+            },
+        );
+    let mut assessments = Vec::new();
+    for claim in extract_claims(&pruned_patch.path, &pruned_patch.content) {
+        let key = claim_statement_key(&claim);
+        let mut assessment = if let Some(assessment) = supported_by_statement
+            .get_mut(&key)
+            .and_then(VecDeque::pop_front)
+        {
+            assessment
+        } else if claim.kind == ClaimKind::Title && claim.statement == canonical_title[2..] {
+            canonical_title_assessment(&claim, directory, evidence)?
+        } else {
+            return Err(ApiError::ConfigError(format!(
+                "deterministic README pruning cannot preserve a supported assessment for '{}'",
+                claim.statement
+            )));
+        };
+        assessment.claim = claim;
+        assessments.push(assessment);
+    }
+    if assessments.is_empty() {
+        return Err(ApiError::ConfigError(format!(
+            "deterministic README pruning removed every claim from '{}'",
+            patch.path
+        )));
+    }
+    let (groundedness, unsupported, contradiction) = aggregate_assessments(policy, &assessments);
+    let accepted = groundedness >= policy.minimum_groundedness
+        && unsupported <= policy.maximum_unsupported_claim_mass
+        && contradiction <= policy.maximum_contradiction_claim_mass
+        && assessments.iter().all(|assessment| {
+            assessment.verdict == ClaimVerdict::Supported
+                && assessment.confidence >= policy.minimum_claim_confidence
+        });
+    if !accepted {
+        return Err(ApiError::ConfigError(format!(
+            "deterministic README pruning did not satisfy policy for '{}'",
+            patch.path
+        )));
+    }
+    let pruned_report = ReadmeClaimReport {
+        path: pruned_patch.path.clone(),
+        content_hash: pruned_patch.content_hash.clone(),
+        revision_attempts: revision_attempt,
+        assessments,
+        weighted_groundedness: groundedness,
+        unsupported_claim_mass: unsupported,
+        contradiction_claim_mass: contradiction,
+        accepted,
+    };
+    Ok((pruned_patch, pruned_report))
+}
+
+fn canonical_directory_title(path: &str) -> String {
+    if path == "." {
+        "# Workspace root".to_string()
+    } else {
+        format!("# {}", path.rsplit('/').next().unwrap_or(path))
+    }
+}
+
+fn canonical_title_assessment(
+    claim: &ReadmeClaim,
+    directory: &DirectoryEvidence,
+    evidence: &EvidencePartitions,
+) -> Result<ClaimAssessment, ApiError> {
+    let quote = format!("current directory: {}", directory.path);
+    if !evidence.inventory.contains(&quote) {
+        return Err(ApiError::ConfigError(format!(
+            "directory identity evidence is absent for '{}'",
+            directory.path
+        )));
+    }
+    Ok(ClaimAssessment {
+        claim: claim.clone(),
+        verdict: ClaimVerdict::Supported,
+        confidence: 1.0,
+        citations: vec![ClaimCitation {
+            scope: CitationScope::Inventory,
+            quote,
+        }],
+        rationale: "title matches the observed directory identity".to_string(),
+    })
+}
+
+fn claim_statement_key(claim: &ReadmeClaim) -> String {
+    format!("{:?}\0{}", claim.kind, claim.statement)
+}
+
+fn citations_cover_each_clause(statement: &str, citations: &[ClaimCitation]) -> bool {
+    const SCOPE_TERMS: &[&str] = &["all", "always", "every", "never", "none", "only"];
+    let cited_terms = citations
+        .iter()
+        .flat_map(|citation| meaningful_terms(&citation.quote))
+        .collect::<BTreeSet<_>>();
+    statement_clauses(statement).into_iter().all(|clause| {
+        let terms = meaningful_terms(clause);
+        if terms.is_empty() {
+            return true;
+        }
+        if terms
+            .iter()
+            .filter(|term| SCOPE_TERMS.contains(&term.as_str()))
+            .any(|term| !cited_terms.contains(term))
+        {
+            return false;
+        }
+        let required = if terms.len() <= 2 {
+            1
+        } else {
+            (terms.len() * 2).div_ceil(5)
+        };
+        terms
+            .iter()
+            .filter(|term| cited_terms.contains(*term))
+            .count()
+            >= required
+    })
+}
+
+fn statement_clauses(statement: &str) -> Vec<&str> {
+    let mut clauses = vec![statement];
+    for separator in [" and ", " then ", " except ", ";"] {
+        clauses = clauses
+            .into_iter()
+            .flat_map(|clause| clause.split(separator))
+            .collect();
+    }
+    clauses
+        .into_iter()
+        .map(str::trim)
+        .filter(|clause| !clause.is_empty())
+        .collect()
+}
+
+fn meaningful_terms(value: &str) -> BTreeSet<String> {
+    const STOP_WORDS: &[&str] = &[
+        "a", "an", "as", "at", "be", "by", "for", "from", "in", "into", "is", "it", "of", "on",
+        "or", "that", "the", "this", "to", "with",
+    ];
+    value
+        .split(|character: char| !character.is_alphanumeric() && character != '$')
+        .map(str::to_lowercase)
+        .filter(|term| term.len() > 1 || term.starts_with('$'))
+        .filter(|term| !STOP_WORDS.contains(&term.as_str()))
+        .collect()
+}
+
+fn normalize_pruned_markdown(value: &str) -> String {
+    let mut lines = Vec::new();
+    let mut ordered_index = 0_usize;
+    let mut in_code_block = false;
+    for raw_line in value.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.starts_with("```") {
+            in_code_block = !in_code_block;
+            ordered_index = 0;
+            lines.push(trimmed.to_string());
+            continue;
+        }
+        if in_code_block {
+            lines.push(raw_line.to_string());
+            continue;
+        }
+        if trimmed.is_empty() {
+            if lines.last().is_some_and(|line| !line.is_empty()) {
+                lines.push(String::new());
+            }
+            continue;
+        }
+        if trimmed.starts_with('#') {
+            ordered_index = 0;
+            lines.push(trimmed.to_string());
+            continue;
+        }
+        if let Some(item) = strip_ordered_list_marker(trimmed) {
+            ordered_index += 1;
+            lines.push(format!("{ordered_index}. {item}"));
+            continue;
+        }
+        if strip_unordered_list_marker(trimmed).is_some() {
+            ordered_index = 0;
+            lines.push(trimmed.to_string());
+            continue;
+        }
+        ordered_index = 0;
+        lines.push(trimmed.to_string());
+    }
+    while lines.last().is_some_and(String::is_empty) {
+        lines.pop();
+    }
+    format!("{}\n", lines.join("\n"))
+}
+
+fn strip_ordered_list_marker(line: &str) -> Option<&str> {
+    let digits = line
+        .chars()
+        .take_while(|character| character.is_ascii_digit())
+        .count();
+    if digits == 0 {
+        return None;
+    }
+    line.get(digits..)
+        .and_then(|rest| rest.strip_prefix(". "))
+        .map(str::trim)
+}
+
+fn strip_unordered_list_marker(line: &str) -> Option<&str> {
+    ["- ", "* ", "+ "]
+        .into_iter()
+        .find_map(|marker| line.strip_prefix(marker).map(str::trim))
+}
+
+fn evidence_partitions(
+    directory: &DirectoryEvidence,
+    accepted_by_directory: &BTreeMap<String, String>,
+) -> EvidencePartitions {
+    let inventory = format!(
+        "current directory: {}\ndirect files:\n{}\nchild directories:\n{}",
+        directory.path,
+        list_or_none(&directory.direct_files),
+        list_or_none(&directory.child_directories)
+    );
+    let descendant = directory
+        .child_directories
+        .iter()
+        .filter_map(|child| {
+            accepted_by_directory
+                .get(child)
+                .map(|content| (child, content))
+        })
+        .map(|(child, content)| {
+            format!(
+                "\n--- child {child} README ---\n{}\n",
+                truncate_chars(content, MAX_CHILD_README_BYTES)
+            )
+        })
+        .collect::<String>();
+    EvidencePartitions {
+        inventory,
+        direct: directory.evidence.clone(),
+        descendant,
+    }
+}
+
+fn list_or_none(values: &[String]) -> String {
+    if values.is_empty() {
+        "- none".to_string()
+    } else {
+        values
+            .iter()
+            .map(|value| format!("- {value}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+}
+
+/// Deterministically enumerate all assertion-bearing Markdown blocks.
+pub fn extract_claims(path: &str, content: &str) -> Vec<ReadmeClaim> {
+    let mut claims = Vec::new();
+    let mut paragraph = Vec::<(usize, String)>::new();
+    let mut in_code_block = false;
+    for (index, raw_line) in content.lines().enumerate() {
+        let line_number = index + 1;
+        let trimmed = raw_line.trim();
+        if trimmed.starts_with("```") {
+            flush_paragraph(path, &mut paragraph, &mut claims);
+            in_code_block = !in_code_block;
+            continue;
+        }
+        if in_code_block {
+            if !trimmed.is_empty() {
+                push_claim(
+                    path,
+                    trimmed.to_string(),
+                    ClaimKind::CodeLine,
+                    line_number,
+                    line_number,
+                    &mut claims,
+                );
+            }
+            continue;
+        }
+        if trimmed.is_empty() {
+            flush_paragraph(path, &mut paragraph, &mut claims);
+            continue;
+        }
+        if let Some(title) = trimmed.strip_prefix("# ") {
+            flush_paragraph(path, &mut paragraph, &mut claims);
+            push_claim(
+                path,
+                title.trim().to_string(),
+                ClaimKind::Title,
+                line_number,
+                line_number,
+                &mut claims,
+            );
+            continue;
+        }
+        if trimmed.starts_with('#') || is_table_separator(trimmed) {
+            flush_paragraph(path, &mut paragraph, &mut claims);
+            continue;
+        }
+        if let Some(item) = strip_list_marker(trimmed) {
+            flush_paragraph(path, &mut paragraph, &mut claims);
+            push_claim(
+                path,
+                item.to_string(),
+                ClaimKind::ListItem,
+                line_number,
+                line_number,
+                &mut claims,
+            );
+            continue;
+        }
+        if trimmed.starts_with('|') && trimmed.ends_with('|') {
+            flush_paragraph(path, &mut paragraph, &mut claims);
+            push_claim(
+                path,
+                trimmed.to_string(),
+                ClaimKind::TableRow,
+                line_number,
+                line_number,
+                &mut claims,
+            );
+            continue;
+        }
+        paragraph.push((
+            line_number,
+            trimmed.trim_start_matches('>').trim().to_string(),
+        ));
+    }
+    flush_paragraph(path, &mut paragraph, &mut claims);
+    claims
+}
+
+fn flush_paragraph(
+    path: &str,
+    paragraph: &mut Vec<(usize, String)>,
+    claims: &mut Vec<ReadmeClaim>,
+) {
+    if paragraph.is_empty() {
+        return;
+    }
+    let start = paragraph.first().unwrap().0;
+    let end = paragraph.last().unwrap().0;
+    let statement = paragraph
+        .iter()
+        .map(|(_, line)| line.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    paragraph.clear();
+    push_claim(path, statement, ClaimKind::Prose, start, end, claims);
+}
+
+fn push_claim(
+    path: &str,
+    statement: String,
+    kind: ClaimKind,
+    start: usize,
+    end: usize,
+    claims: &mut Vec<ReadmeClaim>,
+) {
+    if statement.trim().is_empty() {
+        return;
+    }
+    let seed = format!("{path}::{start}::{end}::{kind:?}::{statement}");
+    claims.push(ReadmeClaim {
+        claim_id: format!("claim-{}", blake3::hash(seed.as_bytes()).to_hex()),
+        literal_requirements: literal_requirements(&statement),
+        statement,
+        kind,
+        source_line_start: start,
+        source_line_end: end,
+    });
+}
+
+fn literal_requirements(statement: &str) -> Vec<String> {
+    let mut literals = BTreeSet::new();
+    let mut remaining = statement;
+    while let Some(start) = remaining.find('`') {
+        let after_start = &remaining[start + 1..];
+        let Some(end) = after_start.find('`') else {
+            break;
+        };
+        let literal = &after_start[..end];
+        if !literal.trim().is_empty() {
+            literals.insert(literal.to_string());
+        }
+        remaining = &after_start[end + 1..];
+    }
+    for token in statement.split_whitespace() {
+        let candidate = token.trim_matches(|character: char| {
+            matches!(
+                character,
+                '(' | ')' | '[' | ']' | '<' | '>' | ',' | '.' | ';' | ':' | '"' | '\''
+            )
+        });
+        if candidate.starts_with("https://") || candidate.starts_with("http://") {
+            literals.insert(candidate.to_string());
+        }
+    }
+    literals.into_iter().collect()
+}
+
+fn strip_list_marker(line: &str) -> Option<&str> {
+    for marker in ["- ", "* ", "+ "] {
+        if let Some(item) = line.strip_prefix(marker) {
+            return Some(item.trim());
+        }
+    }
+    let digits = line
+        .chars()
+        .take_while(|character| character.is_ascii_digit())
+        .count();
+    if digits > 0 {
+        return line
+            .get(digits..)
+            .and_then(|rest| rest.strip_prefix(". "))
+            .map(str::trim);
+    }
+    None
+}
+
+fn is_table_separator(line: &str) -> bool {
+    line.starts_with('|')
+        && line.ends_with('|')
+        && line
+            .chars()
+            .all(|character| matches!(character, '|' | '-' | ':' | ' '))
+}
+
+fn aggregate_assessments(
+    policy: &DocsClaimPolicy,
+    assessments: &[ClaimAssessment],
+) -> (f64, f64, f64) {
+    let total = assessments
+        .iter()
+        .map(|assessment| policy.weight(assessment.claim.kind))
+        .sum::<f64>();
+    if total <= 0.0 {
+        return (0.0, 1.0, 0.0);
+    }
+    let supported = assessments
+        .iter()
+        .filter(|assessment| assessment.verdict == ClaimVerdict::Supported)
+        .map(|assessment| policy.weight(assessment.claim.kind) * assessment.confidence)
+        .sum::<f64>();
+    let unsupported = assessments
+        .iter()
+        .filter(|assessment| assessment.verdict == ClaimVerdict::Unsupported)
+        .map(|assessment| policy.weight(assessment.claim.kind))
+        .sum::<f64>();
+    let contradiction = assessments
+        .iter()
+        .filter(|assessment| assessment.verdict == ClaimVerdict::Contradicted)
+        .map(|assessment| policy.weight(assessment.claim.kind))
+        .sum::<f64>();
+    (
+        supported / total,
+        unsupported / total,
+        contradiction / total,
+    )
+}
+
+fn aggregate_reports(policy: &DocsClaimPolicy, reports: &[ReadmeClaimReport]) -> (f64, f64, f64) {
+    let assessments = reports
+        .iter()
+        .flat_map(|report| report.assessments.iter().cloned())
+        .collect::<Vec<_>>();
+    aggregate_assessments(policy, &assessments)
+}
+
+fn rejection_summary(report: &ReadmeClaimReport) -> String {
+    report
+        .assessments
+        .iter()
+        .filter(|assessment| assessment.verdict != ClaimVerdict::Supported)
+        .take(6)
+        .map(|assessment| {
+            format!(
+                "{} [{}]: {}",
+                assessment.claim.claim_id, assessment.claim.statement, assessment.rationale
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
+fn validation_request(
+    config: &DocsCapabilityConfig,
+    directory: &DirectoryEvidence,
+    content_hash: &str,
+    revision_attempt: usize,
+    batch_index: usize,
+    frame_type: &str,
+) -> GenerationOrchestrationRequest {
+    let digest = blake3::hash(
+        format!(
+            "{}::{content_hash}::{revision_attempt}::{batch_index}::{frame_type}",
+            directory.path
+        )
+        .as_bytes(),
+    );
+    let mut request_bytes = [0_u8; 8];
+    request_bytes.copy_from_slice(&digest.as_bytes()[..8]);
+    GenerationOrchestrationRequest {
+        request_id: u64::from_le_bytes(request_bytes),
+        node_id: *digest.as_bytes(),
+        agent_id: config.agent_id.clone(),
+        provider: config.provider.clone(),
+        frame_type: frame_type.to_string(),
+        retry_count: revision_attempt,
+        force: true,
+    }
+}
+
+fn readme_path(directory: &str) -> String {
+    if directory == "." {
+        "README.md".to_string()
+    } else {
+        format!("{directory}/README.md")
+    }
+}
+
+fn decode_json_response<T: serde::de::DeserializeOwned>(
+    content: &str,
+    label: &str,
+) -> Result<T, ApiError> {
+    let trimmed = content.trim();
+    let candidate = if trimmed.starts_with("```") && trimmed.ends_with("```") {
+        let body = trimmed
+            .strip_prefix("```json")
+            .or_else(|| trimmed.strip_prefix("```"))
+            .unwrap_or(trimmed);
+        body.strip_suffix("```").unwrap_or(body).trim()
+    } else if (trimmed.starts_with('{') && trimmed.ends_with('}'))
+        || (trimmed.starts_with('[') && trimmed.ends_with(']'))
+    {
+        trimmed
+    } else if let (Some(start), Some(end)) = (trimmed.find('{'), trimmed.rfind('}')) {
+        &trimmed[start..=end]
+    } else {
+        trimmed
+    };
+    serde_json::from_str(candidate).map_err(|error| {
+        ApiError::ConfigError(format!("provider returned invalid {label} JSON: {error}"))
+    })
+}
+
+fn normalize_markdown(value: &str) -> String {
+    let trimmed = value.trim();
+    let unwrapped = if trimmed.starts_with("```") && trimmed.ends_with("```") {
+        let body = trimmed
+            .strip_prefix("```markdown")
+            .or_else(|| trimmed.strip_prefix("```md"))
+            .or_else(|| trimmed.strip_prefix("```"))
+            .unwrap_or(trimmed);
+        body.strip_suffix("```").unwrap_or(body).trim()
+    } else {
+        trimmed
+    };
+    format!("{}\n", unwrapped.trim())
+}
+
+fn truncate_chars(value: &str, max: usize) -> String {
+    value.chars().take(max).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn policy() -> DocsClaimPolicy {
+        DocsClaimPolicy {
+            policy_id: "test".to_string(),
+            minimum_claim_confidence: 0.8,
+            minimum_groundedness: 0.8,
+            maximum_unsupported_claim_mass: 0.0,
+            maximum_contradiction_claim_mass: 0.0,
+            maximum_revision_attempts: 1,
+            title_weight: 1.0,
+            prose_weight: 1.0,
+            list_item_weight: 1.0,
+            code_line_weight: 2.0,
+            table_row_weight: 1.0,
+        }
+    }
+
+    #[test]
+    fn extraction_covers_title_prose_lists_tables_and_code() {
+        let claims = extract_claims(
+            "README.md",
+            "# Tool\n\nA useful tool.\n\n## API\n\n- `run` starts it.\n\n| Name | Meaning |\n| --- | --- |\n| api | HTTP |\n\n```sh\npython -m tool\n```\n",
+        );
+        assert_eq!(claims.len(), 6);
+        assert_eq!(claims[0].kind, ClaimKind::Title);
+        assert_eq!(claims[1].kind, ClaimKind::Prose);
+        assert_eq!(claims[2].literal_requirements, vec!["run"]);
+        assert_eq!(claims[3].kind, ClaimKind::TableRow);
+        assert_eq!(claims[4].kind, ClaimKind::TableRow);
+        assert_eq!(claims[5].kind, ClaimKind::CodeLine);
+    }
+
+    #[test]
+    fn missing_literal_overrides_a_supported_model_verdict() {
+        let claim = ReadmeClaim {
+            claim_id: "claim".to_string(),
+            statement: "Use `invented.yaml`.".to_string(),
+            kind: ClaimKind::ListItem,
+            source_line_start: 1,
+            source_line_end: 1,
+            literal_requirements: vec!["invented.yaml".to_string()],
+        };
+        let mut assessments = vec![ClaimAssessment {
+            claim,
+            verdict: ClaimVerdict::Supported,
+            confidence: 0.9,
+            citations: vec![ClaimCitation {
+                scope: CitationScope::Direct,
+                quote: "config.example.yaml".to_string(),
+            }],
+            rationale: "supported".to_string(),
+        }];
+        apply_deterministic_guards(
+            &policy(),
+            &EvidencePartitions {
+                inventory: String::new(),
+                direct: "config.example.yaml".to_string(),
+                descendant: String::new(),
+            },
+            &mut assessments,
+        );
+        assert_eq!(assessments[0].verdict, ClaimVerdict::Unsupported);
+        assert!(assessments[0].rationale.contains("invented.yaml"));
+    }
+
+    #[test]
+    fn supported_citations_must_be_exact_admitted_quotes() {
+        let claims = vec![ReadmeClaim {
+            claim_id: "claim".to_string(),
+            statement: "The service exposes health.".to_string(),
+            kind: ClaimKind::Prose,
+            source_line_start: 1,
+            source_line_end: 1,
+            literal_requirements: Vec::new(),
+        }];
+        let provider = vec![ProviderClaimAssessment {
+            claim_id: "claim".to_string(),
+            verdict: ClaimVerdict::Supported,
+            confidence: 0.95,
+            citations: vec![ClaimCitation {
+                scope: CitationScope::Direct,
+                quote: "imagined quote".to_string(),
+            }],
+            rationale: "supported".to_string(),
+        }];
+        let mut assessments = reconcile_provider_assessments(&claims, provider).unwrap();
+        apply_deterministic_guards(
+            &policy(),
+            &EvidencePartitions {
+                inventory: String::new(),
+                direct: "@app.get(\"/healthz\")".to_string(),
+                descendant: String::new(),
+            },
+            &mut assessments,
+        );
+        assert_eq!(assessments[0].verdict, ClaimVerdict::Unsupported);
+        assert!(assessments[0].rationale.contains("absent"));
+    }
+
+    #[test]
+    fn one_clause_citation_cannot_support_a_compound_claim() {
+        let claim = ReadmeClaim {
+            claim_id: "claim".to_string(),
+            statement: "All scripts run from the root and rely on strict mode, except during parallel waits."
+                .to_string(),
+            kind: ClaimKind::Prose,
+            source_line_start: 1,
+            source_line_end: 1,
+            literal_requirements: Vec::new(),
+        };
+        let mut assessments = vec![ClaimAssessment {
+            claim,
+            verdict: ClaimVerdict::Supported,
+            confidence: 0.95,
+            citations: vec![ClaimCitation {
+                scope: CitationScope::Direct,
+                quote: "Assumed that it is being run from the root".to_string(),
+            }],
+            rationale: "supported".to_string(),
+        }];
+        apply_deterministic_guards(
+            &policy(),
+            &EvidencePartitions {
+                inventory: String::new(),
+                direct: "Assumed that it is being run from the root\nset -e\nset +e\nwait"
+                    .to_string(),
+                descendant: String::new(),
+            },
+            &mut assessments,
+        );
+
+        assert_eq!(assessments[0].verdict, ClaimVerdict::Unsupported);
+        assert!(assessments[0].rationale.contains("every independent"));
+    }
+
+    #[test]
+    fn universal_scope_requires_explicit_citation_support() {
+        assert!(!citations_cover_each_clause(
+            "All scripts enable strict mode.",
+            &[ClaimCitation {
+                scope: CitationScope::Direct,
+                quote: "one script enables strict mode".to_string(),
+            }]
+        ));
+        assert!(citations_cover_each_clause(
+            "All scripts enable strict mode.",
+            &[ClaimCitation {
+                scope: CitationScope::Direct,
+                quote: "All scripts enable strict mode".to_string(),
+            }]
+        ));
+    }
+
+    #[test]
+    fn provider_must_assess_every_extracted_claim_exactly_once() {
+        let claims = extract_claims("README.md", "# Tool\n\nIt runs.\n");
+        let one = ProviderClaimAssessment {
+            claim_id: claims[0].claim_id.clone(),
+            verdict: ClaimVerdict::Supported,
+            confidence: 0.9,
+            citations: vec![ClaimCitation {
+                scope: CitationScope::Direct,
+                quote: "tool".to_string(),
+            }],
+            rationale: "supported".to_string(),
+        };
+
+        assert!(reconcile_provider_assessments(&claims, vec![one.clone()]).is_err());
+        assert!(reconcile_provider_assessments(&claims, vec![one.clone(), one]).is_err());
+
+        let unknown = ProviderClaimAssessment {
+            claim_id: "unknown".to_string(),
+            verdict: ClaimVerdict::Supported,
+            confidence: 0.9,
+            citations: Vec::new(),
+            rationale: String::new(),
+        };
+        assert!(reconcile_provider_assessments(&claims, vec![unknown]).is_err());
+    }
+
+    #[test]
+    fn singleton_assessment_recovers_an_opaque_id_copy_error() {
+        let claims = extract_claims("README.md", "# Tool\n");
+        let provider = vec![ProviderClaimAssessment {
+            claim_id: "wrong-opaque-id".to_string(),
+            verdict: ClaimVerdict::Supported,
+            confidence: 0.9,
+            citations: vec![ClaimCitation {
+                scope: CitationScope::Inventory,
+                quote: "current directory: .".to_string(),
+            }],
+            rationale: "supported".to_string(),
+        }];
+
+        let reconciled = reconcile_provider_assessments(&claims, provider).unwrap();
+
+        assert_eq!(reconciled[0].claim.claim_id, claims[0].claim_id);
+    }
+
+    #[test]
+    fn verifier_accepts_equivalent_constrained_json_envelopes() {
+        let assessment = r#"{"claim_id":"claim","verdict":"supported","confidence":0.9,"citations":[{"scope":"direct","quote":"run"}],"rationale":"supported"}"#;
+        let wrapped = format!(r#"{{"assessments":[{assessment}]}}"#);
+        let array = format!(r#"[{assessment}]"#);
+
+        assert_eq!(decode_provider_assessments(&wrapped).unwrap().len(), 1);
+        assert_eq!(decode_provider_assessments(&array).unwrap().len(), 1);
+        assert_eq!(decode_provider_assessments(assessment).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn only_verifier_structure_errors_can_become_unsupported_singletons() {
+        assert!(is_structurally_invalid_claim_response(
+            "provider returned invalid claim assessment JSON: bad shape"
+        ));
+        assert!(is_structurally_invalid_claim_response(
+            "claim verifier returned unknown claim id 'wrong'"
+        ));
+        assert!(!is_structurally_invalid_claim_response(
+            "provider configuration is missing"
+        ));
+    }
+
+    #[test]
+    fn hard_failures_are_not_hidden_by_weighted_support() {
+        let supported = |id: &str| ClaimAssessment {
+            claim: ReadmeClaim {
+                claim_id: id.to_string(),
+                statement: "supported".to_string(),
+                kind: ClaimKind::Prose,
+                source_line_start: 1,
+                source_line_end: 1,
+                literal_requirements: Vec::new(),
+            },
+            verdict: ClaimVerdict::Supported,
+            confidence: 1.0,
+            citations: Vec::new(),
+            rationale: String::new(),
+        };
+        let mut assessments = (0..20)
+            .map(|index| supported(&format!("supported-{index}")))
+            .collect::<Vec<_>>();
+        let mut contradicted = supported("contradicted");
+        contradicted.verdict = ClaimVerdict::Contradicted;
+        assessments.push(contradicted);
+        let (_, _, contradiction) = aggregate_assessments(&policy(), &assessments);
+        assert!(contradiction > 0.0);
+        assert!(contradiction > policy().maximum_contradiction_claim_mass);
+    }
+
+    #[test]
+    fn final_bounded_revision_deterministically_removes_rejected_claim_blocks() {
+        let directory = DirectoryEvidence {
+            path: ".".to_string(),
+            direct_files: vec!["tool.rs".to_string()],
+            child_directories: Vec::new(),
+            evidence: "run".to_string(),
+        };
+        let evidence = evidence_partitions(&directory, &BTreeMap::new());
+        let content = "# Tool\n\nSupported summary.\n\nInvented behavior.\n\n- `run` exists.\n";
+        let patch = ReadmePatch {
+            path: "README.md".to_string(),
+            content: content.to_string(),
+            content_hash: blake3::hash(content.as_bytes()).to_hex().to_string(),
+        };
+        let mut assessments = extract_claims(&patch.path, &patch.content)
+            .into_iter()
+            .map(|claim| ClaimAssessment {
+                claim,
+                verdict: ClaimVerdict::Supported,
+                confidence: 0.9,
+                citations: vec![ClaimCitation {
+                    scope: CitationScope::Direct,
+                    quote: "run".to_string(),
+                }],
+                rationale: "supported".to_string(),
+            })
+            .collect::<Vec<_>>();
+        assessments
+            .iter_mut()
+            .find(|assessment| assessment.claim.statement == "Invented behavior.")
+            .unwrap()
+            .verdict = ClaimVerdict::Unsupported;
+        let report = ReadmeClaimReport {
+            path: patch.path.clone(),
+            content_hash: patch.content_hash.clone(),
+            revision_attempts: 1,
+            assessments,
+            weighted_groundedness: 0.75,
+            unsupported_claim_mass: 0.25,
+            contradiction_claim_mass: 0.0,
+            accepted: false,
+        };
+
+        let (pruned, pruned_report) =
+            prune_rejected_claims(&policy(), &directory, &evidence, &patch, &report, 1).unwrap();
+
+        assert!(pruned.content.contains("Supported summary."));
+        assert!(pruned.content.contains("`run` exists."));
+        assert!(!pruned.content.contains("Invented behavior."));
+        assert!(pruned_report.accepted);
+        assert_eq!(pruned_report.content_hash, pruned.content_hash);
+        assert_eq!(pruned_report.assessments.len(), 3);
+    }
+
+    #[test]
+    fn final_bounded_revision_replaces_a_rejected_title_with_observed_identity() {
+        let directory = DirectoryEvidence {
+            path: ".".to_string(),
+            direct_files: vec!["tool.rs".to_string()],
+            child_directories: Vec::new(),
+            evidence: "The tool runs.".to_string(),
+        };
+        let evidence = evidence_partitions(&directory, &BTreeMap::new());
+        let content = "# Invented product\n\nThe tool runs.\n";
+        let patch = ReadmePatch {
+            path: "README.md".to_string(),
+            content: content.to_string(),
+            content_hash: blake3::hash(content.as_bytes()).to_hex().to_string(),
+        };
+        let mut assessments = extract_claims(&patch.path, &patch.content)
+            .into_iter()
+            .map(|claim| ClaimAssessment {
+                claim,
+                verdict: ClaimVerdict::Supported,
+                confidence: 0.9,
+                citations: vec![ClaimCitation {
+                    scope: CitationScope::Direct,
+                    quote: "The tool runs.".to_string(),
+                }],
+                rationale: "supported".to_string(),
+            })
+            .collect::<Vec<_>>();
+        assessments[0].verdict = ClaimVerdict::Unsupported;
+        assessments[0].citations.clear();
+        let report = ReadmeClaimReport {
+            path: patch.path.clone(),
+            content_hash: patch.content_hash.clone(),
+            revision_attempts: 1,
+            assessments,
+            weighted_groundedness: 0.5,
+            unsupported_claim_mass: 0.5,
+            contradiction_claim_mass: 0.0,
+            accepted: false,
+        };
+
+        let (pruned, pruned_report) =
+            prune_rejected_claims(&policy(), &directory, &evidence, &patch, &report, 1).unwrap();
+
+        assert!(pruned.content.starts_with("# Workspace root\n"));
+        assert!(pruned_report.accepted);
+        assert_eq!(
+            pruned_report.assessments[0].citations[0].quote,
+            "current directory: ."
+        );
+    }
+
+    #[test]
+    fn pruned_markdown_flattens_orphaned_lists_and_repairs_ordering() {
+        let normalized = normalize_pruned_markdown(
+            "# Tool\n\n    - kept child\n    1. first\n    3. third  \n\n    trailing prose\n",
+        );
+
+        assert_eq!(
+            normalized,
+            "# Tool\n\n- kept child\n1. first\n2. third\n\ntrailing prose\n"
+        );
+    }
+}

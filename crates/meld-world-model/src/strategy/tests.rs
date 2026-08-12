@@ -184,6 +184,92 @@ fn constructs_and_verifies_a_novel_capability_chain() {
 }
 
 #[test]
+fn direct_search_reuses_one_producer_across_a_multi_input_dag() {
+    let mut validate = operator(
+        "validate-docs",
+        "docs.validate",
+        Some("draft_docs"),
+        "validated_docs",
+        Vec::new(),
+    );
+    validate.resolution.requires_inputs.push(SlotConstraint {
+        artifact_type: Term::ArtifactType("source_evidence".into()),
+        required: true,
+    });
+    let capabilities = vec![
+        StrategyCapability {
+            contract_id: "contract-assess-v1".into(),
+            operator: operator(
+                "assess-docs",
+                "docs.assess",
+                Some("validated_docs"),
+                "freshness_evidence",
+                vec![Effect::Assert(Proposition::Exists {
+                    scope: subject(),
+                    artifact_type: Term::ArtifactType("freshness_evidence".into()),
+                })],
+            ),
+            outcome_contract_id: "docs-evaluated".into(),
+        },
+        StrategyCapability {
+            contract_id: "contract-validate-v1".into(),
+            operator: validate,
+            outcome_contract_id: "docs-validated".into(),
+        },
+        StrategyCapability {
+            contract_id: "contract-draft-v1".into(),
+            operator: operator(
+                "draft-docs",
+                "docs.draft",
+                Some("source_evidence"),
+                "draft_docs",
+                Vec::new(),
+            ),
+            outcome_contract_id: "docs-drafted".into(),
+        },
+        StrategyCapability {
+            contract_id: "contract-inspect-v1".into(),
+            operator: operator(
+                "inspect-docs",
+                "docs.inspect",
+                None,
+                "source_evidence",
+                Vec::new(),
+            ),
+            outcome_contract_id: "docs-inspected".into(),
+        },
+    ];
+    let mut problem = problem();
+    problem.capabilities = capabilities;
+    let request = StrategySearchRequest {
+        problem,
+        bounds: StrategySearchBounds {
+            max_expansions: 32,
+            max_depth: 8,
+        },
+    };
+
+    let result = search(&request);
+    let candidate = result.recommendation.expect("candidate");
+
+    assert_eq!(candidate.composition.steps.len(), 4);
+    assert_eq!(candidate.composition.edges.len(), 4);
+    assert_eq!(
+        candidate
+            .composition
+            .steps
+            .iter()
+            .filter(|step| step.step_id == "inspect-docs")
+            .count(),
+        1
+    );
+    assert!(matches!(
+        verify_candidate(&request.problem, &candidate),
+        CandidateVerification::Valid { .. }
+    ));
+}
+
+#[test]
 fn method_seed_uses_the_same_candidate_and_verification_shape() {
     let mut problem = problem();
     let evaluate = problem.capabilities[0].operator.clone();

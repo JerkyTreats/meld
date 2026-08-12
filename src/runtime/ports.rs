@@ -1227,11 +1227,7 @@ impl ClaimedTaskInvoker for CompiledTaskClaimInvoker {
                 // all-fresh expansion has no work by construction: both are
                 // terminal, recorded through the command boundary so belief
                 // learns them, never refenced into unbounded retries.
-                if message.contains(crate::context::capability::GATE_FAILURE_MARKER)
-                    || message
-                        .contains(crate::merkle_traversal::expansion::NOTHING_TO_REGENERATE_MARKER)
-                    || message.contains(crate::workspace::capability::MISSING_HEAD_MARKER)
-                {
+                if is_terminal_claimed_failure(&message) {
                     Ok(ClaimedInvocationOutcome::Failed { error: message })
                 } else {
                     // Any other unresolved invocation keeps the claim
@@ -1242,6 +1238,13 @@ impl ClaimedTaskInvoker for CompiledTaskClaimInvoker {
             }
         }
     }
+}
+
+fn is_terminal_claimed_failure(message: &str) -> bool {
+    message.contains(meld_execution::error::TERMINAL_CAPABILITY_FAILURE_MARKER)
+        || message.contains(crate::context::capability::GATE_FAILURE_MARKER)
+        || message.contains(crate::merkle_traversal::expansion::NOTHING_TO_REGENERATE_MARKER)
+        || message.contains(crate::workspace::capability::MISSING_HEAD_MARKER)
 }
 
 /// Shared handle adapter for an injected package-run preparation port.
@@ -1308,6 +1311,17 @@ mod tests {
     use meld_lang::{Goal, GoalLifecycle, GoalPriority, GoalSource, Proposition, Term};
     use meld_world_model::agent::AgentGoalMutationKind;
     use meld_world_model::AgentCurationDedupeKey;
+
+    #[test]
+    fn generic_terminal_capability_marker_prevents_unbounded_claim_replay() {
+        assert!(is_terminal_claimed_failure(&format!(
+            "{}: exhausted bounded validation",
+            meld_execution::error::TERMINAL_CAPABILITY_FAILURE_MARKER
+        )));
+        assert!(!is_terminal_claimed_failure(
+            "Provider request failed: connection reset"
+        ));
+    }
 
     fn subject() -> DomainObjectRef {
         DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap()

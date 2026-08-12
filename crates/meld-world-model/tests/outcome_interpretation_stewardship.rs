@@ -52,7 +52,12 @@ fn outcome(artifact_type: &str, stale_probability: f64) -> OutcomeMappingInput {
                     "source_fingerprint": "source-hash",
                     "stale_probability": stale_probability,
                     "expected_readmes": 4,
-                    "verified_readmes": 4
+                    "verified_readmes": 4,
+                    "policy_identity": "policy-hash",
+                    "validation_fingerprint": "validation-hash",
+                    "weighted_groundedness": 0.96,
+                    "unsupported_claim_mass": 0.0,
+                    "contradiction_claim_mass": 0.0
                 },
                 "producer": {
                     "task_id": "task-assessment",
@@ -111,15 +116,25 @@ fn exact_byte_assessment_promotes_its_measured_probability() {
         record.fields.get("source_fingerprint"),
         Some(&EvidenceValue::Text("source-hash".to_string()))
     );
+    assert_eq!(
+        record.fields.get("validation_fingerprint"),
+        Some(&EvidenceValue::Text("validation-hash".to_string()))
+    );
+    assert_eq!(
+        record.fields.get("weighted_groundedness"),
+        Some(&EvidenceValue::Scalar(0.96))
+    );
 }
 
 #[test]
 fn intermediate_task_success_is_not_freshness_evidence() {
-    let disposition = mapping().map_outcome(&outcome("docs_publication_receipt", 0.0));
-    assert!(matches!(
-        disposition,
-        OutcomeMappingDisposition::NotApplicable { .. }
-    ));
+    for artifact_type in ["docs_validated_patch_set", "docs_publication_receipt"] {
+        let disposition = mapping().map_outcome(&outcome(artifact_type, 0.0));
+        assert!(matches!(
+            disposition,
+            OutcomeMappingDisposition::NotApplicable { .. }
+        ));
+    }
 }
 
 #[test]

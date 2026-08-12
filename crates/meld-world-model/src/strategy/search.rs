@@ -259,6 +259,31 @@ fn close_inputs(
         ) {
             continue;
         }
+        if let Some((_, producer)) = selected.iter().find(|(_, operator)| {
+            operator
+                .resolution
+                .requires_outputs
+                .iter()
+                .any(|output| output.required && output.artifact_type == input.artifact_type)
+        }) {
+            if producer.operator_id == consumer.operator_id {
+                state.reject(StrategyRejectionGround::UnclosedArtifact {
+                    artifact_type: format!("{:?}", input.artifact_type),
+                });
+                return false;
+            }
+            let edge = Edge {
+                from: producer.operator_id.clone(),
+                to: consumer.operator_id.clone(),
+                kind: EdgeKind::DataFlow {
+                    artifact_type: input.artifact_type.clone(),
+                },
+            };
+            if !edges.contains(&edge) {
+                edges.push(edge);
+            }
+            continue;
+        }
         let artifact_key = format!("{:?}", input.artifact_type);
         if !visiting.insert(artifact_key.clone()) {
             state.reject(StrategyRejectionGround::UnclosedArtifact {

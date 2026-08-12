@@ -14,10 +14,11 @@ use meld_world_model::{
 use crate::capability::{CapabilityCatalog, CapabilityExecutorRegistry, CapabilityTypeContract};
 use crate::docs::capability::{
     AssessPublishedScopeCapability, DocsCapabilityConfig, DraftPatchSetCapability,
-    InspectScopeCapability, PublishPatchSetCapability, ASSESS_PUBLISHED_SCOPE, DRAFT_PATCH_SET,
-    EVIDENCE_BUNDLE, FRESHNESS_ASSESSMENT, INSPECT_SCOPE, PATCH_SET, PUBLICATION_RECEIPT,
-    PUBLISH_PATCH_SET,
+    InspectScopeCapability, PublishPatchSetCapability, ValidatePatchSetCapability,
+    ASSESS_PUBLISHED_SCOPE, DRAFT_PATCH_SET, EVIDENCE_BUNDLE, FRESHNESS_ASSESSMENT, INSPECT_SCOPE,
+    PATCH_SET, PUBLICATION_RECEIPT, PUBLISH_PATCH_SET, VALIDATED_PATCH_SET, VALIDATE_PATCH_SET,
 };
+use crate::docs::claim_validation::DocsClaimPolicy;
 use crate::error::ApiError;
 
 pub const ASSESSMENT_OUTCOME_CONTRACT: &str = "docs.freshness_assessed.v1";
@@ -32,11 +33,19 @@ pub struct DocsPdsRuntime {
 }
 
 pub fn compose(config: DocsCapabilityConfig) -> Result<DocsPdsRuntime, ApiError> {
+    let claim_policy = docs_claim_policy();
     let mut catalog = CapabilityCatalog::new();
     let mut registry = CapabilityExecutorRegistry::new();
     registry.register(&mut catalog, InspectScopeCapability::new(config.clone()))?;
     registry.register(&mut catalog, DraftPatchSetCapability::new(config.clone()))?;
-    registry.register(&mut catalog, PublishPatchSetCapability::new(config.clone()))?;
+    registry.register(
+        &mut catalog,
+        ValidatePatchSetCapability::new(config.clone(), claim_policy.clone()),
+    )?;
+    registry.register(
+        &mut catalog,
+        PublishPatchSetCapability::new(config.clone(), claim_policy),
+    )?;
     registry.register(
         &mut catalog,
         AssessPublishedScopeCapability::new(config.clone()),
@@ -51,12 +60,28 @@ pub fn compose(config: DocsCapabilityConfig) -> Result<DocsPdsRuntime, ApiError>
     })
 }
 
+fn docs_claim_policy() -> DocsClaimPolicy {
+    DocsClaimPolicy {
+        policy_id: "docs-claims-strict-v1".to_string(),
+        minimum_claim_confidence: 0.8,
+        minimum_groundedness: 0.8,
+        maximum_unsupported_claim_mass: 0.0,
+        maximum_contradiction_claim_mass: 0.0,
+        maximum_revision_attempts: 2,
+        title_weight: 1.0,
+        prose_weight: 1.0,
+        list_item_weight: 0.8,
+        code_line_weight: 1.25,
+        table_row_weight: 0.8,
+    }
+}
+
 fn strategy_capabilities(catalog: &CapabilityCatalog) -> Vec<StrategyCapability> {
     vec![
         strategy_capability(
             catalog.get(INSPECT_SCOPE, 1).unwrap(),
             "inspect-docs-scope",
-            None,
+            &[],
             EVIDENCE_BUNDLE,
             "docs.scope_inspected.v1",
             Vec::new(),
@@ -64,15 +89,23 @@ fn strategy_capabilities(catalog: &CapabilityCatalog) -> Vec<StrategyCapability>
         strategy_capability(
             catalog.get(DRAFT_PATCH_SET, 1).unwrap(),
             "draft-docs-patch-set",
-            Some(EVIDENCE_BUNDLE),
+            &[EVIDENCE_BUNDLE],
             PATCH_SET,
             "docs.patch_set_drafted.v1",
             Vec::new(),
         ),
         strategy_capability(
+            catalog.get(VALIDATE_PATCH_SET, 1).unwrap(),
+            "validate-docs-patch-set",
+            &[EVIDENCE_BUNDLE, PATCH_SET],
+            VALIDATED_PATCH_SET,
+            "docs.patch_set_validated.v1",
+            Vec::new(),
+        ),
+        strategy_capability(
             catalog.get(PUBLISH_PATCH_SET, 1).unwrap(),
             "publish-docs-patch-set",
-            Some(PATCH_SET),
+            &[VALIDATED_PATCH_SET],
             PUBLICATION_RECEIPT,
             "docs.patch_set_published.v1",
             Vec::new(),
@@ -80,7 +113,7 @@ fn strategy_capabilities(catalog: &CapabilityCatalog) -> Vec<StrategyCapability>
         strategy_capability(
             catalog.get(ASSESS_PUBLISHED_SCOPE, 1).unwrap(),
             "assess-published-docs-scope",
-            Some(PUBLICATION_RECEIPT),
+            &[PUBLICATION_RECEIPT],
             FRESHNESS_ASSESSMENT,
             ASSESSMENT_OUTCOME_CONTRACT,
             vec![Effect::Assert(Proposition::Exists {
@@ -94,7 +127,7 @@ fn strategy_capabilities(catalog: &CapabilityCatalog) -> Vec<StrategyCapability>
 fn strategy_capability(
     contract: &CapabilityTypeContract,
     operator_id: &str,
-    input: Option<&str>,
+    inputs: &[&str],
     output: &str,
     outcome_contract_id: &str,
     effects: Vec<Effect>,
@@ -110,19 +143,25 @@ fn strategy_capability(
             preconditions: Vec::new(),
             effects,
             cost: CostEstimate {
-                time_ms: if contract.capability_type_id == DRAFT_PATCH_SET {
+                time_ms: if matches!(
+                    contract.capability_type_id.as_str(),
+                    DRAFT_PATCH_SET | VALIDATE_PATCH_SET
+                ) {
                     60_000
                 } else {
                     100
                 },
                 money_microdollars: 0,
-                provider_calls: u32::from(contract.capability_type_id == DRAFT_PATCH_SET),
+                provider_calls: u32::from(matches!(
+                    contract.capability_type_id.as_str(),
+                    DRAFT_PATCH_SET | VALIDATE_PATCH_SET
+                )),
             },
             resolution: Resolution {
-                requires_inputs: input
-                    .into_iter()
+                requires_inputs: inputs
+                    .iter()
                     .map(|artifact| SlotConstraint {
-                        artifact_type: Term::ArtifactType(artifact.to_string()),
+                        artifact_type: Term::ArtifactType((*artifact).to_string()),
                         required: true,
                     })
                     .collect(),
@@ -221,7 +260,7 @@ mod tests {
     use meld_world_model::{search, StrategyCandidateOrigin, StrategySearchRequest};
 
     #[test]
-    fn pds_catalog_dynamically_closes_the_four_capability_chain() {
+    fn pds_catalog_dynamically_closes_the_five_capability_chain() {
         let root = tempfile::tempdir().unwrap();
         let config = DocsCapabilityConfig {
             target_root: root.path().to_path_buf(),
@@ -240,8 +279,8 @@ mod tests {
         });
         let candidate = result.recommendation.unwrap();
         assert_eq!(candidate.origin, StrategyCandidateOrigin::Direct);
-        assert_eq!(candidate.composition.steps.len(), 4);
-        assert_eq!(candidate.composition.edges.len(), 3);
+        assert_eq!(candidate.composition.steps.len(), 5);
+        assert_eq!(candidate.composition.edges.len(), 5);
     }
 
     #[test]
@@ -274,7 +313,7 @@ mod tests {
             result.completion,
             meld_world_model::StrategySearchCompletion::Exhaustive
         );
-        assert_eq!(result.recommendation.unwrap().composition.steps.len(), 4);
+        assert_eq!(result.recommendation.unwrap().composition.steps.len(), 5);
     }
 
     #[test]
@@ -356,6 +395,6 @@ mod tests {
             })
             .unwrap();
         assert!(plan.diagnostics.is_empty());
-        assert_eq!(plan.mutations.mutations.len(), 4);
+        assert_eq!(plan.mutations.mutations.len(), 5);
     }
 }

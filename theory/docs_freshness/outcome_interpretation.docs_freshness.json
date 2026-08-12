@@ -68,6 +68,56 @@
             "equals": "docs_freshness_assessment",
             "pointer": "/content/source_fingerprint"
           }
+        },
+        {
+          "field": "policy_identity",
+          "source": {
+            "source": "data_array_element_text",
+            "array_pointer": "/artifact_records",
+            "field": "artifact_type_id",
+            "equals": "docs_freshness_assessment",
+            "pointer": "/content/policy_identity"
+          }
+        },
+        {
+          "field": "validation_fingerprint",
+          "source": {
+            "source": "data_array_element_text",
+            "array_pointer": "/artifact_records",
+            "field": "artifact_type_id",
+            "equals": "docs_freshness_assessment",
+            "pointer": "/content/validation_fingerprint"
+          }
+        },
+        {
+          "field": "weighted_groundedness",
+          "source": {
+            "source": "data_array_element_scalar",
+            "array_pointer": "/artifact_records",
+            "field": "artifact_type_id",
+            "equals": "docs_freshness_assessment",
+            "pointer": "/content/weighted_groundedness"
+          }
+        },
+        {
+          "field": "unsupported_claim_mass",
+          "source": {
+            "source": "data_array_element_scalar",
+            "array_pointer": "/artifact_records",
+            "field": "artifact_type_id",
+            "equals": "docs_freshness_assessment",
+            "pointer": "/content/unsupported_claim_mass"
+          }
+        },
+        {
+          "field": "contradiction_claim_mass",
+          "source": {
+            "source": "data_array_element_scalar",
+            "array_pointer": "/artifact_records",
+            "field": "artifact_type_id",
+            "equals": "docs_freshness_assessment",
+            "pointer": "/content/contradiction_claim_mass"
+          }
         }
       ]
     }
