@@ -14,13 +14,13 @@ The language is pure. No IO, no async, no side effects, no persistence. Every fu
 
 ## Motivation
 
-The gap this crate resolves is the planning pipeline's missing middle. The world model has strong design across graph, belief, causation, regime, and planner-facing projection. Execution has strong implementation in task compilation, capability contracts, readiness computation, and task execution. Strategy uses the shared language to construct semantic candidate Compositions. Execution Planning uses the same language to realize Agent-authorized candidates as task-network mutations.
+The gap this crate resolves is the planning pipeline's missing middle. The world model owns graph, belief, causation, regime, and planner-facing projection. Execution owns task compilation, capability contracts, readiness computation, and task execution. Strategy uses the shared language to construct semantic candidate Compositions. Execution Planning uses the same language to realize Agent-authorized candidates as task-network mutations.
 
-Previous design iterations attempted to have execution interpret semantic goals through linguistic decomposition layers: parse goal fields, retrieve matching methods by frame analysis, fill precondition gaps through means-end search, and fall back to LLM for novel situations. This pushes epistemic work into execution — the wrong domain for it.
+Execution must not interpret semantic goals through linguistic decomposition layers — parsing goal fields, retrieving matching methods by frame analysis, filling precondition gaps through means-end search, or falling back to an LLM for novel situations. That pushes epistemic work into execution — the wrong domain for it.
 
 The resolution: define a formal language that both domains speak natively. The world model constructs Goals as typed propositions and Strategy constructs candidate Compositions. Execution evaluates propositions and compiles Agent-authorized Compositions mechanically. Meaning and intention live in the world model where they belong.
 
-A critical property of this language is **runtime composition**. Goals, Methods, Operators, and Compositions are runtime values rather than compile-time action enums. The current [World Model Strategy](../world_model/strategy/README.md) slice instantiates a configured Method into a concrete Composition and passes it through the same validation used by Execution.
+A critical property of this language is **runtime composition**. Goals, Methods, Operators, and Compositions are runtime values rather than compile-time action enums. [World Model Strategy](../world_model/strategy/README.md) may seed construction from a configured Method and may construct directly from Capability contracts; either path yields a concrete Composition that passes through the same validation used by Execution.
 
 ## Core Design
 
@@ -105,12 +105,12 @@ meld (core)
 
 ## Documents
 
-- [Implementation Plan](PLAN.md)
+- [Completed Implementation Plan](../../completed/meld_lang/PLAN.md)
   phased implementation order, gates, and verification for the `meld-lang` crate
 - [Crate Boundary](CRATE.md)
   crate identity, ownership, dependency rule, forbidden directions
 - [Requirements](requirements.md)
-  functional, structural, and nonfunctional requirements with first slice
+  functional, structural, and nonfunctional requirements
 - [Primitives](primitives.md)
   Term, Proposition, Condition, Effect — the three primitives and their grammar
 - [Operators and Resolution](operators.md)
@@ -132,4 +132,4 @@ meld (core)
 - [World Model Planner](../world_model/planner/README.md)
 - [World Model Agent](../world_model/agent/README.md)
 - [Events Domain](../events/README.md)
-- [Execution Gaps](../execution/GAPS.md)
+- [Execution Gap Ledger](../../plan/execution/gaps.md)

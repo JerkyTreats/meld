@@ -6,10 +6,10 @@ Scope: `meld-world-model` crate for graph, anchors, provenance, belief assessmen
 
 ## Identity
 
-`meld-world-model` is the source of truth for graph materialization, first-slice belief assessment, first-slice planner projection, and legacy world state claim projections.
+`meld-world-model` is the source of truth for graph materialization, belief assessment, planner projection, and legacy world state claim projections.
 Root `meld` consumes this crate through a compatibility shim in [src/world_state.rs](../../../src/world_state.rs).
 
-The live implementation is in:
+Crate routing:
 
 - [crates/meld-world-model/src/lib.rs](../../../crates/meld-world-model/src/lib.rs)
 - [crates/meld-world-model/src/world_state.rs](../../../crates/meld-world-model/src/world_state.rs)
@@ -87,5 +87,3 @@ Root `meld` keeps:
 - branch and CLI adapters
 - compatibility paths for runtime and store seams
 - product specific presentation and routing
-
-The authority implementation no longer lives under `src/world_state`.

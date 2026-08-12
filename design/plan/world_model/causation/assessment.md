@@ -72,3 +72,11 @@ Runtime flywheel can close first through outcome facts and belief revision witho
 ## Recommendation
 
 Defer causation until outcome publication exists.
+
+## Evidence Note 2026-08-12
+
+Evidence note 2026-08-12: the causal requirements document previously carried a first-slice and deferred split. That slice boundary is recorded here.
+
+First slice scope: `CausalVariable`, `InterventionRecord`, `OutcomeLink`, `SelectionWarning`, `ConfounderHypothesis`, `IdentificationAssessment`, `EffectEstimate`, `CausalAssumptionSet`, `CausalSummary`, intervention lowering from execution facts, outcome linking from execution outcomes and belief views, selection-path interpretation from graph provenance, confounder scoring with explicit blockers, an identification gate before effect estimation, one simple effect estimation method, causal summary projection, and replay tests.
+
+Deferred past the first slice: full structural causal model learning, automated mechanism discovery, multi-regime mechanism library, rich counterfactual search over action alternatives, continuous-time delayed effect modeling, high-dimensional adjustment set optimization, and automated intervention design.

@@ -128,11 +128,9 @@ Grounding instantiates those questions for each material folder. Reconciliation 
 
 Bottom-up execution topology is not produced here. Directive grounding establishes what must be known. Strategy later decides which theory of action can change unacceptable belief divergence.
 
-## First implementation boundary
+## Minimal grounding shape
 
-Current Meld already supports configured belief keys, key registration, belief assessment, watched belief revisions, and a deterministic threshold curation rule.
-
-Current Meld does not derive belief questions from an activated Directive and changing graph scope. The first implementation may use one configured grounding rule for one PDS belief family and one bounded scope walk. It does not require a general rule language, learned grounding policy, or comprehensive lifecycle framework.
+One configured grounding rule for one PDS belief family over one bounded scope walk is a sufficient grounding mechanism. Grounding does not require a general rule language, a learned grounding policy, or a comprehensive lifecycle framework.
 
 ## Read with
 

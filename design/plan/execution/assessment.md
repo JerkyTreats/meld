@@ -2,7 +2,7 @@
 
 Status: Phase 8 expanded execution implemented
 Depends on: `design/plan/meld-lang/assessment.md`, `design/plan/execution/goals/assessment.md`, `design/plan/execution/planning/assessment.md`
-Design source: `design/cognitive_architecture/execution/README.md`, `design/cognitive_architecture/execution/GAPS.md`, `design/cognitive_architecture/execution/task_network.md`, `design/cognitive_architecture/execution/task_initialization.md`, `design/cognitive_architecture/execution/planning/README.md`, `design/cognitive_architecture/execution/goals/README.md`
+Design source: `design/cognitive_architecture/execution/README.md`, `design/plan/execution/gaps.md`, `design/cognitive_architecture/execution/task_network.md`, `design/cognitive_architecture/execution/task_initialization.md`, `design/cognitive_architecture/execution/planning/README.md`, `design/cognitive_architecture/execution/goals/README.md`
 Evidence date: 2026-06-06
 
 ## Verdict Summary
@@ -109,7 +109,7 @@ Runtime assembly, direct world model agent command ingestion, and sensory runtim
 - `design/plan/execution/task_network/PHASE8.md`
 - `design/cognitive_architecture/execution/task_initialization.md`
 - `design/cognitive_architecture/execution/README.md`
-- `design/cognitive_architecture/execution/GAPS.md`
+- `design/plan/execution/gaps.md`
 - `design/cognitive_architecture/execution/task_network.md`
 
 ## Gaps
@@ -136,3 +136,14 @@ Runtime assembly, direct world model agent command ingestion, and sensory runtim
 ## Recommendation
 
 Proceed with task network deepening after Phase 8. Prioritize conditional edge execution, graph repair mutations, runtime assembly, and planning audit records. Keep sensory, switching cost, shared task reuse, and workflow migration deferred until those runtime hooks are stable.
+
+## Evidence note 2026-08-12
+
+Task network weak points moved from `design/cognitive_architecture/execution/task_network.md`:
+
+- Event ordering must stay deterministic.
+- Duplicate event handling must be idempotent.
+- Cancellation semantics need sharper rules for graceful shutdown and cleanup task injection.
+- A task equivalence definition is needed for shared-task detection across goals.
+- A resource model is needed if providers have capacity limits.
+- A continuation and checkpoint model for durable resume needs design.

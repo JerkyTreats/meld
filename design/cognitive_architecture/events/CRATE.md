@@ -9,7 +9,7 @@ Scope: `meld-events` crate for canonical event ledger ownership
 `meld-events` is the source of truth for canonical event storage and replay.
 Root `meld` consumes this crate through a thin reexport shim in [src/events.rs](../../../src/events.rs).
 
-The live implementation is in:
+Crate routing:
 
 - [crates/meld-events/src/lib.rs](../../../crates/meld-events/src/lib.rs)
 - [crates/meld-events/src/events.rs](../../../crates/meld-events/src/events.rs)

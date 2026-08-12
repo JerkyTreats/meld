@@ -89,11 +89,13 @@ That means:
 - lowering IR usually stays outside events
 - promoted semantic observations enter events
 
-## First Slice
+## Foundational Modalities
+
+The substrate grounds in:
 
 - workspace watch lowering from churn into stable workspace delta observations
 - git change lowering into reusable typed observations
-- one promotion contract shared by those first modalities
+- one promotion contract shared by those modalities
 - one replay story for promoted facts only
 
 ## Read With
@@ -101,4 +103,4 @@ That means:
 - [Sensory Domain](README.md)
 - [Events Domain](../events/README.md)
 - [Observe Merge Push](../observe_merge_push.md)
-- [Further Research Prompts](../further_research_prompts.md)
+- [Further Research Prompts](../../completed/world_state/further_research_prompts.md)

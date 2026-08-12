@@ -146,7 +146,7 @@ Proposition::Holds {
 }
 ```
 
-The prior design used `DesiredState { subject, predicate: BeliefPredicate }` as a bespoke type. This is now subsumed by `Proposition::Holds`, which serves the same role but uses the shared language that both world model and execution speak natively. `BeliefPredicate` becomes `Proposition`. `DomainObjectRef` subjects become `Term::Object`. Confidence thresholds become `Condition::Above`.
+The desired state is expressed through `Proposition::Holds` in the shared language that both world model and execution speak natively. Belief predicates are `Proposition` values, subjects are `Term::Object` references, and confidence thresholds are `Condition::Above` conditions.
 
 Examples in the shared language:
 
@@ -214,7 +214,7 @@ enum GoalLifecycle {
 
 **Abandoned**: the goal is no longer relevant. The agent removes goals when: user cancels, regime shift invalidates premises, or cost exceeds remaining value.
 
-The prior `Superseded { by: GoalId }` variant is absorbed into `Abandoned` — supersession is an abandonment reason, not a distinct lifecycle state.
+Supersession is an abandonment reason, not a distinct lifecycle state.
 
 Lifecycle transitions are initiated by the world model Agent and persisted by Execution through public Goal APIs. Planning may observe that a target appears satisfied or that no candidate is currently realizable, but it does not own satisfaction or suspension mutations.
 
@@ -231,11 +231,11 @@ GoalPriority {
 }
 ```
 
-**Urgency**: lower number = higher urgency. 0 is most urgent. Set by the agent based on belief context — the value-to-cost ratio from the agent's cost-benefit evaluation (see [Goal Curation](../../world_model/agent/goal_curation.md)) determines the urgency level. This replaces the prior separate `urgency`/`importance` fields — importance is now expressed through urgency ordering, which is itself derived from the agent's cost-benefit posterior.
+**Urgency**: lower number = higher urgency. 0 is most urgent. Set by the agent based on belief context — the value-to-cost ratio from the agent's cost-benefit evaluation in [Goal Curation](../../world_model/agent/goal_curation.md) determines the urgency level. Importance is expressed through urgency ordering, which is derived from the agent's cost-benefit posterior.
 
 **Cost ceiling**: optional upper bound on effort expressed as a `CostEstimate`. Strategy uses it when constructing the candidate. Execution rechecks current operational cost and rejects a candidate that no longer fits. The Agent may adjust the ceiling, suspend, or abandon.
 
-The prior `preemption_policy` field is deferred. Preemption behavior will be derived from urgency ordering and cost-aware plan transition logic as those mechanisms mature.
+Preemption behavior derives from urgency ordering and cost-aware plan transition logic.
 
 ## Satisfaction Checking
 
@@ -257,7 +257,7 @@ match evaluate(&world_state, &goal.target) {
 }
 ```
 
-The prior `SatisfactionCriteria` type (predicate, confidence_threshold, freshness_requirement, stability_requirement) is subsumed by the `Proposition` target itself. Confidence thresholds become `Condition::Above`. Freshness requirements become `Condition::Within` on a freshness dimension. Stability requirements become a separate dimension the world model projects when it has sufficient history.
+Satisfaction criteria are carried by the `Proposition` target itself. Confidence thresholds are `Condition::Above` conditions. Freshness requirements are `Condition::Within` conditions on a freshness dimension. Stability requirements are a separate dimension the world model projects when it has sufficient history.
 
 The satisfaction boundary is split by ownership:
 
@@ -344,7 +344,7 @@ The agent is one entity with two faces:
 
 In a multi-agent system, each agent has its own normative framework and its own goal set. Two agents observing the same repository may curate different goals because they have different perspectives, different priorities, or different tolerance thresholds for divergence.
 
-The agent's normative framework — what states it cares about, what thresholds trigger action, how it prioritizes — is the agent-specific policy that the earlier design called "goal generation policy." This lives in the world model agent definition, not in execution.
+The agent's normative framework — what states it cares about, what thresholds trigger action, how it prioritizes — is agent-specific policy. It lives in the world model agent definition, not in execution.
 
 ## Relationship to Planning
 
@@ -371,13 +371,11 @@ Each admitted subgoal is a separate entry in the Goal Set with its own desired s
 
 Goal decomposition is the Agent concern of deciding what desired states deserve independent lifecycle. Strategy decomposition constructs semantic theories of action and instantiates any reusable Method path. Execution decomposition is limited to realizing the authorized concrete Composition.
 
-## Resolving the GAPS.md Tension
+## Goal Semantics And Repair
 
-GAPS.md identified a tension: goals as world-state propositions vs goals as operational triggers.
+Goals are propositions about desired belief states. They begin as world-model drafts and become Execution lifecycle data only after Strategy construction and Agent authorization. Operational triggers cause the Agent to draft or later curate a Goal. The Agent is the translator between belief divergence and desired state. Strategy establishes viable means before initial admission.
 
-The resolution: Goals are propositions about desired belief states. They begin as world-model drafts and become Execution lifecycle data only after Strategy construction and Agent authorization. Operational triggers cause the Agent to draft or later curate a Goal. The Agent is the translator between belief divergence and desired state. Strategy establishes viable means before initial admission.
-
-Repair becomes: a task fails and Execution publishes the outcome. The Agent evaluates whether the threatened Goal remains worthwhile. Strategy determines whether a different semantic candidate is justified. Execution Planning may select another still-authorized alternative or mechanically transition to a newly authorized decision. The Agent owns intent, Strategy owns semantic approach, and Execution owns transition mechanics.
+When a task fails, Execution publishes the outcome. The Agent evaluates whether the threatened Goal remains worthwhile. Strategy determines whether a different semantic candidate is justified. Execution Planning may select another still-authorized alternative or mechanically transition to a newly authorized decision. The Agent owns intent, Strategy owns semantic approach, and Execution owns transition mechanics.
 
 ## What This Design Does Not Cover
 
@@ -385,28 +383,26 @@ Repair becomes: a task fails and Execution publishes the outcome. The Agent eval
 
 The agent's normative framework — what it cares about, what thresholds trigger action, how it prioritizes — is defined as cost-benefit evaluation over belief. The framework reduces to: which belief keys the agent watches (subscription filter), and what regime-scoped priors it carries for a cost-benefit comparison on each concern class. Divergence thresholds, tolerance, and priority are derived from cost and value beliefs rather than configured separately. See [Goal Curation](../../world_model/agent/goal_curation.md) for the full mechanism.
 
-Residual gaps in the normative framework:
-
-- cost-benefit comparator specification (factors, weights, decision boundary)
-- value measurement methodology (how to measure downstream value of goal achievement)
-- subscription filter design (static vs learned concern declarations)
+Comparator specification, value measurement methodology, and subscription filter design are outside this document's scope.
 
 ### Goal conflict resolution
 
-When multiple goals compete for resources or have contradictory desired states, the agent must resolve the conflict before (or while) curating the goal set. Priority and preemption policy provide mechanisms, but the resolution strategy is not fully specified.
+Competing goals are mediated through priority and preemption mechanisms. The broader resolution strategy for competing or contradictory desired states is outside this document's scope.
 
 ### Multi-agent goal coordination
 
-When multiple agents curate overlapping goal sets (shared resources, complementary or conflicting objectives), coordination is needed. The shared graph substrate and perspective-scoped beliefs provide the foundation, but the coordination protocol is not designed.
+The shared graph substrate and perspective-scoped beliefs provide the foundation for goals that interact across agents. The coordination protocol is outside this document's scope.
 
 ### Goal learning
 
-Can the agent learn which goals are productive from outcomes? Can it refine its normative framework based on which goals led to successful belief revision? This connects to the belief layer's calibration mechanisms but is not addressed here.
+Refinement of the agent's normative framework from goal outcomes connects to the belief layer's calibration mechanisms and is outside this document's scope.
+
+Open design work for these areas is tracked in the [Execution Gap Ledger](../../../plan/execution/gaps.md).
 
 ## Read With
 
 - [Execution Domain](../README.md)
-- [Execution Gaps](../GAPS.md)
+- [Execution Gap Ledger](../../../plan/execution/gaps.md)
 - [Planning Pipeline](../planning/planning_pipeline.md)
 - [Task Network](../task_network.md)
 - [Lang Domain](../../meld-lang/README.md)

@@ -1,3 +1,9 @@
+# Planning Flow
+
+Date: 2026-08-12
+Status: historical evidence
+
+This diagram records the Method-selection flow. The landed strategy path realizes authorized capability compositions without Method search, so this flow describes the legacy route only.
 
 ```mermaid
 flowchart TD

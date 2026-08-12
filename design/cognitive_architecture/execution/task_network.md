@@ -160,7 +160,7 @@ For each task that is NOT completed and NOT in-flight:
 
 Tasks whose dependencies are all satisfied enter the ready set and may be dispatched to workers.
 
-This is the upper level of the fractal. `compute_ready_capability_instances` performs the identical computation at the lower level in `task/readiness.rs`.
+This is the upper level of the fractal. The task executor performs the identical computation at the lower level over capabilities within a task.
 
 ## Task Init Materialization
 
@@ -209,8 +209,6 @@ Each dispatched task is executed by a task executor that runs the internal capab
 - When all capabilities are complete, the task is complete
 - The task executor emits `task_succeeded` or `task_failed` back to the task network
 
-The task executor is implemented in `task/executor.rs`. It uses `compute_ready_capability_instances` from `task/readiness.rs` for ready-set computation.
-
 Task-internal retry remains in the task executor. When retries are exhausted, the failure propagates through the task network and event spine. Execution may choose another still-authorized alternative. A new semantic path requires renewed Strategy and Agent authorization.
 
 ## State Ownership Split
@@ -233,15 +231,6 @@ Task-internal retry remains in the task executor. When retries are exhausted, th
 | Semantic candidate decomposition | world-model Strategy |
 | Candidate authorization | world-model Agent |
 | Operational realization | Execution Planning |
-
-## Weak Points
-
-- Event ordering must stay deterministic
-- Duplicate event handling must be idempotent
-- Cancellation semantics need sharper rules for graceful shutdown and cleanup task injection
-- Task equivalence definition needed for shared-task detection across goals
-- Resource model needed if providers have capacity limits
-- Continuation and checkpoint model for durable resume needs design
 
 ## Read With
 

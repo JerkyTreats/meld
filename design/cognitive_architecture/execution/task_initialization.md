@@ -66,7 +66,7 @@ PreservedArtifact
 SyntheticSeed
 ```
 
-The first expanded execution slice needs only static seeds and upstream artifacts.
+Static seeds and upstream artifacts are the foundational source plan kinds. Preserved artifacts and synthetic seeds extend the same source plan contract.
 
 Every required init slot must have exactly one source plan. Optional init slots may have zero or one source plan unless the task contract later declares many-valued slots.
 

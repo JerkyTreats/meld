@@ -74,3 +74,12 @@ The typed loop can use a constructed `WorldState` and does not need the sensory 
 ## Recommendation
 
 Proceed with typed loop independent of sensory runtime. Specify sensory promotion before runtime flywheel.
+
+## Evidence note 2026-08-12
+
+Moved from `design/cognitive_architecture/sensory/README.md`. The system is stronger at task-triggered observation than continuous background sensing. The required first slice:
+
+- always-on workers for workspace, git, and other high-value modalities
+- typed observation contracts that can survive replay and cross-domain reuse
+- source-local throttling so high-volume sensors do not dominate events
+- a clean handoff from sensory publication to curation reducers

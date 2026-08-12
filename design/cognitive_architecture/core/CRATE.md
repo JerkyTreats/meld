@@ -1,7 +1,7 @@
 # Core Crate
 
 Date: 2026-04-23
-Status: active experiment
+Status: active
 Scope: root `meld` crate as the product orchestrator and compatibility shell
 
 ## Intent
@@ -23,9 +23,9 @@ The root crate is not the owner of event truth, world-model truth, or execution 
 - runtime assembly and dependency injection
 - compatibility shims for migrated module paths
 - app bootstrap, logging, init, and operator-facing status
-- workspace and context compatibility paths until they have clearer crate homes
-- context storage, context query, prompt context, and generation compatibility APIs for now
-- provider configuration, registry, diagnostics, and concrete model client management for now
+- workspace and context compatibility paths
+- context storage, context query, prompt context, and generation compatibility APIs
+- provider configuration, registry, diagnostics, and concrete model client management
 - public adapter implementations for execution ports
 
 ## Does Not Own
@@ -54,9 +54,9 @@ The root crate is not the owner of event truth, world-model truth, or execution 
 
 ## Context And Provider Posture
 
-Context and provider remain in root `meld` for now.
+Context and provider are root-owned concerns.
 
-They are too coupled to the current product shell to extract cleanly, but they are also too broad to fold into `meld-execution`.
+They are coupled to the product shell and too broad to fold into `meld-execution`.
 
 Root `meld` should expose explicit public APIs and adapters for:
 
@@ -70,13 +70,12 @@ Root `meld` should expose explicit public APIs and adapters for:
 `meld-execution` consumes those capabilities through ports.
 It does not import root `meld` internals.
 
-## Deferred Crate
+## Provider Crate Constraint
 
-Do not create `meld-provider` yet.
+Do not create a separate `meld-provider` crate.
 
-A later crate may be justified if generation stabilizes as its own meta-domain.
-That future crate would be closer to `meld-generation` than `meld-provider`.
-It would own prompt assembly, provider call orchestration, generated frame metadata, and generation-specific adapters.
+A generation crate is justified only if generation stabilizes as its own meta-domain, and it would be closer to `meld-generation` than `meld-provider`.
+Such a crate would own prompt assembly, provider call orchestration, generated frame metadata, and generation-specific adapters.
 
 It would not own all context storage or all provider configuration.
 
@@ -96,8 +95,8 @@ If a subcrate needs a capability from root `meld`, that capability must be moved
 
 `meld-execution` may depend on context and provider capabilities only through execution-owned ports implemented by root `meld`.
 
-## Migration Notes
+## Compatibility Re-exports
 
-The root crate may temporarily re-export migrated crates to preserve old imports.
+The root crate may re-export migrated crates to preserve old imports.
 
-Compatibility re-exports must be marked as temporary and should not become the permanent architecture.
+Compatibility re-exports are transitional wrappers. They must be marked as such and must not become the permanent architecture.

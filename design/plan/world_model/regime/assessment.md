@@ -67,3 +67,11 @@ Regime should not be implemented before runtime flywheel behavior works without 
 ## Recommendation
 
 Defer regime and use a default stable regime assumption.
+
+## Evidence Note 2026-08-12
+
+Evidence note 2026-08-12: the regime requirements document previously carried a first-slice and deferred split. That slice boundary is recorded here.
+
+First slice scope: `ActiveSegment`, `ChangepointCandidate`, one continuation model, one break model, continuation versus break comparison, `RegimePosterior`, `RunLengthBelief`, active segment rollover, one recurring regime archive path, known regime entry prior selection, novel regime widened prior selection, mixture prediction, regime summary projection, and replay tests.
+
+Deferred past the first slice: rich regime library matching, retrospective smoothing over break timing, multi-scale nested regimes, full structural stress scenario library, agent goal-prior integration beyond public prior refs, online nonparametric regime discovery, and multi-process regime worker coordination.

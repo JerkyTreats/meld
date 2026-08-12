@@ -127,33 +127,6 @@ Regime protects the system from silently treating structural change as ordinary 
 - Unresolved posterior stays unresolved through mixture prediction.
 - Old regime priors are archived before new priors are selected.
 
-## First Slice Requirements
-
-- Implement `ActiveSegment`.
-- Implement `ChangepointCandidate`.
-- Implement one continuation model.
-- Implement one break model.
-- Implement continuation versus break comparison.
-- Implement `RegimePosterior`.
-- Implement `RunLengthBelief`.
-- Implement active segment rollover.
-- Implement one recurring regime archive path.
-- Implement known regime entry prior selection.
-- Implement novel regime widened prior selection.
-- Implement mixture prediction.
-- Implement regime summary projection.
-- Implement replay tests.
-
-## Deferred Requirements
-
-- Rich regime library matching.
-- Retrospective smoothing over break timing.
-- Multi-scale nested regimes.
-- Full structural stress scenario library.
-- Agent goal-prior integration beyond public prior refs.
-- Online nonparametric regime discovery.
-- Multi-process regime worker coordination.
-
 ## Read With
 
 - [Regime Spec](spec.md)

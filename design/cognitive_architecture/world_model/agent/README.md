@@ -135,7 +135,7 @@ The meta-layer's verbs are deferred and have a reserved home in the contract abo
 - a serialized goalset-template vocabulary that expands one directive into a goal DAG using existing `meld-lang` propositions and compositions, sibling to the method library
 - natural-language interpretation of arbitrary user intent, realized as a planning capability that emits `CreateAgent` goals
 
-In the first slice exactly one seed agent serves one directive, supplied as trusted seed configuration. See [Agent Genesis And Activation](genesis_and_activation.md).
+The minimal shape is exactly one seed agent serving one directive, supplied as trusted seed configuration. See [Agent Genesis And Activation](genesis_and_activation.md).
 
 ## Core Design Rule
 
@@ -211,34 +211,17 @@ When the capability catalog changes or the subject scope expands, the agent re-s
 
 Agent shutdown is also a goal. The agent's subscriptions are unbound. Active goals curated by this agent are evaluated for transfer to another agent or abandonment. Cleanup runs through the normal task network.
 
-## First Slice
+## Design Boundaries
 
-The implemented first slice remains narrow.
+Strategy-gated Goal admission is a canonical contract, not a deferred item. A Goal draft reaches Execution only after bounded Strategy construction produces at least one eligible candidate and the Agent authorizes the Goal and candidate inventory together.
 
-It defines:
+Beyond the boundaries above, this design intentionally leaves open:
 
-- one seed Agent identity from trusted init or configuration
-- one Agent identity anchored to `DomainObjectRef`
-- one explicit perspective key
-- one evidence and trust policy surface
-- one branch and observation scope surface
-- one path from belief views to planner-facing projection for that Agent through `BeliefQuery` and `PlannerQuery`
-- seed registration through the world model agent command surface
-- durable runtime records for registration, subscription, cursor, and curation decision
-- one proposed `AgentGoalCommand` with a ground `meld-lang::Goal` built from runtime rule configuration in its compatibility form and mapped into execution's neutral Goal Set API
-- duplicate suppression through active goal summary input and curation decision dedupe
-
-It defers:
-
-- dynamic spawned Agent creation through curated `CreateAgent` goals
-- Directive grounding from PDS theory and changing graph scope
-- Goal draft gating through Strategy before Execution admission
-- existing Agent activation across process restart
-- full `AgentRuntime` process workers
 - full multi-Agent synchronization strategy
 - shared planning between Agents
 - multi-agent goal coordination protocol
-- any requirement that other crates adopt world model implementation vocabulary
+
+The agent design does not require other crates to adopt world model implementation vocabulary.
 
 ## Read With
 
@@ -248,7 +231,6 @@ It defers:
 - [Agent Spec](spec.md)
 - [World Model Belief](../belief/README.md)
 - [Belief Microarchitecture](../belief/microarchitecture.md)
-- [Agent Spec](spec.md)
 - [Agent Genesis And Activation](genesis_and_activation.md)
 - [Agent Runtime Surface](runtime_surface.md)
 - [Goal Curation](goal_curation.md)

@@ -3,8 +3,10 @@
 Status: first slice implemented
 Typed substrate status: ready
 Depends on: `design/plan/execution/goals/assessment.md`, `design/plan/world_model/planner/assessment.md`, `design/plan/meld-lang/assessment.md`
-Design source: `design/cognitive_architecture/execution/planning/README.md`, `design/cognitive_architecture/execution/planning/planning_pipeline.md`, `design/cognitive_architecture/execution/planning/guard_expression_semantics.md`, `design/cognitive_architecture/execution/planning/observation_wait_semantics.md`, `design/cognitive_architecture/execution/task_network.md`, `design/cognitive_architecture/execution/GAPS.md`, `design/cognitive_architecture/meld-lang/README.md`
+Design source: `design/cognitive_architecture/execution/planning/README.md`, `design/cognitive_architecture/execution/planning/planning_pipeline.md`, `design/cognitive_architecture/execution/planning/guard_expression_semantics.md`, `design/cognitive_architecture/execution/planning/observation_wait_semantics.md`, `design/cognitive_architecture/execution/task_network.md`, `design/plan/execution/gaps.md`, `design/cognitive_architecture/meld-lang/README.md`
 Evidence date: 2026-05-31
+
+Note 2026-08-12: planning has since gained the authorized-candidate realization path that bypasses Method search, commits b48c09d and 4894b73. This assessment predates that path and stands as evidence for the earlier slice.
 
 ## Verdict Summary
 
@@ -128,3 +130,15 @@ No task network graph executor is required for this slice.
 ## Recommendation
 
 Proceed to execution composition lowering and task network mutation contracts. Keep goal storage authoritative and add planning attempt records as replayable audit data rather than as an authoritative plan store.
+
+## Evidence note 2026-08-12
+
+Implementation status moved from `design/cognitive_architecture/execution/planning/planning_pipeline.md`, which now carries only canonical pipeline semantics.
+
+- Implemented: the task compiler, task executor, capability catalog, task lifecycle event builders, readiness computation, execution goal store, method library loading and verification, and the planning runtime that turns one active goal and one projected world state into an `ExecutionComposition`. The Phase 8 expanded execution slice lowers multi node compositions, materializes task init payloads, dispatches real task runs, and replays accepted graph state; see `design/plan/execution/task_network/PHASE8.md`.
+- Designed but not fully implemented: exact subgoal realization where later planning expands the concrete child Composition or Method invocation resolved inside the authorized candidate; guard expressions as conditional dependency edges; observation wait semantics as data-flow dependencies from observation tasks; and the Phase 7 task network first slice in `design/plan/execution/task_network/PLAN.md` covering one inject mutation, one ready task, one dispatch, and one publication handoff.
+- Deferred beyond the expanded slice: continuous planning loop operation with world-model reads and cost-aware mutation proposal decisions; task network deepening covering recursive sub-goal lowering plus cancel, relink, preserve, and prune; diff native sensory runtime until task network deepening has the required runtime hooks; the switching cost model covering cleanup estimation, sunk cost calculation, and benefit comparison; and plan diffing that identifies affected subtrees from belief changes and computes minimal mutations.
+- Method library: the first slice supports serialized `meld-lang::Method` values with loading, verification, and the `docs_freshness` fixture as configured-path compatibility. Remaining: method authoring beyond docs freshness such as test status and course generation; method library operations covering indexing by trigger shape and cache invalidation on file change; and Method promotion, whether generalized Strategy candidates can become verified reusable Methods.
+- Task network deepening: the Phase 7 and Phase 8 slices cover inject mutation, reduced state, ready set computation, dispatch claim fencing, multi node graph execution, task init materialization, the real task runtime bridge, durable publication handoff, and replay. Later work requires conditional edge evaluation with guard expressions on dependency edges, recursive sub-goal lowering, cancel, relink, preserve, and prune mutation behavior, and task equivalence for shared-task reuse across goals.
+- Switching cost model: cost-aware plan transitions require cost estimates on tasks and a model for computing switching cost, including cleanup cost estimation, sunk cost of cancelled work, and benefit estimation of the new plan.
+- Workflow compatibility: workflows short-circuit the planning loop; the user-authored workflow profile is the plan. A workflow profile lowers into an initially linear task network graph through task package lowering. As the planning loop matures it can produce graphs with parallelism, branching, and observation points, and the task network executor handles both identically. The existing workflow executor occupies the task network graph executor role as a specialized instance of the general pattern: workflow advances through turns, evaluates gates, and persists state, while task network execution advances through the ready set, evaluates conditional edges, and persists task network state.

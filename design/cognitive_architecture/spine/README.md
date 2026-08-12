@@ -30,5 +30,4 @@ Those responsibilities now belong to `events`.
 
 - [Events Domain](../events/README.md)
 - [Events Crate](../events/CRATE.md)
-- [Event Ledger Requirements](../events/event_manager_requirements.md)
 - [Multi-Domain Event Ledger](../events/multi_domain_spine.md)

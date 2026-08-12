@@ -71,3 +71,11 @@ Graph supports the runtime flywheel after the event foundation closes and sensor
 ## Recommendation
 
 Proceed.
+
+## Evidence Note 2026-08-12
+
+Evidence note 2026-08-12: the graph requirements document previously carried a first-slice and deferred split. That slice boundary is recorded here as implementation evidence.
+
+First slice scope: traversal fact recording, object fact indexing, relation incoming and outgoing indexes, current anchor selection, anchor tombstone handling, anchor lineage, anchor provenance, current anchor queries, object history query, neighbor query, bounded graph walk, derived anchor selected publication, derived anchor superseded publication, reducer cursor catch-up, and idempotent replay tests.
+
+Deferred past the first slice: full branch federation query ergonomics, branch presence records as first-class graph records, materialized walk cache, relation visibility policy beyond current-only filters, perspective-first hot index for high-volume perspective reads, multi-process graph reducer coordination, and graph retention and compaction policy.

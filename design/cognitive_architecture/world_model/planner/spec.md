@@ -2,13 +2,6 @@
 
 `planner` is a projection domain. It assembles action-relevant world-model views from `belief`, `causation`, and `regime` rather than performing deep inference. It remains inside `world_model`, so it stays epistemic rather than operational.
 
-Implementation status:
-
-- The first slice is implemented in `crates/meld-world-model/src/planner.rs` and `crates/meld-world-model/src/planner/`.
-- The first slice projects `BeliefView` plus graph scope into ground `meld-lang::WorldState`.
-- The first slice exposes `project_world_state` and `PlannerQuery::project_current_world_state`.
-- Broad `DecisionContext`, `WorldModelView`, causal, regime, risk, and abstention contracts remain future architecture.
-
 ## Domain Types
 
 ### Type Categories
@@ -65,9 +58,6 @@ Required fields:
 Implementation requirement:
 define canonical serialization before any cache, replay, or query route uses `DecisionContext`.
 
-Open gap:
-`SubjectScope`, `BranchScope`, `ReferenceTime`, `TransactionTime`, `BeliefPredicate`, `InterventionRef`, and `DecisionHorizon` need shared contracts.
-
 #### `ViewSnapshot`
 
 One replay and validity boundary for a completed view.
@@ -84,9 +74,6 @@ Required fields:
 
 Implementation requirement:
 `ViewSnapshot` must be attached to every `WorldModelView` and must be sufficient to rerun projection from the same lower records.
-
-Open gap:
-source cursor shape is not yet shared across graph, belief, causation, and regime.
 
 #### `PlannerAgentLens`
 
@@ -106,9 +93,6 @@ Required fields:
 Implementation requirement:
 planner must receive the lens through an agent read port or by value in the query envelope.
 Planner must not import agent internals.
-
-Open gap:
-agent lens contracts are not yet defined as typed public records.
 
 ### Input Packet Types
 
@@ -131,9 +115,6 @@ Carries:
 Implementation requirement:
 graph input must be produced by a graph-owned projection or read adapter.
 Planner may filter graph input for context, but planner must not derive truth, confidence, or causal support from graph input alone.
-
-Open gap:
-`ObjectHistory`, `BranchPresence`, and graph source cursor contracts are not fully exposed in current implementation.
 
 #### `PlannerBeliefInput`
 
@@ -159,9 +140,6 @@ Carries:
 Implementation requirement:
 belief input must preserve belief revision refs and evidence refs through every planner output that depends on them.
 
-Open gap:
-belief layer needs typed public records for posterior, uncertainty, precision, freshness, contradiction, origin, coverage, and assessment state.
-
 #### `PlannerCausalInput`
 
 One causal packet scoped to a `DecisionContext`.
@@ -183,9 +161,6 @@ Carries:
 Implementation requirement:
 planner may summarize effect support, but must not estimate effects or choose adjustment sets.
 
-Open gap:
-causation layer needs read contracts for causal variables, effect estimates, identification status, confounder risk, selection warnings, and assumption refs.
-
 #### `PlannerRegimeInput`
 
 One regime packet scoped to a `DecisionContext`.
@@ -206,9 +181,6 @@ Carries:
 Implementation requirement:
 planner may use regime state for sensitivity, expiry, risk, assumptions, and abstention.
 Planner must not decide the active regime.
-
-Open gap:
-regime layer needs typed read contracts for active segment state, mixture prediction, stress metrics, and sensitivity sets.
 
 ### Output Types
 
@@ -234,9 +206,6 @@ Implementation requirement:
 `WorldModelView` is the only root output from `query_world_model_view`.
 Other planner routes may return child projections, but they must be derivable from the same projection pipeline.
 
-Open gap:
-the public interface has route names but no typed response envelope with errors, warnings, cursor metadata, and partial result semantics.
-
 #### `ActionableBeliefView`
 
 One belief projection for the scoped decision.
@@ -253,9 +222,6 @@ Required outcomes:
 
 Implementation requirement:
 each view must name the predicate it affects and carry evidence refs, belief revision refs, decision relevance, and projection version.
-
-Open gap:
-decision relevance scoring needs an explicit scale, threshold basis, and tie-break rule.
 
 #### `ObservationOpportunityView`
 
@@ -274,9 +240,6 @@ Required outcomes:
 Implementation requirement:
 planner ranks opportunities but does not dispatch observation or choose execution method.
 
-Open gap:
-observation cost and channel refs need a cross-domain contract with execution capabilities.
-
 #### `PreconditionAssessment`
 
 One assessment of world-facing conditions for a desired predicate or candidate intervention.
@@ -294,9 +257,6 @@ Implementation requirement:
 precondition assessment must stay world-facing.
 Execution method readiness, resource readiness, retry rules, and dispatch policy remain outside planner.
 
-Open gap:
-the boundary between world-facing condition and execution method precondition needs a shared test fixture with execution.
-
 #### `CausalEffectSummary`
 
 One planner-facing causal effect projection.
@@ -312,9 +272,6 @@ Required outcomes:
 
 Implementation requirement:
 preserve causal claim refs, adjustment assumptions, selection warnings, and counterfactual refs.
-
-Open gap:
-causal input records are design-only and need implementation contracts.
 
 #### `RiskEnvelope`
 
@@ -338,9 +295,6 @@ Implementation requirement:
 risk dimensions stay typed and traceable.
 The planner must not collapse them into one authority score.
 
-Open gap:
-risk severity scale, blocking threshold, and mitigation hint vocabulary are undefined.
-
 #### `AbstentionState`
 
 One explicit no-commit state.
@@ -354,9 +308,6 @@ Required outcomes:
 
 Implementation requirement:
 abstention must cite the source refs that caused it and must distinguish missing support from negative support.
-
-Open gap:
-execution needs a clear mapping from abstention state to planner handoff behavior.
 
 #### `ConflictSummary`
 
@@ -372,9 +323,6 @@ Required conflict kinds:
 
 Implementation requirement:
 conflict blocks a decision only when it affects the scoped predicate or candidate intervention.
-
-Open gap:
-belief contradiction taxonomy needs stable typed values.
 
 #### `SensitivitySummary`
 
@@ -392,9 +340,6 @@ Required fields:
 Implementation requirement:
 sensitivity must state what lower-layer change would materially alter the view.
 
-Open gap:
-regime sensitivity and stress metrics need a threshold vocabulary.
-
 #### `AssumptionSet`
 
 One explicit dependency set for the view.
@@ -410,9 +355,6 @@ Required assumption kinds:
 
 Implementation requirement:
 every assumption must state validity scope, source refs, violation effect, and expiry rule.
-
-Open gap:
-assumption refs need shared formatting across causal, regime, belief, and planner records.
 
 #### `HydrationHandle`
 
@@ -433,9 +375,6 @@ Required fields:
 Implementation requirement:
 hydration handles support explanation and replay.
 They do not substitute for typed projection fields.
-
-Open gap:
-hydration handle dereference routes are not defined in the public interface.
 
 ### Type Rules
 
@@ -1190,9 +1129,6 @@ Rules:
 Failure behavior:
 invalid context returns a route error before lower-layer reads.
 
-Implementation gap:
-canonical serialization for `DecisionContext` is undefined.
-
 ### Agent-Lens Acquisition
 
 Input:
@@ -1211,9 +1147,6 @@ Rules:
 
 Failure behavior:
 missing required lens returns route error unless the route supplies an explicit default lens.
-
-Implementation gap:
-agent lens records and default lens policy are undefined.
 
 ### Lower-Input Acquisition
 
@@ -1235,9 +1168,6 @@ Failure behavior:
 missing optional packet becomes explicit absence.
 missing required packet becomes warning or abstention depending on route and context.
 
-Implementation gap:
-source domains do not yet expose all packet reads.
-
 ### Source Packet Validation
 
 Input:
@@ -1258,9 +1188,6 @@ Failure behavior:
 invalid source packet does not silently disappear.
 It becomes route error, warning, or abstention input.
 
-Implementation gap:
-version negotiation between planner and lower source packets is not specified.
-
 ### Belief-Input Projection
 
 Input:
@@ -1279,9 +1206,6 @@ Rules:
 
 Replay invariant:
 same belief state and projection version produce the same belief input packet.
-
-Implementation gap:
-planner-specific belief packet adaptation is not yet available in code.
 
 ### Graph-Input Projection
 
@@ -1302,9 +1226,6 @@ Rules:
 Replay invariant:
 same graph state and as-of boundary produce the same graph input packet.
 
-Implementation gap:
-the graph implementation exposes anchors, walks, and provenance, but object history, branch presence, and source cursor envelopes need public route shape.
-
 ### Actionable-Belief Projection
 
 Input:
@@ -1324,9 +1245,6 @@ Rules:
 
 Abstention handoff:
 emit abstention input when critical uncertainty, stale evidence, unresolved contradiction, invalid assessment, or insufficient coverage blocks commitment.
-
-Implementation gap:
-decision relevance scoring needs scale and threshold rules.
 
 ### Precondition Assessment Projection
 
@@ -1349,9 +1267,6 @@ Boundary:
 planner assesses world-facing conditions.
 execution assesses method readiness, resource readiness, retry rules, dispatch, and repair.
 
-Implementation gap:
-shared fixtures are needed to keep planner preconditions and execution readiness from overlapping.
-
 ### Observation Opportunity Projection
 
 Input:
@@ -1368,9 +1283,6 @@ Rules:
 - Rank opportunities by decision relevance and expected information gain after admissibility filtering.
 - Do not dispatch observation or choose an execution method.
 
-Implementation gap:
-evidence channel refs and observation cost records need a shared contract with execution capabilities.
-
 ### Conflict-Summary Projection
 
 Input:
@@ -1385,9 +1297,6 @@ Rules:
 - Distinguish direct counterevidence, supersession, invalidation, weak coverage, and competing hypothesis conflict.
 - Mark conflict as blocking only when it affects the scoped decision.
 - Preserve competing evidence refs and hydration handles.
-
-Implementation gap:
-belief contradiction taxonomy needs stable typed values.
 
 ### Causal-Input Projection
 
@@ -1408,9 +1317,6 @@ Rules:
 Replay invariant:
 same causal source records and projection version produce the same causal input packet.
 
-Implementation gap:
-causal source records are design-only and need public read contracts.
-
 ### Causal-Effect Projection
 
 Input:
@@ -1426,9 +1332,6 @@ Rules:
 - Mark selection-shaped evidence when measurement or anchor selection may explain the outcome.
 - Preserve counterfactual summary when available.
 - Preserve causal assumptions and source refs.
-
-Implementation gap:
-effect support categories and blocked identification semantics need typed values.
 
 ### Regime-Input Projection
 
@@ -1449,9 +1352,6 @@ Rules:
 Replay invariant:
 same regime source records and projection version produce the same regime input packet.
 
-Implementation gap:
-regime source records are design-only and need public read contracts.
-
 ### Risk-Envelope Projection
 
 Input:
@@ -1467,9 +1367,6 @@ Rules:
 - Mark a risk as blocking only when it violates decision context or agent tolerance.
 - Do not collapse typed risk dimensions into a single authority score.
 
-Implementation gap:
-risk severity scale and blocking thresholds are undefined.
-
 ### Sensitivity-Summary Projection
 
 Input:
@@ -1484,9 +1381,6 @@ Rules:
 - Include stress metrics that cross planner-relevant thresholds.
 - Emit expiry horizon when regime uncertainty makes the view time-sensitive.
 - Preserve regime refs and stress scenario refs.
-
-Implementation gap:
-flip and weakening condition vocabulary is undefined.
 
 ### Assumption-Set Projection
 
@@ -1505,9 +1399,6 @@ Rules:
 - Record scope assumptions from decision context.
 - State violation effect for each assumption.
 
-Implementation gap:
-assumption refs and violation effects need typed records.
-
 ### Abstention Projection
 
 Input:
@@ -1523,9 +1414,6 @@ Rules:
 - Emit no abstention when all blocking risks are absent or below tolerance.
 - Preserve source refs that caused abstention.
 - Distinguish missing support from negative support.
-
-Implementation gap:
-execution handoff semantics for hard and soft abstention are not yet specified.
 
 ### Hydration-Handle Projection
 
@@ -1543,9 +1431,6 @@ Rules:
 - Deduplicate handles by source identity and explanation role.
 - Never use hydration handles as substitute authority for typed projection fields.
 
-Implementation gap:
-hydration dereference routes are not defined.
-
 ### View-Snapshot Projection
 
 Input:
@@ -1561,9 +1446,6 @@ Rules:
 - Record projection version.
 - Record input packet ids.
 - Record expiry horizon from freshness, observation opportunity, regime sensitivity, and causal assumption expiry.
-
-Implementation gap:
-source cursor set shape is undefined.
 
 ### Planner-View Assembly
 
@@ -1581,9 +1463,6 @@ Rules:
 - Include abstention state even when empty.
 - Include risk, conflict, sensitivity, and assumptions even when non-blocking.
 - Preserve projection version and lower-layer source cursors.
-
-Implementation gap:
-typed response envelope is missing for partial views, warnings, and route metadata.
 
 ### Cross-Domain Projections
 
@@ -1673,27 +1552,3 @@ These inputs are decomposed into planner-facing types through deterministic proj
 `agent` consumes that view as part of its perspective assembly.
 `execution` consumes the shaped result, not internal planner state.
 
-## Implementation Gap Register
-
-| Gap | Blocks | Needed owner |
-|---|---|---|
-| canonical `DecisionContext` serialization | cache keys, replay keys, route idempotence | planner |
-| source cursor set format | deterministic replay across layers | graph, belief, causation, regime |
-| typed agent lens contract | perspective-scoped admissibility | agent |
-| typed belief view contract | belief input projection | belief |
-| typed causal output contract | causal effect summary and abstention | causation |
-| typed regime output contract | risk, sensitivity, expiry | regime |
-| hydration dereference routes | explanation and execution handoff | public interface |
-| decision relevance scale | ranking and blocking | planner |
-| risk severity scale | abstention and execution handoff | planner |
-| partial result semantics | robust query behavior during missing lower-layer data | public interface |
-| context canonicalization | route idempotence and cache keys | planner |
-| agent lens read port | admissibility filtering | agent |
-| graph packet contract | graph input projection | graph |
-| belief packet contract | belief projections | belief |
-| causal packet contract | causal summaries | causation |
-| regime packet contract | risk, sensitivity, expiry | regime |
-| source cursor set | replay and snapshot | all source layers |
-| score thresholds | ranking, blocking, abstention tests | planner |
-| execution handoff contract | abstention and precondition consumption | execution, planner |
-| partial response envelope | robust public routes | public interface |

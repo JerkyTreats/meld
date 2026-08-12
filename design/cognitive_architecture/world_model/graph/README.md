@@ -23,11 +23,9 @@ The graph contract is:
 
 The design work now is to keep this surface narrow, replayable, index backed, and explicit enough for belief, causation, regime, and planner-facing projection layers to use without reaching into source-domain internals.
 
-## Current Outcome
+## Design Baseline
 
-The graph baseline is largely achieved in code today.
-
-It includes:
+The graph baseline includes:
 
 - canonical event publication with explicit object refs and relations
 - workspace, context, execution, task, and artifact contribution to current anchor state where those domains publish graph-readable facts
@@ -36,8 +34,6 @@ It includes:
 - durable derived anchor events written back to the event ledger by `GraphRuntime`
 - branch-annotated federation over traversal stores
 - workflow task paths that can resolve final frame artifacts through traversal
-
-The remaining active work is mostly crate boundary cleanup: continuing the breakout from a singular monolith into explicit domain crates while preserving the same graph contract.
 
 ## What Graph Owns
 

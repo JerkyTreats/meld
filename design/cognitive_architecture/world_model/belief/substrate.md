@@ -165,7 +165,7 @@ It must not depend on hidden belief substrate state.
 
 ## Status Vocabulary
 
-The implemented first status set is small:
+The first status set is small:
 
 - settled
 - stale
@@ -235,20 +235,6 @@ The durable substrate rules are:
 - public reads remain shaped belief views
 - sparse belief state is modeled as domain data, not a shared runtime doctrine
 - task and capability remain the deliberate execution substrate
-
-## First Slice
-
-The first substrate slice should prove:
-
-- replay from spine to evidence
-- runtime family configuration loading, validation, and snapshotting
-- evidence to belief key assignment
-- lease acquisition and expiry
-- generic comparator engine output to revision
-- belief view projection
-- observation-needed projection for unresolved beliefs
-- storm coalescing for one belief key
-- recovery after interrupted assessment
 
 ## Read With
 

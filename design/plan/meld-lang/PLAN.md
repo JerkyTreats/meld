@@ -32,7 +32,7 @@ Related specs:
 Related plan docs:
 - [Meld Lang Assessment](assessment.md)
 - [Typed Loop Integration](../integration/typed_loop.md)
-- [Execution Gaps](../../cognitive_architecture/execution/GAPS.md)
+- [Execution Gap Ledger](../execution/gaps.md)
 
 ---
 

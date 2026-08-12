@@ -6,15 +6,15 @@ Scope: concrete runtime contracts for `world_model/agent`
 
 ## Thesis
 
-The agent runtime surface is the first concrete implementation boundary for the agent domain.
+The agent runtime surface is the concrete runtime boundary for the agent domain.
 
 It must make agent state durable, make runtime activation resumable, make subscription delivery idempotent, and make goal curation deterministic over explicit inputs.
 
-The first slice does not need dynamic spawned agents. It does need the same runtime shape that spawned agents will later use.
+Seed agents and spawned agents share the same runtime shape.
 
 ## Owned Runtime Parts
 
-`world_model/agent` exposes these first-slice parts:
+`world_model/agent` exposes these runtime parts:
 
 - `AgentStore`
   durable writes for agent records, subscriptions, activation state, cursors, and curation decisions
@@ -28,11 +28,6 @@ The first slice does not need dynamic spawned agents. It does need the same runt
   command surface for seed registration and later spawned agent registration
 - `AgentSubscription`
   command surface for binding belief keys and advancing delivery cursors
-
-Deferred runtime part:
-
-- `AgentRuntime`
-  process runner that activates existing records and dispatches watched belief revisions to curation
 
 `AgentStore` owns durable agent state.
 `AgentRuntime` owns only live process handles.
@@ -170,7 +165,7 @@ Execution capabilities should use the public interface. Internal runtime code ma
 
 The agent runtime consumes belief revision notifications.
 
-The first implementation may poll durable belief views through `BeliefQuery`. Later implementations may subscribe to the event spine.
+Delivery may poll durable belief views through `BeliefQuery` or subscribe to the event spine.
 
 Each delivery must include:
 
@@ -186,7 +181,7 @@ The handler must check the stored subscription cursor before running curation. I
 
 ## Curation Runtime
 
-The first curation rule is deterministic and receives its dimension, threshold, priority, desired summary, and source kind from runtime rule configuration. Caller-supplied configuration is the compatibility supply path; the target durable home is the curation-rule binding on the agent registration.
+The curation rule is deterministic and receives its dimension, threshold, priority, desired summary, and source kind from runtime rule configuration. The rule's durable home is the curation-rule binding on the agent registration.
 
 Input:
 
@@ -210,11 +205,11 @@ Output:
 - optional Goal draft for Strategy construction
 - advanced subscription cursor
 
-The curation rule must not write Execution Goal state directly. Current code emits `AgentGoalCommand` directly into integration as a configured-path compatibility behavior. Target runtime routes the same proposed Goal value through Strategy construction and emits an Execution admission bundle only after the Agent authorizes a nonempty candidate inventory.
+The curation rule must not write Execution Goal state directly. The runtime routes the proposed Goal value through Strategy construction and emits an Execution admission bundle only after the Agent authorizes a nonempty candidate inventory.
 
 ## Goal Command Dedupe
 
-The dedupe key for the first slice includes:
+The dedupe key includes:
 
 - `agent_id`
 - `subject`
@@ -223,7 +218,7 @@ The dedupe key for the first slice includes:
 - `target_condition`
 - `goal_source_kind`
 
-For the first configured threshold rule, the key identifies one goal that requires configured confidence above the configured threshold for one subject and one agent perspective.
+For the configured threshold rule, the key identifies one goal that requires configured confidence above the configured threshold for one subject and one agent perspective.
 
 If execution already has an active matching goal, the agent records an absorbed decision and does not emit another command.
 
@@ -245,32 +240,6 @@ Replay order:
 8. Advance cursor only after decision persistence succeeds.
 
 No live watcher handle may be required to replay curation.
-
-## First Slice Requirements
-
-The first slice implements:
-
-- one seed agent registration path
-- one durable agent record
-- one subscription record
-- one activation status
-- one cursor over watched belief revisions
-- one deterministic threshold curation rule supplied by runtime configuration
-- one goal command dedupe key
-- one decision record
-- one query facade
-
-The next boundary change inserts Goal draft and Strategy admission between curation output and the existing Goal Set API. Directive grounding remains a separate missing precursor to this runtime surface.
-
-It defers:
-
-- spawned agent authorization
-- multi agent conflict handling
-- learned cost benefit comparator
-- restart activation workers
-- full `AgentRuntime` process worker
-- event spine push delivery
-- curation over multiple belief dimensions
 
 ## Read With
 

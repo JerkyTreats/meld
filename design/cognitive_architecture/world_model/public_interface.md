@@ -115,7 +115,7 @@ The runtime surface also needs a durable curation decision record and subscripti
 Owned by `world_model/planner`. These operations expose the action-relevant world model projection.
 
 ```
-// First-slice current world state for one subject and belief dimension
+// Current world state for one subject and belief dimension
 project_current_world_state(subject: DomainObjectRef, dimension_id: BeliefDimensionId, perspective: Option<Perspective>, branch_scope: Option<BranchScope>) -> PlannerProjectionOutput
 
 // Full world model view for a scoped planning question
@@ -128,27 +128,30 @@ query_observation_opportunities(context: DecisionContext) -> Vec<ObservationOppo
 query_preconditions(context: DecisionContext) -> Vec<PreconditionAssessment>
 ```
 
-The implemented first-slice planner route is `PlannerQuery::project_current_world_state`. It reads current belief views and current graph anchors, then returns a ground `meld-lang::WorldState` with provenance, hydration refs, and projection warnings.
+The minimal planner route is `PlannerQuery::project_current_world_state`. It reads current belief views and current graph anchors, then returns a ground `meld-lang::WorldState` with provenance, hydration refs, and projection warnings.
 
-Planner operations are read-only deterministic projections over graph and belief in the first slice. Later broad views may add causation and regime state.
+Planner operations are read-only deterministic projections over graph and belief. Broad views may add causation and regime state.
 They do not expose raw inference internals.
 They must return view records with provenance and hydration handles, not free-form semantic summaries.
 
 ### Strategy
 
-Owned by `world_model/strategy`. This operation constructs one bounded candidate for a proposed Goal and exact world-model context.
+Owned by `world_model/strategy`. Strategy exposes bounded candidate search over an immutable problem, plus independent verification of any candidate before authorization.
 
 ```
-construct_strategy_candidate(request: StrategyCandidateRequest) -> StrategyCandidateResult
+search(request: StrategySearchRequest) -> StrategySearchResult
+verify_candidate(problem: StrategyProblem, candidate: StrategyCandidate) -> StrategyVerification
 ```
 
-Strategy construction consumes planner projections through their public contracts. It does not expose or import lower inference internals.
+The search input is a complete immutable `StrategyProblem` — goal, planner snapshot, theory snapshot, capability vocabulary, methods, and evaluation policy — with content-derived identity. Search is a pure function: no live world-model queries, live catalogs, ambient configuration, or unseeded randomness. The result carries honest completion — a bounded result may claim only strongest-found; only an exhaustive result with no recommendation may state that no eligible candidate exists.
 
-The Goal-owning Agent authorizes the candidate before initial Goal admission. Persistence custody does not confer authority.
+Verification is independent of the discovering algorithm and accepts no search diagnostics as proof. Strategy construction consumes planner projections through their public contracts and does not expose or import lower inference internals.
+
+The Goal-owning Agent authorizes a verified candidate before initial Goal admission. Persistence custody does not confer authority.
 
 Execution consumes the admitted authorization through explicit contracts, then returns realization acceptance or rejection. Execution must not reinterpret the candidate.
 
-This route defines the current public Strategy surface. Implementation readiness lives in [Strategy Ground Map](../../plan/world_model/strategy/ground_map.md).
+The full semantic boundary lives in [Strategy Search](strategy/search.md) and [Strategy Boundary Contracts](strategy/contracts.md).
 
 ## Capability Invocation Pattern
 

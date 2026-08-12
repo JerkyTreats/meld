@@ -84,3 +84,74 @@ This slice is implemented and verified.
 ## Recommendation
 
 Proceed with agent goal curation against the projected `WorldState`. Defer broad planner view, causal, and regime expansion.
+
+## Spec-extracted open items, 2026-08-12
+
+These open items were extracted from the planner spec's per-type open-gap subsections on 2026-08-12. The spec keeps the durable type and pipeline contracts; the open implementation questions live here.
+
+- `DecisionContext`: `SubjectScope`, `BranchScope`, `ReferenceTime`, `TransactionTime`, `BeliefPredicate`, `InterventionRef`, and `DecisionHorizon` need shared contracts.
+- `ViewSnapshot`: source cursor shape is not yet shared across graph, belief, causation, and regime.
+- `PlannerAgentLens`: agent lens contracts are not yet defined as typed public records.
+- `PlannerGraphInput`: `ObjectHistory`, `BranchPresence`, and graph source cursor contracts are not fully exposed in current implementation.
+- `PlannerBeliefInput`: the belief layer needs typed public records for posterior, uncertainty, precision, freshness, contradiction, origin, coverage, and assessment state.
+- `PlannerCausalInput`: the causation layer needs read contracts for causal variables, effect estimates, identification status, confounder risk, selection warnings, and assumption refs.
+- `PlannerRegimeInput`: the regime layer needs typed read contracts for active segment state, mixture prediction, stress metrics, and sensitivity sets.
+- `WorldModelView`: the public interface has route names but no typed response envelope with errors, warnings, cursor metadata, and partial result semantics.
+- `ActionableBeliefView`: decision relevance scoring needs an explicit scale, threshold basis, and tie-break rule.
+- `ObservationOpportunityView`: observation cost and channel refs need a cross-domain contract with execution capabilities.
+- `PreconditionAssessment`: the boundary between world-facing condition and execution method precondition needs a shared test fixture with execution.
+- `CausalEffectSummary`: causal input records are design-only and need implementation contracts.
+- `RiskEnvelope`: risk severity scale, blocking threshold, and mitigation hint vocabulary are undefined.
+- `AbstentionState`: execution needs a clear mapping from abstention state to planner handoff behavior.
+- `ConflictSummary`: belief contradiction taxonomy needs stable typed values.
+- `SensitivitySummary`: regime sensitivity and stress metrics need a threshold vocabulary.
+- `AssumptionSet`: assumption refs need shared formatting across causal, regime, belief, and planner records.
+- `HydrationHandle`: hydration handle dereference routes are not defined in the public interface.
+
+Extracted the same day from the spec's pipeline-stage gap annotations:
+
+- canonical serialization for `DecisionContext` is undefined.
+- agent lens records and default lens policy are undefined.
+- source domains do not yet expose all packet reads.
+- version negotiation between planner and lower source packets is not specified.
+- planner-specific belief packet adaptation is not yet available in code.
+- the graph implementation exposes anchors, walks, and provenance, but object history, branch presence, and source cursor envelopes need public route shape.
+- decision relevance scoring needs scale and threshold rules.
+- shared fixtures are needed to keep planner preconditions and execution readiness from overlapping.
+- evidence channel refs and observation cost records need a shared contract with execution capabilities.
+- belief contradiction taxonomy needs stable typed values.
+- causal source records are design-only and need public read contracts.
+- effect support categories and blocked identification semantics need typed values.
+- regime source records are design-only and need public read contracts.
+- risk severity scale and blocking thresholds are undefined.
+- flip and weakening condition vocabulary is undefined.
+- assumption refs and violation effects need typed records.
+- execution handoff semantics for hard and soft abstention are not yet specified.
+- hydration dereference routes are not defined.
+- source cursor set shape is undefined.
+- typed response envelope is missing for partial views, warnings, and route metadata.
+
+Extracted the same day, the spec's gap register table:
+
+| Gap | Blocks | Needed owner |
+|---|---|---|
+| canonical `DecisionContext` serialization | cache keys, replay keys, route idempotence | planner |
+| source cursor set format | deterministic replay across layers | graph, belief, causation, regime |
+| typed agent lens contract | perspective-scoped admissibility | agent |
+| typed belief view contract | belief input projection | belief |
+| typed causal output contract | causal effect summary and abstention | causation |
+| typed regime output contract | risk, sensitivity, expiry | regime |
+| hydration dereference routes | explanation and execution handoff | public interface |
+| decision relevance scale | ranking and blocking | planner |
+| risk severity scale | abstention and execution handoff | planner |
+| partial result semantics | robust query behavior during missing lower-layer data | public interface |
+| context canonicalization | route idempotence and cache keys | planner |
+| agent lens read port | admissibility filtering | agent |
+| graph packet contract | graph input projection | graph |
+| belief packet contract | belief projections | belief |
+| causal packet contract | causal summaries | causation |
+| regime packet contract | risk, sensitivity, expiry | regime |
+| source cursor set | replay and snapshot | all source layers |
+| score thresholds | ranking, blocking, abstention tests | planner |
+| execution handoff contract | abstention and precondition consumption | execution, planner |
+| partial response envelope | robust public routes | public interface |

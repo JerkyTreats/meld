@@ -147,34 +147,6 @@ It does not settle belief, infer causality, detect regimes, or choose actions.
 - Superseded anchors remain inspectable.
 - Current anchor changes are explainable through provenance and lineage.
 
-## First Slice Requirements
-
-- Implement traversal fact recording.
-- Implement object fact indexing.
-- Implement relation incoming and outgoing indexes.
-- Implement current anchor selection.
-- Implement anchor tombstone handling.
-- Implement anchor lineage.
-- Implement anchor provenance.
-- Implement current anchor queries.
-- Implement object history query.
-- Implement neighbor query.
-- Implement bounded graph walk.
-- Implement derived anchor selected publication.
-- Implement derived anchor superseded publication.
-- Implement reducer cursor catch-up.
-- Implement idempotent replay tests.
-
-## Deferred Requirements
-
-- Full branch federation query ergonomics.
-- Branch presence records as first-class graph records.
-- Materialized walk cache.
-- Relation visibility policy beyond current-only filters.
-- Perspective-first hot index for high-volume perspective reads.
-- Multi-process graph reducer coordination.
-- Graph retention and compaction policy.
-
 ## Read With
 
 - [Graph Spec](spec.md)

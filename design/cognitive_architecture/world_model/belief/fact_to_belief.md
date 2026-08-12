@@ -20,15 +20,15 @@ This document describes the first bottom-up transition path. It is not the whole
 
 ## Enabling Base
 
-Belief exists because these implemented layers now exist:
+Belief builds on these layers:
 
 - [Completed Events](../../../completed/events/README.md)
   durable spine, runtime-wide sequence, append, replay, idempotent derived facts, and graph attachment fields
-- [Completed World State Graph](../../completed/world_state/graph/README.md)
+- [Completed World State Graph](../../../completed/world_state/graph/README.md)
   current anchors, lineage, provenance, traversal indexes, and branch annotated federation
-- [Graph Implementation Status](../../completed/world_state/graph/implementation_plan.md)
+- [Graph Implementation Status](../../../completed/world_state/graph/implementation_plan.md)
   implemented `DomainObjectRef`, `EventRelation`, `GraphRuntime`, traversal queries, and graph-readable publishers
-- [Spine Graph Completion Review](../../completed/world_state/graph/spine_graph_completion_plan.md)
+- [Spine Graph Completion Review](../../../completed/world_state/graph/spine_graph_completion_plan.md)
   explicit closeout that belief and planner-facing views are next scope
 - [World Model Graph](../graph/README.md)
   source model where semantic spine facts materialize graph views and future belief facts
@@ -218,20 +218,6 @@ Spine owns:
 - subscription
 - sequence
 - cross-domain refs
-
-## First Slice
-
-Start with one externally configured belief family:
-
-- subject is a `DomainObjectRef`
-- runtime predicate id names the planner question
-- perspective is explicit or intentionally defaulted
-- evidence comes from graph anchors and execution outcomes
-- generic comparator engine emits posterior summary, uncertainty, confidence, and status
-- belief view exposes settlement state for agent policy
-
-The family id, dimension id, evidence schemas, source mappings, comparator config, priors, thresholds, and planner projection fields are runtime configuration.
-They are not Rust modules, enum variants, or family-specific comparator types.
 
 ## Read With
 

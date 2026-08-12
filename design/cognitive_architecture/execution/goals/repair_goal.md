@@ -1,16 +1,16 @@
 # Repair Goal
 
 Date: 2026-06-02
-Status: resolved into goal model
+Status: active
 Scope: repair as a goal lifecycle pattern rather than a separate goal type
 
-## Resolution
+## Pattern
 
 Repair is not a separate Goal type. It is bounded convergence after a task outcome threatens an active Goal.
 
 When retries are exhausted, Execution records and publishes the failure. The Agent judges whether intent remains active. Strategy may construct a replacement proposal from the revised world state. Execution may select another still-authorized alternative or realize a newly authorized decision through task-network mutations.
 
-The original repair framing identified the right split:
+The repair pattern splits three concerns:
 
 - **why** plan change is needed → goal lifecycle, where the active goal is threatened by task failure
 - **which semantic replacement is viable** → Strategy proposal and Agent authorization

@@ -119,7 +119,7 @@ It may hydrate facts after a planner decision, but the planner decision is over 
 
 ## API Shape
 
-Landed belief public API:
+Belief public API:
 
 - query current belief view by key
 - query belief views by subject
@@ -168,39 +168,12 @@ Spine public API:
 - Regime changes silently reset priors without an explicit regime record
 - Belief policy hints are treated as action commands
 
-## Landed First Slice Boundary
-
-The first slice remains in one binary.
-It still behaves as if these were separate processes.
-
-The slice defines:
-
-- `BeliefView` as the only planner input
-- stable belief keys
-- revision ids
-- evidence ids
-- explicit perspective identity
-- explicit branch scope
-- posterior, uncertainty, freshness, and observation-needed fields
-- belief view polling contract through `BeliefQuery`
-- task construction hydration path from belief provenance
-- promoted evidence normalization for later outcome publication
-
-The slice explicitly defers:
-
-- full smoothing over hidden past transitions
-- global message passing across connected belief families
-- regime identity and changepoint authority
-- execution posture commitment
-- belief view subscriptions
-- belief revision publication back to the spine
-
 ## Read With
 
 - [Belief](README.md)
 - [Fact To Belief](fact_to_belief.md)
 - [Belief Substrate](substrate.md)
 - [Comparator Model](comparator_model.md)
-- [Microarchitecture Assessment By Domain](../../microarchitecture_assessment_by_domain.md)
+- [Microarchitecture Assessment By Domain](../../../completed/world_state/microarchitecture_assessment_by_domain.md)
 - [Execution Domain](../../execution/README.md)
 - [Spine Concern](../../spine/README.md)

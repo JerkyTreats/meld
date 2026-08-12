@@ -29,23 +29,15 @@ The world model owns belief updates and conflict resolution.
 `events` owns durability, ordering, replay, and subscription.
 `execution` owns task-triggered observation use cases that already exist today.
 
-## Current Anchors
+## Anchors
 
-- `workspace_scan_batch` already shows the right diff-first publication shape
-- [Await Observation Semantics](../execution/planning/observation_wait_semantics.md) already defines the deliberate observation-and-branch pattern inside `execution`
-- the current system is stronger at task-triggered observation than continuous background sensing
+- `workspace_scan_batch` shows the diff-first publication shape
+- [Await Observation Semantics](../execution/planning/observation_wait_semantics.md) defines the deliberate observation-and-branch pattern inside `execution`
 
 ## Substrate
 
 - [Sensory Substrate](substrate.md)
   parallel stream compilers, lowering IR, and promotion into shared events
-
-## Required First Slice
-
-- always-on workers for workspace, git, and other high-value modalities
-- typed observation contracts that can survive replay and cross-domain reuse
-- source-local throttling so high-volume sensors do not dominate events
-- a clean handoff from sensory publication to curation reducers
 
 ## Read With
 

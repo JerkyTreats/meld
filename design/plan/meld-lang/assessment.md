@@ -2,7 +2,7 @@
 
 Status: complete
 Depends on: `design/plan/events/assessment.md`
-Design source: `design/cognitive_architecture/meld-lang/README.md`, `design/cognitive_architecture/meld-lang/CRATE.md`, `design/cognitive_architecture/meld-lang/requirements.md`, `design/cognitive_architecture/meld-lang/primitives.md`, `design/cognitive_architecture/meld-lang/world_state.md`, `design/cognitive_architecture/meld-lang/goals_and_methods.md`, `design/cognitive_architecture/meld-lang/compositions.md`, `design/cognitive_architecture/meld-lang/operators.md`, `design/cognitive_architecture/meld-lang/PLAN.md`
+Design source: `design/cognitive_architecture/meld-lang/README.md`, `design/cognitive_architecture/meld-lang/CRATE.md`, `design/cognitive_architecture/meld-lang/requirements.md`, `design/cognitive_architecture/meld-lang/primitives.md`, `design/cognitive_architecture/meld-lang/world_state.md`, `design/cognitive_architecture/meld-lang/goals_and_methods.md`, `design/cognitive_architecture/meld-lang/compositions.md`, `design/cognitive_architecture/meld-lang/operators.md`, `design/completed/meld_lang/PLAN.md`
 Evidence date: 2026-07-10
 
 ## Verdict Summary
@@ -106,8 +106,8 @@ The first implementation should create an initial `WorldState`, evaluate one `Go
 - `design/cognitive_architecture/meld-lang/goals_and_methods.md`
 - `design/cognitive_architecture/meld-lang/compositions.md`
 - `design/cognitive_architecture/meld-lang/operators.md`
-- `design/cognitive_architecture/meld-lang/PLAN.md`
-- `design/cognitive_architecture/execution/GAPS.md`
+- `design/completed/meld_lang/PLAN.md`
+- `design/plan/execution/gaps.md`
 
 ## Gaps
 
@@ -125,3 +125,38 @@ The first implementation should create an initial `WorldState`, evaluate one `Go
 ## Recommendation
 
 Proceed with `meld-lang` typed-loop implementation before runtime execution planning.
+
+## Evidence note 2026-08-12
+
+First-slice and deferred requirement lists moved from `design/cognitive_architecture/meld-lang/requirements.md`, which now states the evaluation loop declaratively.
+
+First slice requirements:
+
+- Implement `Term` with all variants: `Object`, `Dimension`, `ArtifactType`, `Literal`, `Variable`, `Derived`.
+- Implement `Literal` with: `Bool`, `Text`, `Number`, `Duration`.
+- Implement `Proposition` with: `Holds`, `Exists`, `Accessible`, `Related`, `All`, `Any`, `Not`.
+- Implement `Condition` with: `Above`, `Below`, `Equals`, `In`, `Within`, `Exceeds`, `Present`, `Absent`.
+- Implement `Effect` with: `Assert`, `Retract`, `Update`.
+- Implement `Operator` with preconditions, effects, cost, and resolution.
+- Implement `Resolution` with input and output slot constraints, scope kind, tags, and optional specific capability ref.
+- Implement `Composition` with steps and edges.
+- Implement `Goal` with target proposition, priority, source, and lifecycle.
+- Implement `Method` with trigger, preconditions, composition, net effects, cost, and preference.
+- Implement `WorldState` with ground proposition set, `satisfies()`, `gap()`, `apply()`.
+- Implement `evaluate()` with three-valued result.
+- Implement `unify()` with variable binding.
+- Implement `substitute()` for compositions.
+- Implement `validate()` for structural soundness.
+- Implement `CostEstimate` with addition, ceiling comparison, and composition aggregation.
+- Test full evaluation loop in a single test: goal construction, world state evaluation, method unification, binding substitution, composition validation, effect application, and re-evaluation showing goal satisfaction.
+
+Deferred requirements:
+
+- Numeric fluent tracking across world state transitions.
+- Temporal proposition variants scoped by valid time.
+- Composition optimization: dead step elimination and parallel opportunity detection.
+- Method learning from execution traces.
+- Incremental world state: diff-based update rather than full replacement.
+- Proposition indexing for large world states of hundreds of thousands of propositions.
+- Composition merging: combining two compositions that share steps.
+- Multi-agent perspective scoping within the language, currently carried by `Goal.agent_id`.

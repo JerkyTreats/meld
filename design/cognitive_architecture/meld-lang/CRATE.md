@@ -46,11 +46,9 @@ The crate is pure. No IO, no async, no persistence, no side effects. Every publi
 - persistence, serialization format, or storage paths
 - dimension semantics or artifact type semantics
 
-## Current Code Areas
+## Code Routing
 
-No code exists yet. This crate is new.
-
-Target location: `crates/meld-lang/src/`
+Crate location: `crates/meld-lang/src/`
 
 ## Dependency Rule
 

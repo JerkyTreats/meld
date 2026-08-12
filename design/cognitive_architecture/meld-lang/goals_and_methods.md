@@ -145,7 +145,7 @@ let goal = Goal {
             provider_calls: 10,
         }),
     },
-    lifecycle: GoalLifecycle::Active,
+    lifecycle: GoalLifecycle::Proposed,
 };
 ```
 
@@ -188,13 +188,13 @@ pub struct Method {
 
 ### Method Design Rules
 
-- Methods provide reusable decomposition templates. The current Strategy slice instantiates one configured Method into one concrete candidate.
+- Methods provide reusable decomposition templates. Strategy may instantiate a configured Method into a concrete candidate.
 - Methods are serializable. A method library is a directory of serialized method files loaded at runtime. New methods do not require recompilation.
 - `Method.trigger` uses `Term::Variable` in positions that should bind against the goal. When `unify(method.trigger, goal.target)` succeeds, it produces `Bindings` that map variable names to concrete terms from the goal.
 - `Method.preconditions` are checked after trigger unification. Bindings from the trigger are substituted into preconditions before evaluation against world state. This enables preconditions like "scope ?node must be accessible" where `?node` was bound from the trigger.
 - `Method.composition` is a template. It contains `Term::Variable` references matching the trigger's variables. `substitute(composition, bindings)` produces a concrete composition ready for validation and runtime compilation.
 - `Method.net_effects` support counterfactual projection. They may establish mechanical candidate eligibility, but they do not establish that an observational Goal condition became true.
-- `Method.preference` is current Method metadata. The minimal Strategy contract does not require ranking or comparison behavior.
+- `Method.preference` is Method metadata that orders alternative Methods for the same goal. The minimal Strategy contract does not require ranking or comparison behavior.
 
 ### Strategy Method Instantiation Flow
 

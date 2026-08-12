@@ -153,7 +153,7 @@ impl CostEstimate {
 - Cost is multi-dimensional. A cheap-in-time but expensive-in-money composition is not the same as a cheap-in-money but slow composition. The planning loop compares dimensions individually.
 - `money_microdollars` avoids floating point for monetary values. $0.08 is 80_000 microdollars.
 - `provider_calls` tracks LLM invocations separately because they have latency, rate limit, and quality implications beyond their monetary cost.
-- Cost estimates on operators are predictions, not guarantees. Actual cost is recorded by execution and may feed back into cost estimation calibration (deferred requirement).
+- Cost estimates on operators are predictions, not guarantees. Execution records actual cost, which may feed back into cost estimation calibration.
 
 ## Relationship to Existing Capability Contracts
 

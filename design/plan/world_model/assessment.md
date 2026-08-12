@@ -5,6 +5,8 @@ Depends on: `design/plan/events/assessment.md`, `design/plan/meld-lang/assessmen
 Design source: `design/cognitive_architecture/world_model/README.md`, `design/cognitive_architecture/world_model/public_interface.md`, `design/cognitive_architecture/meld-lang/README.md`
 Evidence date: 2026-07-10
 
+Note 2026-08-12: this snapshot predates the strategy landing. The strategy domain now exists in code and its delivery is recorded under `world_model/strategy/`.
+
 ## Verdict Summary
 
 World model design is conditionally ready for execution planning after graph, belief, planner projection, and agent goal curation.

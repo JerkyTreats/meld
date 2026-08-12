@@ -1,7 +1,7 @@
 # Execution Crate
 
 Date: 2026-05-02
-Status: completed authority crate
+Status: active
 Scope: `meld-execution` crate boundary for execution-owned contracts, task and capability authority, workflow runtime, and runtime ports
 
 ## Intent
@@ -9,7 +9,7 @@ Scope: `meld-execution` crate boundary for execution-owned contracts, task and c
 `meld-execution` owns the public contract boundary and runtime algorithms for deliberate action.
 It defines the provider execution request shape, task and capability contracts, workflow execution runtime, and the ports that let execution code read context, dispatch provider work, query the world model, load workflow profiles, write generated frames, and publish outcomes without depending on root `meld`.
 
-Root `meld` remains the product shell and adapter host for current concrete runtime implementations.
+Root `meld` remains the product shell and adapter host for concrete runtime implementations.
 
 ## Target Crate
 
@@ -65,7 +65,7 @@ Execution code should depend on the provider execution port, not on root `meld`.
 
 ## Context And Provider Reliance
 
-`meld-execution` relies on context and provider capabilities in the current product shape.
+`meld-execution` relies on context and provider capabilities.
 
 That reliance should be explicit.
 The extracted crate owns the ports it needs:
@@ -82,15 +82,14 @@ The extracted crate owns the ports it needs:
 Root `meld` supplies adapters for those ports during runtime wiring.
 
 This keeps the dependency direction from becoming `meld-execution` to root `meld`.
-It also lets context and provider remain in root `meld` while their long-term crate homes stay unresolved.
+Context and provider remain root-owned concerns behind those ports.
 
 ## Root Adapter Posture
 
-Root `meld` binds the associated-type port contracts to the product's current concrete types.
-Those wrappers are compatibility adapters, not the long-term authority surface.
+Root `meld` binds the associated-type port contracts to the product's concrete types.
 
-The extraction intentionally leaves root-owned storage, config, CLI, provider registry, provider clients, and workspace-specific capability registration in root `meld`.
-Root compatibility adapters provide those concrete product concerns to `meld-execution` through explicit ports and runtime inputs.
+Storage, config, CLI, provider registry, provider clients, and workspace-specific capability registration are root-owned.
+Root adapters provide those concrete product concerns to `meld-execution` through explicit ports and runtime inputs.
 
 ## Target Dependencies
 

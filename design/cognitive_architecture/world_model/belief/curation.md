@@ -113,11 +113,13 @@ The useful boundary is:
 
 That boundary keeps the world model living without leaking worker internals across domains.
 
-## First Slice
+## Minimal Curation Scope
 
-The core belief slice is implemented.
-The broader curation slice is not implemented yet.
-It should build on the implemented graph substrate, the landed belief store and query surface, and the legacy claim compatibility layer.
+Belief settlement is the core slice of this substrate.
+Broader curation is the larger slice above it.
+Curation builds on the graph substrate, the belief store and query surface, and the legacy claim compatibility layer.
+
+The minimal curation scope includes:
 
 - thesis, evidence, provenance, supersession, and calibration records
 - one curation replay path from promoted spine facts into current belief

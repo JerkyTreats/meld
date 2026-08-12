@@ -92,7 +92,7 @@ Related specs:
 - [Planning Pipeline](../../../cognitive_architecture/execution/planning/planning_pipeline.md)
 - [Task Network](../../../cognitive_architecture/execution/task_network.md)
 - [Execution Goals](../../../cognitive_architecture/execution/goals/README.md)
-- [Execution Gaps](../../../cognitive_architecture/execution/GAPS.md)
+- [Execution Gap Ledger](../gaps.md)
 - [Meld Lang](../../../cognitive_architecture/meld-lang/README.md)
 - [Meld Lang Goals And Methods](../../../cognitive_architecture/meld-lang/goals_and_methods.md)
 - [Meld Lang Compositions](../../../cognitive_architecture/meld-lang/compositions.md)
@@ -732,7 +732,7 @@ Gate policy:
 | Fuzz targets | `cargo-fuzz` | Each target runs for a bounded local pass with no panics. |
 | Coverage | `cargo-llvm-cov` | Planning and goals line coverage does not decrease across phases. Final slice target is at least 90 percent for new modules. |
 | Boundary scans | `rg` plus focused tests | No `mod.rs`, no task dispatch imports from planning, no capability invocation from planning. |
-| Comment consistency | policy review plus source scan | Comments follow [Commenting Policy](../../../governance/commenting_policy.md) and do not narrate obvious code. |
+| Comment consistency | policy review plus source scan | Comments follow [Commenting Policy](../../../../governance/commenting_policy.md) and do not narrate obvious code. |
 
 Phase specific gate additions:
 

@@ -8,7 +8,7 @@ Scope: expanded implementation requirements for `world_model/belief`
 
 Belief implementation must prove a replayable path from durable facts to normalized evidence, belief revisions, observation opportunities, calibration records, and shaped views.
 
-The first slice must preserve the full boundary shape even when inference starts with simple comparators.
+The implementation must preserve the full boundary shape even when inference starts with simple comparators.
 
 ## Functional Requirements
 
@@ -151,36 +151,9 @@ The first slice must preserve the full boundary shape even when inference starts
 
 ### Evolution
 
-- First slice supports compact comparator output.
+- Compact comparator output is a sufficient starting shape.
 - New belief families are added by runtime configuration, not Rust source changes.
-- Later slices add priors, posterior distributions, hidden state, inference epochs, calibration, and regime-conditioned prior selection without changing public view boundaries.
-
-## First Slice Requirements
-
-- Implement `BeliefKey`, `EvidenceItem`, `BeliefRevision`, `BeliefView`, and `AssessmentLease`.
-- Implement runtime family configuration loading, validation, and replay snapshotting.
-- Implement evidence normalization from graph anchors and promoted outcome evidence.
-- Implement belief key assignment.
-- Implement one generic typed Bayesian comparator engine driven by runtime configuration.
-- Implement missing comparator state.
-- Implement revision commit.
-- Implement belief view projection.
-- Implement observation-needed projection.
-- Implement stale detection.
-- Implement lease expiry and recovery.
-- Implement storm coalescing for one belief key.
-- Implement replay tests.
-
-## Deferred Requirements
-
-- Deterministic rule comparator.
-- Semantic settlement with provisional status.
-- Full multi-belief message passing.
-- Predictive residual inference over continuous state.
-- Retrospective smoothing over hidden transition timing.
-- Global hypothesis graph across all belief families.
-- Regime-conditioned prior selection.
-- Automated capability synthesis for missing evidence channels.
+- Priors, posterior distributions, hidden state, inference epochs, calibration, and regime-conditioned prior selection can be added without changing public view boundaries.
 
 ## Read With
 

@@ -8,7 +8,7 @@ Scope: priors, posteriors, uncertainty, freshness, contradiction, hypotheses, an
 
 `world_model/belief` answers what should be believed about the graph, how uncertain that belief is, what evidence would change it, and which unresolved uncertainty matters for action.
 
-The earlier belief design is not just implementation history. Its first-slice machinery is still useful: belief keys, evidence items, comparator contracts, revisions, leases, replay, and planner-facing views. What needs elevation is the role of belief in the larger world model architecture. Belief is not only "do we trust the current anchor." It is the generative inference layer over graph state, agent perspective, evidence reliability, hidden causes, and future-relevant uncertainty.
+The earlier belief design is not just implementation history. Its core machinery remains durable: belief keys, evidence items, comparator contracts, revisions, leases, replay, and planner-facing views. What needs elevation is the role of belief in the larger world model architecture. Belief is not only "do we trust the current anchor." It is the generative inference layer over graph state, agent perspective, evidence reliability, hidden causes, and future-relevant uncertainty.
 
 Graph tells the system what is current and reachable.
 Belief tells the system what is credible, uncertain, stale, contradicted, predicted, or worth observing.
@@ -37,7 +37,7 @@ Belief does not dispatch tasks, decide execution policy, own causal claims, or d
 
 ## What Remains Durable
 
-These parts of the landed belief work remain active architecture:
+These parts of the belief design remain active architecture:
 
 - `BeliefKey` as stable identity for the question being assessed
 - `EvidenceItem` as normalized input from facts, anchors, outcomes, or measurements
@@ -194,47 +194,6 @@ The public contract should therefore make perspective explicit on belief keys, e
   event-driven belief runtime, leases, recovery, staleness, and storm handling
 - [Curation In Belief](curation.md)
   natural runtime for belief maintenance and materialized belief
-- [Belief Spec](spec.md)
-  consolidated domain types, data model, and pipelines for belief
-
-## Landed First Slice
-
-The first belief slice has landed without attempting full generative inference or full curation.
-
-It defines:
-
-- `BeliefKey`
-- `EvidenceItem`
-- `BeliefRevision`
-- `BeliefView`
-- runtime family configuration contracts
-- explicit perspective identity and branch scope
-- generic comparator input and output contracts
-- one configured weighted Bayesian comparator engine
-- uncertainty and freshness fields
-- observation-needed state with target evidence
-- lease-based assessment
-- replay from graph anchors and promoted records into current belief
-- planner query over belief views only
-- durable evidence, assignment, revision, view, lease, rejection, config snapshot, runtime metadata, and dirty-key stores
-- dirty-key rescheduling and storm coalescing for one belief key
-- stale detection for newer evidence, superseded anchors, config snapshot changes, and evidence policy changes
-
-It does not define a Rust module, enum variant, comparator type, or source mapping branch for a specific belief family.
-The first family content is loaded runtime configuration.
-
-The first slice leaves these research-direction items deferred:
-
-- explicit prior and posterior pair records for every revision
-- prior to posterior divergence or surprise as a required field
-- origin and coverage fields that distinguish direct observation, predictive persistence, smoothing, and never-observed state
-- retrospective smoothing over hidden transition timing
-- structured multi-belief inference epochs across connected belief keys
-- regime posterior, run length, and mixture prediction, which belong to `regime`
-- broad comparator catalog
-- semantic settlement adapter
-- outcome-driven calibration
-- planner projection into `meld-lang::WorldState`
 
 ## Read With
 

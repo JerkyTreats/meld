@@ -36,7 +36,7 @@ Execution Planning does not decide whether a Goal has any semantic theory of act
 ## Read With
 
 - [Execution Domain](../README.md)
-- [Execution Gaps](../GAPS.md)
+- [Execution Gap Ledger](../../../plan/execution/gaps.md)
 - [Goals](../goals/README.md)
 - [HTN Model](htn/README.md)
 - [HTN Lineage Model](htn/lineage_model.md)

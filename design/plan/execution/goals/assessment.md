@@ -2,8 +2,10 @@
 
 Status: first slice implemented
 Depends on: `design/plan/world_model/agent/assessment.md`, `design/plan/meld-lang/assessment.md`
-Design source: `design/cognitive_architecture/execution/goals/README.md`, `design/cognitive_architecture/execution/GAPS.md`, `design/cognitive_architecture/world_model/agent/goal_curation.md`, `design/cognitive_architecture/meld-lang/goals_and_methods.md`
+Design source: `design/cognitive_architecture/execution/goals/README.md`, `design/plan/execution/gaps.md`, `design/cognitive_architecture/world_model/agent/goal_curation.md`, `design/cognitive_architecture/meld-lang/goals_and_methods.md`
 Evidence date: 2026-05-31
+
+Note 2026-08-12: goal admission has since gained strategy-authorization gating in commit b48c09d. This assessment predates that gate and stands as evidence for the earlier slice.
 
 ## Verdict Summary
 
@@ -66,7 +68,7 @@ This is implemented for the first execution planning slice.
 - `crates/meld-execution/src/goals/query.rs`
 - `crates/meld-execution/tests/goals.rs`
 - `design/cognitive_architecture/execution/goals/README.md`
-- `design/cognitive_architecture/execution/GAPS.md`
+- `design/plan/execution/gaps.md`
 - `design/cognitive_architecture/meld-lang/goals_and_methods.md`
 
 ## Gaps

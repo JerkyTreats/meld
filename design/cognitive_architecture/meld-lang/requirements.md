@@ -6,7 +6,7 @@ Scope: functional, structural, and nonfunctional requirements for `meld-lang`
 
 ## Thesis
 
-`meld-lang` must provide a minimal, pure, runtime-composable language for expressing propositions, goals, operators, and compositions. The first slice must prove the full evaluation loop: construct a goal from terms, evaluate it against a world state, match a method, substitute bindings, validate the composition, and apply effects to produce a new world state. Later slices extend the grammar and add optimization without changing the evaluation boundary.
+`meld-lang` must provide a minimal, pure, runtime-composable language for expressing propositions, goals, operators, and compositions. The language supports the full evaluation loop: construct a goal from terms, evaluate it against a world state, match a method, substitute bindings, validate the composition, and apply effects to produce a new world state. Grammar extensions and optimization must not change the evaluation boundary.
 
 ## Functional Requirements
 
@@ -181,37 +181,6 @@ Scope: functional, structural, and nonfunctional requirements for `meld-lang`
 - Proposition evaluation against a world state with hundreds of ground propositions must be fast enough for the planning loop to evaluate multiple goals per cycle.
 - Unification, substitution, and validation are per-goal-per-method operations. They must be fast enough to scan a method library of tens to hundreds of methods per planning cycle.
 - No performance requirement on world state sizes beyond hundreds of propositions in the first slice.
-
-## First Slice Requirements
-
-- Implement `Term` with all variants: `Object`, `Dimension`, `ArtifactType`, `Literal`, `Variable`, `Derived`.
-- Implement `Literal` with: `Bool`, `Text`, `Number`, `Duration`.
-- Implement `Proposition` with: `Holds`, `Exists`, `Accessible`, `Related`, `All`, `Any`, `Not`.
-- Implement `Condition` with: `Above`, `Below`, `Equals`, `In`, `Within`, `Exceeds`, `Present`, `Absent`.
-- Implement `Effect` with: `Assert`, `Retract`, `Update`.
-- Implement `Operator` with preconditions, effects, cost, and resolution.
-- Implement `Resolution` with input/output slot constraints, scope kind, tags, and optional specific capability ref.
-- Implement `Composition` with steps and edges.
-- Implement `Goal` with target proposition, priority, source, and lifecycle.
-- Implement `Method` with trigger, preconditions, composition, net effects, cost, and preference.
-- Implement `WorldState` with ground proposition set, `satisfies()`, `gap()`, `apply()`.
-- Implement `evaluate()` with three-valued result.
-- Implement `unify()` with variable binding.
-- Implement `substitute()` for compositions.
-- Implement `validate()` for structural soundness.
-- Implement `CostEstimate` with addition, ceiling comparison, and composition aggregation.
-- Test full evaluation loop in a single test: goal construction, world state evaluation, method unification, binding substitution, composition validation, effect application, and re-evaluation showing goal satisfaction.
-
-## Deferred Requirements
-
-- Numeric fluent tracking across world state transitions.
-- Temporal proposition variants (valid-time-scoped assertions).
-- Composition optimization (dead step elimination, parallel opportunity detection).
-- Method learning from execution traces.
-- Incremental world state (diff-based update rather than full replacement).
-- Proposition indexing for large world states (hundreds of thousands of propositions).
-- Composition merging (combining two compositions that share steps).
-- Multi-agent perspective scoping within the language (currently carried by `Goal.agent_id`).
 
 ## Read With
 

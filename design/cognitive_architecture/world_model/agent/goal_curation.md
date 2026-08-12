@@ -83,7 +83,7 @@ Value beliefs are derived from outcome correlation. When the agent acts on a div
 
 Value beliefs require longer calibration windows than cost beliefs because the causal chain from goal → execution → outcome → downstream belief change is longer and noisier. Value beliefs should carry wider uncertainty initially and narrow as outcome data accumulates.
 
-This is where goal curation connects to the causal layer. The question "does acting on this divergence actually produce downstream value?" is a causal question. The causal layer's intervention and outcome semantics can feed value belief assessment, though the first slice can use simpler outcome correlation.
+This is where goal curation connects to the causal layer. The question "does acting on this divergence actually produce downstream value?" is a causal question. The causal layer's intervention and outcome semantics can feed value belief assessment; simple outcome correlation is an acceptable starting basis.
 
 ## User Input as High-Weight Evidence
 
@@ -141,7 +141,7 @@ For spawned agents, an authorized existing agent curates a `CreateAgent` goal. E
 3. Register belief keys for dimensions that should exist but don't
 4. Bind subscriptions to each relevant belief key
 
-The implemented subscription filter comes from seed configuration. The target architecture derives concrete belief questions from Directive grounding over activated PDS theory and trusted graph scope, then binds the Agent to the resulting keys. See [Directive Grounding](directive_grounding.md) and [World Model Public Interface](../public_interface.md).
+Trusted seed configuration supplies the initial subscription filter. Directive grounding derives concrete belief questions from activated PDS theory and trusted graph scope, then binds the Agent to the resulting keys. See [Directive Grounding](directive_grounding.md) and [World Model Public Interface](../public_interface.md).
 
 The subscription filter is the agent's definition of "what I care about." It does not define what to do about changes — the cost-benefit comparator handles that. It defines which changes reach the comparator at all.
 
@@ -233,7 +233,7 @@ Before the system has execution history, cost beliefs are uninformed. Three sour
 2. **Explicit configuration**: an agent can be initialized with cost priors for its concern classes. These are manually set and should be marked as uncalibrated.
 3. **Uninformative priors**: when no cost data exists, the comparator defaults to wide uncertainty. The practical effect is that the agent acts on strong divergences (where value clearly dominates uncertain cost) but abstains on marginal ones until cost data arrives.
 
-Value beliefs are similarly cold at start. The first slice should default to acting on strong divergences with clear value signals (user-directed, maintenance invariant violation) and deferring marginal ones until outcome data calibrates the value posterior.
+Value beliefs are similarly cold at start. Until outcome data calibrates the value posterior, curation should default to acting on strong divergences with clear value signals, such as user-directed input or maintenance invariant violation, and deferring marginal ones.
 
 ## The Normative Framework, Reduced
 
@@ -254,19 +254,19 @@ The normative framework is the maintained conditions a Directive grounds, the re
 
 ### Cost-benefit comparator specification
 
-The shape of the comparator is defined. The specific factors, weights, and decision boundary require implementation design and will calibrate from experience.
+The shape of the comparator is defined. The specific factors, weights, and decision boundary are out of scope here.
 
 ### Multi-agent goal coordination
 
-When multiple agents' cost-benefit evaluations produce conflicting goals, coordination is needed. The shared task network provides structural coordination (shared dependencies). Normative coordination (which agent's goals take priority when they conflict) is not specified.
+When multiple agents' cost-benefit evaluations produce conflicting goals, coordination is needed. The shared task network provides structural coordination through shared dependencies. Normative coordination, deciding which agent's goals take priority when they conflict, is out of scope here.
 
 ### Value measurement methodology
 
-How to measure downstream value of goal achievement is a research question. Simple outcome correlation may suffice initially but may not capture long-term or indirect value. The causal layer's intervention semantics are the eventual foundation for rigorous value assessment.
+Measuring the downstream value of goal achievement is out of scope here. The causal layer's intervention semantics are the foundation for rigorous value assessment.
 
 ### Subscription filter refinement
 
-The implemented subscription filter comes from seed configuration during bootstrap. Target subscription growth follows Directive grounding when graph scope or activated PDS theory changes. Learning which questions remain valuable is not yet specified.
+Seed configuration supplies the subscription filter at bootstrap, and subscription growth follows Directive grounding when graph scope or activated PDS theory changes. Learning which questions remain valuable is out of scope here.
 
 ## Read With
 

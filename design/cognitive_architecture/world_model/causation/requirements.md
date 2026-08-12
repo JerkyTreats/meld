@@ -130,36 +130,6 @@ The first slice must prevent selected anchors, temporal order, or task success f
 - Execution success is insufficient for downstream effect support.
 - Blocked identification prevents strong causal summary.
 
-## First Slice Requirements
-
-- Implement `CausalVariable`.
-- Implement `InterventionRecord`.
-- Implement `OutcomeLink`.
-- Implement `SelectionWarning`.
-- Implement `ConfounderHypothesis`.
-- Implement `IdentificationAssessment`.
-- Implement `EffectEstimate`.
-- Implement `CausalAssumptionSet`.
-- Implement `CausalSummary`.
-- Implement intervention lowering from execution facts.
-- Implement outcome linking from execution outcomes and belief views.
-- Implement selection-path interpretation from graph provenance.
-- Implement confounder scoring with explicit blockers.
-- Implement identification gate before effect estimation.
-- Implement one simple effect estimation method.
-- Implement causal summary projection.
-- Implement replay tests.
-
-## Deferred Requirements
-
-- Full structural causal model learning.
-- Automated mechanism discovery.
-- Multi-regime mechanism library.
-- Rich counterfactual search over action alternatives.
-- Continuous-time delayed effect modeling.
-- High-dimensional adjustment set optimization.
-- Automated intervention design.
-
 ## Read With
 
 - [Causal Spec](spec.md)

@@ -130,7 +130,7 @@ The workflow emits normal execution outcomes and world model facts through the s
 
 An agent has arrived when all required setup state exists and one readiness signal has been processed.
 
-Minimum readiness for the first slice:
+Minimum readiness:
 
 - durable agent record exists
 - perspective key exists
@@ -143,26 +143,6 @@ Minimum readiness for the first slice:
 For a spawned agent, arrival allows it to satisfy or provide satisfaction evidence for the `CreateAgent` goal that requested it.
 
 For a seed agent, arrival allows it to begin normal goal curation.
-
-## Minimal Slice
-
-The minimal slice implements seed agent creation only.
-
-It does not require dynamic spawned agents.
-
-It provides:
-
-- one seed agent identity
-- one perspective key
-- one configured subject scope
-- one configured watched belief dimension
-- one threshold curation rule configured for the watched belief dimension
-- one deterministic goal construction path
-- one durable subscription cursor
-- one curation decision record
-- one Goal admission handoff boundary with nonempty Strategy inventory
-
-Dynamic `CreateAgent` goals, inter agent spawn policy, and spawned agent satisfaction of initialization goals are full design concerns deferred past the minimal slice.
 
 ## Full Design
 

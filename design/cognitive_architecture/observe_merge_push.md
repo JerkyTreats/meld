@@ -1,8 +1,10 @@
 # Observe, Merge, Push
 
 Date: 2026-04-11
-Status: active
+Status: founding record
 Scope: foundational cognitive loop, world model design, and multi-process architecture direction
+
+This document preserves the founding prompt and its response verbatim. Its thesis remains canonical; its point-in-time observations about what existed or was missing describe the system as of its date and are not maintained. Current architecture intent lives in the domain documents this directory indexes.
 
 ## Prompt
 
