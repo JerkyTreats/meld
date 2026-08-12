@@ -436,8 +436,7 @@ mod tests {
             .iter()
             .any(|reason| reason.contains("has type 'frame_ref'")));
 
-        let mut wrong_schema =
-            artifact("artifact_wrong_schema", "capinst_child", "readme_summary");
+        let mut wrong_schema = artifact("artifact_wrong_schema", "capinst_child", "readme_summary");
         wrong_schema.schema_version = 2;
         repo.append_artifact(wrong_schema).unwrap();
         assert!(

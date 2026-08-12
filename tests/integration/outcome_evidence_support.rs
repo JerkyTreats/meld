@@ -156,9 +156,7 @@ use meld_world_model::belief::{
 };
 use meld_world_model::world_state::graph::store::TraversalStore;
 use meld_world_model::world_state::graph::PerspectiveKey;
-use meld_world_model::{
-    BeliefRuntime, BeliefStore, BranchScope, PromotedEvidenceIngestionResult,
-};
+use meld_world_model::{BeliefRuntime, BeliefStore, BranchScope, PromotedEvidenceIngestionResult};
 
 /// Test-only replay of docs task success events into belief evidence.
 ///

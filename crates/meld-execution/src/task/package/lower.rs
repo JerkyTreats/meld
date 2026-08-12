@@ -426,7 +426,9 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error.to_string().contains("declares producer artifact type"));
+        assert!(error
+            .to_string()
+            .contains("declares producer artifact type"));
     }
 
     #[test]

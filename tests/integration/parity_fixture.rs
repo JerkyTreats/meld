@@ -617,8 +617,10 @@ pub fn try_run_workflow_route(
         spec.write_to(&workspace_root);
 
         create_test_agent(PARITY_AGENT_ID, Some(PARITY_WORKFLOW_ID));
-        let provider =
-            DeterministicDocsProvider::spawn_with_evidence_sabotage(&workspace_root, sabotage_first);
+        let provider = DeterministicDocsProvider::spawn_with_evidence_sabotage(
+            &workspace_root,
+            sabotage_first,
+        );
         create_test_provider(PARITY_PROVIDER_NAME, provider.endpoint());
 
         let run_context = RunContext::new(workspace_root.clone(), None).unwrap();

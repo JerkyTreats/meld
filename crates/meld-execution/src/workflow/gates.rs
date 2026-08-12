@@ -52,7 +52,10 @@ pub fn evaluate_gate(
 fn evaluate_schema_required_fields(gate: &WorkflowGate, output: &str) -> GateEvaluationResult {
     let mut reasons = Vec::new();
 
-    match decode_json_lenient(output).as_ref().and_then(Value::as_object) {
+    match decode_json_lenient(output)
+        .as_ref()
+        .and_then(Value::as_object)
+    {
         Some(object) => {
             for field in &gate.required_fields {
                 if !object.contains_key(field) {
@@ -97,8 +100,7 @@ fn decode_json_lenient(output: &str) -> Option<Value> {
             return Some(value);
         }
     }
-    extract_first_json_object(output)
-        .and_then(|slice| serde_json::from_str::<Value>(slice).ok())
+    extract_first_json_object(output).and_then(|slice| serde_json::from_str::<Value>(slice).ok())
 }
 
 fn extract_fenced_block(output: &str) -> Option<&str> {
@@ -324,12 +326,9 @@ mod tests {
 
         assert!(evaluate_gate(&gate, r#"{"claims":[],"evidence":[]}"#, None).is_pass());
         // Fenced model output decodes; prose mentioning field names does not.
-        assert!(evaluate_gate(
-            &gate,
-            "```json\n{\"claims\":[],\"evidence\":[]}\n```",
-            None
-        )
-        .is_pass());
+        assert!(
+            evaluate_gate(&gate, "```json\n{\"claims\":[],\"evidence\":[]}\n```", None).is_pass()
+        );
         assert!(!evaluate_gate(&gate, "Claims\nEvidence", None).is_pass());
     }
 
