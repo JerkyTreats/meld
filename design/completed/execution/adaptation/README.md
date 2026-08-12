@@ -83,7 +83,7 @@ This document asked whether the planning loop needs an internal control-program-
 
 - [Planning Pipeline](../planning/planning_pipeline.md) — authoritative treatment of the two-process model
 - [Execution Domain](../README.md)
-- [Execution Gaps](../GAPS.md)
+- [Execution Gap Ledger](../../../plan/execution/gaps.md)
 - [HTN Model](../planning/htn/README.md)
 - [HTN Lineage Model](../planning/htn/lineage_model.md)
 - [Task Network](../task_network.md)

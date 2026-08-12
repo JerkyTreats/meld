@@ -3,6 +3,7 @@
 Date: 2026-05-20
 Status: complete
 Scope: phased implementation plan for the `meld-lang` crate — shared proposition language between world model and execution
+Note: moved to the completed tree on 2026-08-12 as a finished plan.
 
 ## Overview
 
@@ -19,24 +20,24 @@ Outcome:
 
 - `meld-lang` exists as a pure crate with no IO, no async, no side effects
 - both `meld-world-model` and `meld-execution` can depend on `meld-lang` for all planning types
-- the shared language resolves Gaps 1 (goal model), 2 (planning pipeline substrate), and 3 (world model read interface) from `execution/GAPS.md`
+- the shared language resolves Gaps 1 (goal model), 2 (planning pipeline substrate), and 3 (world model read interface) from `design/plan/execution/gaps.md`
 - method libraries can be loaded from serialized JSON files at runtime
 
 ## Related Specs
 
-- [Lang Domain](README.md)
-- [Lang Crate](CRATE.md)
-- [Lang Requirements](requirements.md)
-- [Lang Primitives](primitives.md)
-- [Operators and Resolution](operators.md)
-- [Compositions](compositions.md)
-- [Goals and Methods](goals_and_methods.md)
-- [World State and Evaluation](world_state.md)
-- [Execution Domain](../execution/README.md)
-- [Execution Gaps](../execution/GAPS.md)
-- [Planning Pipeline](../execution/planning/planning_pipeline.md)
-- [World Model Planner](../world_model/planner/README.md)
-- [World Model Agent](../world_model/agent/README.md)
+- [Lang Domain](../../cognitive_architecture/meld-lang/README.md)
+- [Lang Crate](../../cognitive_architecture/meld-lang/CRATE.md)
+- [Lang Requirements](../../cognitive_architecture/meld-lang/requirements.md)
+- [Lang Primitives](../../cognitive_architecture/meld-lang/primitives.md)
+- [Operators and Resolution](../../cognitive_architecture/meld-lang/operators.md)
+- [Compositions](../../cognitive_architecture/meld-lang/compositions.md)
+- [Goals and Methods](../../cognitive_architecture/meld-lang/goals_and_methods.md)
+- [World State and Evaluation](../../cognitive_architecture/meld-lang/world_state.md)
+- [Execution Domain](../../cognitive_architecture/execution/README.md)
+- [Execution Gap Ledger](../../plan/execution/gaps.md)
+- [Planning Pipeline](../../cognitive_architecture/execution/planning/planning_pipeline.md)
+- [World Model Planner](../../cognitive_architecture/world_model/planner/README.md)
+- [World Model Agent](../../cognitive_architecture/world_model/agent/README.md)
 
 ## Guiding Rules
 
@@ -69,8 +70,8 @@ Outcome:
 **Goal**: create the `meld-lang` crate with correct workspace integration, dependency on `meld-events`, and module structure.
 
 **Source docs**:
-- [Lang Crate](CRATE.md)
-- [Lang Requirements](requirements.md)
+- [Lang Crate](../../cognitive_architecture/meld-lang/CRATE.md)
+- [Lang Requirements](../../cognitive_architecture/meld-lang/requirements.md)
 
 | Task | Completion |
 |------|------------|
@@ -101,7 +102,7 @@ Outcome:
 **Goal**: implement the atomic reference type and literal value type. These are the foundation that all other types compose.
 
 **Source docs**:
-- [Lang Primitives](primitives.md)
+- [Lang Primitives](../../cognitive_architecture/meld-lang/primitives.md)
 
 | Task | Completion |
 |------|------------|
@@ -134,8 +135,8 @@ Outcome:
 **Goal**: implement the typed statement primitive and condition comparison types. These define the grammar of what the language can express about the world.
 
 **Source docs**:
-- [Lang Primitives](primitives.md)
-- [Lang Requirements](requirements.md)
+- [Lang Primitives](../../cognitive_architecture/meld-lang/primitives.md)
+- [Lang Requirements](../../cognitive_architecture/meld-lang/requirements.md)
 
 | Task | Completion |
 |------|------------|
@@ -173,8 +174,8 @@ Outcome:
 **Goal**: implement state change primitives, the ground proposition set, and three-valued evaluation. This is the first testable loop: construct propositions, build a world state, evaluate a proposition against it.
 
 **Source docs**:
-- [Lang Primitives](primitives.md)
-- [World State and Evaluation](world_state.md)
+- [Lang Primitives](../../cognitive_architecture/meld-lang/primitives.md)
+- [World State and Evaluation](../../cognitive_architecture/meld-lang/world_state.md)
 
 | Task | Completion |
 |------|------------|
@@ -219,7 +220,7 @@ Outcome:
 **Goal**: implement the runtime-constructed operator contract, capability resolution query, and multi-dimensional cost algebra.
 
 **Source docs**:
-- [Operators and Resolution](operators.md)
+- [Operators and Resolution](../../cognitive_architecture/meld-lang/operators.md)
 
 | Task | Completion |
 |------|------------|
@@ -254,7 +255,7 @@ Outcome:
 **Goal**: implement the composition graph (steps + edges) and the structural validation function. This is the plan representation in the language.
 
 **Source docs**:
-- [Compositions](compositions.md)
+- [Compositions](../../cognitive_architecture/meld-lang/compositions.md)
 
 | Task | Completion |
 |------|------------|
@@ -295,8 +296,8 @@ Outcome:
 **Goal**: implement the Goal type with its operational metadata. Goals are propositions with lifecycle, priority, source, and agent identity.
 
 **Source docs**:
-- [Goals and Methods](goals_and_methods.md)
-- [Goals](../execution/goals/README.md)
+- [Goals and Methods](../../cognitive_architecture/meld-lang/goals_and_methods.md)
+- [Goals](../../cognitive_architecture/execution/goals/README.md)
 
 | Task | Completion |
 |------|------------|
@@ -327,7 +328,7 @@ Outcome:
 **Goal**: implement methods (cached compositions with trigger patterns), pattern unification, binding management, and composition substitution. This completes the planning loop's ability to match goals to decompositions.
 
 **Source docs**:
-- [Goals and Methods](goals_and_methods.md)
+- [Goals and Methods](../../cognitive_architecture/meld-lang/goals_and_methods.md)
 
 | Task | Completion |
 |------|------------|
@@ -372,8 +373,8 @@ Outcome:
 **Goal**: prove the complete evaluation loop in a single integration test. This is the first-slice requirement from `requirements.md`: construct goal, evaluate against world state, match method, substitute bindings, validate composition, apply effects, re-evaluate showing satisfaction.
 
 **Source docs**:
-- [Lang Requirements](requirements.md) — first slice requirements
-- [World State and Evaluation](world_state.md) — consumption example
+- [Lang Requirements](../../cognitive_architecture/meld-lang/requirements.md) — first slice requirements
+- [World State and Evaluation](../../cognitive_architecture/meld-lang/world_state.md) — consumption example
 
 | Task | Completion |
 |------|------------|
@@ -477,11 +478,11 @@ Method files serialized in one version must deserialize in the next. Adding new 
 
 ## Read With
 
-- [Lang Domain](README.md)
-- [Lang Crate](CRATE.md)
-- [Lang Requirements](requirements.md)
-- [Execution Domain](../execution/README.md)
-- [Execution Gaps](../execution/GAPS.md)
-- [Planning Pipeline](../execution/planning/planning_pipeline.md)
-- [World Model Planner](../world_model/planner/README.md)
-- [World Model Agent](../world_model/agent/README.md)
+- [Lang Domain](../../cognitive_architecture/meld-lang/README.md)
+- [Lang Crate](../../cognitive_architecture/meld-lang/CRATE.md)
+- [Lang Requirements](../../cognitive_architecture/meld-lang/requirements.md)
+- [Execution Domain](../../cognitive_architecture/execution/README.md)
+- [Execution Gap Ledger](../../plan/execution/gaps.md)
+- [Planning Pipeline](../../cognitive_architecture/execution/planning/planning_pipeline.md)
+- [World Model Planner](../../cognitive_architecture/world_model/planner/README.md)
+- [World Model Agent](../../cognitive_architecture/world_model/agent/README.md)

@@ -37,4 +37,4 @@ cargo test --test integration_tests generation_parity:: -- --nocapture
 - [PLAN](PLAN.md)
 - [Crate Split Dependency Checklist](dependency_checklist.md)
 - [Public Surface Inventory](public_surface_inventory.md)
-- [Initial Port Inventory](core/port_inventory.md)
+- [Initial Port Inventory](../core/port_inventory.md)

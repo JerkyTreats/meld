@@ -1,8 +1,9 @@
 # Initial Port Inventory
 
 Date: 2026-04-25
-Status: frozen for migration start
+Status: completed migration artifact
 Scope: execution owned ports and root adapter responsibilities
+Note: this inventory was frozen for the execution boundary migration, which has since completed; it is retained here as a historical record.
 
 ## Purpose
 
@@ -37,6 +38,6 @@ Later phases may refine names, but new responsibilities should not appear withou
 
 ## Read With
 
-- [PLAN](../PLAN.md)
+- [PLAN](../world_state/PLAN.md)
 - [Core Migration](MIGRATION.md)
-- [Execution Contract Extraction](../completed/execution_contract_extraction.md)
+- [Execution Contract Extraction](../world_state/graph/execution_contract_extraction.md)

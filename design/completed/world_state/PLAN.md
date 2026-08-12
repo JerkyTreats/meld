@@ -35,11 +35,11 @@ Implementation posture:
 - [Public Surface Inventory](public_surface_inventory.md)
 - [Core Crate](core/CRATE.md)
 - [Core Migration](core/MIGRATION.md)
-- [Initial Port Inventory](core/port_inventory.md)
+- [Initial Port Inventory](../core/port_inventory.md)
 - [Events Crate](events/CRATE.md)
 - [Events Migration](events/MIGRATION.md)
 - [World Model Crate](world_model/CRATE.md)
-- [World Model Migration](world_model/MIGRATION.md)
+- [World Model Migration](../world_model/MIGRATION.md)
 - [Execution Crate](execution/CRATE.md)
 - [Execution Contract Extraction](completed/execution_contract_extraction.md)
 - [Crate Boundary Assessment By Domain](microarchitecture_assessment_by_domain.md)
@@ -164,7 +164,7 @@ Apply these rules in every phase.
 | [Crate Split Dependency Checklist](dependency_checklist.md) |
 | [Phase 0 Baseline](phase0_baseline.md) |
 | [Public Surface Inventory](public_surface_inventory.md) |
-| [Initial Port Inventory](core/port_inventory.md) |
+| [Initial Port Inventory](../core/port_inventory.md) |
 
 | Phase 0 gate evidence | Result |
 |-----------------------|--------|
@@ -242,7 +242,7 @@ Apply these rules in every phase.
 |-------|--------|
 | Goal | Remove source domain imports from world model reduction and replace store shaped APIs with public query surfaces |
 | Dependencies | Phase 0 and Phase 1 |
-| Docs | [World Model Migration](world_model/MIGRATION.md) |
+| Docs | [World Model Migration](../world_model/MIGRATION.md) |
 | Status | completed |
 
 | Order | Task | Completion |
@@ -418,7 +418,7 @@ Apply these rules in every phase.
 |-------|--------|
 | Goal | Reduce root exports, formalize compatibility shims, and ensure each authority crate surface is narrow and declarative |
 | Dependencies | Phase 1 and Phase 2 and Phase 3 and Phase 4 |
-| Docs | [Core Migration](core/MIGRATION.md), [Events Migration](events/MIGRATION.md), [World Model Migration](world_model/MIGRATION.md), and [Execution Contract Extraction](completed/execution_contract_extraction.md) |
+| Docs | [Core Migration](core/MIGRATION.md), [Events Migration](events/MIGRATION.md), [World Model Migration](../world_model/MIGRATION.md), and [Execution Contract Extraction](completed/execution_contract_extraction.md) |
 | Status | completed |
 
 | Order | Task | Completion |

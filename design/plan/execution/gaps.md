@@ -3,6 +3,7 @@
 Date: 2026-07-23
 Status: active
 Scope: open contracts and undefined seams preventing a complete execution architecture
+Note: moved from design/cognitive_architecture/execution on 2026-08-12 because this ledger records implementation status, which belongs under design/plan.
 
 ## Purpose
 
@@ -14,7 +15,7 @@ Each gap below names what is missing, why it blocks a complete architecture diag
 
 **Status: resolved. Goal type implemented in `meld-lang`. Residual gaps identified.**
 
-See [Goals](goals/README.md) for the full goal model and [World Model Agent](../world_model/agent/README.md) for the curation side.
+See [Goals](../../cognitive_architecture/execution/goals/README.md) for the full goal model and [World Model Agent](../../cognitive_architecture/world_model/agent/README.md) for the curation side.
 
 The goal model resolves the type and lifecycle split. Execution owns admitted Goal lifecycle data. The world model Agent owns Goal drafts and later lifecycle curation. Initial admission requires a nonempty Agent-authorized Strategy inventory.
 
@@ -35,7 +36,7 @@ Residual gaps within the goal model:
 
 **Status: type substrate and expanded execution slice implemented. Residual runtime gaps identified.**
 
-See [Planning Pipeline](planning/planning_pipeline.md) for the unified pipeline: Agent curation and authorization, Strategy construction, Execution Planning, and task-network execution connected by durable contracts.
+See [Planning Pipeline](../../cognitive_architecture/execution/planning/planning_pipeline.md) for the unified pipeline: Agent curation and authorization, Strategy construction, Execution Planning, and task-network execution connected by durable contracts.
 
 The pipeline document resolves the structural gap. The previous six-stage sequential model and the separate adaptation domain both dissolved into the graphs-lower-graphs abstraction. Control flow is expressed as graph structure through conditional dependency edges and multi-dependency nodes, not as a separate compiled control program. Adaptation's reconciliation concern folds into the planning loop's cost-aware mutation proposal decisions.
 
@@ -44,7 +45,7 @@ The pipeline document resolves the structural gap. The previous six-stage sequen
 Residual gaps within the pipeline:
 
 - **Method registry deepening** — first-slice loading and verification exist; durable registration, revision, visibility, quarantine, indexing, and retirement remain
-- **Strategy construction** — bounded configured Method instantiation belongs to Agent-authorized [World Model Strategy](../world_model/strategy/README.md); `meld-execution` retains Method registry custody and concrete candidate realization
+- **Strategy construction** — bounded configured Method instantiation belongs to Agent-authorized [World Model Strategy](../../cognitive_architecture/world_model/strategy/README.md); `meld-execution` retains Method registry custody and concrete candidate realization
 - **task network graph executor** — the expanded execution slice exists; remaining gaps are conditional edge evaluation, exact authorized subgoal lowering, graph repair mutations, shared task reuse, and deeper runtime recovery
 - **switching cost model** — operational transitions require cleanup, sunk, and disruption cost plus exact integration with Agent-authorized selection policy and world-model benefit projections
 
@@ -168,9 +169,9 @@ The gaps are not independent. Closing them in the wrong order produces circular 
 
 Current resolution state:
 
-- **Gap 1 goal model**: **type and lifecycle implemented; admission gate missing.** `Goal`, `GoalPriority`, `GoalSource`, and `GoalLifecycle` are implemented in `meld-lang`. Current world-model curation emits configured Goal commands directly. Target flow holds a Goal draft outside Execution until Strategy produces an eligible candidate and the Agent authorizes admission. Residual: Directive grounding, Goal admission bundle, Agent normative framework, goal conflict resolution, multi-agent coordination, and goal learning. See [Lang Goals and Methods](../meld-lang/goals_and_methods.md).
-- **Gap 2 planning pipeline**: **configured-path execution slice implemented; Strategy missing.** `Method`, `Composition`, `Operator`, `unify`, `substitute`, and `validate` are implemented in `meld-lang`. Current Execution matches configured Methods and lowers concrete Compositions. Strategy must instantiate the configured Method before Goal admission and preserve Agent authorization through realization. See [Lang Compositions](../meld-lang/compositions.md).
-- **Gap 3 (world model read interface)**: **resolved and implemented.** `WorldState`, `evaluate()`, `EvalResult`, gap detection, and pattern query are implemented in `meld-lang`. The world model publishes `WorldState` as a set of ground propositions. Execution evaluates propositions with three-valued semantics. Residual: world model planner projection from internal types into ground `WorldState` propositions (`meld-world-model` concern). See [Lang World State](../meld-lang/world_state.md).
+- **Gap 1 goal model**: **type and lifecycle implemented; admission gate missing.** `Goal`, `GoalPriority`, `GoalSource`, and `GoalLifecycle` are implemented in `meld-lang`. Current world-model curation emits configured Goal commands directly. Target flow holds a Goal draft outside Execution until Strategy produces an eligible candidate and the Agent authorizes admission. Residual: Directive grounding, Goal admission bundle, Agent normative framework, goal conflict resolution, multi-agent coordination, and goal learning. See [Lang Goals and Methods](../../cognitive_architecture/meld-lang/goals_and_methods.md).
+- **Gap 2 planning pipeline**: **configured-path execution slice implemented; Strategy missing.** `Method`, `Composition`, `Operator`, `unify`, `substitute`, and `validate` are implemented in `meld-lang`. Current Execution matches configured Methods and lowers concrete Compositions. Strategy must instantiate the configured Method before Goal admission and preserve Agent authorization through realization. See [Lang Compositions](../../cognitive_architecture/meld-lang/compositions.md).
+- **Gap 3 (world model read interface)**: **resolved and implemented.** `WorldState`, `evaluate()`, `EvalResult`, gap detection, and pattern query are implemented in `meld-lang`. The world model publishes `WorldState` as a set of ground propositions. Execution evaluates propositions with three-valued semantics. Residual: world model planner projection from internal types into ground `WorldState` propositions (`meld-world-model` concern). See [Lang World State](../../cognitive_architecture/meld-lang/world_state.md).
 - **Gap 4 (outcome publication)**: **resolved.** Execution publishes task lifecycle events to the spine. The world model reducer consumes them and materializes claims for belief revision. `Effect` and `WorldState::apply()` in `meld-lang` serve forward projection in the planning loop, not outcome publication. Residual: world model reducer enrichment as belief layer matures (world model concern).
 - **Gap 5 (workflow integration)**: continuous. Workflows remain the compatibility layer where cognitive subsystems are not yet built.
 
@@ -182,15 +183,31 @@ Recommended next resolution:
 4. **Gap 3 residual**: world model planner projection into `WorldState` (`meld-world-model`).
 5. **Gap 5**: continuous integration as each subsystem matures.
 
+## Addendum 2026-08-12: Goal Model Residuals
+
+Moved from `design/cognitive_architecture/execution/goals/README.md`, which now states scope declaratively.
+
+Normative framework residuals:
+
+- cost-benefit comparator specification: factors, weights, decision boundary
+- value measurement methodology: how to measure downstream value of goal achievement
+- subscription filter design: static versus learned concern declarations
+
+Goal conflict resolution: when multiple goals compete for resources or have contradictory desired states, the agent must resolve the conflict before or while curating the goal set. Priority and preemption policy provide mechanisms, but the resolution strategy is not fully specified.
+
+Multi-agent goal coordination: when multiple agents curate overlapping goal sets with shared resources or complementary or conflicting objectives, coordination is needed. The shared graph substrate and perspective-scoped beliefs provide the foundation, but the coordination protocol is not designed.
+
+Goal learning: whether the agent can learn which goals are productive from outcomes, and refine its normative framework based on which goals led to successful belief revision, connects to the belief layer's calibration mechanisms but is not yet designed.
+
 ## Read With
 
-- [Execution Domain](README.md)
-- [Goals](goals/README.md)
-- [Execution Planning](planning/README.md)
-- [Task Network](task_network.md)
-- [Planning Pipeline](planning/planning_pipeline.md)
-- [Synthesis Overview](synthesis/README.md)
-- [Lang Domain](../meld-lang/README.md)
-- [Lang Requirements](../meld-lang/requirements.md)
-- [World Model Planner](../world_model/planner/README.md)
-- [Events Design](../events/README.md)
+- [Execution Domain](../../cognitive_architecture/execution/README.md)
+- [Goals](../../cognitive_architecture/execution/goals/README.md)
+- [Execution Planning](../../cognitive_architecture/execution/planning/README.md)
+- [Task Network](../../cognitive_architecture/execution/task_network.md)
+- [Planning Pipeline](../../cognitive_architecture/execution/planning/planning_pipeline.md)
+- [Synthesis Overview](../../cognitive_architecture/execution/synthesis/README.md)
+- [Lang Domain](../../cognitive_architecture/meld-lang/README.md)
+- [Lang Requirements](../../cognitive_architecture/meld-lang/requirements.md)
+- [World Model Planner](../../cognitive_architecture/world_model/planner/README.md)
+- [Events Design](../../cognitive_architecture/events/README.md)

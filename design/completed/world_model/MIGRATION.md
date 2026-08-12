@@ -1,8 +1,9 @@
 # World Model Crate Migration
 
 Date: 2026-04-25
-Status: working plan
-Purpose: make [CRATE.md](CRATE.md) true through code changes in `src`
+Status: completed migration record
+Purpose: make [CRATE.md](../../cognitive_architecture/world_model/CRATE.md) true through code changes in `src`
+Note: this migration completed — crates/meld-world-model exists — and the line-numbered src links below are historical.
 
 ## Intent
 
