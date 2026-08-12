@@ -47,6 +47,8 @@ flowchart TD
 
 Apply the belief-family registry pattern — stable identity, content hash, append-only revisions, historical resolution — to every theory kind the docs image hand-lowers: settlement rules, prospective evidence routes, claim policies, outcome contract bindings, and capability strategy views. Registries are per domain, following existing ownership, not one central store. Success: every string identity in the docs stewardship image resolves through a durable registry, and the exact executed semantics of a past run are recoverable by revision.
 
+Initiation and completion are governed by the [Theory Durability Symmetry Workstream](theory_durability_symmetry_workstream.md), with cross-domain ownership frozen in the [Theory Durability Symmetry Assessment By Domain](theory_durability_symmetry_domain_assessment.md).
+
 ### Step 2 — Declaration lowering and root dispatch removal
 
 Replace the unconditional docs composition and the expression match in root assembly with lowering from a declared stewardship selection. The existing docs configuration remains a compatibility reader that lowers into the generic form, per the transitional-forms invariant. Success: adding a new stewardship expression requires no new root match arm in config or runtime assembly, and `src/docs/pds.rs` either lowers from installed theory or is retired to a regression fixture for the lowering path.
