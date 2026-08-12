@@ -96,15 +96,9 @@ impl RunContext {
         if product.dispatch_routes_bound() {
             return;
         }
-        // The production capability set is the workflow task-path set — the
-        // same catalog and executor registry the registered workflow route
-        // executes through.
-        let task_path_runtime = match crate::workflow::build_workflow_task_path_runtime() {
-            Ok(runtime) => runtime,
-            Err(error) => {
-                warn!(error = %error, "dispatch route composition skipped: capability set unavailable");
-                return;
-            }
+        let Some(capability_runtime) = product.capability_runtime().cloned() else {
+            warn!("dispatch route composition skipped: capability runtime unavailable");
+            return;
         };
         let provider = match ProviderExecutionBinding::new(
             seed.provider_id.clone(),
@@ -128,8 +122,8 @@ impl RunContext {
             // convention so published frames share one lineage vocabulary.
             frame_type: format!("context-{}", seed.agent_id),
             session_id: Some(seed.session_id.clone()),
-            catalog: task_path_runtime.catalog,
-            registry: task_path_runtime.registry,
+            catalog: capability_runtime.catalog,
+            registry: capability_runtime.registry,
         });
         product.bind_dispatch_routes(routes);
     }

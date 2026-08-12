@@ -181,7 +181,11 @@ fn map_http_error(error: reqwest::Error) -> ApiError {
 }
 
 const PROVIDER_HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-const PROVIDER_HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+// Local and remote inference can legitimately spend several minutes on one
+// bounded generation. Keep the transport deadline aligned with the existing
+// generation wait and runtime lease bounds so the HTTP layer does not abort
+// work that the owning runtime still considers healthy.
+const PROVIDER_HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 fn build_provider_http_client() -> Result<Client, ApiError> {
     Client::builder()

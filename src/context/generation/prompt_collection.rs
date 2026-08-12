@@ -262,21 +262,19 @@ fn collect_directory_child_context_text(
                         belief_annotation_line(&class, assertion)
                     )
                 }
-                (_, assertion) => {
-                    match assertion {
-                        Some(assertion) if class != BeliefSelectionClass::Uncovered => format!(
-                            "Path: {}\nType: {}\n{}\nContent:\n{}",
-                            child_path,
-                            child_kind,
-                            belief_annotation_line(&class, assertion),
-                            child_text
-                        ),
-                        _ => format!(
-                            "Path: {}\nType: {}\nContent:\n{}",
-                            child_path, child_kind, child_text
-                        ),
-                    }
-                }
+                (_, assertion) => match assertion {
+                    Some(assertion) if class != BeliefSelectionClass::Uncovered => format!(
+                        "Path: {}\nType: {}\n{}\nContent:\n{}",
+                        child_path,
+                        child_kind,
+                        belief_annotation_line(&class, assertion),
+                        child_text
+                    ),
+                    _ => format!(
+                        "Path: {}\nType: {}\nContent:\n{}",
+                        child_path, child_kind, child_text
+                    ),
+                },
             };
             child_sections.push((class.rank(), child_order, section));
         } else {

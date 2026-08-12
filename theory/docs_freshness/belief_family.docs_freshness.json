@@ -12,14 +12,7 @@
       "precision": 1.0
     },
     {
-      "schema_id": "folder_task_success",
-      "required": false,
-      "role": "Support",
-      "reliability": 1.0,
-      "precision": 1.0
-    },
-    {
-      "schema_id": "aggregate_completion",
+      "schema_id": "docs_freshness_assessment_v1",
       "required": true,
       "role": "Support",
       "reliability": 1.0,
@@ -32,24 +25,16 @@
       "source_kind": "world_model_unobserved_scope",
       "evidence_schema_id": "unobserved_scope_signal",
       "subject_from": "record.subject",
-      "value_field": "tree_stale_signal",
+      "value_field": "stale_probability",
       "factor_id": "unobserved_scope_signal"
     },
     {
-      "mapping_id": "folder_task_success_to_selected_tree",
-      "source_kind": "execution_folder_task_outcome",
-      "evidence_schema_id": "folder_task_success",
-      "subject_from": "field:selected_scope",
-      "value_field": "tree_stale_signal",
-      "factor_id": "folder_task_success"
-    },
-    {
-      "mapping_id": "package_aggregate_to_selected_tree",
-      "source_kind": "execution_package_aggregate",
-      "evidence_schema_id": "aggregate_completion",
+      "mapping_id": "docs_assessment_to_subject",
+      "source_kind": "docs_freshness_assessment",
+      "evidence_schema_id": "docs_freshness_assessment_v1",
       "subject_from": "record.subject",
-      "value_field": "tree_stale_signal",
-      "factor_id": "aggregate_completion"
+      "value_field": "stale_probability",
+      "factor_id": "docs_freshness_assessment"
     }
   ],
   "comparator": {
@@ -59,28 +44,22 @@
       {
         "factor_id": "unobserved_scope_signal",
         "evidence_schema_id": "unobserved_scope_signal",
-        "weight": 0.1,
+        "weight": 1.0,
         "polarity": "Supports"
       },
       {
-        "factor_id": "folder_task_success",
-        "evidence_schema_id": "folder_task_success",
-        "weight": 0.2,
-        "polarity": "Supports"
-      },
-      {
-        "factor_id": "aggregate_completion",
-        "evidence_schema_id": "aggregate_completion",
+        "factor_id": "docs_freshness_assessment",
+        "evidence_schema_id": "docs_freshness_assessment_v1",
         "weight": 1.0,
         "polarity": "Supports"
       }
     ],
     "missing_evidence_uncertainty": 0.9
   },
-  "default_prior": 0.75,
+  "default_prior": 0.0,
   "planner_projection": {
     "confidence_field": "confidence",
-    "threshold": 0.6,
+    "threshold": 0.7,
     "posterior_meaning": "stale_probability"
   },
   "config_version": "1",

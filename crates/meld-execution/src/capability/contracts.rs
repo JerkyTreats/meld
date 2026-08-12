@@ -173,6 +173,14 @@ pub struct CapabilityTypeContract {
 }
 
 impl CapabilityTypeContract {
+    /// Returns the content identity used to bind semantic authorization to
+    /// this exact executable contract.
+    pub fn content_identity(&self) -> String {
+        let encoded = serde_json::to_vec(self)
+            .expect("Capability contract identity serialization is infallible");
+        format!("capability-contract-{}", blake3::hash(&encoded).to_hex())
+    }
+
     /// Validates the published contract before registration.
     pub fn validate(&self) -> Result<(), ApiError> {
         require_non_empty("capability_type_id", &self.capability_type_id)?;

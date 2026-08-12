@@ -14,6 +14,7 @@ pub mod concurrency;
 pub mod config;
 pub mod context;
 pub mod control;
+pub mod docs;
 pub mod error;
 pub mod events;
 pub mod execution;

@@ -12,8 +12,8 @@ use crate::error::{ApiError, StorageError};
 use crate::events::binding::{resolve_product_event_authority, ProductEventBindingError};
 use crate::heads::HeadIndex;
 use crate::runtime::assembly::{
-    PlanningTheoryBinding, ProductRuntimeAssembly, ProductRuntimeConfig, StewardshipComposition,
-    StewardshipTheoryBindings,
+    PlanningTheoryBinding, ProductCapabilityRuntime, ProductRuntimeAssembly, ProductRuntimeConfig,
+    StewardshipComposition, StewardshipTheoryBindings,
 };
 use crate::runtime::storage::ProductStorageLayout;
 use crate::session::{SessionRuntime, SessionStore};
@@ -249,70 +249,44 @@ fn compose_stewardship_theory(binding: &PhysicalBinding) -> StewardshipTheoryBin
             &binding.package.evidence_mapping_id,
         ),
     );
+    let pds = loaded("docs PDS", compose_docs_pds(binding));
+    let strategy = pds.as_ref().map(|pds| pds.strategy.clone());
+    let planning = pds.as_ref().map(|pds| PlanningTheoryBinding {
+        methods: Vec::new(),
+        capability_catalog: pds.catalog.clone(),
+        available_actions: meld_execution::planning::AvailableActionSet {
+            actions: Vec::new(),
+        },
+        method_realizations: Vec::new(),
+        requested_dimensions: pds.requested_dimensions.clone(),
+    });
+    let capability_runtime = pds.map(|pds| ProductCapabilityRuntime {
+        catalog: pds.catalog,
+        registry: pds.registry,
+    });
     StewardshipTheoryBindings {
         outcome_mapping,
-        strategy: None,
-        planning: compose_planning_theory(binding),
+        strategy,
+        capability_runtime,
+        planning,
         dispatch: None,
     }
 }
 
-/// Compose the production planning theory for one stewardship binding.
-///
-/// Methods, the available-action set, and the method realizations are
-/// authored planning theory loaded by expression; the capability catalog is
-/// the workflow task-path set — the same catalog the production dispatch
-/// routes execute through, so planning resolves operators against exactly
-/// the contracts dispatch runs. Requested dimensions derive from the loaded
-/// methods' trigger dimensions: the dimensions planning asks the projection
-/// for are the ones its theory can act on.
-fn compose_planning_theory(binding: &PhysicalBinding) -> Option<PlanningTheoryBinding> {
-    use meld_lang::{Proposition, Term};
+fn compose_docs_pds(
+    binding: &PhysicalBinding,
+) -> Result<crate::docs::pds::DocsPdsRuntime, ApiError> {
+    use crate::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
 
-    let expression = &binding.package.expression;
-    let methods = loaded(
-        "planning methods",
-        crate::init::world::theory::load_planning_methods(expression),
+    let provider = ProviderExecutionBinding::new(
+        binding.provider_id.clone(),
+        ProviderRuntimeOverrides::default(),
     )?;
-    let available_actions = loaded(
-        "available actions",
-        crate::init::world::theory::load_available_actions(expression),
-    )?;
-    let method_realizations = loaded(
-        "method realizations",
-        crate::init::world::theory::load_method_realizations(expression),
-    )?;
-    let catalog = loaded(
-        "planning capability catalog",
-        crate::workflow::build_workflow_task_path_runtime(),
-    )?;
-
-    let mut requested_dimensions: Vec<String> = Vec::new();
-    for method in &methods {
-        if let Proposition::Holds {
-            dimension: Term::Dimension(dimension),
-            ..
-        } = &method.trigger
-        {
-            if !requested_dimensions.contains(dimension) {
-                requested_dimensions.push(dimension.clone());
-            }
-        }
-    }
-    if requested_dimensions.is_empty() {
-        tracing::warn!(
-            expression,
-            "planning theory composition skipped: no method declares a trigger dimension"
-        );
-        return None;
-    }
-
-    Some(PlanningTheoryBinding {
-        methods,
-        capability_catalog: catalog.catalog,
-        available_actions,
-        method_realizations,
-        requested_dimensions,
+    crate::docs::pds::compose(crate::docs::capability::DocsCapabilityConfig {
+        target_root: binding.workspace_root.clone(),
+        subject_id: binding.subject.clone(),
+        agent_id: binding.agent_id.clone(),
+        provider,
     })
 }
 

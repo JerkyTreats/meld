@@ -18,9 +18,9 @@ use meld_execution::planning::{
 use meld_execution::task::TaskCompiler;
 use meld_execution::task_network::{Response, SledTaskNetworkStore};
 use meld_lang::{
-    CapabilityRef, Composition, Condition, CostEstimate, Effect, Goal, GoalLifecycle, GoalPriority,
-    GoalSource, Literal, Method, Operator, Proposition, Resolution, SlotConstraint, Step, StepKind,
-    Term, WorldState,
+    Bindings, CapabilityRef, Composition, Condition, CostEstimate, Effect, Goal, GoalLifecycle,
+    GoalPriority, GoalSource, Literal, Method, Operator, Proposition, Resolution, SlotConstraint,
+    Step, StepKind, Term, WorldState,
 };
 
 fn node(id: &str) -> Term {
@@ -224,7 +224,10 @@ fn authorized_planning_bypasses_method_search_and_revalidates_exact_composition(
         goal_id: goal.goal_id.clone(),
         planner_snapshot_id: frame().frame_id,
         composition: composition.clone(),
-        capability_contract_ids: vec!["docs.write-v1".into()],
+        bindings: Bindings::empty()
+            .bind("scope".into(), node("readme"))
+            .unwrap(),
+        capability_contract_ids: vec![catalog().get("docs.write", 1).unwrap().content_identity()],
         method_id: None,
     };
     let world_state = WorldState::new(vec![Proposition::Accessible {
@@ -240,6 +243,53 @@ fn authorized_planning_bypasses_method_search_and_revalidates_exact_composition(
 
     assert_eq!(composed.composition, composition);
     assert_eq!(composed.method_id, "candidate-1");
+    assert_eq!(composed.bindings.get("scope"), Some(&node("readme")));
+}
+
+#[test]
+fn authorized_planning_rejects_drifted_contract_identity() {
+    let runtime = runtime(Vec::new());
+    let goal = goal_with_ceiling(None);
+    let composition = Composition {
+        steps: vec![Step {
+            step_id: "write".into(),
+            kind: StepKind::Op(Operator {
+                operator_id: "write".into(),
+                preconditions: Vec::new(),
+                effects: Vec::new(),
+                cost: CostEstimate::zero(),
+                resolution: Resolution {
+                    requires_inputs: Vec::new(),
+                    requires_outputs: vec![SlotConstraint {
+                        artifact_type: Term::ArtifactType("docs_patch".into()),
+                        required: true,
+                    }],
+                    scope_kind: Some("filesystem".into()),
+                    tags: Vec::new(),
+                    specific: Some(CapabilityRef {
+                        capability_type_id: "docs.write".into(),
+                        capability_version: 1,
+                    }),
+                },
+            }),
+        }],
+        edges: Vec::new(),
+    };
+    let authorization = ExecutionStrategyAuthorization {
+        authorization_id: "authorization-drift".into(),
+        agent_decision_id: "decision-drift".into(),
+        candidate_id: "candidate-drift".into(),
+        goal_id: goal.goal_id.clone(),
+        planner_snapshot_id: frame().frame_id,
+        composition,
+        bindings: Bindings::empty(),
+        capability_contract_ids: vec!["stale-contract-identity".into()],
+        method_id: None,
+    };
+    let result = runtime
+        .plan_authorized_goal(request(goal, WorldState::empty()), &authorization)
+        .unwrap();
+    assert!(matches!(result, PlanningResult::InvalidMethod(_)));
 }
 
 fn planning_actor() -> PlanningRuntimeActor<TaskCompiler> {

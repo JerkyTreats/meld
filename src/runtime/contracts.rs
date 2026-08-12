@@ -8,7 +8,6 @@ use meld_world_model::world_state::graph::runtime::GraphCatchUpReport;
 use meld_world_model::AgentRuntimeReport;
 use serde::{Deserialize, Serialize};
 
-
 /// Current schema version for runtime status cache records.
 /// Version 2 embeds action records carrying waiting-on declarations
 /// (DBG-016); version 1 records decode through the compat mirror.

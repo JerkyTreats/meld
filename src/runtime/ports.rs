@@ -568,6 +568,7 @@ impl ExecutionGoalCommandPort {
                     goal_id: authorization.candidate.goal_id,
                     planner_snapshot_id: authorization.candidate.planner_snapshot_id,
                     composition: authorization.candidate.composition,
+                    bindings: authorization.candidate.bindings,
                     capability_contract_ids: authorization.candidate.capability_contract_ids,
                     method_id,
                 }

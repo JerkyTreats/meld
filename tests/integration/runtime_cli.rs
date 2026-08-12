@@ -383,8 +383,6 @@ fn runtime_run_publishes_durable_lifecycle_snapshots() {
 
 #[test]
 fn stewardship_boot_composes_production_dispatch_routes() {
-    use meld_execution::task_network::dispatch_actor::{package_route_run_id, PackageRunPreparer};
-
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
         meld::init::initialize_workflows(false).unwrap();
@@ -428,50 +426,24 @@ fn stewardship_boot_composes_production_dispatch_routes() {
             .unwrap()
             .has_semantic_body());
 
-        // The production preparer resolves a plan through the registered
-        // workflow package surface, keyed by the actor-derived run id.
-        let routes = product.dispatch_routes().unwrap();
-        let plan = docs_route_plan("plan-production-route");
-        let task_run_id = package_route_run_id(&plan.plan_id);
-        let prepared = routes
-            .preparer
-            .prepare_package_run(&plan, &task_run_id)
-            .unwrap();
-        assert_eq!(
-            prepared.init_payload.task_run_context.task_run_id,
-            task_run_id
-        );
-        assert!(!prepared.compiled_task.capability_instances.is_empty());
+        let capability_runtime = product.capability_runtime().unwrap();
+        for capability_type in [
+            "docs.inspect_scope",
+            "docs.draft_patch_set",
+            "docs.publish_patch_set",
+            "docs.assess_published_scope",
+        ] {
+            assert!(capability_runtime.catalog.contains(capability_type, 1));
+            assert!(capability_runtime
+                .registry
+                .get(capability_type, 1)
+                .is_some());
+        }
+        assert!(!capability_runtime.catalog.contains("merkle_traversal", 1));
 
         drop(run_context);
         provider.shutdown();
     });
-}
-
-fn docs_route_plan(plan_id: &str) -> meld_execution::planning::realization::TaskPackageRoutePlan {
-    meld_execution::planning::realization::TaskPackageRoutePlan {
-        plan_id: plan_id.to_string(),
-        network_id: "stewardship.docs_freshness".to_string(),
-        composition_id: "composition-a".to_string(),
-        goal_id: "goal-a".to_string(),
-        method_id: "method-a".to_string(),
-        action_id: "action-a".to_string(),
-        package_id: "docs_writer".to_string(),
-        workflow_id: "docs_writer_thread_v1".to_string(),
-        outcome_contract_id: "execution.package.aggregate.v1".to_string(),
-        artifact: meld_execution::planning::ActionArtifactMeaning {
-            artifact_type_id: "docs_patch".to_string(),
-            schema_version: 1,
-        },
-        world_state_frame: meld_execution::planning::PlanningWorldStateFrameRef {
-            frame_id: "frame-1".to_string(),
-            projection_version: "world_model.planner.v1".to_string(),
-            perspective_id: "default".to_string(),
-            branch_id: "main".to_string(),
-            source_refs: Vec::new(),
-            warnings: Vec::new(),
-        },
-    }
 }
 
 fn write_stewardship_config(workspace_root: &Path, endpoint: &str) {

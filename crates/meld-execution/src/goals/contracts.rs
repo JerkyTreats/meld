@@ -45,6 +45,8 @@ pub struct ExecutionStrategyAuthorization {
     pub planner_snapshot_id: String,
     /// Exact authorized semantic action graph.
     pub composition: meld_lang::Composition,
+    /// Exact ground bindings selected during Strategy construction.
+    pub bindings: meld_lang::Bindings,
     /// Exact Capability contract identities selected by Strategy.
     pub capability_contract_ids: Vec<String>,
     /// Optional reusable Method lineage.

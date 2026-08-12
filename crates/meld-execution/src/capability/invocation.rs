@@ -71,9 +71,16 @@ pub trait CapabilityInvoker: Send + Sync {
 }
 
 /// In-memory runtime registry for published capability invokers.
-#[derive(Clone)]
 pub struct CapabilityExecutorRegistry<E, A: ?Sized> {
     invokers: BTreeMap<(String, u32), Arc<dyn CapabilityInvoker<Error = E, ExecutionApi = A>>>,
+}
+
+impl<E, A: ?Sized> Clone for CapabilityExecutorRegistry<E, A> {
+    fn clone(&self) -> Self {
+        Self {
+            invokers: self.invokers.clone(),
+        }
+    }
 }
 
 impl<E, A: ?Sized> Default for CapabilityExecutorRegistry<E, A> {

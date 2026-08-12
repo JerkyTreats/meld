@@ -17,8 +17,6 @@
 
 use std::path::{Path, PathBuf};
 
-use meld_execution::planning::{AvailableActionSet, MethodRealizationBinding};
-use meld_lang::Method;
 use meld_world_model::agent::AgentCurationRuleConfig;
 use meld_world_model::belief::{BeliefConfigLoader, ConfiguredOutcomeMappingSet};
 
@@ -26,7 +24,6 @@ use crate::config::SelectedStewardshipPackage;
 use crate::error::ApiError;
 use crate::init::world::theory::{
     belief_family_config_path, curation_rule_config_path, outcome_mapping_config_path,
-    planning_theory_root, validate_theory_id,
 };
 
 /// Disposition of one provisioned theory body.
@@ -50,8 +47,8 @@ pub struct TheorySourceReport {
 /// Provision a theory source directory for one stewardship selection.
 ///
 /// Requires the source to carry the belief family, outcome mapping, and
-/// curation rule the selection names; planning theory is provisioned when
-/// present. Identity mismatches reject before any write.
+/// curation rule the selection names. Strategy and capability vocabulary
+/// are published by the selected PDS and are not legacy planning files.
 pub fn provision_theory_source(
     source_dir: &Path,
     package: &SelectedStewardshipPackage,
@@ -107,80 +104,7 @@ pub fn provision_theory_source(
         .bodies
         .push(write_body("curation_rule", &destination, &rule_raw)?);
 
-    provision_planning(source_dir, &package.expression, &mut report)?;
-
     Ok(report)
-}
-
-/// Provision planning theory when the source carries it.
-///
-/// Planning bodies are keyed by the stewardship expression. A source with
-/// no planning bodies provisions none — the dependent actor then stays a
-/// truthful unresolved required binding at assembly.
-fn provision_planning(
-    source_dir: &Path,
-    expression: &str,
-    report: &mut TheorySourceReport,
-) -> Result<(), ApiError> {
-    let methods_dir = source_dir.join("methods");
-    let actions = find_single(source_dir, "available_actions")?;
-    let realizations = find_single(source_dir, "method_realizations")?;
-    if !methods_dir.is_dir() && actions.is_none() && realizations.is_none() {
-        return Ok(());
-    }
-    let planning_root = planning_theory_root(expression)?;
-
-    if let Some(path) = actions {
-        let raw = read_file(&path)?;
-        let _: AvailableActionSet = serde_json::from_str(&raw)
-            .map_err(|error| source_error(source_dir, "available_actions", error))?;
-        report.bodies.push(write_body(
-            "available_actions",
-            &planning_root.join("available_actions.json"),
-            &raw,
-        )?);
-    }
-    if let Some(path) = realizations {
-        let raw = read_file(&path)?;
-        let _: Vec<MethodRealizationBinding> = serde_json::from_str(&raw)
-            .map_err(|error| source_error(source_dir, "method_realizations", error))?;
-        report.bodies.push(write_body(
-            "method_realizations",
-            &planning_root.join("method_realizations.json"),
-            &raw,
-        )?);
-    }
-    if methods_dir.is_dir() {
-        let mut files: Vec<PathBuf> = std::fs::read_dir(&methods_dir)
-            .map_err(|error| {
-                ApiError::ConfigError(format!(
-                    "cannot read theory source methods '{}': {error}",
-                    methods_dir.display()
-                ))
-            })?
-            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-            .filter(|path| {
-                path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("json")
-            })
-            .collect();
-        files.sort();
-        for file in files {
-            let raw = read_file(&file)?;
-            let method: Method = serde_json::from_str(&raw)
-                .map_err(|error| source_error(source_dir, "method", error))?;
-            // The destination file name is content-derived identity; it must
-            // pass the same escape guard as every selected theory id.
-            validate_theory_id("method id", &method.method_id)?;
-            report.bodies.push(write_body(
-                "method",
-                &planning_root
-                    .join("methods")
-                    .join(format!("{}.json", method.method_id)),
-                &raw,
-            )?);
-        }
-    }
-    Ok(())
 }
 
 /// Locate exactly one `<kind>.<id>.json` body and return its content.

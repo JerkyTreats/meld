@@ -120,6 +120,20 @@ pub enum OutcomeSubjectSource {
         /// JSON pointer to the object id text.
         pointer: String,
     },
+    /// Select one payload-array element by a configured field value, then
+    /// mint the subject from text within that element. This supports
+    /// canonical outcomes that carry input and output artifacts in one
+    /// ordered array without assigning semantic meaning to array position.
+    PayloadArrayElementObjectId {
+        /// JSON pointer to the payload array.
+        array_pointer: String,
+        /// Field inspected on each array element.
+        field: String,
+        /// Required string value on exactly one element.
+        equals: String,
+        /// JSON pointer within the selected element to the object id text.
+        pointer: String,
+    },
 }
 
 /// One extracted evidence field on the promoted record.
@@ -148,6 +162,28 @@ pub enum OutcomeValueSource {
     /// Text read from the publication payload.
     DataText {
         /// JSON pointer into the envelope payload.
+        pointer: String,
+    },
+    /// Finite scalar read from one uniquely selected payload-array element.
+    DataArrayElementScalar {
+        /// JSON pointer to the payload array.
+        array_pointer: String,
+        /// Field inspected on each array element.
+        field: String,
+        /// Required string value on exactly one element.
+        equals: String,
+        /// JSON pointer within the selected element to the scalar.
+        pointer: String,
+    },
+    /// Text read from one uniquely selected payload-array element.
+    DataArrayElementText {
+        /// JSON pointer to the payload array.
+        array_pointer: String,
+        /// Field inspected on each array element.
+        field: String,
+        /// Required string value on exactly one element.
+        equals: String,
+        /// JSON pointer within the selected element to the text.
         pointer: String,
     },
     /// Fixed domain object reference carried by the installed mapping
@@ -318,6 +354,26 @@ fn validate_mapping_config(config: &OutcomeMappingConfig) -> Result<(), StorageE
                 ));
             }
         }
+        OutcomeSubjectSource::PayloadArrayElementObjectId {
+            array_pointer,
+            field,
+            equals,
+            pointer,
+        } => {
+            validate_array_element_selector(
+                "subject payload",
+                array_pointer,
+                field,
+                equals,
+                pointer,
+            )?;
+            if config.subject.domain_id.is_none() {
+                return Err(StorageError::InvalidPath(
+                    "payload array element object id subject binding requires a subject domain id"
+                        .to_string(),
+                ));
+            }
+        }
     }
     for rule in &config.match_content {
         match rule {
@@ -361,6 +417,24 @@ fn validate_mapping_config(config: &OutcomeMappingConfig) -> Result<(), StorageE
             | OutcomeValueSource::DataText { pointer } => {
                 require_non_empty("evidence field pointer", pointer)?;
             }
+            OutcomeValueSource::DataArrayElementScalar {
+                array_pointer,
+                field,
+                equals,
+                pointer,
+            }
+            | OutcomeValueSource::DataArrayElementText {
+                array_pointer,
+                field,
+                equals,
+                pointer,
+            } => validate_array_element_selector(
+                "evidence field",
+                array_pointer,
+                field,
+                equals,
+                pointer,
+            )?,
             OutcomeValueSource::ConstantObject {
                 domain_id,
                 object_kind,
@@ -372,6 +446,20 @@ fn validate_mapping_config(config: &OutcomeMappingConfig) -> Result<(), StorageE
             }
         }
     }
+    Ok(())
+}
+
+fn validate_array_element_selector(
+    label: &str,
+    array_pointer: &str,
+    field: &str,
+    equals: &str,
+    pointer: &str,
+) -> Result<(), StorageError> {
+    require_non_empty(&format!("{label} array pointer"), array_pointer)?;
+    require_non_empty(&format!("{label} selector field"), field)?;
+    require_non_empty(&format!("{label} selector value"), equals)?;
+    require_non_empty(&format!("{label} value pointer"), pointer)?;
     Ok(())
 }
 
@@ -527,6 +615,27 @@ fn bind_subject(
             DomainObjectRef::new(domain_id, binding.object_kind.clone(), object_id)
                 .map_err(|error| format!("payload subject id at '{pointer}': {error}"))?
         }
+        OutcomeSubjectSource::PayloadArrayElementObjectId {
+            array_pointer,
+            field,
+            equals,
+            pointer,
+        } => {
+            let element =
+                select_unique_array_element(&envelope.data, array_pointer, field, equals)?;
+            let Some(object_id) = element.pointer(pointer).and_then(Value::as_str) else {
+                return Err(format!(
+                    "selected payload element pointer '{pointer}' is not subject id text"
+                ));
+            };
+            let domain_id = binding
+                .domain_id
+                .as_deref()
+                .ok_or_else(|| "subject binding is missing a domain id".to_string())?;
+            DomainObjectRef::new(domain_id, binding.object_kind.clone(), object_id).map_err(
+                |error| format!("selected payload element subject id at '{pointer}': {error}"),
+            )?
+        }
     };
     subject
         .validate()
@@ -569,6 +678,29 @@ fn extract_value(source: &OutcomeValueSource, data: &Value) -> Result<EvidenceVa
             .and_then(Value::as_str)
             .map(|value| EvidenceValue::Text(value.to_string()))
             .ok_or_else(|| format!("payload pointer '{pointer}' is not text")),
+        OutcomeValueSource::DataArrayElementScalar {
+            array_pointer,
+            field,
+            equals,
+            pointer,
+        } => select_unique_array_element(data, array_pointer, field, equals)?
+            .pointer(pointer)
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+            .map(EvidenceValue::Scalar)
+            .ok_or_else(|| {
+                format!("selected payload element pointer '{pointer}' is not a finite scalar")
+            }),
+        OutcomeValueSource::DataArrayElementText {
+            array_pointer,
+            field,
+            equals,
+            pointer,
+        } => select_unique_array_element(data, array_pointer, field, equals)?
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .map(|value| EvidenceValue::Text(value.to_string()))
+            .ok_or_else(|| format!("selected payload element pointer '{pointer}' is not text")),
         OutcomeValueSource::ConstantObject {
             domain_id,
             object_kind,
@@ -584,4 +716,28 @@ fn extract_value(source: &OutcomeValueSource, data: &Value) -> Result<EvidenceVa
             Ok(EvidenceValue::Map(parts))
         }
     }
+}
+
+fn select_unique_array_element<'a>(
+    data: &'a Value,
+    array_pointer: &str,
+    field: &str,
+    equals: &str,
+) -> Result<&'a Value, String> {
+    let elements = data
+        .pointer(array_pointer)
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("payload pointer '{array_pointer}' is not an array"))?;
+    let mut matches = elements
+        .iter()
+        .filter(|element| element.get(field).and_then(Value::as_str) == Some(equals));
+    let selected = matches.next().ok_or_else(|| {
+        format!("payload array '{array_pointer}' has no element where '{field}' equals '{equals}'")
+    })?;
+    if matches.next().is_some() {
+        return Err(format!(
+            "payload array '{array_pointer}' has multiple elements where '{field}' equals '{equals}'"
+        ));
+    }
+    Ok(selected)
 }

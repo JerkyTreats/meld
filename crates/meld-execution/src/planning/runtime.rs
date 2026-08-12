@@ -906,6 +906,28 @@ impl PlanningRuntime {
                 "authorized Capability contract is unavailable or incompatible",
             ));
         }
+        let mut resolved_contract_ids = operator_resolutions
+            .iter()
+            .filter_map(|resolution| {
+                self.capability_catalog
+                    .get(
+                        resolution.capability_type_id.as_deref()?,
+                        resolution.capability_version?,
+                    )
+                    .map(|contract| contract.content_identity())
+            })
+            .collect::<Vec<_>>();
+        resolved_contract_ids.sort();
+        resolved_contract_ids.dedup();
+        let mut authorized_contract_ids = authorization.capability_contract_ids.clone();
+        authorized_contract_ids.sort();
+        authorized_contract_ids.dedup();
+        if resolved_contract_ids != authorized_contract_ids {
+            return Ok(invalid_authorized_candidate(
+                authorization,
+                "authorized Capability contract identity no longer matches the live catalog",
+            ));
+        }
         let projected_effects = authorization
             .composition
             .steps
@@ -929,14 +951,14 @@ impl PlanningRuntime {
                 &request.request_id,
                 &request.goal.goal_id,
                 &method_id,
-                &Bindings::empty(),
+                &authorization.bindings,
                 &authorization.composition,
                 &request.world_state_frame,
             ),
             goal: request.goal,
             world_state_frame: request.world_state_frame,
             method_id,
-            bindings: Bindings::empty(),
+            bindings: authorization.bindings.clone(),
             composition: authorization.composition.clone(),
             projected_effects,
             operator_resolutions,

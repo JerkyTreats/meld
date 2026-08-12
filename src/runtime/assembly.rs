@@ -27,7 +27,6 @@ use meld_execution::planning::{
     PlanningRuntime, PlanningRuntimeActor, PlanningRuntimeActorGoalResult,
     PlanningRuntimeActorRequest,
 };
-use meld_execution::task::package::{load_builtin_task_package_spec, PackageExpansionSpec};
 use meld_execution::task::{TaskCompiler, TaskProgressStore};
 use meld_execution::task_network::aggregate_publication::{
     publish_aggregate_for_run, AggregatePublicationError, AggregatePublicationStore,
@@ -99,6 +98,7 @@ pub struct ProductRuntimeAssembly {
     diagnostics: Vec<AssemblyDiagnostic>,
     dispatch_route_slot: Option<DispatchRouteSlot>,
     dispatch_route_seed: Option<DispatchRouteSeed>,
+    capability_runtime: Option<ProductCapabilityRuntime>,
 }
 
 /// Read-only product runtime description for operator CLI commands.
@@ -393,62 +393,11 @@ impl StewardshipActorBindings {
             anchor_perspective_id: format!("context-{}", binding.agent_id),
             network_id: format!("stewardship.{expression}"),
             session_id: format!("stewardship::{expression}"),
-            folder_unit_capability_types: folder_unit_capability_types(&expression)?,
-            semantic_yield_source: semantic_yield_source(&expression)?,
+            folder_unit_capability_types: Vec::new(),
+            semantic_yield_source: None,
             expression,
         })
     }
-}
-
-/// Derive the package-declared semantic yield source, when one exists.
-fn semantic_yield_source(
-    expression: &str,
-) -> Result<Option<(String, String)>, RuntimeAssemblyError> {
-    let package_id = match expression {
-        "docs_freshness" => "docs_writer",
-        other => {
-            return Err(RuntimeAssemblyError::Config(format!(
-                "stewardship expression '{other}' selects no known task package"
-            )))
-        }
-    };
-    let spec = load_builtin_task_package_spec(package_id)
-        .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?;
-    Ok(spec
-        .semantic_yield
-        .map(|declared| (declared.artifact_type_id, declared.array_field)))
-}
-
-/// Derive per-folder work unit capability types from the selected package.
-///
-/// The stewardship expression selects the built-in package; the package
-/// document's repeated per-node stage chain declares which durable
-/// capability types execute folder work. Root only reads the declaration —
-/// the classification is package-authored data, not root vocabulary.
-fn folder_unit_capability_types(expression: &str) -> Result<Vec<String>, RuntimeAssemblyError> {
-    let package_id = match expression {
-        "docs_freshness" => "docs_writer",
-        other => {
-            return Err(RuntimeAssemblyError::Config(format!(
-                "stewardship expression '{other}' selects no known task package"
-            )))
-        }
-    };
-    let spec = load_builtin_task_package_spec(package_id)
-        .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?;
-    let mut types = BTreeSet::new();
-    for expansion in &spec.expansions {
-        let PackageExpansionSpec::TraversalPrerequisite(traversal) = expansion;
-        for stage in &traversal.repeated_region.stage_chain.stages {
-            types.insert(stage.capability_type_id.clone());
-        }
-    }
-    if types.is_empty() {
-        return Err(RuntimeAssemblyError::Config(format!(
-            "task package '{package_id}' declares no per-folder stage capability types"
-        )));
-    }
-    Ok(types.into_iter().collect())
 }
 
 /// Injected theory and route bindings for one stewardship composition.
@@ -478,10 +427,22 @@ pub struct StewardshipTheoryBindings {
     /// `None` deliberately retains compatibility curation until root assembly
     /// can supply an authored, content-identified theory snapshot.
     pub strategy: Option<meld_world_model::AgentStrategyRuntimeConfig>,
+    /// Live atomic contracts and matching invokers shared across execution.
+    pub capability_runtime: Option<ProductCapabilityRuntime>,
     /// Planning theory: methods, catalog, afforded actions, realizations.
     pub planning: Option<PlanningTheoryBinding>,
     /// Real execution route bindings for the dispatch actor.
     pub dispatch: Option<DispatchRouteBindings>,
+}
+
+/// Product-neutral capability runtime shared by Strategy, planning, and
+/// dispatch for one stewardship composition.
+#[derive(Clone)]
+pub struct ProductCapabilityRuntime {
+    /// Exact contracts visible to planning and lowering.
+    pub catalog: CapabilityCatalog,
+    /// Matching executable invokers visible to dispatch.
+    pub registry: crate::capability::CapabilityExecutorRegistry,
 }
 
 /// Planning theory injected until a durable method registry exists.
@@ -1053,7 +1014,10 @@ impl Default for RuntimeLifecycleConfig {
     fn default() -> Self {
         Self {
             heartbeat_interval_ms: 1_000,
-            lease_duration_ms: 30_000,
+            // A bounded actor may legitimately wait on provider I/O. Keep
+            // its lease aligned with the existing fifteen minute generation
+            // wait bound so another supervisor cannot steal live work.
+            lease_duration_ms: 15 * 60 * 1_000,
             shutdown_grace_ms: 10_000,
         }
     }
@@ -1283,6 +1247,9 @@ impl ProductRuntimeAssembly {
         let dispatch_route_seed = composed_stewardship
             .as_ref()
             .map(|composed| composed.dispatch_route_seed.clone());
+        let capability_runtime = composed_stewardship
+            .as_ref()
+            .and_then(|composed| composed.theory.capability_runtime.clone());
 
         Ok(Self {
             product_root,
@@ -1302,6 +1269,7 @@ impl ProductRuntimeAssembly {
             diagnostics,
             dispatch_route_slot,
             dispatch_route_seed,
+            capability_runtime,
         })
     }
 
@@ -1379,6 +1347,11 @@ impl ProductRuntimeAssembly {
     /// there is no dispatch route to build.
     pub fn dispatch_route_seed(&self) -> Option<&DispatchRouteSeed> {
         self.dispatch_route_seed.as_ref()
+    }
+
+    /// Return the exact capability runtime shared by planning and dispatch.
+    pub fn capability_runtime(&self) -> Option<&ProductCapabilityRuntime> {
+        self.capability_runtime.as_ref()
     }
 
     /// Return whether execution routes are bound for the dispatch actor.
@@ -3470,6 +3443,7 @@ mod tests {
         assert_eq!(package.handle_factories.len(), 12);
         assert_eq!(package.default_work_budget.max_items, 64);
         assert_eq!(package.lifecycle_config.heartbeat_interval_ms, 1_000);
+        assert_eq!(package.lifecycle_config.lease_duration_ms, 15 * 60 * 1_000);
         assert_eq!(package.process_services.clock_source, "system");
         let factory = package.handle_factories.get("event.append").unwrap();
         let mut handle = factory.build_handle();
@@ -4486,16 +4460,6 @@ mod tests {
         );
         assert!(!retryable_fatal);
         assert_eq!(retryable_issue.code, "aggregate_publication_failed");
-    }
-
-    #[test]
-    fn folder_unit_capability_types_derive_from_the_selected_package() {
-        let types = folder_unit_capability_types("docs_freshness").unwrap();
-
-        assert!(types.contains(&"provider_execute_chat".to_string()));
-        assert!(types.contains(&"context_generate_prepare".to_string()));
-        assert!(types.contains(&"context_generate_finalize".to_string()));
-        assert!(folder_unit_capability_types("code_health").is_err());
     }
 
     #[test]

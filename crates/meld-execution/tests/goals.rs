@@ -45,6 +45,7 @@ fn strategy_authorization(goal_id: &str) -> ExecutionStrategyAuthorization {
             }],
             edges: Vec::new(),
         },
+        bindings: meld_lang::Bindings::empty(),
         capability_contract_ids: vec!["docs.write-v1".into()],
         method_id: None,
     }
