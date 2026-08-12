@@ -426,7 +426,7 @@ impl<'a> AgentGoalCurationRuntime<'a> {
                                 failure.completion, failure.grounds
                             );
                             failure.outcome.goal_command = None;
-                            failure.outcome
+                            *failure.outcome
                         }
                     };
             }

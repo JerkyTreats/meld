@@ -349,19 +349,17 @@ pub async fn validate_patch_set(
             ))
         })?;
         let partitions = evidence_partitions(directory, &accepted_by_directory);
+        let assessment = ReadmeAssessmentContext {
+            api,
+            config,
+            policy,
+            directory,
+            evidence: &partitions,
+            event_context,
+        };
         let mut accepted_report = None;
         for revision_attempt in 0..=policy.maximum_revision_attempts {
-            let report = assess_readme(
-                api,
-                config,
-                policy,
-                directory,
-                &patch,
-                &partitions,
-                revision_attempt,
-                event_context,
-            )
-            .await?;
+            let report = assess_readme(&assessment, &patch, revision_attempt).await?;
             if report.accepted {
                 accepted_report = Some(report);
                 break;
@@ -435,15 +433,19 @@ pub async fn validate_patch_set(
     })
 }
 
+struct ReadmeAssessmentContext<'a> {
+    api: &'a dyn ExecutionRuntimeContext,
+    config: &'a DocsCapabilityConfig,
+    policy: &'a DocsClaimPolicy,
+    directory: &'a DirectoryEvidence,
+    evidence: &'a EvidencePartitions,
+    event_context: Option<&'a ExecutionEventContext>,
+}
+
 async fn assess_readme(
-    api: &dyn ExecutionRuntimeContext,
-    config: &DocsCapabilityConfig,
-    policy: &DocsClaimPolicy,
-    directory: &DirectoryEvidence,
+    context: &ReadmeAssessmentContext<'_>,
     patch: &ReadmePatch,
-    evidence: &EvidencePartitions,
     revision_attempt: usize,
-    event_context: Option<&ExecutionEventContext>,
 ) -> Result<ReadmeClaimReport, ApiError> {
     let claims = extract_claims(&patch.path, &patch.content);
     if claims.is_empty() {
@@ -460,15 +462,15 @@ async fn assess_readme(
     let mut batch_attempt = 0;
     while let Some(batch) = pending_batches.pop_front() {
         match assess_claim_batch(
-            api,
-            config,
-            directory,
+            context.api,
+            context.config,
+            context.directory,
             patch,
-            evidence,
+            context.evidence,
             &batch,
             revision_attempt,
             batch_attempt,
-            event_context,
+            context.event_context,
         )
         .await
         {
@@ -495,14 +497,15 @@ async fn assess_readme(
         batch_attempt += 1;
     }
     assessments.sort_by(|left, right| left.claim.claim_id.cmp(&right.claim.claim_id));
-    apply_deterministic_guards(policy, evidence, &mut assessments);
-    let (groundedness, unsupported, contradiction) = aggregate_assessments(policy, &assessments);
-    let accepted = groundedness >= policy.minimum_groundedness
-        && unsupported <= policy.maximum_unsupported_claim_mass
-        && contradiction <= policy.maximum_contradiction_claim_mass
+    apply_deterministic_guards(context.policy, context.evidence, &mut assessments);
+    let (groundedness, unsupported, contradiction) =
+        aggregate_assessments(context.policy, &assessments);
+    let accepted = groundedness >= context.policy.minimum_groundedness
+        && unsupported <= context.policy.maximum_unsupported_claim_mass
+        && contradiction <= context.policy.maximum_contradiction_claim_mass
         && assessments.iter().all(|assessment| {
             assessment.verdict == ClaimVerdict::Supported
-                && assessment.confidence >= policy.minimum_claim_confidence
+                && assessment.confidence >= context.policy.minimum_claim_confidence
         });
     Ok(ReadmeClaimReport {
         path: patch.path.clone(),

@@ -2739,12 +2739,6 @@ fn worker_scope(
     }
 }
 
-/// Translate one belief assessment report into the supervisor shape.
-///
-/// The step-sequence checkpoint is bookkeeping, not a domain progress
-/// cursor, so both worker checkpoints carry the persisted value and
-/// progress is signaled through committed items alone: a zero-work step
-
 /// Translate world-model waiting-on declarations into the carrier shape.
 fn world_model_waiting(
     declarations: Vec<meld_world_model::WaitingOnDeclaration>,

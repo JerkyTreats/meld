@@ -21,7 +21,7 @@ pub struct AgentStrategyRuntimeConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentStrategyFailure {
     /// Original curation outcome, retained so the Agent can persist abstention.
-    pub outcome: AgentCurationOutcome,
+    pub outcome: Box<AgentCurationOutcome>,
     /// Whether the finite reachable search space was exhausted.
     pub completion: StrategySearchCompletion,
     /// Typed grounds returned by construction or verification.
@@ -48,14 +48,14 @@ pub fn authorize_curation_outcome(
     });
     let Some(candidate) = result.recommendation else {
         return Err(AgentStrategyFailure {
-            outcome,
+            outcome: Box::new(outcome),
             completion: result.completion,
             grounds: result.rejections,
         });
     };
     if let CandidateVerification::Invalid { grounds } = verify_candidate(&problem, &candidate) {
         return Err(AgentStrategyFailure {
-            outcome,
+            outcome: Box::new(outcome),
             completion: result.completion,
             grounds,
         });

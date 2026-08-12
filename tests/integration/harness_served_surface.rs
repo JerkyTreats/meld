@@ -100,7 +100,7 @@ fn the_substrate_serves_contract_types_over_loopback_for_a_live_session() {
     let page: EventPage = post(
         addr,
         "/v1/events/replay",
-        serde_json::to_value(&request).unwrap(),
+        serde_json::to_value(request).unwrap(),
     )
     .into_json()
     .unwrap();
@@ -192,7 +192,7 @@ fn the_substrate_serves_contract_types_over_loopback_for_a_live_session() {
                 "subject_key": format!("workspace_fs::node::{SUBJECT_ID}"),
             }),
         ),
-        ("/v1/events/replay", serde_json::to_value(&request).unwrap()),
+        ("/v1/events/replay", serde_json::to_value(request).unwrap()),
         (
             "/v1/projections/subagent",
             json!({ "scope": scope, "after_seq": 0 }),

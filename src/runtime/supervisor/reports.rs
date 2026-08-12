@@ -533,13 +533,13 @@ mod tests {
             domain_id: record.domain_id.clone(),
             actor_id: record.actor_id.clone(),
             object_ref: record.object_ref.clone(),
-            action_kind: record.action_kind.clone(),
-            cause: record.cause.clone(),
-            outcome: record.outcome.clone(),
+            action_kind: record.action_kind,
+            cause: record.cause,
+            outcome: record.outcome,
             metrics: record.metrics.clone(),
             checkpoints: record.checkpoints.clone(),
             issues: record.issues.clone(),
-            redaction: record.redaction.clone(),
+            redaction: record.redaction,
         };
         bincode::serialize(&legacy).unwrap()
     }

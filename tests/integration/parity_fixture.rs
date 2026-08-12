@@ -734,7 +734,7 @@ pub fn run_incremental_workflow_scenario(
         register_docs_writer_capabilities(&mut catalog, &mut registry);
         let rt = tokio::runtime::Runtime::new().unwrap();
 
-        let mut phase = |force: bool, session_id: &str| -> (usize, Result<(), String>) {
+        let phase = |force: bool, session_id: &str| -> (usize, Result<(), String>) {
             let provider = DeterministicDocsProvider::spawn(&workspace_root);
             create_test_provider(PARITY_PROVIDER_NAME, provider.endpoint());
             let run_context = RunContext::new(workspace_root.clone(), None).unwrap();

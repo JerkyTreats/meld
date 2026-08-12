@@ -571,7 +571,7 @@ pub fn inspect_scope(root: &Path) -> Result<DocsEvidenceBundle, ApiError> {
             .flatten()
             .filter(|child| meaningful.contains(*child))
             .filter_map(|child| child.strip_prefix(&root).ok())
-            .map(|child| relative_display(child))
+            .map(relative_display)
             .collect::<Vec<_>>();
         evidence.push(DirectoryEvidence {
             path: relative_display(directory.strip_prefix(&root).unwrap_or(&directory)),

@@ -27,20 +27,6 @@ pub struct DocsTaskSuccessEvidenceRequest {
     pub required_artifact_type_id: Option<String>,
 }
 
-impl DocsTaskSuccessEvidenceRequest {
-    /// Build the first-slice docs content success mapping.
-    pub fn fresh_content(event: EventRecord, subject: DomainObjectRef) -> Self {
-        Self {
-            event,
-            subject,
-            stale_probability: 0.0,
-            review_probability: 0.2,
-            source_kind: "content_written".to_string(),
-            required_artifact_type_id: Some("docs_patch".to_string()),
-        }
-    }
-}
-
 /// Errors returned by the docs outcome evidence mapper.
 #[derive(Debug, Error, Clone, PartialEq)]
 pub enum DocsTaskSuccessEvidenceError {
@@ -176,7 +162,6 @@ pub struct DocsTaskEvidenceReplayRequest {
 }
 
 pub struct DocsTaskEvidenceReplayReport {
-    pub input_event_seq: u64,
     pub output_event_seq: u64,
     pub events_attempted: usize,
     pub promoted_evidence_count: usize,
@@ -210,7 +195,6 @@ pub fn ingest_after_limit(
         request.branch_scope.clone(),
     );
     let mut report = DocsTaskEvidenceReplayReport {
-        input_event_seq: request.after_seq,
         output_event_seq: request.after_seq,
         events_attempted: events.len(),
         promoted_evidence_count: 0,

@@ -831,7 +831,7 @@ impl Reference {
 /// One network open attempt through the read-only discipline.
 enum NetworkOpen {
     /// The network database exists and opened.
-    Open(SledTaskNetworkStore),
+    Open(Box<SledTaskNetworkStore>),
     /// No database exists for the network id.
     Missing,
     /// The database exists but another handle holds its exclusive lock,
@@ -855,7 +855,7 @@ fn open_existing_network(
         return Ok(NetworkOpen::Missing);
     }
     match factory.open_network(network_id) {
-        Ok(store) => Ok(NetworkOpen::Open(store)),
+        Ok(store) => Ok(NetworkOpen::Open(Box::new(store))),
         Err(error) => {
             let message = error.to_string();
             if message.contains("could not acquire lock") {
