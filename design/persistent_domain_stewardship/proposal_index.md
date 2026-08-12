@@ -42,40 +42,61 @@ This interpretation remains subject to the open decisions and experiments in thi
 2. [Persistent Domain Stewardship Overview](README.md)  
    Introduces stewardship, standing objectives, episodes, package concepts, and the initial docs-freshness slice.
 
-3. [PDS Meta-Domain](meta_domain.md)  
+3. [PDS Code Expression Map](code_expression_map.md)  
+   Maps the current PDS expression all the way to Rust/runtime contracts and distinguishes enforced types, typed-but-injected theory, docs-specific compatibility forms, reusable substrate, and design-only gaps.
+
+4. [Persistent Domain Stewardship Architectural Invariants](architectural_invariants.md)  
+   Extracts the cross-expression architecture constraints that should remain stable across documentation, security, reliability, roleplay, lore, learner, portfolio, simulation, and physical-maintenance stewards.
+
+5. [PDS Examples Across Compilation Layers](examples/compilation_layer_span.md)  
+   Reinterprets the example corpus as a compiler pipeline from user intent through an approvable canonical declaration into compiled semantic IR and domain-owned runtime state.
+
+6. [PDS Meta-Domain](meta_domain.md)  
    Compares central schema, federated facets, root-only composition, and rejected runtime-orchestrator models.
 
-4. [Assessment By Domain](assessment_by_domain.md)  
+7. [Assessment By Domain](assessment_by_domain.md)  
    Applies Meld's domain-isolation policy and identifies ownership, adapter, optional, and non-integration relationships.
 
-5. [Steward Profile Abstraction](profile_abstraction.md)  
+8. [Steward Profile Abstraction](profile_abstraction.md)  
    Separates expert package mechanics from customer intent and evaluates YAML, DSL, SDK, GUI, and conversational interfaces.
 
-6. [Stewardship Facet Protocol](facet_protocol.md)  
+9. [Stewardship Facet Protocol](facet_protocol.md)  
    Proposes one connector model for domain-owned package facets and multi-domain activation.
 
-7. [Stewardship Package Model](package_model.md)  
+10. [Stewardship Package Model](package_model.md)  
    Explores the complete operational-domain-theory representation. Read its central schema as one option rather than a settled architecture.
 
-8. [Runtime Anchor Map](runtime_anchor_map.md)  
-   Maps PDS concepts to the implemented cognitive-runtime surfaces on `runtime-operator-visibility`.
+11. [Runtime Anchor Map](runtime_anchor_map.md)  
+    Maps PDS concepts to the implemented cognitive-runtime surfaces on `runtime-operator-visibility`.
 
-9. [Candidate Implementation Requirements](candidate_implementation_requirements.md)  
-   Extracts possible requirements while preserving their proposal status.
+12. [Candidate Implementation Requirements](candidate_implementation_requirements.md)  
+    Extracts possible requirements while preserving their proposal status.
 
-10. [Use-Case Decomposition](use_case_decomposition.md)  
+13. [Use-Case Decomposition](use_case_decomposition.md)  
     Defines stewardship qualification, mandatory baselines, decomposition, and falsification.
 
-11. [Workflow Migration](workflow_migration.md)  
+14. [Workflow Migration](workflow_migration.md)  
     Explores stewardship as application truth above existing workflow and execution mechanics.
 
-12. [Open Decisions](open_decisions.md)  
+15. [Open Decisions](open_decisions.md)  
     Records unresolved architecture choices and evidence required to resolve them.
 
-13. [Evaluation Plan](evaluation_plan.md)  
+16. [Evaluation Plan](evaluation_plan.md)  
     Defines experiments that may validate, narrow, or reject the current hypotheses.
 
 ## Examples
+
+- [PDS Examples Across Compilation Layers](examples/compilation_layer_span.md)  
+  Spans documentation freshness, CVE exposure, roleplay, lore, code quality, game strategy, service reliability, learner mastery, portfolio thesis/risk, and physical maintenance across user intent, canonical declaration, compiler target, and runtime state.
+
+- [PDS Expression Catalog](examples/pds_expression_catalog.md)  
+  Normalizes documentation freshness, CVE exposure, roleplay continuity, lore/canon stewardship, codebase quality, game faction strategy, service reliability, learner mastery, portfolio thesis/risk, and physical asset maintenance against one comparative expression surface.
+
+- [Roleplay Character Continuity Steward](examples/roleplay_character.md)  
+  Detailed decomposition of a persistent interactive character that separates canon truth, character knowledge, commitments, relationships, narrative threads, and response authority.
+
+- [Lore Transcriber And Canon Steward](examples/lore_transcriber.md)  
+  Detailed decomposition of persistent entity and claim curation, including alias resolution, merge/split lineage, provenance, contradiction, supersession, and derived-definition freshness.
 
 - [Software Quality Stewardship](examples/software_quality.md)  
   Full expert decomposition across reliability, persistence, performance, usability, maintainability, and documentation.
@@ -113,7 +134,12 @@ The current recommendations are:
 - use a small structured customer profile with generated visual and conversational editing;
 - reuse existing cognitive-runtime contracts;
 - treat workflows as compatibility methods where useful rather than deleting proven mechanics;
-- start with documentation freshness, then test software performance and one non-software steward.
+- start with documentation freshness, then test software performance and one non-software steward;
+- use dissimilar expression cards to reject false-positive PDS use cases before freezing a package source schema;
+- require a new expression to lower through generic domain contracts rather than adding expression-name semantic branches to root runtime code;
+- distinguish a typed Rust shape from complete PDS implementation by checking generality, durability, revision lineage, and authority ownership separately;
+- treat current detailed PDS examples primarily as compiler-target/semantic-IR specifications, and require future examples to include both a small user-intent sketch and a complete lowering target;
+- preserve separate durable identities for the principal-approved canonical declaration and the compiled stewardship image that the runtime executed.
 
 ## Current Non-Decisions
 
