@@ -8,6 +8,7 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/jerkytreats/meld"
 
 [dependencies]
+blake3 = "1.5"
 meld-events = { path = "../meld-events", version = "2.7.0" }
 serde = { workspace = true }
 serde_json = { workspace = true }

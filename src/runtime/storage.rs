@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use meld_execution::authority::AuthorityPolicyRegistryStore;
 use meld_execution::capability::CapabilityContractRegistryStore;
 use meld_execution::goals::PersistentGoalSetStore;
 use meld_execution::task::TaskArtifactRepoFactory;
@@ -205,6 +206,8 @@ pub struct OpenProductStores {
     pub execution_db: ScopedResource<sled::Db>,
     /// Execution-owned exact capability-contract registry.
     pub capability_contract_registry: ScopedResource<Arc<CapabilityContractRegistryStore>>,
+    /// Execution-owned exact effective-authority policy registry.
+    pub authority_policy_registry: ScopedResource<Arc<AuthorityPolicyRegistryStore>>,
     /// Docs-owned exact claim-policy registry.
     pub claim_policy_registry: ScopedResource<Arc<DocsClaimPolicyRegistryStore>>,
     /// Root-owned complete installation receipt store.
@@ -407,41 +410,53 @@ impl OpenProductStores {
             )
         };
 
-        let (capability_contract_registry, claim_policy_registry, theory_receipts, theory_db) =
-            if scope.theory {
-                let theory_db = open_db(&layout.theory_db)?;
-                (
-                    ScopedResource::open(
-                        "capability_contract_registry",
-                        Arc::new(
-                            CapabilityContractRegistryStore::new(theory_db.clone())
-                                .map_err(to_execution)?,
-                        ),
+        let (
+            capability_contract_registry,
+            authority_policy_registry,
+            claim_policy_registry,
+            theory_receipts,
+            theory_db,
+        ) = if scope.theory {
+            let theory_db = open_db(&layout.theory_db)?;
+            (
+                ScopedResource::open(
+                    "capability_contract_registry",
+                    Arc::new(
+                        CapabilityContractRegistryStore::new(theory_db.clone())
+                            .map_err(to_execution)?,
                     ),
-                    ScopedResource::open(
-                        "claim_policy_registry",
-                        Arc::new(
-                            DocsClaimPolicyRegistryStore::new(theory_db.clone())
-                                .map_err(to_context)?,
-                        ),
+                ),
+                ScopedResource::open(
+                    "authority_policy_registry",
+                    Arc::new(
+                        AuthorityPolicyRegistryStore::new(theory_db.clone())
+                            .map_err(to_execution)?,
                     ),
-                    ScopedResource::open(
-                        "theory_receipts",
-                        Arc::new(
-                            TheoryInstallationReceiptStore::new(theory_db.clone())
-                                .map_err(to_context)?,
-                        ),
+                ),
+                ScopedResource::open(
+                    "claim_policy_registry",
+                    Arc::new(
+                        DocsClaimPolicyRegistryStore::new(theory_db.clone()).map_err(to_context)?,
                     ),
-                    ScopedResource::open("theory_db", theory_db),
-                )
-            } else {
-                (
-                    ScopedResource::closed("capability_contract_registry"),
-                    ScopedResource::closed("claim_policy_registry"),
-                    ScopedResource::closed("theory_receipts"),
-                    ScopedResource::closed("theory_db"),
-                )
-            };
+                ),
+                ScopedResource::open(
+                    "theory_receipts",
+                    Arc::new(
+                        TheoryInstallationReceiptStore::new(theory_db.clone())
+                            .map_err(to_context)?,
+                    ),
+                ),
+                ScopedResource::open("theory_db", theory_db),
+            )
+        } else {
+            (
+                ScopedResource::closed("capability_contract_registry"),
+                ScopedResource::closed("authority_policy_registry"),
+                ScopedResource::closed("claim_policy_registry"),
+                ScopedResource::closed("theory_receipts"),
+                ScopedResource::closed("theory_db"),
+            )
+        };
 
         let goal_store = if scope.execution_goals {
             let execution_goals_db = open_db(&layout.execution_goals_db)?;
@@ -511,6 +526,7 @@ impl OpenProductStores {
             task_artifacts,
             execution_db,
             capability_contract_registry,
+            authority_policy_registry,
             claim_policy_registry,
             theory_receipts,
             theory_db,

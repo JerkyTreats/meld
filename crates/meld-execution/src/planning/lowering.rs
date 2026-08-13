@@ -458,6 +458,7 @@ where
             world_state_frame_id: request.composition.world_state_frame.frame_id.clone(),
             capability_type_id: resolved.capability_type_id.clone(),
             capability_version: resolved.capability_version,
+            authority_decision: request.composition.authority_decision.clone(),
         };
 
         Ok(LoweredTaskDraft {

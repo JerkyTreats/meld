@@ -6,6 +6,7 @@ use thiserror::Error;
 
 use crate::config::SelectedStewardshipPackage;
 use crate::docs::claim_validation::DocsClaimPolicyRevisionRef;
+use meld_execution::authority::{AuthorityPolicyRevision, AuthorityPolicyRevisionRef};
 use meld_execution::capability::CapabilityContractRevisionRef;
 use meld_execution::capability::{CapabilityCatalog, CapabilityContractRevision};
 use meld_world_model::agent::{AgentCurationRuleRevision, AgentMaintainedConditionRevision};
@@ -39,6 +40,8 @@ pub struct TheoryInstallationReceipt {
     pub strategy_theory: TheoryRevisionRef,
     /// Exact executable capability contract revisions.
     pub executable_contracts: Vec<CapabilityContractRevisionRef>,
+    /// Exact effective-authority policy revision.
+    pub authority_policy: AuthorityPolicyRevisionRef,
     /// Exact docs claim-policy revision.
     pub claim_policy: DocsClaimPolicyRevisionRef,
     /// Sequence observed when the receipt was first installed.
@@ -54,6 +57,7 @@ struct ReceiptIdentity<'a> {
     outcome_mapping: &'a TheoryRevisionRef,
     strategy_theory: &'a TheoryRevisionRef,
     executable_contracts: &'a [CapabilityContractRevisionRef],
+    authority_policy: &'a AuthorityPolicyRevisionRef,
     claim_policy: &'a DocsClaimPolicyRevisionRef,
 }
 
@@ -68,6 +72,7 @@ impl TheoryInstallationReceipt {
         outcome_mapping: TheoryRevisionRef,
         strategy_theory: TheoryRevisionRef,
         mut executable_contracts: Vec<CapabilityContractRevisionRef>,
+        authority_policy: AuthorityPolicyRevisionRef,
         claim_policy: DocsClaimPolicyRevisionRef,
         installed_at_seq: u64,
     ) -> Result<Self, TheoryReceiptError> {
@@ -103,6 +108,13 @@ impl TheoryInstallationReceipt {
                 "receipt requires executable contract revisions".to_string(),
             ));
         }
+        if authority_policy.policy_id.trim().is_empty()
+            || authority_policy.content_hash.trim().is_empty()
+        {
+            return Err(TheoryReceiptError::Invalid(
+                "receipt authority policy reference is incomplete".to_string(),
+            ));
+        }
         if claim_policy.policy_id.trim().is_empty()
             || claim_policy.content_identity.trim().is_empty()
         {
@@ -118,6 +130,7 @@ impl TheoryInstallationReceipt {
             outcome_mapping: &outcome_mapping,
             strategy_theory: &strategy_theory,
             executable_contracts: &executable_contracts,
+            authority_policy: &authority_policy,
             claim_policy: &claim_policy,
         };
         let receipt_id = hash(&identity)?;
@@ -130,6 +143,7 @@ impl TheoryInstallationReceipt {
             outcome_mapping,
             strategy_theory,
             executable_contracts,
+            authority_policy,
             claim_policy,
             installed_at_seq,
         })
@@ -149,6 +163,7 @@ impl TheoryInstallationReceipt {
             outcome_mapping: &self.outcome_mapping,
             strategy_theory: &self.strategy_theory,
             executable_contracts: &self.executable_contracts,
+            authority_policy: &self.authority_policy,
             claim_policy: &self.claim_policy,
         };
         if hash(&identity)? != self.receipt_id {
@@ -203,6 +218,8 @@ pub struct ResolvedStewardshipTheory {
     pub strategy_theory: StrategyTheoryRevision,
     /// Exact executable capability contract revisions.
     pub executable_contracts: Vec<CapabilityContractRevision>,
+    /// Exact effective-authority policy revision.
+    pub authority_policy: AuthorityPolicyRevision,
     /// Exact docs claim-policy revision.
     pub claim_policy: DocsClaimPolicyRevision,
 }
@@ -290,6 +307,14 @@ impl ResolvedStewardshipTheory {
                     .ok_or_else(|| missing("executable capability contract"))
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let authority_policy = stores
+            .authority_policy_registry
+            .resolve(
+                &receipt.authority_policy.policy_id,
+                &receipt.authority_policy.content_hash,
+            )
+            .map_err(owner_error)?
+            .ok_or_else(|| missing("authority policy"))?;
         let claim_policy = stores
             .claim_policy_registry
             .resolve(&receipt.claim_policy)
@@ -303,6 +328,7 @@ impl ResolvedStewardshipTheory {
             outcome_mapping,
             strategy_theory,
             executable_contracts,
+            authority_policy,
             claim_policy,
         };
         resolved.validate(selection)?;
@@ -330,10 +356,19 @@ impl ResolvedStewardshipTheory {
             || self.maintained_condition.revision_ref() != self.receipt.maintained_condition
             || self.outcome_mapping.revision_ref() != self.receipt.outcome_mapping
             || self.strategy_theory.revision_ref() != self.receipt.strategy_theory
+            || self.authority_policy.revision_ref() != self.receipt.authority_policy
             || self.claim_policy.revision_ref() != self.receipt.claim_policy
         {
             return Err(TheoryResolutionError::Inconsistent(
                 "resolved owner revision does not match its receipt reference".to_string(),
+            ));
+        }
+        if self.authority_policy.policy.policy_id != selection.authority_policy_id
+            || self.authority_policy.policy.principal_id != selection.principal_id
+        {
+            return Err(TheoryResolutionError::Inconsistent(
+                "resolved authority policy does not match the selected policy and principal"
+                    .to_string(),
             ));
         }
         if self.curation_rule.rule.dimension_id != self.belief_family.config.dimension_id
@@ -471,11 +506,13 @@ impl TheoryInstallationReceiptStore {
 fn validate_selection(selection: &SelectedStewardshipPackage) -> Result<(), TheoryReceiptError> {
     for value in [
         &selection.expression,
+        &selection.principal_id,
         &selection.belief_family_id,
         &selection.evidence_mapping_id,
         &selection.curation_rule_id,
         &selection.maintained_condition_id,
         &selection.strategy_theory_id,
+        &selection.authority_policy_id,
         &selection.claim_policy_id,
     ] {
         if value.trim().is_empty() {
@@ -520,6 +557,7 @@ mod tests {
     use crate::docs::capability::published_contracts;
     use crate::docs::claim_validation::DocsClaimPolicy;
     use crate::runtime::storage::ProductStorageLayout;
+    use meld_lang::AuthorityPolicy;
     use meld_world_model::agent::{AgentCurationRuleConfig, AgentMaintainedCondition};
     use meld_world_model::belief::{
         BeliefFamilyConfig, BeliefFamilyRegistryStore, OutcomeMappingSetConfig,
@@ -529,11 +567,13 @@ mod tests {
     fn selection() -> SelectedStewardshipPackage {
         SelectedStewardshipPackage {
             expression: "docs_freshness".to_string(),
+            principal_id: "workspace-owner".to_string(),
             belief_family_id: "docs_freshness".to_string(),
             evidence_mapping_id: "docs_freshness_outcome_interpretation_v1".to_string(),
             curation_rule_id: "docs_freshness".to_string(),
             maintained_condition_id: "docs_freshness".to_string(),
             strategy_theory_id: "docs_freshness".to_string(),
+            authority_policy_id: "docs_workspace_local".to_string(),
             claim_policy_id: "docs-claims-strict-v1".to_string(),
         }
     }
@@ -565,8 +605,12 @@ mod tests {
             "../../theory/docs_freshness/strategy_theory.docs_freshness.json"
         ))
         .unwrap();
-        let policy: DocsClaimPolicy = serde_json::from_str(include_str!(
+        let claim_policy: DocsClaimPolicy = serde_json::from_str(include_str!(
             "../../theory/docs_freshness/claim_policy.docs-claims-strict-v1.json"
+        ))
+        .unwrap();
+        let authority_policy: AuthorityPolicy = serde_json::from_str(include_str!(
+            "../../theory/docs_freshness/authority_policy.docs_workspace_local.json"
         ))
         .unwrap();
 
@@ -579,7 +623,14 @@ mod tests {
             .strategy_theory_registry
             .install(strategy, 10)
             .unwrap();
-        let (_, policy_revision) = stores.claim_policy_registry.install(policy, 10).unwrap();
+        let (_, authority_revision) = stores
+            .authority_policy_registry
+            .install(authority_policy, 10)
+            .unwrap();
+        let (_, policy_revision) = stores
+            .claim_policy_registry
+            .install(claim_policy, 10)
+            .unwrap();
         let capability_revisions = published_contracts()
             .into_iter()
             .map(|contract| {
@@ -615,6 +666,7 @@ mod tests {
                 .iter()
                 .map(CapabilityContractRevision::revision_ref)
                 .collect(),
+            authority_revision.revision_ref(),
             policy_revision.revision_ref(),
             10,
         )
@@ -629,6 +681,7 @@ mod tests {
             mapping_revision.revision_ref(),
             strategy_revision.revision_ref(),
             reversed_contracts,
+            authority_revision.revision_ref(),
             policy_revision.revision_ref(),
             99,
         )
@@ -662,6 +715,7 @@ mod tests {
                 .iter()
                 .map(CapabilityContractRevision::revision_ref)
                 .collect(),
+            authority_revision.revision_ref(),
             policy_revision.revision_ref(),
             20,
         )
@@ -759,6 +813,10 @@ mod tests {
                 },
                 content_identity: "missing-contract".to_string(),
             }],
+            AuthorityPolicyRevisionRef {
+                policy_id: "docs_workspace_local".to_string(),
+                content_hash: "missing-authority-policy".to_string(),
+            },
             DocsClaimPolicyRevisionRef {
                 policy_id: "docs-claims-strict-v1".to_string(),
                 content_identity: "missing-policy".to_string(),

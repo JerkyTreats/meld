@@ -12,6 +12,7 @@
 //! # Module Map
 //!
 //! - [`composition`] defines step graphs and typed dependency edges.
+//! - [`authority`] defines pure effective-authority policy and decision values.
 //! - [`proposition`] and [`term`] define the ground and pattern language.
 //! - [`mod@evaluate`] and [`world_state`] evaluate propositions against belief.
 //! - [`mod@unify`] and [`mod@substitute`] bind and instantiate language patterns.
@@ -42,6 +43,8 @@
 
 #![deny(missing_docs)]
 
+/// Pure effective-authority policy, decision, and evaluation contracts.
+pub mod authority;
 /// Planning step graphs and typed dependency edges.
 pub mod composition;
 /// Proposition condition operators.
@@ -71,6 +74,10 @@ pub mod validate;
 /// Ground proposition sets and effect application.
 pub mod world_state;
 
+pub use authority::{
+    evaluate_authority, required_action_ids, AuthorityDecision, AuthorityDenial, AuthorityPolicy,
+    AuthorityPolicyBinding,
+};
 pub use composition::{Composition, Edge, EdgeKind, Step, StepKind};
 pub use condition::Condition;
 pub use cost::CostEstimate;

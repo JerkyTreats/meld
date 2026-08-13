@@ -13,6 +13,7 @@
 //! - maintained conditions: `$XDG_CONFIG_HOME/meld/theory/maintained_conditions/<id>.json`
 //! - outcome mappings:  `$XDG_CONFIG_HOME/meld/theory/outcome_mappings/<id>.json`
 //! - Strategy packages: `$XDG_CONFIG_HOME/meld/theory/strategy_theories/<id>.json`
+//! - authority policies: `$XDG_CONFIG_HOME/meld/theory/authority_policies/<id>.json`
 //! - claim policies:    `$XDG_CONFIG_HOME/meld/theory/claim_policies/<id>.json`
 //!
 //! A file's content identity must match the selection identity: a belief
@@ -21,6 +22,7 @@
 
 use std::path::PathBuf;
 
+use meld_lang::AuthorityPolicy;
 use meld_world_model::agent::{AgentCurationRuleConfig, AgentMaintainedCondition};
 use meld_world_model::belief::{
     BeliefConfigLoader, BeliefFamilyConfig, ConfiguredOutcomeMappingSet, OutcomeMappingSetConfig,
@@ -66,6 +68,14 @@ pub fn strategy_theory_config_path(theory_id: &str) -> Result<PathBuf, ApiError>
     Ok(theory_config_root()?
         .join("strategy_theories")
         .join(format!("{theory_id}.json")))
+}
+
+/// Path of the effective-authority policy for one selected id.
+pub fn authority_policy_config_path(policy_id: &str) -> Result<PathBuf, ApiError> {
+    validate_theory_id("authority policy id", policy_id)?;
+    Ok(theory_config_root()?
+        .join("authority_policies")
+        .join(format!("{policy_id}.json")))
 }
 
 /// Path of the docs claim policy for one selected id.
@@ -170,6 +180,27 @@ pub fn load_strategy_theory_package(theory_id: &str) -> Result<StrategyTheoryPac
         )));
     }
     Ok(package)
+}
+
+/// Load and owner-validate the selected effective-authority policy.
+pub fn load_authority_policy(policy_id: &str) -> Result<AuthorityPolicy, ApiError> {
+    let path = authority_policy_config_path(policy_id)?;
+    let policy: AuthorityPolicy = load_json(&path, "authority policy")?;
+    policy.validate().map_err(|error| {
+        ApiError::ConfigError(format!(
+            "invalid authority policy config '{}': {error}",
+            path.display()
+        ))
+    })?;
+    if policy.policy_id != policy_id {
+        return Err(ApiError::ConfigError(format!(
+            "authority policy '{}' declares policy_id '{}' but was selected as '{}'",
+            path.display(),
+            policy.policy_id,
+            policy_id
+        )));
+    }
+    Ok(policy)
 }
 
 /// Load and owner-validate the selected docs claim policy.

@@ -11,7 +11,9 @@ use crate::agent::contracts::{
 };
 use crate::agent::curation::{curate_goal_satisfaction, curate_threshold_rule, AgentCuration};
 use crate::agent::store::AgentStore;
-use crate::agent::strategy::{authorize_curation_outcome_with_theory, AgentStrategyRuntimeConfig};
+use crate::agent::strategy::{
+    authorize_curation_outcome_with_authority, AgentStrategyRuntimeConfig,
+};
 use crate::agent::subscription::AgentSubscription;
 use crate::agent::AgentMaintainedConditionBinding;
 use crate::belief::BeliefQuery;
@@ -445,11 +447,19 @@ impl<'a> AgentGoalCurationRuntime<'a> {
                 let mut problem = strategy.problem.clone();
                 problem.world_state = strategy_world_state;
                 problem.planner_snapshot_id = strategy_snapshot_id;
-                outcome = match authorize_curation_outcome_with_theory(
+                let authority = strategy.authority_policy.as_ref().map(|policy| {
+                    (
+                        policy,
+                        strategy.requested_authority.as_slice(),
+                        &strategy.subject,
+                    )
+                });
+                outcome = match authorize_curation_outcome_with_authority(
                     outcome,
                     problem,
                     strategy.bounds.clone(),
                     strategy.theory_revision.clone(),
+                    authority,
                 ) {
                     Ok(outcome) => outcome,
                     Err(mut failure) => {

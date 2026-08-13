@@ -78,6 +78,9 @@ pub struct StrategyTheoryPackage {
     pub search_bounds: StrategySearchBounds,
     /// Belief projection dimensions required by this package.
     pub requested_dimensions: Vec<String>,
+    /// Capability type identities whose invocation the package requests.
+    #[serde(default)]
+    pub requested_authority: Vec<String>,
 }
 
 /// Complete immutable input to the pure Strategy function.
@@ -171,6 +174,9 @@ pub struct StrategyAuthorization {
     /// Exact complete Strategy theory revision used for construction.
     #[serde(default)]
     pub strategy_theory_revision: Option<crate::belief::TheoryRevisionRef>,
+    /// Effective authority under which this exact candidate may execute.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority_decision: Option<meld_lang::AuthorityDecision>,
 }
 
 /// Why a branch could not become an eligible candidate.

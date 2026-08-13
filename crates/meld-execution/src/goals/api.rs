@@ -403,6 +403,18 @@ fn validate_strategy_authorization(
             "Strategy authorization Composition is invalid".to_string(),
         ));
     }
+    if let Some(authority) = &authorization.authority_decision {
+        authority
+            .validate()
+            .map_err(|error| GoalSetApiError::InvalidCommand(error.to_string()))?;
+        let required = meld_lang::required_action_ids(&authorization.composition)
+            .map_err(|error| GoalSetApiError::InvalidCommand(error.to_string()))?;
+        if required != authority.authorized_action_ids {
+            return Err(GoalSetApiError::InvalidCommand(
+                "Strategy authority does not cover the authorized Composition".to_string(),
+            ));
+        }
+    }
     Ok(())
 }
 

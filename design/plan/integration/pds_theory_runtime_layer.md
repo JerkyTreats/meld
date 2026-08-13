@@ -24,7 +24,7 @@ Each Meld coupling consumes operational domain theory through one seam. The matr
 | Executable contract | capability implementation publication | derived from Strategy capability selectors | execution capability registry selected by complete receipt | durable exact owner revision |
 | Claim policy | `claim_policy.<id>.json` | `theory.claim_policy_id` | docs claim-policy registry selected by complete receipt | durable exact owner revision |
 | Maintained scope | named stewardship declaration | `stewardship.declarations.<id>` config table | generic stage 0 physical binding resolution | canonical config selection for Step 2 |
-| Authority | deferred | deferred to Step 4 | no runtime relationship yet | not implemented |
+| Authority | package requested actions plus selected principal and policy | execution-owned exact policy revision | Agent judgment plus admission, planning, and dispatch revalidation | compact decision in existing Strategy authorization and task lineage |
 
 Family-declared semantics travel inside the belief family body and never in runtime code: observationality and anchor coupling are the two declared so far, and the family owns any future assessment semantics the same way.
 
@@ -36,7 +36,7 @@ Family-declared semantics travel inside the belief family body and never in runt
 - Canonical configuration uses named tables under `stewardship.declarations`. The older `stewardship.docs_freshness` table is a temporary compatibility reader that lowers into the same value.
 - Strategy activation is owned by meld world model. Capability implementations bind by exact type, version, and content identity. Neither path selects by expression name.
 - Belief-context hydration consumes the family identity carried by the selected physical binding. Context does not choose an application family.
-- The declaration remains a minimal selection. It names the maintained-condition owner body but does not infer condition semantics or authority.
+- The declaration remains a minimal selection. It names maintained-condition and authority owner bodies plus the principal identity but does not infer their semantics.
 
 ## Pipeline Authority
 
@@ -49,7 +49,7 @@ flowchart LR
     ground --> runtime["belief, curation,<br/>planning, dispatch"]
 ```
 
-Authority at each stage: the named declaration selects identity and physical scope but does not interpret standing conditions or represent effective authority. The authored package supplies owner semantics for installation. Installed revisions are the only theory the runtime cites. Grounding decides application and the runtime settles answers. The final user intent surface remains unsettled.
+Authority at each stage: the named declaration selects identity, principal, and physical scope but does not interpret standing conditions or policy. The authored package supplies requested actions and owner semantics for installation. Installed revisions are the only theory the runtime cites. Agent judgment computes effective authority and execution independently revalidates it. Grounding decides application and the runtime settles answers. The final user intent surface remains unsettled.
 
 ## Layer Settlement Rule
 

@@ -145,5 +145,12 @@
     "prefer_fewer_steps": true
   },
   "search_bounds": { "max_expansions": 32, "max_depth": 8 },
-  "requested_dimensions": ["docs_freshness"]
+  "requested_dimensions": ["docs_freshness"],
+  "requested_authority": [
+    "docs.inspect_scope",
+    "docs.draft_patch_set",
+    "docs.validate_patch_set",
+    "docs.publish_patch_set",
+    "docs.assess_published_scope"
+  ]
 }

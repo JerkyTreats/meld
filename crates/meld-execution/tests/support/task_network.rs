@@ -394,6 +394,7 @@ pub fn composition() -> meld_execution::planning::ExecutionComposition {
             warnings: vec![],
         },
         diagnostics: vec![],
+        authority_decision: None,
     }
 }
 
@@ -619,6 +620,7 @@ pub fn single_task_node(task_instance_id: &str) -> TaskNode {
             world_state_frame_id: "frame-fixture".to_string(),
             capability_type_id: "docs.write".to_string(),
             capability_version: 1,
+            authority_decision: None,
         },
     }
 }

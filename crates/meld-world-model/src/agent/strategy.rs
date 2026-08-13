@@ -1,7 +1,10 @@
 //! Agent-owned Strategy judgment and authorization.
 
 use meld_events::DomainObjectRef;
-use meld_lang::{Goal, GoalLifecycle, GoalPriority, GoalSource, Proposition, Term, WorldState};
+use meld_lang::{
+    evaluate_authority, AuthorityPolicyBinding, Goal, GoalLifecycle, GoalPriority, GoalSource,
+    Proposition, Term, WorldState,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::agent::{AgentCurationOutcome, AgentDecisionKind};
@@ -15,6 +18,8 @@ use crate::strategy::{
 /// Root-supplied immutable Strategy template for Agent curation ticks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentStrategyRuntimeConfig {
+    /// Exact physical subject against which authority scope is evaluated.
+    pub subject: DomainObjectRef,
     /// Problem template whose Goal and planner state are replaced per curation turn.
     pub problem: StrategyProblem,
     /// Explicit structural bounds for the minimal engine.
@@ -22,6 +27,12 @@ pub struct AgentStrategyRuntimeConfig {
     /// Exact installed Strategy theory revision frozen for this composition.
     #[serde(default)]
     pub theory_revision: Option<crate::belief::TheoryRevisionRef>,
+    /// Package-requested action identities used for effective authority.
+    #[serde(default)]
+    pub requested_authority: Vec<String>,
+    /// Exact authority policy frozen for this composition.
+    #[serde(default)]
+    pub authority_policy: Option<AuthorityPolicyBinding>,
 }
 
 impl AgentStrategyRuntimeConfig {
@@ -61,7 +72,7 @@ impl AgentStrategyRuntimeConfig {
             lifecycle: GoalLifecycle::Proposed,
         };
         let world_state = WorldState::new(vec![Proposition::Accessible {
-            scope: Term::Object(subject),
+            scope: Term::Object(subject.clone()),
         }])
         .map_err(|error| {
             StorageError::InvalidPath(format!(
@@ -69,6 +80,7 @@ impl AgentStrategyRuntimeConfig {
             ))
         })?;
         Ok(Self {
+            subject,
             problem: StrategyProblem {
                 problem_id: format!("{theory_id}::runtime"),
                 goal,
@@ -81,7 +93,15 @@ impl AgentStrategyRuntimeConfig {
             },
             bounds: package.search_bounds,
             theory_revision: None,
+            requested_authority: package.requested_authority,
+            authority_policy: None,
         })
+    }
+
+    /// Activate the exact authority policy selected by the complete receipt.
+    pub fn with_authority_policy(mut self, policy: AuthorityPolicyBinding) -> Self {
+        self.authority_policy = Some(policy);
+        self
     }
 }
 
@@ -111,10 +131,21 @@ pub fn authorize_curation_outcome(
 
 /// Construct and authorize while pinning the complete Strategy revision.
 pub fn authorize_curation_outcome_with_theory(
+    outcome: AgentCurationOutcome,
+    problem: StrategyProblem,
+    bounds: StrategySearchBounds,
+    theory_revision: Option<crate::belief::TheoryRevisionRef>,
+) -> Result<AgentCurationOutcome, AgentStrategyFailure> {
+    authorize_curation_outcome_with_authority(outcome, problem, bounds, theory_revision, None)
+}
+
+/// Construct and authorize while enforcing one exact effective-authority policy.
+pub fn authorize_curation_outcome_with_authority(
     mut outcome: AgentCurationOutcome,
     mut problem: StrategyProblem,
     bounds: StrategySearchBounds,
     theory_revision: Option<crate::belief::TheoryRevisionRef>,
+    authority: Option<(&AuthorityPolicyBinding, &[String], &DomainObjectRef)>,
 ) -> Result<AgentCurationOutcome, AgentStrategyFailure> {
     let Some(command) = outcome.goal_command.as_mut() else {
         return Ok(outcome);
@@ -138,11 +169,26 @@ pub fn authorize_curation_outcome_with_theory(
             grounds,
         });
     }
+    let authority_decision = match authority {
+        Some((policy, requested, subject)) => {
+            match evaluate_authority(policy, requested, &candidate.composition, subject) {
+                Ok(decision) => Some(decision),
+                Err(denial) => {
+                    outcome.decision.decision = AgentDecisionKind::Indeterminate;
+                    outcome.decision.reason = format!("effective authority denied: {denial}");
+                    outcome.goal_command = None;
+                    return Ok(outcome);
+                }
+            }
+        }
+        None => None,
+    };
     let authorization_id = authorization_identity(
         &outcome.decision.decision_id,
         &candidate.candidate_id,
         &problem.evaluation_policy.policy_id,
         theory_revision.as_ref(),
+        authority_decision.as_ref(),
     );
     let authorization = StrategyAuthorization {
         authorization_id,
@@ -150,6 +196,7 @@ pub fn authorize_curation_outcome_with_theory(
         candidate,
         evaluation_policy_id: problem.evaluation_policy.policy_id,
         strategy_theory_revision: theory_revision,
+        authority_decision,
     };
     command.strategy_authorization = Some(authorization.clone());
     outcome.decision.strategy_authorization = Some(authorization);
@@ -162,10 +209,17 @@ fn authorization_identity(
     candidate_id: &str,
     policy_id: &str,
     theory_revision: Option<&crate::belief::TheoryRevisionRef>,
+    authority_decision: Option<&meld_lang::AuthorityDecision>,
 ) -> String {
     let bytes = match theory_revision {
-        Some(revision) => serde_json::to_vec(&(decision_id, candidate_id, policy_id, revision)),
-        None => serde_json::to_vec(&(decision_id, candidate_id, policy_id)),
+        Some(revision) => serde_json::to_vec(&(
+            decision_id,
+            candidate_id,
+            policy_id,
+            revision,
+            authority_decision,
+        )),
+        None => serde_json::to_vec(&(decision_id, candidate_id, policy_id, authority_decision)),
     }
     .expect("Strategy authorization identity serialization is infallible");
     format!("strategy-authorization-{}", blake3::hash(&bytes).to_hex())

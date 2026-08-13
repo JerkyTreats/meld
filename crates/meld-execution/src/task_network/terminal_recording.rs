@@ -229,6 +229,7 @@ pub fn package_route_task_lineage(
         world_state_frame_id: plan.world_state_frame.frame_id.clone(),
         capability_type_id: plan.workflow_id.clone(),
         capability_version: compiled_task_version,
+        authority_decision: None,
     }
 }
 

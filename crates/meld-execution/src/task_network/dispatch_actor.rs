@@ -78,6 +78,7 @@ use crate::task_network::terminal_recording::{
 };
 use crate::waiting::{conditions, WaitingOnDeclaration};
 use async_trait::async_trait;
+use meld_lang::AuthorityPolicyBinding;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -445,6 +446,7 @@ pub struct DispatchRuntimeActor<P, PI, CI> {
     preparer: P,
     package_invoker: Arc<PI>,
     claim_invoker: CI,
+    authority_policy: Option<AuthorityPolicyBinding>,
 }
 
 impl<P, PI, CI> DispatchRuntimeActor<P, PI, CI>
@@ -481,7 +483,14 @@ where
             preparer,
             package_invoker: Arc::new(package_invoker),
             claim_invoker,
+            authority_policy: None,
         })
+    }
+
+    /// Bind dispatch to one exact authority policy for independent enforcement.
+    pub fn with_authority_policy(mut self, policy: AuthorityPolicyBinding) -> Self {
+        self.authority_policy = Some(policy);
+        self
     }
 
     /// Returns the stable actor id used in reports.
@@ -530,6 +539,14 @@ where
     ) {
         let mut seen_plan_ids = BTreeSet::new();
         for plan in plans {
+            if self.authority_policy.is_some() {
+                report.fatal(
+                    Some(plan.plan_id.clone()),
+                    "authority_lineage_missing",
+                    "package-route plan has no exact authority lineage".to_string(),
+                );
+                continue;
+            }
             // The handoff carries no durable record by design, so in-tick
             // dedupe keys on the deterministic plan identity and durable
             // dedupe keys on the derived run id below.
@@ -1038,6 +1055,15 @@ where
             (node.clone(), init_payload)
         };
 
+        if let Err(error) = validate_task_authority(self.authority_policy.as_ref(), &node) {
+            report.fatal(
+                Some(claim.task_instance_id.clone()),
+                "effective_authority_denied",
+                error,
+            );
+            return;
+        }
+
         let outcome = match self
             .claim_invoker
             .invoke_claimed_task(&node, claim, &init_payload)
@@ -1149,6 +1175,58 @@ where
         repo.flush()
             .map_err(|error| ArtifactPersistFailure::Storage(error.to_string()))?;
         Ok(())
+    }
+}
+
+fn validate_task_authority(
+    active_policy: Option<&AuthorityPolicyBinding>,
+    node: &TaskNode,
+) -> Result<(), String> {
+    match (active_policy, &node.lineage.authority_decision) {
+        (Some(policy), Some(decision)) => {
+            policy.validate().map_err(|error| error.to_string())?;
+            decision.validate().map_err(|error| error.to_string())?;
+            if decision.policy_id != policy.policy.policy_id
+                || decision.policy_content_hash != policy.content_hash
+                || decision.principal_id != policy.policy.principal_id
+                || decision.subject != policy.policy.subject
+            {
+                return Err("task authority cites a different active policy or scope".to_string());
+            }
+            if !decision
+                .authorized_action_ids
+                .contains(&node.lineage.capability_type_id)
+            {
+                return Err(format!(
+                    "task capability '{}' is absent from effective authority",
+                    node.lineage.capability_type_id
+                ));
+            }
+            if !policy
+                .policy
+                .principal_granted_action_ids
+                .contains(&node.lineage.capability_type_id)
+                || !policy
+                    .policy
+                    .runtime_allowed_action_ids
+                    .contains(&node.lineage.capability_type_id)
+                || policy
+                    .policy
+                    .restricted_action_ids
+                    .contains(&node.lineage.capability_type_id)
+            {
+                return Err(format!(
+                    "task capability '{}' is denied by the active policy",
+                    node.lineage.capability_type_id
+                ));
+            }
+            Ok(())
+        }
+        (Some(_), None) => Err("task has no authority decision under an active policy".to_string()),
+        (None, Some(_)) => {
+            Err("task authority cannot be checked without an active policy".to_string())
+        }
+        (None, None) => Ok(()),
     }
 }
 

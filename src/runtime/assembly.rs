@@ -39,7 +39,7 @@ use meld_execution::task_network::terminal_recording::package_run_terminal_outco
 use meld_execution::task_network::{
     PublicationRuntime, PublishPendingPublicationsRequest, SledTaskNetworkStore,
 };
-use meld_lang::Method;
+use meld_lang::{AuthorityPolicyBinding, Method};
 use meld_world_model::agent::{
     AgentCurationRuleBinding, AgentGoalCurationActor, AgentMaintainedConditionBinding,
     AgentSatisfactionCurationActor, AgentStepReport, AgentStepRequest, AgentStore,
@@ -433,6 +433,8 @@ pub struct StewardshipTheoryBindings {
     pub strategy: Option<meld_world_model::AgentStrategyRuntimeConfig>,
     /// Live atomic contracts and matching invokers shared across execution.
     pub capability_runtime: Option<ProductCapabilityRuntime>,
+    /// Exact effective-authority policy shared by judgment and execution.
+    pub authority_policy: Option<AuthorityPolicyBinding>,
     /// Planning theory: methods, catalog, afforded actions, realizations.
     pub planning: Option<PlanningTheoryBinding>,
     /// Real execution route bindings for the dispatch actor.
@@ -652,7 +654,18 @@ fn hydrate_stewardship_theory(
             return;
         }
     };
+    let authority_policy = match resolved.authority_policy.binding() {
+        Ok(policy) => policy,
+        Err(error) => {
+            diagnostics.push(AssemblyDiagnostic {
+                code: "theory_image_inconsistent".to_string(),
+                message: error.to_string(),
+            });
+            return;
+        }
+    };
     strategy.theory_revision = Some(resolved.strategy_theory.revision_ref());
+    strategy = strategy.with_authority_policy(authority_policy.clone());
     theory.outcome_mapping = Some(resolved.outcome_mapping.config.clone());
     theory.strategy = Some(strategy);
     theory.planning = Some(PlanningTheoryBinding {
@@ -669,6 +682,7 @@ fn hydrate_stewardship_theory(
             .clone(),
     });
     theory.capability_runtime = Some(capability_runtime);
+    theory.authority_policy = Some(authority_policy);
     theory.resolved = Some(resolved);
 }
 
@@ -904,6 +918,7 @@ struct PlanningFactory {
     registry: Arc<BeliefFamilyRegistryStore>,
     bindings: StewardshipActorBindings,
     handoffs: Arc<PackageRouteHandoffs>,
+    authority_policy: Option<AuthorityPolicyBinding>,
 }
 
 #[derive(Clone)]
@@ -914,6 +929,7 @@ struct DispatchFactory {
     network: Arc<Mutex<SledTaskNetworkStore>>,
     handoffs: Arc<PackageRouteHandoffs>,
     worker_id: String,
+    authority_policy: Option<AuthorityPolicyBinding>,
 }
 
 #[derive(Clone)]
@@ -2146,6 +2162,7 @@ impl RuntimeSemanticHandleFactory {
                     registry: Arc::clone(registry),
                     bindings: composed.bindings.clone(),
                     handoffs: Arc::clone(&composed.handoffs),
+                    authority_policy: composed.theory.authority_policy.clone(),
                 })))
             }
             "execution.task_dispatch" => {
@@ -2175,6 +2192,7 @@ impl RuntimeSemanticHandleFactory {
                     network: Arc::clone(network),
                     handoffs: Arc::clone(&composed.handoffs),
                     worker_id: composed.worker_id.clone(),
+                    authority_policy: composed.theory.authority_policy.clone(),
                 })))
             }
             "execution.publication" => {
@@ -2339,13 +2357,19 @@ impl RuntimeSemanticHandleFactory {
             }
             Self::Planning(factory) => RuntimeSemanticHandle::Planning(Box::new(PlanningHandle {
                 actor: PlanningRuntimeActor::new(
-                    PlanningRuntime::new(
-                        MethodLibrary::from_methods(
-                            factory.theory.methods.clone(),
-                            &factory.theory.capability_catalog,
-                        ),
-                        factory.theory.capability_catalog.clone(),
-                    ),
+                    {
+                        let runtime = PlanningRuntime::new(
+                            MethodLibrary::from_methods(
+                                factory.theory.methods.clone(),
+                                &factory.theory.capability_catalog,
+                            ),
+                            factory.theory.capability_catalog.clone(),
+                        );
+                        match &factory.authority_policy {
+                            Some(policy) => runtime.with_authority_policy(policy.clone()),
+                            None => runtime,
+                        }
+                    },
                     ExecutionCompositionLowerer::new(
                         TaskCompiler::new(),
                         factory.theory.capability_catalog.clone(),
@@ -2378,13 +2402,18 @@ impl RuntimeSemanticHandleFactory {
                 let Some(routes) = factory.routes.current() else {
                     return RuntimeSemanticHandle::None;
                 };
-                let (actor, construction_error) = match DispatchRuntimeActor::new(
+                let actor_result = DispatchRuntimeActor::new(
                     factory.worker_id.clone(),
                     factory.execution_db.clone(),
                     routes.preparer,
                     routes.package_invoker,
                     routes.claim_invoker,
-                ) {
+                )
+                .map(|actor| match &factory.authority_policy {
+                    Some(policy) => actor.with_authority_policy(policy.clone()),
+                    None => actor,
+                });
+                let (actor, construction_error) = match actor_result {
                     Ok(actor) => (Some(actor), None),
                     Err(error) => (None, Some(error.to_string())),
                 };
@@ -4063,6 +4092,7 @@ mod tests {
                 target_root: workspace.to_path_buf(),
                 subject: "docs".to_string(),
                 agent_id: STEWARD_AGENT_ID.to_string(),
+                principal_id: "workspace-owner".to_string(),
                 provider_id: "main-provider".to_string(),
                 theory: TheorySelection {
                     belief_family_id: FAMILY_ID.to_string(),
@@ -4070,6 +4100,7 @@ mod tests {
                     curation_rule_id: "docs_freshness".to_string(),
                     maintained_condition_id: "docs_freshness".to_string(),
                     strategy_theory_id: "docs_freshness".to_string(),
+                    authority_policy_id: "docs_workspace_local".to_string(),
                     claim_policy_id: "docs-claims-strict-v1".to_string(),
                 },
             }),

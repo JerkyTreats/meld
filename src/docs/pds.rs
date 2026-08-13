@@ -210,6 +210,7 @@ mod tests {
             strategy_theory_id: None,
             strategy_theory_content_hash: None,
             method_id: None,
+            authority_decision: None,
         };
         let mut active_goal = problem.goal;
         active_goal.lifecycle = GoalLifecycle::Active;

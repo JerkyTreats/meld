@@ -1,5 +1,6 @@
 //! First-slice execution planning runtime.
 
+use crate::authority::revalidate_authority;
 use crate::capability::CapabilityCatalog;
 use crate::goals::{ActiveGoalQuery, ExecutionStrategyAuthorization};
 use crate::planning::action::{ActionRealizationRoute, AvailableActionSet};
@@ -24,8 +25,8 @@ use crate::task_network::{
 };
 use crate::waiting::{conditions, WaitingOnDeclaration};
 use meld_lang::{
-    evaluate, substitute, validate, Bindings, Composition, CostEstimate, Effect, EvalResult,
-    Operator, Proposition, Resolution, Step, StepKind, WorldState,
+    evaluate, substitute, validate, AuthorityPolicyBinding, Bindings, Composition, CostEstimate,
+    Effect, EvalResult, Operator, Proposition, Resolution, Step, StepKind, Term, WorldState,
 };
 use serde::Serialize;
 
@@ -623,6 +624,7 @@ where
 pub struct PlanningRuntime {
     method_library: MethodLibrary,
     capability_catalog: CapabilityCatalog,
+    authority_policy: Option<AuthorityPolicyBinding>,
 }
 
 fn validate_actor_request(
@@ -819,7 +821,14 @@ impl PlanningRuntime {
         Self {
             method_library,
             capability_catalog,
+            authority_policy: None,
         }
+    }
+
+    /// Bind planning to one exact authority policy for independent revalidation.
+    pub fn with_authority_policy(mut self, policy: AuthorityPolicyBinding) -> Self {
+        self.authority_policy = Some(policy);
+        self
     }
 
     /// Plan one active ground goal against one projected world state.
@@ -906,6 +915,37 @@ impl PlanningRuntime {
                 authorization,
                 "authorization does not match the Goal or planner frame",
             ));
+        }
+        match (&self.authority_policy, &authorization.authority_decision) {
+            (Some(policy), Some(decision)) => {
+                let Some(subject) = goal_subject(&request.goal.target) else {
+                    return Ok(invalid_authorized_candidate(
+                        authorization,
+                        "authorized Goal has no concrete authority subject",
+                    ));
+                };
+                if let Err(error) =
+                    revalidate_authority(policy, decision, &authorization.composition, subject)
+                {
+                    return Ok(invalid_authorized_candidate(
+                        authorization,
+                        &format!("effective authority revalidation failed: {error}"),
+                    ));
+                }
+            }
+            (Some(_), None) => {
+                return Ok(invalid_authorized_candidate(
+                    authorization,
+                    "exact authority policy requires an authority decision",
+                ))
+            }
+            (None, Some(_)) => {
+                return Ok(invalid_authorized_candidate(
+                    authorization,
+                    "authority decision cannot be checked without an active policy",
+                ))
+            }
+            (None, None) => {}
         }
         let validation = validate(&authorization.composition);
         if !validation.valid {
@@ -995,6 +1035,7 @@ impl PlanningRuntime {
             operator_resolutions,
             validation,
             diagnostics,
+            authority_decision: authorization.authority_decision.clone(),
         }))
     }
 }
@@ -1286,7 +1327,25 @@ fn prepare_composition(
         operator_resolutions,
         validation,
         diagnostics,
+        authority_decision: None,
     })
+}
+
+fn goal_subject(target: &Proposition) -> Option<&meld_events::DomainObjectRef> {
+    match target {
+        Proposition::Holds {
+            subject: Term::Object(subject),
+            ..
+        }
+        | Proposition::Accessible {
+            scope: Term::Object(subject),
+        }
+        | Proposition::Exists {
+            scope: Term::Object(subject),
+            ..
+        } => Some(subject),
+        _ => None,
+    }
 }
 
 fn substitute_proposition(

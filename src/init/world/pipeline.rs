@@ -19,6 +19,8 @@
 use meld_events::{
     AppendDisposition, AppendMode, DomainObjectRef, EventAppendCapability, EventEnvelope,
 };
+use meld_execution::authority::AuthorityPolicyRegistryStore;
+use meld_lang::AuthorityPolicy;
 use meld_world_model::agent::{
     AgentCurationRuleBinding, AgentCurationRuleConfig, AgentCurationRuleRegistryStore,
     AgentMaintainedCondition, AgentMaintainedConditionRegistryStore, AgentRegistration,
@@ -122,6 +124,7 @@ pub struct WorldInitTheoryBundle {
     pub outcome_mapping: OutcomeMappingSetConfig,
     pub strategy_theory: StrategyTheoryPackage,
     pub executable_contracts: Vec<CapabilityTypeContract>,
+    pub authority_policy: AuthorityPolicy,
     pub claim_policy: DocsClaimPolicy,
 }
 
@@ -134,6 +137,7 @@ pub struct CompleteTheoryInstall<'a> {
     pub outcome_mappings: &'a OutcomeMappingRegistryStore,
     pub strategy_theories: &'a StrategyTheoryRegistryStore,
     pub executable_contracts: &'a CapabilityContractRegistryStore,
+    pub authority_policies: &'a AuthorityPolicyRegistryStore,
     pub claim_policies: &'a DocsClaimPolicyRegistryStore,
     pub receipts: &'a TheoryInstallationReceiptStore,
 }
@@ -217,7 +221,7 @@ impl<'a> WorldInitPipeline<'a> {
         content: &WorldInitContent,
     ) -> Result<WorldInitStageReport, WorldInitError> {
         if self.complete_theory.is_some() {
-            return self.install_complete_theory(content.observed_seq);
+            return self.install_complete_theory(content.observed_seq, &content.subject);
         }
         let (disposition, revision) = self
             .registry
@@ -240,12 +244,13 @@ impl<'a> WorldInitPipeline<'a> {
     fn install_complete_theory(
         &mut self,
         observed_seq: u64,
+        subject: &DomainObjectRef,
     ) -> Result<WorldInitStageReport, WorldInitError> {
         let install = self
             .complete_theory
             .as_ref()
             .expect("complete theory checked");
-        validate_selected_bundle(&install.selection, &install.bundle)
+        validate_selected_bundle(&install.selection, &install.bundle, subject)
             .map_err(WorldInitError::Theory)?;
 
         let (family_disposition, family) = self
@@ -285,6 +290,10 @@ impl<'a> WorldInitPipeline<'a> {
             .strategy_theories
             .install(install.bundle.strategy_theory.clone(), observed_seq)
             .map_err(|error| WorldInitError::Theory(error.to_string()))?;
+        let (authority_changed, authority) = install
+            .authority_policies
+            .install(install.bundle.authority_policy.clone(), observed_seq)
+            .map_err(|error| WorldInitError::Theory(error.to_string()))?;
         let (claim_changed, claim) = install
             .claim_policies
             .install(install.bundle.claim_policy.clone(), observed_seq)
@@ -320,6 +329,12 @@ impl<'a> WorldInitPipeline<'a> {
                 .map_err(|error| WorldInitError::Theory(error.to_string()))?
                 .as_ref()
                 != Some(&strategy)
+            || install
+                .authority_policies
+                .resolve(&authority.policy.policy_id, &authority.content_hash)
+                .map_err(|error| WorldInitError::Theory(error.to_string()))?
+                .as_ref()
+                != Some(&authority)
             || install
                 .claim_policies
                 .resolve(&claim.revision_ref())
@@ -357,6 +372,7 @@ impl<'a> WorldInitPipeline<'a> {
                 .iter()
                 .map(|item| item.revision_ref())
                 .collect(),
+            authority.revision_ref(),
             claim.revision_ref(),
             observed_seq,
         )
@@ -375,6 +391,7 @@ impl<'a> WorldInitPipeline<'a> {
         ]
         .contains(&TheoryInstallDisposition::Installed)
             || capability_changed
+            || authority_changed
             || claim_changed;
         let mut record_ids = vec![
             format_revision(&family.revision_ref()),
@@ -392,6 +409,10 @@ impl<'a> WorldInitPipeline<'a> {
                 reference.content_identity
             )
         }));
+        record_ids.push(format!(
+            "authority_policy::{}::{}",
+            authority.policy.policy_id, authority.content_hash
+        ));
         record_ids.push(format!(
             "claim_policy::{}::{}",
             claim.policy.policy_id, claim.content_identity
@@ -632,14 +653,24 @@ impl<'a> WorldInitPipeline<'a> {
 fn validate_selected_bundle(
     selection: &SelectedStewardshipPackage,
     bundle: &WorldInitTheoryBundle,
+    subject: &DomainObjectRef,
 ) -> Result<(), String> {
     if bundle.family.family_id != selection.belief_family_id
         || bundle.maintained_condition.condition_id != selection.maintained_condition_id
         || bundle.outcome_mapping.mapping_id != selection.evidence_mapping_id
         || bundle.strategy_theory.snapshot.theory_id != selection.strategy_theory_id
+        || bundle.authority_policy.policy_id != selection.authority_policy_id
         || bundle.claim_policy.policy_id != selection.claim_policy_id
     {
         return Err("selected theory identities do not match the loaded owner bodies".to_string());
+    }
+    if bundle.authority_policy.principal_id != selection.principal_id
+        || &bundle.authority_policy.subject != subject
+    {
+        return Err(
+            "authority policy principal or subject does not match the stewardship binding"
+                .to_string(),
+        );
     }
     if bundle.curation_rule.dimension_id != bundle.family.dimension_id {
         return Err("curation rule dimension does not match the belief family".to_string());
@@ -660,6 +691,24 @@ fn validate_selected_bundle(
     {
         return Err(
             "Strategy requested dimension is unavailable from the belief family".to_string(),
+        );
+    }
+    if bundle.strategy_theory.requested_authority.is_empty() {
+        return Err("Strategy package requests no authority".to_string());
+    }
+    if bundle
+        .strategy_theory
+        .requested_authority
+        .iter()
+        .any(|action| {
+            !bundle
+                .executable_contracts
+                .iter()
+                .any(|contract| &contract.capability_type_id == action)
+        })
+    {
+        return Err(
+            "Strategy requested authority cites an unavailable executable action".to_string(),
         );
     }
     for rule in &bundle.strategy_theory.snapshot.settlement_rules {

@@ -13,6 +13,7 @@
 //!
 //! - [`capability`] publishes capability contracts, catalogs, invocation
 //!   payloads, and bound runtime records.
+//! - [`authority`] owns exact policy revisions and execution revalidation.
 //! - [`execution`] defines the adapter ports used by workflow, task, and
 //!   workspace runtimes.
 //! - [`generation`] carries prompt assembly, provider completion, prompt
@@ -34,6 +35,8 @@
 
 #![deny(missing_docs)]
 
+/// Effective-authority policy durability and execution enforcement helpers.
+pub mod authority;
 /// Capability publication, binding, invocation, and runtime contracts.
 pub mod capability;
 /// Execution-domain error types shared by public contracts.

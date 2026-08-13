@@ -227,6 +227,7 @@ fn fanout_composition(
             warnings: vec![],
         },
         diagnostics: vec![],
+        authority_decision: None,
     }
 }
 

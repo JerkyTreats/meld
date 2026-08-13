@@ -10,9 +10,10 @@ use std::path::{Path, PathBuf};
 use meld::config::SelectedStewardshipPackage;
 use meld::init::world::source::provision_theory_source;
 use meld::init::world::theory::{
-    load_belief_family_config, load_claim_policy, load_curation_rule_config,
+    load_authority_policy, load_belief_family_config, load_claim_policy, load_curation_rule_config,
     load_maintained_condition, load_outcome_mapping_config, load_strategy_theory_package,
 };
+use meld_events::DomainObjectRef;
 
 use crate::integration::test_utils::with_xdg_env;
 
@@ -25,20 +26,31 @@ fn shipped_theory_dir() -> PathBuf {
 fn shipped_selection() -> SelectedStewardshipPackage {
     SelectedStewardshipPackage {
         expression: "docs_freshness".to_string(),
+        principal_id: "workspace-owner".to_string(),
         belief_family_id: "docs_freshness".to_string(),
         evidence_mapping_id: "docs_freshness_outcome_interpretation_v1".to_string(),
         curation_rule_id: "docs_freshness".to_string(),
         maintained_condition_id: "docs_freshness".to_string(),
         strategy_theory_id: "docs_freshness".to_string(),
+        authority_policy_id: "docs_workspace_local".to_string(),
         claim_policy_id: "docs-claims-strict-v1".to_string(),
     }
+}
+
+fn shipped_subject() -> DomainObjectRef {
+    DomainObjectRef::new("workspace_fs", "node", "docs").unwrap()
 }
 
 #[test]
 fn shipped_theory_provisions_and_loads_through_every_selection_identity() {
     let test_dir = tempfile::TempDir::new().unwrap();
     with_xdg_env(&test_dir, || {
-        let report = provision_theory_source(&shipped_theory_dir(), &shipped_selection()).unwrap();
+        let report = provision_theory_source(
+            &shipped_theory_dir(),
+            &shipped_selection(),
+            &shipped_subject(),
+        )
+        .unwrap();
 
         let kinds: Vec<&str> = report
             .bodies
@@ -50,8 +62,9 @@ fn shipped_theory_provisions_and_loads_through_every_selection_identity() {
         assert!(kinds.contains(&"curation_rule"));
         assert!(kinds.contains(&"maintained_condition"));
         assert!(kinds.contains(&"strategy_theory"));
+        assert!(kinds.contains(&"authority_policy"));
         assert!(kinds.contains(&"claim_policy"));
-        assert_eq!(kinds.len(), 6);
+        assert_eq!(kinds.len(), 7);
         assert!(report.bodies.iter().all(|body| body.changed));
 
         let family = load_belief_family_config("docs_freshness").unwrap();
@@ -99,6 +112,9 @@ fn shipped_theory_provisions_and_loads_through_every_selection_identity() {
         assert_eq!(strategy.snapshot.theory_id, "docs_freshness");
         assert_eq!(strategy.capabilities.len(), 5);
 
+        let authority = load_authority_policy("docs_workspace_local").unwrap();
+        assert_eq!(authority.principal_id, "workspace-owner");
+
         let claim_policy = load_claim_policy("docs-claims-strict-v1").unwrap();
         assert_eq!(claim_policy.policy_id, "docs-claims-strict-v1");
     });
@@ -109,8 +125,9 @@ fn provisioning_is_byte_idempotent() {
     let test_dir = tempfile::TempDir::new().unwrap();
     with_xdg_env(&test_dir, || {
         let selection = shipped_selection();
-        provision_theory_source(&shipped_theory_dir(), &selection).unwrap();
-        let second = provision_theory_source(&shipped_theory_dir(), &selection).unwrap();
+        provision_theory_source(&shipped_theory_dir(), &selection, &shipped_subject()).unwrap();
+        let second =
+            provision_theory_source(&shipped_theory_dir(), &selection, &shipped_subject()).unwrap();
         assert!(second.bodies.iter().all(|body| !body.changed));
     });
 }
@@ -122,7 +139,8 @@ fn selection_identity_mismatch_rejects_before_any_write() {
         let mut selection = shipped_selection();
         selection.belief_family_id = "some-other-family".to_string();
 
-        let error = provision_theory_source(&shipped_theory_dir(), &selection).unwrap_err();
+        let error = provision_theory_source(&shipped_theory_dir(), &selection, &shipped_subject())
+            .unwrap_err();
 
         assert!(error.to_string().contains("some-other-family"));
         // Nothing was provisioned: the theory root does not exist.
@@ -135,7 +153,12 @@ fn provisioning_writes_nothing_outside_the_config_home() {
     let workspace = tempfile::TempDir::new().unwrap();
     let test_dir = tempfile::TempDir::new().unwrap();
     with_xdg_env(&test_dir, || {
-        provision_theory_source(&shipped_theory_dir(), &shipped_selection()).unwrap();
+        provision_theory_source(
+            &shipped_theory_dir(),
+            &shipped_selection(),
+            &shipped_subject(),
+        )
+        .unwrap();
         assert_eq!(std::fs::read_dir(workspace.path()).unwrap().count(), 0);
     });
 }
@@ -157,6 +180,7 @@ expression = "docs_freshness"
 target_root = "{target_root}"
 subject = "docs"
 agent_id = "docs-writer"
+principal_id = "workspace-owner"
 provider_id = "steward-provider"
 
 [stewardship.docs_freshness.theory]
@@ -165,6 +189,7 @@ evidence_mapping_id = "docs_freshness_outcome_interpretation_v1"
 curation_rule_id = "docs_freshness"
 maintained_condition_id = "docs_freshness"
 strategy_theory_id = "docs_freshness"
+authority_policy_id = "docs_workspace_local"
 claim_policy_id = "docs-claims-strict-v1"
 "#,
         target_root = target_root.display()
@@ -206,7 +231,12 @@ fn authored_files_do_not_activate_runtime_without_a_durable_receipt() {
             "missing durable activation diagnostic: {codes:?}"
         );
 
-        provision_theory_source(&shipped_theory_dir(), &shipped_selection()).unwrap();
+        provision_theory_source(
+            &shipped_theory_dir(),
+            &shipped_selection(),
+            &shipped_subject(),
+        )
+        .unwrap();
 
         // Source provisioning copies authored inputs only. World init owns
         // durable owner installation and commits the activation receipt.

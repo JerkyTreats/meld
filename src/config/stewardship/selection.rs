@@ -123,8 +123,8 @@ pub struct NamedStewardshipDeclaration {
 /// Minimal canonical stewardship declaration for the implemented runtime.
 ///
 /// This is intentionally smaller than the eventual principal-facing PDS
-/// declaration. Maintained conditions and authority enter in later program
-/// steps rather than being inferred here.
+/// declaration. It selects identities and physical bindings without
+/// embedding owner-controlled theory bodies.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StewardshipDeclaration {
     /// Name of the stewardship expression this declaration instantiates.
@@ -138,6 +138,9 @@ pub struct StewardshipDeclaration {
 
     /// Durable agent identity that stewards the subject.
     pub agent_id: String,
+
+    /// Principal whose grant bounds this stewardship declaration.
+    pub principal_id: String,
 
     /// Key into the root provider map binding the model provider.
     pub provider_id: String,
@@ -168,6 +171,9 @@ pub struct DocsFreshnessSelection {
     /// Durable agent identity that stewards the subject.
     pub agent_id: String,
 
+    /// Principal whose grant bounds this stewardship selection.
+    pub principal_id: String,
+
     /// Key into the root provider map binding the model provider.
     pub provider_id: String,
 
@@ -195,6 +201,9 @@ pub struct TheorySelection {
 
     /// Complete Strategy theory package identity.
     pub strategy_theory_id: String,
+
+    /// Effective-authority policy identity.
+    pub authority_policy_id: String,
 
     /// Docs claim policy identity.
     pub claim_policy_id: String,
@@ -304,6 +313,7 @@ impl From<DocsFreshnessSelection> for StewardshipDeclaration {
             target_root: selection.target_root,
             subject: selection.subject,
             agent_id: selection.agent_id,
+            principal_id: selection.principal_id,
             provider_id: selection.provider_id,
             theory: selection.theory,
         }
@@ -371,6 +381,7 @@ fn validate_declaration(
     for (field, value) in [
         ("subject", &declaration.subject),
         ("agent_id", &declaration.agent_id),
+        ("principal_id", &declaration.principal_id),
         ("provider_id", &declaration.provider_id),
         (
             "theory.belief_family_id",
@@ -391,6 +402,10 @@ fn validate_declaration(
         (
             "theory.strategy_theory_id",
             &declaration.theory.strategy_theory_id,
+        ),
+        (
+            "theory.authority_policy_id",
+            &declaration.theory.authority_policy_id,
         ),
         (
             "theory.claim_policy_id",
@@ -419,6 +434,7 @@ mod tests {
             target_root: PathBuf::from("/workspace/docs"),
             subject: "docs".to_string(),
             agent_id: "docs-steward".to_string(),
+            principal_id: "workspace-owner".to_string(),
             provider_id: "main-provider".to_string(),
             theory: TheorySelection {
                 belief_family_id: "docs_freshness".to_string(),
@@ -426,6 +442,7 @@ mod tests {
                 curation_rule_id: "docs_freshness".to_string(),
                 maintained_condition_id: "docs_freshness".to_string(),
                 strategy_theory_id: "docs_freshness".to_string(),
+                authority_policy_id: "docs_workspace_local".to_string(),
                 claim_policy_id: "docs-claims-strict-v1".to_string(),
             },
         }

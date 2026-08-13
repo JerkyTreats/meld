@@ -579,6 +579,7 @@ impl ExecutionGoalCommandPort {
                     bindings: authorization.candidate.bindings,
                     capability_contract_ids: authorization.candidate.capability_contract_ids,
                     method_id,
+                    authority_decision: authorization.authority_decision,
                 }
             }),
         };

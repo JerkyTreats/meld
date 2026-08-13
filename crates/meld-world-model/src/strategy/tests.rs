@@ -1,15 +1,15 @@
 use meld_events::DomainObjectRef;
 use meld_lang::{
-    CapabilityRef, Composition, Condition, CostEstimate, Effect, Goal, GoalLifecycle, GoalPriority,
-    GoalSource, Method, Operator, Proposition, Resolution, SlotConstraint, Step, StepKind, Term,
-    WorldState,
+    AuthorityPolicy, AuthorityPolicyBinding, CapabilityRef, Composition, Condition, CostEstimate,
+    Effect, Goal, GoalLifecycle, GoalPriority, GoalSource, Method, Operator, Proposition,
+    Resolution, SlotConstraint, Step, StepKind, Term, WorldState,
 };
 
 use super::*;
 use crate::agent::{
-    authorize_curation_outcome, authorize_curation_outcome_with_theory, AgentCurationDecision,
-    AgentCurationDedupeKey, AgentCurationInputRefs, AgentCurationOutcome, AgentDecisionKind,
-    AgentGoalCommand,
+    authorize_curation_outcome, authorize_curation_outcome_with_authority,
+    authorize_curation_outcome_with_theory, AgentCurationDecision, AgentCurationDedupeKey,
+    AgentCurationInputRefs, AgentCurationOutcome, AgentDecisionKind, AgentGoalCommand,
 };
 use crate::belief::{BeliefKey, BranchScope};
 use crate::world_state::graph::PerspectiveKey;
@@ -441,6 +441,62 @@ fn agent_settles_the_exact_verified_candidate_into_command_and_decision() {
     )
     .unwrap();
     let exact_authorization = exact.decision.strategy_authorization.unwrap();
+
+    let mut policy = AuthorityPolicy {
+        policy_id: "docs-local".to_string(),
+        principal_id: "workspace-owner".to_string(),
+        subject: match subject() {
+            Term::Object(subject) => subject,
+            _ => unreachable!(),
+        },
+        principal_granted_action_ids: vec!["docs.evaluate".into(), "docs.write".into()],
+        runtime_allowed_action_ids: vec!["docs.evaluate".into(), "docs.write".into()],
+        restricted_action_ids: vec!["docs.write".into()],
+    };
+    let policy_hash = policy.content_hash().unwrap();
+    let restricted = AuthorityPolicyBinding::new(policy.clone(), policy_hash).unwrap();
+    let denied = authorize_curation_outcome_with_authority(
+        outcome.clone(),
+        problem(),
+        StrategySearchBounds {
+            max_expansions: 8,
+            max_depth: 4,
+        },
+        None,
+        Some((
+            &restricted,
+            &["docs.evaluate".to_string(), "docs.write".to_string()],
+            &restricted.policy.subject,
+        )),
+    )
+    .unwrap();
+    assert_eq!(denied.decision.decision, AgentDecisionKind::Indeterminate);
+    assert!(denied.goal_command.is_none());
+
+    policy.restricted_action_ids.clear();
+    let policy_hash = policy.content_hash().unwrap();
+    let allowed = AuthorityPolicyBinding::new(policy, policy_hash).unwrap();
+    let authorized_with_policy = authorize_curation_outcome_with_authority(
+        outcome.clone(),
+        problem(),
+        StrategySearchBounds {
+            max_expansions: 8,
+            max_depth: 4,
+        },
+        None,
+        Some((
+            &allowed,
+            &["docs.evaluate".to_string(), "docs.write".to_string()],
+            &allowed.policy.subject,
+        )),
+    )
+    .unwrap();
+    assert!(authorized_with_policy
+        .decision
+        .strategy_authorization
+        .as_ref()
+        .and_then(|authorization| authorization.authority_decision.as_ref())
+        .is_some());
 
     let authorized = authorize_curation_outcome(
         outcome,

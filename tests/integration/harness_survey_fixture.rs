@@ -106,11 +106,13 @@ pub fn survey_binding(
         provider_id: "specimen-provider".to_string(),
         package: SelectedStewardshipPackage {
             expression: "docs_freshness".to_string(),
+            principal_id: "workspace-owner".to_string(),
             belief_family_id: FAMILY_ID.to_string(),
             evidence_mapping_id: "docs_freshness".to_string(),
             curation_rule_id: "docs_freshness".to_string(),
             maintained_condition_id: "docs_freshness".to_string(),
             strategy_theory_id: "docs_freshness".to_string(),
+            authority_policy_id: "docs_workspace_local".to_string(),
             claim_policy_id: "docs-claims-strict-v1".to_string(),
         },
         storage_root,

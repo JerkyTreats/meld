@@ -102,6 +102,7 @@ fn planning_contracts_round_trip() {
             warnings: vec![],
         },
         diagnostics: vec![diagnostic.clone()],
+        authority_decision: None,
     });
     let variants = vec![
         PlanningResult::Satisfied(PlanningSatisfied {

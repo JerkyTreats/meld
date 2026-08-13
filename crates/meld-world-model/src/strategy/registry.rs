@@ -151,6 +151,15 @@ pub fn validate_strategy_theory_package(
             )));
         }
     }
+    let mut requested_authority = BTreeSet::new();
+    for action_id in &package.requested_authority {
+        require_non_empty("strategy requested authority action", action_id)?;
+        if !requested_authority.insert(action_id.as_str()) {
+            return Err(StorageError::InvalidPath(format!(
+                "duplicate strategy requested authority action '{action_id}'"
+            )));
+        }
+    }
     for rule in &package.snapshot.settlement_rules {
         require_non_empty(
             "prospective evidence route id",

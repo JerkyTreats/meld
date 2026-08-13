@@ -57,6 +57,9 @@ pub struct ExecutionStrategyAuthorization {
     pub strategy_theory_content_hash: Option<String>,
     /// Optional reusable Method lineage.
     pub method_id: Option<String>,
+    /// Effective authority retained from the Agent authorization.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority_decision: Option<meld_lang::AuthorityDecision>,
 }
 
 /// Common metadata attached to idempotent goal commands.

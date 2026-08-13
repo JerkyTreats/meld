@@ -21,6 +21,8 @@ use std::path::PathBuf;
 pub struct SelectedStewardshipPackage {
     /// Stewardship expression name, for example `docs_freshness`.
     pub expression: String,
+    /// Principal whose grant bounds this package.
+    pub principal_id: String,
     /// Belief family identity.
     pub belief_family_id: String,
     /// Outcome-to-evidence mapping identity.
@@ -31,6 +33,8 @@ pub struct SelectedStewardshipPackage {
     pub maintained_condition_id: String,
     /// Complete Strategy theory package identity.
     pub strategy_theory_id: String,
+    /// Effective-authority policy identity.
+    pub authority_policy_id: String,
     /// Docs claim policy identity.
     pub claim_policy_id: String,
 }
@@ -177,11 +181,13 @@ impl PhysicalBinding {
             provider_id: selection.provider_id.clone(),
             package: SelectedStewardshipPackage {
                 expression: selection.expression.clone(),
+                principal_id: selection.principal_id.clone(),
                 belief_family_id: selection.theory.belief_family_id.clone(),
                 evidence_mapping_id: selection.theory.evidence_mapping_id.clone(),
                 curation_rule_id: selection.theory.curation_rule_id.clone(),
                 maintained_condition_id: selection.theory.maintained_condition_id.clone(),
                 strategy_theory_id: selection.theory.strategy_theory_id.clone(),
+                authority_policy_id: selection.theory.authority_policy_id.clone(),
                 claim_policy_id: selection.theory.claim_policy_id.clone(),
             },
             storage_root,
@@ -234,6 +240,7 @@ mod tests {
                 target_root: target_root.to_path_buf(),
                 subject: "docs".to_string(),
                 agent_id: "docs-steward".to_string(),
+                principal_id: "workspace-owner".to_string(),
                 provider_id: "main-provider".to_string(),
                 theory: TheorySelection {
                     belief_family_id: "docs_freshness".to_string(),
@@ -241,6 +248,7 @@ mod tests {
                     curation_rule_id: "docs_freshness".to_string(),
                     maintained_condition_id: "docs_freshness".to_string(),
                     strategy_theory_id: "docs_freshness".to_string(),
+                    authority_policy_id: "docs_workspace_local".to_string(),
                     claim_policy_id: "docs-claims-strict-v1".to_string(),
                 },
             }),

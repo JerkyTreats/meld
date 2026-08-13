@@ -742,6 +742,7 @@ expression = "documentation_maintenance"
 target_root = "{}"
 subject = "{}"
 agent_id = "docs-steward"
+principal_id = "workspace-owner"
 provider_id = "main-provider"
 
 [stewardship.declarations.docs.theory]
@@ -750,6 +751,7 @@ evidence_mapping_id = "docs_freshness_outcome_interpretation_v1"
 curation_rule_id = "docs_freshness"
 maintained_condition_id = "docs_freshness"
 strategy_theory_id = "docs_freshness"
+authority_policy_id = "docs_workspace_local"
 claim_policy_id = "docs-claims-strict-v1"
 "#,
             target_root.display(),

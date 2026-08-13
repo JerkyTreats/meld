@@ -18,9 +18,10 @@ use meld_execution::planning::{
 use meld_execution::task::TaskCompiler;
 use meld_execution::task_network::{Response, SledTaskNetworkStore};
 use meld_lang::{
-    Bindings, CapabilityRef, Composition, Condition, CostEstimate, Effect, Goal, GoalLifecycle,
-    GoalPriority, GoalSource, Literal, Method, Operator, Proposition, Resolution, SlotConstraint,
-    Step, StepKind, Term, WorldState,
+    AuthorityDecision, AuthorityPolicy, AuthorityPolicyBinding, Bindings, CapabilityRef,
+    Composition, Condition, CostEstimate, Effect, Goal, GoalLifecycle, GoalPriority, GoalSource,
+    Literal, Method, Operator, Proposition, Resolution, SlotConstraint, Step, StepKind, Term,
+    WorldState,
 };
 
 fn node(id: &str) -> Term {
@@ -183,6 +184,30 @@ fn runtime(methods: Vec<Method>) -> PlanningRuntime {
     PlanningRuntime::new(library, catalog)
 }
 
+fn authority_policy(restricted: Vec<String>) -> AuthorityPolicyBinding {
+    let policy = AuthorityPolicy {
+        policy_id: "docs-local".to_string(),
+        principal_id: "workspace-owner".to_string(),
+        subject: DomainObjectRef::new("workspace", "node", "readme").unwrap(),
+        principal_granted_action_ids: vec!["docs.write".to_string()],
+        runtime_allowed_action_ids: vec!["docs.write".to_string()],
+        restricted_action_ids: restricted,
+    };
+    let hash = policy.content_hash().unwrap();
+    AuthorityPolicyBinding::new(policy, hash).unwrap()
+}
+
+fn authority_decision(policy: &AuthorityPolicyBinding) -> AuthorityDecision {
+    AuthorityDecision {
+        policy_id: policy.policy.policy_id.clone(),
+        policy_content_hash: policy.content_hash.clone(),
+        principal_id: policy.policy.principal_id.clone(),
+        subject: policy.policy.subject.clone(),
+        requested_action_ids: vec!["docs.write".to_string()],
+        authorized_action_ids: vec!["docs.write".to_string()],
+    }
+}
+
 #[test]
 fn authorized_planning_bypasses_method_search_and_revalidates_exact_composition() {
     let runtime = runtime(Vec::new());
@@ -231,6 +256,7 @@ fn authorized_planning_bypasses_method_search_and_revalidates_exact_composition(
         strategy_theory_id: None,
         strategy_theory_content_hash: None,
         method_id: None,
+        authority_decision: None,
     };
     let world_state = WorldState::new(vec![Proposition::Accessible {
         scope: node("readme"),
@@ -246,6 +272,61 @@ fn authorized_planning_bypasses_method_search_and_revalidates_exact_composition(
     assert_eq!(composed.composition, composition);
     assert_eq!(composed.method_id, "candidate-1");
     assert_eq!(composed.bindings.get("scope"), Some(&node("readme")));
+}
+
+#[test]
+fn authorized_planning_revalidates_effective_authority_before_composing() {
+    let policy = authority_policy(Vec::new());
+    let allowed_runtime = runtime(Vec::new()).with_authority_policy(policy.clone());
+    let goal = goal_with_ceiling(None);
+    let composition = Composition {
+        steps: vec![Step {
+            step_id: "write".into(),
+            kind: StepKind::Op(Operator {
+                operator_id: "write".into(),
+                preconditions: Vec::new(),
+                effects: Vec::new(),
+                cost: CostEstimate::zero(),
+                resolution: Resolution {
+                    requires_inputs: Vec::new(),
+                    requires_outputs: Vec::new(),
+                    scope_kind: Some("filesystem".into()),
+                    tags: Vec::new(),
+                    specific: Some(CapabilityRef {
+                        capability_type_id: "docs.write".into(),
+                        capability_version: 1,
+                    }),
+                },
+            }),
+        }],
+        edges: Vec::new(),
+    };
+    let authorization = ExecutionStrategyAuthorization {
+        authorization_id: "authorization-authority".into(),
+        agent_decision_id: "decision-authority".into(),
+        candidate_id: "candidate-authority".into(),
+        goal_id: goal.goal_id.clone(),
+        planner_snapshot_id: frame().frame_id,
+        composition,
+        bindings: Bindings::empty(),
+        capability_contract_ids: vec![catalog().get("docs.write", 1).unwrap().content_identity()],
+        strategy_theory_id: None,
+        strategy_theory_content_hash: None,
+        method_id: None,
+        authority_decision: Some(authority_decision(&policy)),
+    };
+
+    let allowed = allowed_runtime
+        .plan_authorized_goal(request(goal.clone(), WorldState::empty()), &authorization)
+        .unwrap();
+    assert!(matches!(allowed, PlanningResult::Composed(_)));
+
+    let restricted =
+        runtime(Vec::new()).with_authority_policy(authority_policy(vec!["docs.write".to_string()]));
+    let denied = restricted
+        .plan_authorized_goal(request(goal, WorldState::empty()), &authorization)
+        .unwrap();
+    assert!(matches!(denied, PlanningResult::InvalidMethod(_)));
 }
 
 #[test]
@@ -289,6 +370,7 @@ fn authorized_planning_rejects_drifted_contract_identity() {
         strategy_theory_id: None,
         strategy_theory_content_hash: None,
         method_id: None,
+        authority_decision: None,
     };
     let result = runtime
         .plan_authorized_goal(request(goal, WorldState::empty()), &authorization)

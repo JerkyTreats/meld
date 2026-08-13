@@ -1,0 +1,24 @@
+{
+  "policy_id": "docs_workspace_local",
+  "principal_id": "workspace-owner",
+  "subject": {
+    "domain_id": "workspace_fs",
+    "object_kind": "node",
+    "object_id": "docs"
+  },
+  "principal_granted_action_ids": [
+    "docs.assess_published_scope",
+    "docs.draft_patch_set",
+    "docs.inspect_scope",
+    "docs.publish_patch_set",
+    "docs.validate_patch_set"
+  ],
+  "runtime_allowed_action_ids": [
+    "docs.assess_published_scope",
+    "docs.draft_patch_set",
+    "docs.inspect_scope",
+    "docs.publish_patch_set",
+    "docs.validate_patch_set"
+  ],
+  "restricted_action_ids": []
+}

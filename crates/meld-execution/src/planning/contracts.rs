@@ -37,6 +37,7 @@ pub struct PlanningRequest {
 }
 
 /// Runtime planning outcome for one goal.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PlanningResult {
     /// Goal already satisfied by the projected world state.
@@ -85,6 +86,9 @@ pub struct ExecutionComposition {
     pub validation: meld_lang::ValidationResult,
     /// Deterministic diagnostics explaining selection and preparation.
     pub diagnostics: Vec<PlanningDiagnostic>,
+    /// Effective authority carried into task lineage for dispatch enforcement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority_decision: Option<meld_lang::AuthorityDecision>,
 }
 
 /// No verified method passed all mechanical planning checks.

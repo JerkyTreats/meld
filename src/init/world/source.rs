@@ -17,6 +17,8 @@
 
 use std::path::{Path, PathBuf};
 
+use meld_events::DomainObjectRef;
+use meld_lang::AuthorityPolicy;
 use meld_world_model::agent::{AgentCurationRuleConfig, AgentMaintainedCondition};
 use meld_world_model::belief::{BeliefConfigLoader, ConfiguredOutcomeMappingSet};
 use meld_world_model::strategy::{validate_strategy_theory_package, StrategyTheoryPackage};
@@ -25,8 +27,9 @@ use crate::config::SelectedStewardshipPackage;
 use crate::docs::claim_validation::DocsClaimPolicy;
 use crate::error::ApiError;
 use crate::init::world::theory::{
-    belief_family_config_path, claim_policy_config_path, curation_rule_config_path,
-    maintained_condition_config_path, outcome_mapping_config_path, strategy_theory_config_path,
+    authority_policy_config_path, belief_family_config_path, claim_policy_config_path,
+    curation_rule_config_path, maintained_condition_config_path, outcome_mapping_config_path,
+    strategy_theory_config_path,
 };
 
 /// Disposition of one provisioned theory body.
@@ -55,6 +58,7 @@ pub struct TheorySourceReport {
 pub fn provision_theory_source(
     source_dir: &Path,
     package: &SelectedStewardshipPackage,
+    subject: &DomainObjectRef,
 ) -> Result<TheorySourceReport, ApiError> {
     if !source_dir.is_dir() {
         return Err(ApiError::ConfigError(format!(
@@ -132,6 +136,27 @@ pub fn provision_theory_source(
         "strategy_theory",
         strategy_theory_config_path(&package.strategy_theory_id)?,
         strategy_raw,
+    ));
+
+    let authority_raw = read_single(source_dir, "authority_policy")?;
+    let authority: AuthorityPolicy = serde_json::from_str(&authority_raw)
+        .map_err(|error| source_error(source_dir, "authority_policy", error))?;
+    authority
+        .validate()
+        .map_err(|error| source_error(source_dir, "authority_policy", error))?;
+    if authority.policy_id != package.authority_policy_id
+        || authority.principal_id != package.principal_id
+        || &authority.subject != subject
+    {
+        return Err(ApiError::ConfigError(
+            "theory source authority policy does not match the selected policy, principal, and subject"
+                .to_string(),
+        ));
+    }
+    prepared.push((
+        "authority_policy",
+        authority_policy_config_path(&package.authority_policy_id)?,
+        authority_raw,
     ));
 
     let claim_raw = read_single(source_dir, "claim_policy")?;

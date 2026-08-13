@@ -6,9 +6,9 @@ Scope: elevate the hand-lowered docs stewardship image into durable installed th
 
 ## Purpose
 
-The strategy landing closed the docs freshness loop dynamically: belief divergence curates a Goal, bounded search constructs a candidate from capability contracts, the Agent authorizes it, Execution realizes it exactly with no Method and no workflow route, claim-validated publication produces assessment evidence, and belief settles to quiescence. The generic strategy, agent, and execution machinery carries no domain vocabulary.
+The strategy landing closed the docs freshness loop dynamically. Steps 1 through 4 then elevated the complete docs image into exact durable owner revisions, removed root expression dispatch, made standing maintained conditions causal, and separated effective authority from capability availability. The generic Strategy, Agent, and execution machinery carries no docs vocabulary.
 
-The remaining defect is locational, not structural. The complete docs theory package — settlement rule, prospective evidence route, claim policy, goal template, cost model, and search bounds — is hand-lowered Rust in `src/docs/pds.rs`, composed unconditionally from root assembly. In the stewardship layering recorded by the [PDS proposal corpus](../../persistent_domain_stewardship/proposal_index.md), that module is a compatibility antecedent of a compiled stewardship image: it shows exactly what a declaration compiler must eventually emit, and it must not become the extension model. This program elevates that content into durable installed theory and proves the elevation with a dissimilar second expression.
+The remaining program work is proof and accumulation. A dissimilar second expression must falsify hidden docs assumptions before package schemas freeze, then settled replay must reuse recorded judgment without candidate regeneration.
 
 This program is the active forward authority after the runtime completion program closed. It succeeds the [Runtime Completion Ground Map](runtime_completion_ground_map.md) as the current objective.
 
@@ -23,7 +23,6 @@ What holds on the strategy branch:
 
 What does not hold:
 
-- Authority is not represented separately from capability availability.
 - A second dissimilar expression has not yet tested the generality of the elevated seams.
 - Settled Strategy replay does not yet reuse recorded authorization without candidate regeneration.
 
@@ -47,7 +46,8 @@ flowchart TD
 - Step 1 is implemented with durable exact owner revisions and complete receipts.
 - Step 2 is implemented with named declaration lowering, owner activation, exact capability binding, declaration-selected belief context, and no root expression dispatch.
 - Step 3 is implemented with Agent-owned maintained-condition revisions, complete-receipt activation, causal Goal lineage, and compatibility lowering for threshold-only records.
-- Steps 4 through 6 remain pending.
+- Step 4 is implemented with exact execution-owned policy revisions and independent Agent, admission, planning, and dispatch enforcement.
+- Steps 5 and 6 remain pending.
 
 ### Step 1 — Theory durability symmetry
 
@@ -68,6 +68,8 @@ Implementation and evidence are recorded in the [Standing Maintained Condition I
 ### Step 4 — Authority distinct from capability
 
 Represent effective authority as the intersection of capability availability, package request, principal grant, runtime policy, and restrictions. The stewardship reviews name authority as the place where design must not be inferred from nearby capability machinery. This step gates any expression whose interventions are consequential beyond workspace-local writes.
+
+Implementation and evidence are recorded in the [Effective Authority Implementation Design](effective_authority_implementation_design.md) and [Effective Authority Completion Evidence](effective_authority_completion_evidence.md).
 
 ### Step 5 — Second expression proof
 
@@ -94,6 +96,7 @@ Residuals adopted by this program:
 - The stale on-disk Method, available-action, and realization artifacts were retired in step 2.
 - Claim-policy thresholds and weights are durable owner theory after step 1. Preset expansion remains deferred beyond the minimal step 2 declaration.
 - The hardcoded standing Goal template was closed in step 3. Agent-owned maintained conditions now cause transient Goals through exact receipt-selected revisions.
+- Capability availability as implicit authorization was closed in step 4. Exact authority policy revisions now bound Agent judgment, admission, planning, and dispatch.
 
 Residuals tracked in their home documents, not gated by this program:
 

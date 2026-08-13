@@ -205,6 +205,9 @@ pub struct TaskLineage {
     pub capability_type_id: String,
     /// Capability version selected for the operator.
     pub capability_version: u32,
+    /// Effective authority retained for independent dispatch enforcement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority_decision: Option<meld_lang::AuthorityDecision>,
 }
 
 /// Dependency edge between task nodes.

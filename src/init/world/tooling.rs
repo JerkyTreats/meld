@@ -20,7 +20,7 @@ use crate::init::world::pipeline::{
     CompleteTheoryInstall, WorldInitContent, WorldInitPipeline, WorldInitTheoryBundle,
 };
 use crate::init::world::theory::{
-    load_belief_family_config, load_claim_policy, load_curation_rule_config,
+    load_authority_policy, load_belief_family_config, load_claim_policy, load_curation_rule_config,
     load_maintained_condition, load_outcome_mapping_config, load_strategy_theory_package,
 };
 use crate::init::world::{WorldInitReport, WorldInitRequest, WorldInitStage};
@@ -83,8 +83,14 @@ pub fn run_world_init(
     // loaders resolve selection identities against it. Provisioning is
     // config-home file placement only; durable installation stays with the
     // staged pipeline below.
+    let subject = DomainObjectRef::new(SUBJECT_DOMAIN_ID, SUBJECT_OBJECT_KIND, &binding.subject)
+        .map_err(|error| world_init_error(error.to_string()))?;
     if let Some(source_dir) = theory_source {
-        crate::init::world::source::provision_theory_source(source_dir, &binding.package)?;
+        crate::init::world::source::provision_theory_source(
+            source_dir,
+            &binding.package,
+            &subject,
+        )?;
     }
 
     let target_root = target_path.canonicalize().map_err(|error| {
@@ -114,6 +120,7 @@ pub fn run_world_init(
     let maintained_condition = load_maintained_condition(&binding.package.maintained_condition_id)?;
     let outcome_mapping = load_outcome_mapping_config(&binding.package.evidence_mapping_id)?;
     let strategy_theory = load_strategy_theory_package(&binding.package.strategy_theory_id)?;
+    let authority_policy = load_authority_policy(&binding.package.authority_policy_id)?;
     let claim_policy = load_claim_policy(&binding.package.claim_policy_id)?;
     let executable_contracts = select_strategy_contracts(
         &strategy_theory,
@@ -134,8 +141,6 @@ pub fn run_world_init(
         .map_err(|error| world_init_error(error.to_string()))?
         .tip_seq;
 
-    let subject = DomainObjectRef::new(SUBJECT_DOMAIN_ID, SUBJECT_OBJECT_KIND, &binding.subject)
-        .map_err(|error| world_init_error(error.to_string()))?;
     let perspective = PerspectiveKey::new(SEED_PERSPECTIVE_KIND, SEED_PERSPECTIVE_ID)
         .map_err(|error| world_init_error(error.to_string()))?;
     let observation_scope = family_config.dimension_id.clone();
@@ -166,6 +171,7 @@ pub fn run_world_init(
             outcome_mapping,
             strategy_theory,
             executable_contracts,
+            authority_policy,
             claim_policy,
         },
         curation_rules: stores.curation_rule_registry.as_ref(),
@@ -173,6 +179,7 @@ pub fn run_world_init(
         outcome_mappings: stores.outcome_mapping_registry.as_ref(),
         strategy_theories: stores.strategy_theory_registry.as_ref(),
         executable_contracts: stores.capability_contract_registry.as_ref(),
+        authority_policies: stores.authority_policy_registry.as_ref(),
         claim_policies: stores.claim_policy_registry.as_ref(),
         receipts: stores.theory_receipts.as_ref(),
     };

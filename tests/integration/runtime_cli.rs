@@ -569,6 +569,7 @@ fn stewardship_receipts_activate_routes_and_preserve_a_b_lineage() {
             receipt.outcome_mapping.clone(),
             receipt.strategy_theory.clone(),
             receipt.executable_contracts.clone(),
+            receipt.authority_policy.clone(),
             receipt.claim_policy.clone(),
             100,
         )
@@ -666,6 +667,7 @@ expression = "documentation_maintenance"
 target_root = "{target_root}"
 subject = "docs"
 agent_id = "docs-writer"
+principal_id = "workspace-owner"
 provider_id = "steward-provider"
 
 [stewardship.declarations.docs.theory]
@@ -674,6 +676,7 @@ evidence_mapping_id = "docs_freshness_outcome_interpretation_v1"
 curation_rule_id = "docs_freshness"
 maintained_condition_id = "docs_freshness"
 strategy_theory_id = "docs_freshness"
+authority_policy_id = "docs_workspace_local"
 claim_policy_id = "docs-claims-strict-v1"
 "#,
         target_root = target_root.display()

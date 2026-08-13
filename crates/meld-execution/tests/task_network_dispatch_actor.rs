@@ -38,6 +38,7 @@ use meld_execution::task_network::dispatch_actor::{
 use meld_execution::task_network::state::{NetworkState, TaskNode, TaskStatus};
 use meld_execution::task_network::store::InMemoryTaskNetworkStore;
 use meld_execution::task_network::AGGREGATE_OUTCOME_CONTRACT_ID;
+use meld_lang::{AuthorityDecision, AuthorityPolicy, AuthorityPolicyBinding};
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 
@@ -45,6 +46,30 @@ type ApiError = ExecutionInvariantError;
 
 fn open_db() -> sled::Db {
     sled::Config::new().temporary(true).open().unwrap()
+}
+
+fn authority_policy() -> AuthorityPolicyBinding {
+    let policy = AuthorityPolicy {
+        policy_id: "docs-local".to_string(),
+        principal_id: "workspace-owner".to_string(),
+        subject: meld_events::DomainObjectRef::new("workspace", "node", "docs").unwrap(),
+        principal_granted_action_ids: vec!["docs.write".to_string()],
+        runtime_allowed_action_ids: vec!["docs.write".to_string()],
+        restricted_action_ids: Vec::new(),
+    };
+    let hash = policy.content_hash().unwrap();
+    AuthorityPolicyBinding::new(policy, hash).unwrap()
+}
+
+fn authority_decision(policy: &AuthorityPolicyBinding) -> AuthorityDecision {
+    AuthorityDecision {
+        policy_id: policy.policy.policy_id.clone(),
+        policy_content_hash: policy.content_hash.clone(),
+        principal_id: policy.policy.principal_id.clone(),
+        subject: policy.policy.subject.clone(),
+        requested_action_ids: vec!["docs.write".to_string()],
+        authorized_action_ids: vec!["docs.write".to_string()],
+    }
 }
 
 fn tick_request(
@@ -804,4 +829,54 @@ fn zero_budget_tick_attempts_nothing_and_reports_pending_work() {
     assert!(fixture.package_invocations().is_empty());
     assert!(fixture.claim_invocations().is_empty());
     assert_eq!(fixture.preparer_call_count(), 0);
+}
+
+#[test]
+fn active_authority_policy_denies_missing_lineage_before_invocation() {
+    let fixture = DispatchFixture::new();
+    let actor = fixture
+        .actor(open_db(), sibling_task(), vec![])
+        .with_authority_policy(authority_policy());
+    let mut store = InMemoryTaskNetworkStore::new("network-docs");
+    task_network_support::commit_single_task(&mut store, "task-alpha");
+
+    let report = block_on(actor.tick(&mut store, tick_request(1, 1, vec![]))).unwrap();
+
+    assert!(report
+        .fatal_errors
+        .iter()
+        .any(|issue| issue.code == "effective_authority_denied"));
+    assert!(fixture.claim_invocations().is_empty());
+}
+
+#[test]
+fn matching_authority_lineage_permits_claimed_invocation() {
+    let fixture = DispatchFixture::new();
+    let policy = authority_policy();
+    let actor = fixture
+        .actor(open_db(), sibling_task(), vec![])
+        .with_authority_policy(policy.clone());
+    let mut store = InMemoryTaskNetworkStore::new("network-docs");
+    let mut node = task_network_support::single_task_node("task-alpha");
+    node.lineage.authority_decision = Some(authority_decision(&policy));
+    let set = meld_execution::task_network::mutation::Set::new(
+        "network-docs",
+        "composition-fixture",
+        "inject-authorized-task",
+        vec![meld_execution::task_network::mutation::Mutation::Inject(
+            task_network_support::inject_for_node(node, vec![]),
+        )],
+        vec![],
+    );
+    let request = task_network_support::apply_memory_command(
+        &store,
+        "command-authorized-task",
+        Command::ApplyMutationSet(set),
+    );
+    assert!(matches!(store.submit(request), Response::Accepted { .. }));
+
+    let report = block_on(actor.tick(&mut store, tick_request(1, 1, vec![]))).unwrap();
+
+    assert_eq!(report.items_committed, 1);
+    assert_eq!(fixture.claim_invocations(), vec!["task-alpha"]);
 }
