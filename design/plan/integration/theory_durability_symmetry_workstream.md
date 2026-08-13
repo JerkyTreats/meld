@@ -1,9 +1,11 @@
 # Theory Durability Symmetry Workstream
 
 Date: 2026-08-12
-Status: ready for initiation
+Status: ready for phased implementation
 Parent program: [Theory Elevation Program](theory_elevation_program.md)
-Assessment: [Theory Durability Symmetry Assessment By Domain](theory_durability_symmetry_domain_assessment.md)
+Initial assessment: [Theory Durability Symmetry Assessment By Domain](theory_durability_symmetry_domain_assessment.md)
+Contract assessment: [Theory Durability Symmetry Contract Coherence Assessment](theory_durability_symmetry_contract_coherence_assessment.md)
+Implementation design: [Theory Durability Symmetry Implementation Design](theory_durability_symmetry_implementation_design.md)
 Scope: Theory Elevation Step 1 only
 
 ## Objective
@@ -33,8 +35,7 @@ Implementation begins at the owner contracts and registry behavior. Root assembl
 | Belief-family revision | evidence schemas, comparator, priors, projection, observationality, anchor requirement | `meld-world-model` belief | `theory/docs_freshness/belief_family.docs_freshness.json` |
 | Curation-rule revision | divergence threshold, priority, desired condition, source kind | `meld-world-model` Agent | `theory/docs_freshness/curation_rule.docs_freshness.json` and Agent record binding |
 | Outcome-mapping revision | event matching, subject extraction, evidence field extraction | `meld-world-model` belief | `theory/docs_freshness/outcome_interpretation.docs_freshness.json` |
-| Strategy-activation revision | settlement rules, prospective evidence routes, evaluation policy, search bounds, requested projection dimensions | `meld-world-model` Strategy | `src/docs/pds.rs` |
-| Capability-view revision | Strategy operators, artifact dependencies, effects, cost estimates, outcome contract bindings | `capability` | `src/docs/pds.rs` |
+| Strategy-theory revision | settlement rules, prospective evidence routes, evaluation policy, search bounds, requested projection dimensions, Strategy capabilities, artifact dependencies, effects, costs, and outcome bindings | `meld-world-model` Strategy | `src/docs/pds.rs` |
 | Executable-contract revision | full `CapabilityTypeContract` body and content identity | `meld-execution` capability | docs capability publication during process composition |
 | Claim-policy revision | validation thresholds, weights, revision limit, stable policy identity | `docs` | `src/docs/pds.rs` |
 
@@ -48,14 +49,16 @@ Every revision unit must expose an owner-specific typed contract with these beha
 
 - A stable semantic identity selects a revision family.
 - A canonical content hash identifies exact semantic content.
-- Installation validates the body before changing the current head.
+- Installation validates the body before appending an exact revision.
 - Installing identical content is an idempotent no-op.
-- Installing changed content appends a revision and advances the current head.
-- Advancing the head never deletes or rewrites an older revision.
-- Current resolution returns the complete current body and revision reference.
+- Installing changed content appends a revision without deleting or rewriting an older revision.
 - Exact resolution by semantic identity and content hash returns the historical body.
-- A missing body, corrupt body, or dangling current head returns a typed failure.
-- Concurrent readers observe either the old complete revision or the new complete revision, never a partial body.
+- A missing or corrupt exact body returns a typed failure.
+- The complete installation receipt is the sole activation head for a selected package.
+
+The existing belief-family current head remains a compatibility surface while its callers move to receipt-selected exact resolution. New owner registries do not introduce independent activation heads.
+
+Executable capability contracts retain their existing type and version uniqueness. Different content under the same type and version is version drift and fails installation rather than creating a hidden revision. A semantic capability change increments the capability version.
 
 Each owner may choose its physical store. Shared hashing or persistence mechanics may be reused, but no generic registry may become authoritative for foreign semantics.
 
@@ -75,9 +78,9 @@ Authored source provisioning remains XDG configuration placement only. Durable i
 
 ### AC3 Immutable turn resolution
 
-Before a curation or Strategy turn performs semantic work, the runtime resolution boundary freezes one complete revision set. The turn uses those exact bodies through completion even when another process advances a current head concurrently.
+Before a runtime composition performs semantic work, the runtime resolution boundary freezes one complete revision set. Every turn in that composition uses those exact bodies through completion even when another process activates a newer receipt.
 
-A later turn may use the newer head. One turn may never mix old and new revisions.
+A later runtime assembly may use the newer receipt. Hot theory replacement inside an assembled process is not part of Step 1.
 
 ### AC4 No semantic fallback
 
@@ -87,9 +90,9 @@ No task-network mutation, capability invocation, or evidence admission occurs fr
 
 ### AC5 Curation and Strategy lineage
 
-Every durable curation decision cites the exact curation-rule revision used. Every Strategy authorization cites the exact Strategy-activation revision and capability-view revision used to construct and verify its candidate.
+Every durable curation decision cites the exact curation-rule revision used. Every Strategy authorization cites the exact complete Strategy theory revision used to construct and verify its candidate.
 
-The cited capability-view revision resolves to the exact executable-contract revision identities and outcome contract bindings considered by Strategy.
+The cited Strategy revision retains the exact executable-contract revision identities and outcome contract bindings considered by Strategy through its existing `StrategyCapability` products.
 
 ### AC6 Realization lineage
 
@@ -99,21 +102,21 @@ Each concrete executor activation can be correlated with the exact claim-policy 
 
 ### AC7 Outcome and belief lineage
 
-Substantive docs outcomes retain the exact claim-policy identity already produced by validation and publication. Evidence ingestion records the exact outcome-mapping revision that interpreted the outcome. Resulting belief provenance preserves both the evidence mapping revision and the existing belief-family revision.
+Substantive docs outcomes retain the exact claim-policy identity already produced by validation and publication. Evidence ingestion records the exact outcome-mapping revision that interpreted the outcome. The resulting belief revision preserves its existing belief-family revision and reaches mapping lineage through its durable evidence ids.
 
-From one settled or divergent belief revision, an inspector can resolve the exact mapping, family, claim policy, Strategy activation, capability view, and executable contracts that participated in the causal path when those units were relevant.
+From one settled or divergent belief revision, an inspector can resolve the exact mapping, family, claim policy, Strategy theory, and executable contracts that participated in the causal path when those units were relevant.
 
 ### AC8 Historical resolution after update
 
-An integration test installs revision A for every changed theory kind, runs one docs freshness turn, installs revision B under the same semantic identities, and runs another turn.
+An integration test installs revision A for every changed theory kind, runs one docs freshness composition, installs revision B under the same selected package identities, assembles a new runtime, and runs another composition. An executable capability body changed for B uses an incremented capability version.
 
 The test proves:
 
-- current resolution returns revision B
+- current receipt resolution returns the complete revision B set
 - every revision A reference still resolves to byte-equivalent semantic content
-- records from the first turn cite only revision A
-- records from the second turn cite only revision B
-- no first-turn record is silently reinterpreted through revision B
+- records from the first composition cite only revision A
+- records from the second composition cite only revision B
+- no first-composition record is silently reinterpreted through revision B
 
 This criterion proves recoverability only. Replaying settled execution without candidate regeneration remains Step 6.
 
@@ -140,11 +143,12 @@ No central PDS store owns belief, Strategy, capability, execution, or docs seman
 
 Tests cover at least these failures:
 
-- selected identity has no installed head
-- current head cites a missing revision
+- selected package has no active receipt
+- active receipt head cites a missing receipt
+- active receipt cites a missing exact owner revision
 - stored content does not match its content hash
-- capability view cites an unknown executable contract revision
-- Strategy activation cites an unknown outcome binding
+- Strategy theory cites an unknown executable contract revision
+- Strategy theory cites an unknown outcome binding
 - claim-policy revision is absent when a docs executor binds
 - outcome mapping revision is absent during evidence ingestion
 - installation stops after some owners succeeded and then converges safely on retry
@@ -161,7 +165,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --all-targets
 ```
 
-Focused tests must include owner registry conformance, corrupt-store handling, concurrent head-change isolation, lineage integrity, partial-install recovery, and assembled docs convergence.
+Focused tests must include exact owner-store conformance, receipt isolation, lineage integrity, one partial-install recovery case, and assembled docs convergence.
 
 ## Rejection Criteria
 
@@ -170,7 +174,7 @@ The workstream is not complete if any statement below is true:
 - A new expression would still need to compile one of the Step 1 semantic body kinds into Rust.
 - Runtime success depends on an authored XDG body that was never durably installed.
 - A durable record cites an identity whose exact historical body cannot be resolved.
-- Runtime consumers silently read the current head when a record cites an older revision.
+- Runtime consumers silently read an owner activation head when a receipt or record cites an older exact revision.
 - One central registry interprets several domains' theory kinds.
 - A root adapter validates foreign semantics beyond calling the owning contract.
 - Step 2 declaration grammar, Step 3 maintained conditions, Step 4 authority, Step 5 CVE behavior, or Step 6 settled replay enters the implementation scope.

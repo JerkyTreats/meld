@@ -182,8 +182,10 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 - [execution/task_network/PHASE8.md](execution/task_network/PHASE8.md) — implemented
 - [events/event_foundation_closeout_program.md](events/event_foundation_closeout_program.md) - closed event foundation closeout
 - [integration/theory_elevation_program.md](integration/theory_elevation_program.md) - current forward authority: theory registries, declaration lowering, maintained conditions, authority, second expression proof, settled replay
-- [integration/theory_durability_symmetry_workstream.md](integration/theory_durability_symmetry_workstream.md) - ready Step 1 workstream with frozen theory inventory, acceptance criteria, rejection criteria, and verification gates
-- [integration/theory_durability_symmetry_domain_assessment.md](integration/theory_durability_symmetry_domain_assessment.md) - ready Step 1 affected-domain assessment and ownership boundary
+- [integration/theory_durability_symmetry_workstream.md](integration/theory_durability_symmetry_workstream.md) - Step 1 workstream ready for phased implementation with frozen theory inventory, acceptance criteria, rejection criteria, and verification gates
+- [integration/theory_durability_symmetry_domain_assessment.md](integration/theory_durability_symmetry_domain_assessment.md) - initial Step 1 domain sweep retained as assessment history
+- [integration/theory_durability_symmetry_contract_coherence_assessment.md](integration/theory_durability_symmetry_contract_coherence_assessment.md) - focused contract-reuse audit and refreshed cross-domain coherence assessment
+- [integration/theory_durability_symmetry_implementation_design.md](integration/theory_durability_symmetry_implementation_design.md) - dependency-ordered Step 1 contracts, storage, installation, runtime resolution, lineage, compatibility, and verification design
 - [integration/runtime_completion_ground_map.md](integration/runtime_completion_ground_map.md) - delivered runtime completion authority, retained as ground evidence
 - [integration/runtime_completion_implementation_workstreams.md](integration/runtime_completion_implementation_workstreams.md) - delivered workstream decomposition, all waves closed
 - [integration/flywheel_parity_workstream.md](integration/flywheel_parity_workstream.md) - everything-up-to-Strategy workstream, resuming from the Strategy pause for calibration re-measurement and live-run evidence

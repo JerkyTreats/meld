@@ -47,7 +47,7 @@ flowchart TD
 
 Apply the belief-family registry pattern — stable identity, content hash, append-only revisions, historical resolution — to every theory kind the docs image hand-lowers: settlement rules, prospective evidence routes, claim policies, outcome contract bindings, and capability strategy views. Registries are per domain, following existing ownership, not one central store. Success: every string identity in the docs stewardship image resolves through a durable registry, and the exact executed semantics of a past run are recoverable by revision.
 
-Initiation and completion are governed by the [Theory Durability Symmetry Workstream](theory_durability_symmetry_workstream.md), with cross-domain ownership frozen in the [Theory Durability Symmetry Assessment By Domain](theory_durability_symmetry_domain_assessment.md).
+Initiation and completion are governed by the [Theory Durability Symmetry Workstream](theory_durability_symmetry_workstream.md), with cross-domain ownership reconciled in the [Theory Durability Symmetry Contract Coherence Assessment](theory_durability_symmetry_contract_coherence_assessment.md).
 
 ### Step 2 — Declaration lowering and root dispatch removal
 
