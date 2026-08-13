@@ -23,10 +23,9 @@ What holds on the strategy branch:
 
 What does not hold:
 
-- Settlement rules, evidence routes, claim policies, outcome contract bindings, and the goal template exist only as compiled constants with string identities that no registry resolves.
-- Root assembly composes the docs stewardship image unconditionally; adding a second expression today would require a new root branch, which the stewardship invariants forbid as an extension model.
-- Standing responsibility exists only as a hardcoded goal template rather than a first-class maintained condition.
 - Authority is not represented separately from capability availability.
+- A second dissimilar expression has not yet tested the generality of the elevated seams.
+- Settled Strategy replay does not yet reuse recorded authorization without candidate regeneration.
 
 ## Program Sequence
 
@@ -47,7 +46,8 @@ flowchart TD
 
 - Step 1 is implemented with durable exact owner revisions and complete receipts.
 - Step 2 is implemented with named declaration lowering, owner activation, exact capability binding, declaration-selected belief context, and no root expression dispatch.
-- Steps 3 through 6 remain pending.
+- Step 3 is implemented with Agent-owned maintained-condition revisions, complete-receipt activation, causal Goal lineage, and compatibility lowering for threshold-only records.
+- Steps 4 through 6 remain pending.
 
 ### Step 1 — Theory durability symmetry
 
@@ -62,6 +62,8 @@ Replace the unconditional docs composition and the expression match in root asse
 ### Step 3 — Standing maintained condition
 
 Make standing responsibility a first-class contract: a maintained condition that causes zero or more transient Goals over time. The hardcoded docs goal template with its threshold literal becomes a lowering product of the maintained condition. This is the stewardship invariant every catalogued expression depends on.
+
+Implementation and evidence are recorded in the [Standing Maintained Condition Implementation Design](standing_maintained_condition_implementation_design.md) and [Standing Maintained Condition Completion Evidence](standing_maintained_condition_completion_evidence.md).
 
 ### Step 4 — Authority distinct from capability
 
@@ -91,6 +93,7 @@ Residuals adopted by this program:
 - The hardcoded belief-context family binding was closed in step 2. Hydration now consumes the selected physical binding.
 - The stale on-disk Method, available-action, and realization artifacts were retired in step 2.
 - Claim-policy thresholds and weights are durable owner theory after step 1. Preset expansion remains deferred beyond the minimal step 2 declaration.
+- The hardcoded standing Goal template was closed in step 3. Agent-owned maintained conditions now cause transient Goals through exact receipt-selected revisions.
 
 Residuals tracked in their home documents, not gated by this program:
 

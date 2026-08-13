@@ -61,6 +61,7 @@ fn subject() -> DomainObjectRef {
 
 fn rule_config() -> AgentCurationRuleConfig {
     AgentCurationRuleConfig {
+        maintained_condition_id: None,
         dimension_id: DIMENSION_ID.to_string(),
         threshold: THRESHOLD,
         priority_urgency: 50,
@@ -96,6 +97,8 @@ fn registration(with_rule: bool) -> SeedAgentRegistration {
         curation_rule: with_rule
             .then(|| AgentCurationRuleBinding::for_rule(rule_config()).unwrap()),
         curation_rule_revision: None,
+        maintained_condition: None,
+        maintained_condition_revision: None,
         created_at_seq: 0,
     }
 }

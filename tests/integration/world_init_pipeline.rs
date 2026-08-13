@@ -74,6 +74,7 @@ fn family_config_json() -> &'static str {
 
 fn curation_rule() -> AgentCurationRuleConfig {
     AgentCurationRuleConfig {
+        maintained_condition_id: None,
         dimension_id: FAMILY_ID.to_string(),
         threshold: 0.7,
         priority_urgency: 50,

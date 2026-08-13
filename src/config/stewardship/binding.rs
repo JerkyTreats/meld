@@ -27,6 +27,8 @@ pub struct SelectedStewardshipPackage {
     pub evidence_mapping_id: String,
     /// Curation rule reference.
     pub curation_rule_id: String,
+    /// Standing maintained-condition identity.
+    pub maintained_condition_id: String,
     /// Complete Strategy theory package identity.
     pub strategy_theory_id: String,
     /// Docs claim policy identity.
@@ -178,6 +180,7 @@ impl PhysicalBinding {
                 belief_family_id: selection.theory.belief_family_id.clone(),
                 evidence_mapping_id: selection.theory.evidence_mapping_id.clone(),
                 curation_rule_id: selection.theory.curation_rule_id.clone(),
+                maintained_condition_id: selection.theory.maintained_condition_id.clone(),
                 strategy_theory_id: selection.theory.strategy_theory_id.clone(),
                 claim_policy_id: selection.theory.claim_policy_id.clone(),
             },
@@ -236,6 +239,7 @@ mod tests {
                     belief_family_id: "docs_freshness".to_string(),
                     evidence_mapping_id: "docs_freshness_outcome_interpretation_v1".to_string(),
                     curation_rule_id: "docs_freshness".to_string(),
+                    maintained_condition_id: "docs_freshness".to_string(),
                     strategy_theory_id: "docs_freshness".to_string(),
                     claim_policy_id: "docs-claims-strict-v1".to_string(),
                 },
@@ -271,6 +275,7 @@ mod tests {
             "docs_freshness_outcome_interpretation_v1"
         );
         assert_eq!(binding.package.curation_rule_id, "docs_freshness");
+        assert_eq!(binding.package.maintained_condition_id, "docs_freshness");
         assert!(!binding.storage_root.starts_with(&binding.workspace_root));
     }
 

@@ -88,6 +88,7 @@ fn world_init() -> HarnessWorldInit {
         content: WorldInitContent {
             family_config: serde_json::from_str(family_config_json()).unwrap(),
             curation_rule: AgentCurationRuleConfig {
+                maintained_condition_id: None,
                 dimension_id: FAMILY_ID.to_string(),
                 threshold: 0.7,
                 priority_urgency: 50,

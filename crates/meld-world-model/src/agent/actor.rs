@@ -23,7 +23,7 @@ use crate::agent::runtime::{
 use crate::agent::selection::AgentWorkSelector;
 use crate::agent::store::AgentStore;
 use crate::agent::strategy::AgentStrategyRuntimeConfig;
-use crate::agent::{AgentCurationRuleBinding, AgentSinkReceipt};
+use crate::agent::{AgentCurationRuleBinding, AgentMaintainedConditionBinding, AgentSinkReceipt};
 use crate::belief::{BeliefQuery, BeliefStore};
 use crate::error::StorageError;
 use crate::planner::PlannerQuery;
@@ -161,6 +161,7 @@ pub struct AgentGoalCurationActor {
     core: AgentActorCore,
     strategy: Option<AgentStrategyRuntimeConfig>,
     curation_rule: Option<AgentCurationRuleBinding>,
+    maintained_condition: Option<AgentMaintainedConditionBinding>,
 }
 
 impl AgentGoalCurationActor {
@@ -182,6 +183,7 @@ impl AgentGoalCurationActor {
             },
             strategy: None,
             curation_rule: None,
+            maintained_condition: None,
         }
     }
 
@@ -204,12 +206,22 @@ impl AgentGoalCurationActor {
             },
             strategy: Some(strategy),
             curation_rule: None,
+            maintained_condition: None,
         }
     }
 
     /// Freeze the exact curation-rule revision selected for this composition.
     pub fn with_curation_rule(mut self, curation_rule: AgentCurationRuleBinding) -> Self {
         self.curation_rule = Some(curation_rule);
+        self
+    }
+
+    /// Freeze the exact standing condition selected for this composition.
+    pub fn with_maintained_condition(
+        mut self,
+        maintained_condition: AgentMaintainedConditionBinding,
+    ) -> Self {
+        self.maintained_condition = Some(maintained_condition);
         self
     }
 
@@ -256,6 +268,10 @@ impl AgentGoalCurationActor {
         };
         if let Some(curation_rule) = &self.curation_rule {
             agent.curation_rule = Some(curation_rule.clone());
+        }
+        if let Some(maintained_condition) = &self.maintained_condition {
+            agent.maintained_condition = Some(maintained_condition.clone());
+            agent.maintained_condition_revision = Some(maintained_condition.revision.clone());
         }
         let rule = match agent.installed_curation_rule() {
             Ok(rule) => rule.clone(),
@@ -309,6 +325,10 @@ impl AgentGoalCurationActor {
             .and_then(|binding| binding.revision.clone())
         {
             Some(revision) => runtime.with_curation_rule_revision(revision),
+            None => runtime,
+        };
+        let runtime = match self.maintained_condition.clone() {
+            Some(condition) => runtime.with_maintained_condition(condition),
             None => runtime,
         };
         for delivery in selection.items {

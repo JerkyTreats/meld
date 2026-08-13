@@ -246,6 +246,8 @@ fn agent_record(subject: &DomainObjectRef) -> AgentRecord {
         status: AgentStatus::Operational,
         curation_rule: None,
         curation_rule_revision: None,
+        maintained_condition: None,
+        maintained_condition_revision: None,
         created_at_seq: 1,
         updated_at_seq: 1,
     }

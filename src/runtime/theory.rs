@@ -8,7 +8,7 @@ use crate::config::SelectedStewardshipPackage;
 use crate::docs::claim_validation::DocsClaimPolicyRevisionRef;
 use meld_execution::capability::CapabilityContractRevisionRef;
 use meld_execution::capability::{CapabilityCatalog, CapabilityContractRevision};
-use meld_world_model::agent::AgentCurationRuleRevision;
+use meld_world_model::agent::{AgentCurationRuleRevision, AgentMaintainedConditionRevision};
 use meld_world_model::belief::{
     BeliefFamilyRegistry, BeliefFamilyRevision, OutcomeMappingRevision, TheoryRevisionRef,
 };
@@ -31,6 +31,8 @@ pub struct TheoryInstallationReceipt {
     pub belief_family: TheoryRevisionRef,
     /// Exact curation-rule revision.
     pub curation_rule: TheoryRevisionRef,
+    /// Exact standing maintained-condition revision.
+    pub maintained_condition: TheoryRevisionRef,
     /// Exact outcome-mapping revision.
     pub outcome_mapping: TheoryRevisionRef,
     /// Exact complete Strategy theory revision.
@@ -48,6 +50,7 @@ struct ReceiptIdentity<'a> {
     selection: &'a SelectedStewardshipPackage,
     belief_family: &'a TheoryRevisionRef,
     curation_rule: &'a TheoryRevisionRef,
+    maintained_condition: &'a TheoryRevisionRef,
     outcome_mapping: &'a TheoryRevisionRef,
     strategy_theory: &'a TheoryRevisionRef,
     executable_contracts: &'a [CapabilityContractRevisionRef],
@@ -61,6 +64,7 @@ impl TheoryInstallationReceipt {
         selection: SelectedStewardshipPackage,
         belief_family: TheoryRevisionRef,
         curation_rule: TheoryRevisionRef,
+        maintained_condition: TheoryRevisionRef,
         outcome_mapping: TheoryRevisionRef,
         strategy_theory: TheoryRevisionRef,
         mut executable_contracts: Vec<CapabilityContractRevisionRef>,
@@ -85,6 +89,9 @@ impl TheoryInstallationReceipt {
         curation_rule
             .validate_for_registry("agent_curation_rule")
             .map_err(invalid)?;
+        maintained_condition
+            .validate_for_registry("agent_maintained_condition")
+            .map_err(invalid)?;
         outcome_mapping
             .validate_for_registry("outcome_mapping")
             .map_err(invalid)?;
@@ -107,6 +114,7 @@ impl TheoryInstallationReceipt {
             selection: &selection,
             belief_family: &belief_family,
             curation_rule: &curation_rule,
+            maintained_condition: &maintained_condition,
             outcome_mapping: &outcome_mapping,
             strategy_theory: &strategy_theory,
             executable_contracts: &executable_contracts,
@@ -118,6 +126,7 @@ impl TheoryInstallationReceipt {
             selection,
             belief_family,
             curation_rule,
+            maintained_condition,
             outcome_mapping,
             strategy_theory,
             executable_contracts,
@@ -136,6 +145,7 @@ impl TheoryInstallationReceipt {
             selection: &self.selection,
             belief_family: &self.belief_family,
             curation_rule: &self.curation_rule,
+            maintained_condition: &self.maintained_condition,
             outcome_mapping: &self.outcome_mapping,
             strategy_theory: &self.strategy_theory,
             executable_contracts: &self.executable_contracts,
@@ -185,6 +195,8 @@ pub struct ResolvedStewardshipTheory {
     pub belief_family: BeliefFamilyRevision,
     /// Exact curation-rule revision.
     pub curation_rule: AgentCurationRuleRevision,
+    /// Exact standing maintained-condition revision.
+    pub maintained_condition: AgentMaintainedConditionRevision,
     /// Exact outcome-mapping revision.
     pub outcome_mapping: OutcomeMappingRevision,
     /// Exact complete Strategy theory revision.
@@ -243,6 +255,14 @@ impl ResolvedStewardshipTheory {
             )
             .map_err(owner_error)?
             .ok_or_else(|| missing("curation rule"))?;
+        let maintained_condition = stores
+            .maintained_condition_registry
+            .resolve(
+                &receipt.maintained_condition.id,
+                &receipt.maintained_condition.content_hash,
+            )
+            .map_err(owner_error)?
+            .ok_or_else(|| missing("maintained condition"))?;
         let outcome_mapping = stores
             .outcome_mapping_registry
             .resolve(
@@ -279,6 +299,7 @@ impl ResolvedStewardshipTheory {
             receipt,
             belief_family,
             curation_rule,
+            maintained_condition,
             outcome_mapping,
             strategy_theory,
             executable_contracts,
@@ -306,6 +327,7 @@ impl ResolvedStewardshipTheory {
         if &self.receipt.selection != selection
             || self.belief_family.revision_ref() != self.receipt.belief_family
             || self.curation_rule.revision_ref() != self.receipt.curation_rule
+            || self.maintained_condition.revision_ref() != self.receipt.maintained_condition
             || self.outcome_mapping.revision_ref() != self.receipt.outcome_mapping
             || self.strategy_theory.revision_ref() != self.receipt.strategy_theory
             || self.claim_policy.revision_ref() != self.receipt.claim_policy
@@ -315,6 +337,10 @@ impl ResolvedStewardshipTheory {
             ));
         }
         if self.curation_rule.rule.dimension_id != self.belief_family.config.dimension_id
+            || self.maintained_condition.condition.dimension_id
+                != self.belief_family.config.dimension_id
+            || self.curation_rule.rule.maintained_condition_id.as_deref()
+                != Some(self.maintained_condition.condition.condition_id.as_str())
             || self
                 .strategy_theory
                 .package
@@ -448,6 +474,7 @@ fn validate_selection(selection: &SelectedStewardshipPackage) -> Result<(), Theo
         &selection.belief_family_id,
         &selection.evidence_mapping_id,
         &selection.curation_rule_id,
+        &selection.maintained_condition_id,
         &selection.strategy_theory_id,
         &selection.claim_policy_id,
     ] {
@@ -493,7 +520,7 @@ mod tests {
     use crate::docs::capability::published_contracts;
     use crate::docs::claim_validation::DocsClaimPolicy;
     use crate::runtime::storage::ProductStorageLayout;
-    use meld_world_model::agent::AgentCurationRuleConfig;
+    use meld_world_model::agent::{AgentCurationRuleConfig, AgentMaintainedCondition};
     use meld_world_model::belief::{
         BeliefFamilyConfig, BeliefFamilyRegistryStore, OutcomeMappingSetConfig,
     };
@@ -505,6 +532,7 @@ mod tests {
             belief_family_id: "docs_freshness".to_string(),
             evidence_mapping_id: "docs_freshness_outcome_interpretation_v1".to_string(),
             curation_rule_id: "docs_freshness".to_string(),
+            maintained_condition_id: "docs_freshness".to_string(),
             strategy_theory_id: "docs_freshness".to_string(),
             claim_policy_id: "docs-claims-strict-v1".to_string(),
         }
@@ -527,6 +555,10 @@ mod tests {
         .unwrap();
         let curation: AgentCurationRuleConfig = serde_json::from_str(include_str!(
             "../../theory/docs_freshness/curation_rule.docs_freshness.json"
+        ))
+        .unwrap();
+        let maintained_condition: AgentMaintainedCondition = serde_json::from_str(include_str!(
+            "../../theory/docs_freshness/maintained_condition.docs_freshness.json"
         ))
         .unwrap();
         let strategy: StrategyTheoryPackage = serde_json::from_str(include_str!(
@@ -562,6 +594,10 @@ mod tests {
             .curation_rule_registry
             .install("docs_freshness", curation.clone(), 10)
             .unwrap();
+        let (_, condition_revision) = stores
+            .maintained_condition_registry
+            .install(maintained_condition.clone(), 10)
+            .unwrap();
 
         assert!(matches!(
             stores.theory_receipts.current(&selection()),
@@ -572,6 +608,7 @@ mod tests {
             selection(),
             family_revision.revision_ref(),
             curation_a.revision_ref(),
+            condition_revision.revision_ref(),
             mapping_revision.revision_ref(),
             strategy_revision.revision_ref(),
             capability_revisions
@@ -588,6 +625,7 @@ mod tests {
             selection(),
             family_revision.revision_ref(),
             curation_a.revision_ref(),
+            condition_revision.revision_ref(),
             mapping_revision.revision_ref(),
             strategy_revision.revision_ref(),
             reversed_contracts,
@@ -605,10 +643,19 @@ mod tests {
             .curation_rule_registry
             .install("docs_freshness", curation_b_body, 20)
             .unwrap();
+        let mut condition_b_body = maintained_condition;
+        condition_b_body.desired =
+            meld_lang::Condition::Above(meld_lang::Term::Literal(meld_lang::Literal::Number(0.91)));
+        condition_b_body.desired_summary = "confidence>0.91".to_string();
+        let (_, condition_b) = stores
+            .maintained_condition_registry
+            .install(condition_b_body, 20)
+            .unwrap();
         let receipt_b = TheoryInstallationReceipt::new(
             selection(),
             family_revision.revision_ref(),
             curation_b.revision_ref(),
+            condition_b.revision_ref(),
             mapping_revision.revision_ref(),
             strategy_revision.revision_ref(),
             capability_revisions
@@ -631,6 +678,14 @@ mod tests {
         assert_ne!(
             resolved_a.curation_rule.content_hash,
             resolved_b.curation_rule.content_hash
+        );
+        assert_ne!(
+            resolved_a.maintained_condition.content_hash,
+            resolved_b.maintained_condition.content_hash
+        );
+        assert_eq!(
+            reloaded_a.maintained_condition,
+            resolved_a.maintained_condition
         );
         assert_eq!(
             resolved_a.curation_rule.rule.threshold,
@@ -681,6 +736,11 @@ mod tests {
                 registry: "agent_curation_rule".to_string(),
                 id: "docs_freshness".to_string(),
                 content_hash: "missing-curation".to_string(),
+            },
+            TheoryRevisionRef {
+                registry: "agent_maintained_condition".to_string(),
+                id: "docs_freshness".to_string(),
+                content_hash: "missing-condition".to_string(),
             },
             TheoryRevisionRef {
                 registry: "outcome_mapping".to_string(),

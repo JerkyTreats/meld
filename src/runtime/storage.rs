@@ -7,7 +7,9 @@ use meld_execution::capability::CapabilityContractRegistryStore;
 use meld_execution::goals::PersistentGoalSetStore;
 use meld_execution::task::TaskArtifactRepoFactory;
 use meld_execution::task_network::store::TaskNetworkStoreFactory;
-use meld_world_model::agent::{AgentCurationRuleRegistryStore, AgentStore};
+use meld_world_model::agent::{
+    AgentCurationRuleRegistryStore, AgentMaintainedConditionRegistryStore, AgentStore,
+};
 use meld_world_model::belief::{
     BeliefFamilyRegistryStore, BeliefStore, OutcomeMappingRegistryStore,
 };
@@ -181,6 +183,8 @@ pub struct OpenProductStores {
     pub belief_family_registry: ScopedResource<Arc<BeliefFamilyRegistryStore>>,
     /// Agent-owned exact curation-rule registry.
     pub curation_rule_registry: ScopedResource<Arc<AgentCurationRuleRegistryStore>>,
+    /// Agent-owned exact maintained-condition registry.
+    pub maintained_condition_registry: ScopedResource<Arc<AgentMaintainedConditionRegistryStore>>,
     /// Belief-owned exact outcome-mapping registry.
     pub outcome_mapping_registry: ScopedResource<Arc<OutcomeMappingRegistryStore>>,
     /// Strategy-owned exact theory-package registry.
@@ -329,6 +333,7 @@ impl OpenProductStores {
             belief,
             family_registry,
             curation_registry,
+            maintained_condition_registry,
             outcome_registry,
             strategy_registry,
             agent,
@@ -355,6 +360,13 @@ impl OpenProductStores {
                     "curation_rule_registry",
                     Arc::new(
                         AgentCurationRuleRegistryStore::new(world_model_db.clone())
+                            .map_err(to_world_model)?,
+                    ),
+                ),
+                ScopedResource::open(
+                    "maintained_condition_registry",
+                    Arc::new(
+                        AgentMaintainedConditionRegistryStore::new(world_model_db.clone())
                             .map_err(to_world_model)?,
                     ),
                 ),
@@ -387,6 +399,7 @@ impl OpenProductStores {
                 ScopedResource::closed("belief_store"),
                 ScopedResource::closed("belief_family_registry"),
                 ScopedResource::closed("curation_rule_registry"),
+                ScopedResource::closed("maintained_condition_registry"),
                 ScopedResource::closed("outcome_mapping_registry"),
                 ScopedResource::closed("strategy_theory_registry"),
                 ScopedResource::closed("agent_store"),
@@ -488,6 +501,7 @@ impl OpenProductStores {
             belief_store: belief,
             belief_family_registry: family_registry,
             curation_rule_registry: curation_registry,
+            maintained_condition_registry,
             outcome_mapping_registry: outcome_registry,
             strategy_theory_registry: strategy_registry,
             agent_store: agent,

@@ -41,8 +41,8 @@ use meld_execution::task_network::{
 };
 use meld_lang::Method;
 use meld_world_model::agent::{
-    AgentCurationRuleBinding, AgentGoalCurationActor, AgentSatisfactionCurationActor,
-    AgentStepReport, AgentStepRequest, AgentStore,
+    AgentCurationRuleBinding, AgentGoalCurationActor, AgentMaintainedConditionBinding,
+    AgentSatisfactionCurationActor, AgentStepReport, AgentStepRequest, AgentStore,
 };
 use meld_world_model::belief::{
     BeliefAssessmentActor, BeliefAssessmentReport, BeliefAssessmentRequest, BeliefFamilyRegistry,
@@ -891,6 +891,7 @@ struct AgentActorFactory {
     goal_mutation: ExecutionGoalMutationPort,
     strategy: Option<meld_world_model::AgentStrategyRuntimeConfig>,
     curation_rule: Option<AgentCurationRuleBinding>,
+    maintained_condition: Option<AgentMaintainedConditionBinding>,
 }
 
 #[derive(Clone)]
@@ -2089,6 +2090,15 @@ impl RuntimeSemanticHandleFactory {
                     .map_err(|error| {
                         RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
                     })?;
+                let maintained_condition = composed
+                    .theory
+                    .resolved
+                    .as_ref()
+                    .map(|resolved| resolved.maintained_condition.binding())
+                    .transpose()
+                    .map_err(|error| {
+                        RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
+                    })?;
                 Ok(Self::AgentActor(Box::new(AgentActorFactory {
                     kind,
                     runtime_id: runtime_id.to_string(),
@@ -2101,6 +2111,7 @@ impl RuntimeSemanticHandleFactory {
                     goal_mutation: goal_mutation.clone(),
                     strategy: composed.theory.strategy.clone(),
                     curation_rule,
+                    maintained_condition,
                 })))
             }
             "execution.planning" => {
@@ -2292,6 +2303,10 @@ impl RuntimeSemanticHandleFactory {
                         };
                         let actor = match factory.curation_rule.clone() {
                             Some(rule) => actor.with_curation_rule(rule),
+                            None => actor,
+                        };
+                        let actor = match factory.maintained_condition.clone() {
+                            Some(condition) => actor.with_maintained_condition(condition),
                             None => actor,
                         };
                         (Some(actor), None)
@@ -3926,6 +3941,7 @@ mod tests {
     fn agent_goal_command() -> meld_world_model::AgentGoalCommand {
         let subject = subject();
         let rule = meld_world_model::AgentCurationRuleConfig {
+            maintained_condition_id: None,
             dimension_id: "docs_freshness".to_string(),
             threshold: 0.7,
             priority_urgency: 8,
@@ -4052,6 +4068,7 @@ mod tests {
                     belief_family_id: FAMILY_ID.to_string(),
                     evidence_mapping_id: MAPPING_ID.to_string(),
                     curation_rule_id: "docs_freshness".to_string(),
+                    maintained_condition_id: "docs_freshness".to_string(),
                     strategy_theory_id: "docs_freshness".to_string(),
                     claim_policy_id: "docs-claims-strict-v1".to_string(),
                 },
@@ -4202,6 +4219,7 @@ mod tests {
                     curation_rule: Some(
                         AgentCurationRuleBinding::for_rule(
                             meld_world_model::AgentCurationRuleConfig {
+                                maintained_condition_id: None,
                                 dimension_id: "docs_freshness".to_string(),
                                 threshold: 0.7,
                                 priority_urgency: 8,
@@ -4212,6 +4230,8 @@ mod tests {
                         .unwrap(),
                     ),
                     curation_rule_revision: None,
+                    maintained_condition: None,
+                    maintained_condition_revision: None,
                     created_at_seq: 2,
                 })
                 .unwrap();

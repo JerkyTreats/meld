@@ -11,7 +11,7 @@ use meld::config::SelectedStewardshipPackage;
 use meld::init::world::source::provision_theory_source;
 use meld::init::world::theory::{
     load_belief_family_config, load_claim_policy, load_curation_rule_config,
-    load_outcome_mapping_config, load_strategy_theory_package,
+    load_maintained_condition, load_outcome_mapping_config, load_strategy_theory_package,
 };
 
 use crate::integration::test_utils::with_xdg_env;
@@ -28,6 +28,7 @@ fn shipped_selection() -> SelectedStewardshipPackage {
         belief_family_id: "docs_freshness".to_string(),
         evidence_mapping_id: "docs_freshness_outcome_interpretation_v1".to_string(),
         curation_rule_id: "docs_freshness".to_string(),
+        maintained_condition_id: "docs_freshness".to_string(),
         strategy_theory_id: "docs_freshness".to_string(),
         claim_policy_id: "docs-claims-strict-v1".to_string(),
     }
@@ -47,9 +48,10 @@ fn shipped_theory_provisions_and_loads_through_every_selection_identity() {
         assert!(kinds.contains(&"belief_family"));
         assert!(kinds.contains(&"outcome_interpretation"));
         assert!(kinds.contains(&"curation_rule"));
+        assert!(kinds.contains(&"maintained_condition"));
         assert!(kinds.contains(&"strategy_theory"));
         assert!(kinds.contains(&"claim_policy"));
-        assert_eq!(kinds.len(), 5);
+        assert_eq!(kinds.len(), 6);
         assert!(report.bodies.iter().all(|body| body.changed));
 
         let family = load_belief_family_config("docs_freshness").unwrap();
@@ -84,6 +86,14 @@ fn shipped_theory_provisions_and_loads_through_every_selection_identity() {
 
         let rule = load_curation_rule_config("docs_freshness").unwrap();
         assert_eq!(rule.dimension_id, "docs_freshness");
+        assert_eq!(
+            rule.maintained_condition_id.as_deref(),
+            Some("docs_freshness")
+        );
+
+        let condition = load_maintained_condition("docs_freshness").unwrap();
+        assert_eq!(condition.condition_id, "docs_freshness");
+        assert_eq!(condition.dimension_id, rule.dimension_id);
 
         let strategy = load_strategy_theory_package("docs_freshness").unwrap();
         assert_eq!(strategy.snapshot.theory_id, "docs_freshness");
@@ -153,6 +163,7 @@ provider_id = "steward-provider"
 belief_family_id = "docs_freshness"
 evidence_mapping_id = "docs_freshness_outcome_interpretation_v1"
 curation_rule_id = "docs_freshness"
+maintained_condition_id = "docs_freshness"
 strategy_theory_id = "docs_freshness"
 claim_policy_id = "docs-claims-strict-v1"
 "#,

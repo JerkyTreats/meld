@@ -10,6 +10,7 @@
 //!
 //! - belief families:   `$XDG_CONFIG_HOME/meld/theory/belief_families/<id>.json`
 //! - curation rules:    `$XDG_CONFIG_HOME/meld/theory/curation_rules/<id>.json`
+//! - maintained conditions: `$XDG_CONFIG_HOME/meld/theory/maintained_conditions/<id>.json`
 //! - outcome mappings:  `$XDG_CONFIG_HOME/meld/theory/outcome_mappings/<id>.json`
 //! - Strategy packages: `$XDG_CONFIG_HOME/meld/theory/strategy_theories/<id>.json`
 //! - claim policies:    `$XDG_CONFIG_HOME/meld/theory/claim_policies/<id>.json`
@@ -20,7 +21,7 @@
 
 use std::path::PathBuf;
 
-use meld_world_model::agent::AgentCurationRuleConfig;
+use meld_world_model::agent::{AgentCurationRuleConfig, AgentMaintainedCondition};
 use meld_world_model::belief::{
     BeliefConfigLoader, BeliefFamilyConfig, ConfiguredOutcomeMappingSet, OutcomeMappingSetConfig,
 };
@@ -49,6 +50,14 @@ pub fn curation_rule_config_path(rule_id: &str) -> Result<PathBuf, ApiError> {
     Ok(theory_config_root()?
         .join("curation_rules")
         .join(format!("{rule_id}.json")))
+}
+
+/// Path of the maintained-condition body for one selected id.
+pub fn maintained_condition_config_path(condition_id: &str) -> Result<PathBuf, ApiError> {
+    validate_theory_id("maintained condition id", condition_id)?;
+    Ok(theory_config_root()?
+        .join("maintained_conditions")
+        .join(format!("{condition_id}.json")))
 }
 
 /// Path of the complete Strategy theory package for one selected id.
@@ -119,6 +128,27 @@ pub fn load_curation_rule_config(rule_id: &str) -> Result<AgentCurationRuleConfi
         ))
     })?;
     Ok(rule)
+}
+
+/// Load and owner-validate the selected standing maintained condition.
+pub fn load_maintained_condition(condition_id: &str) -> Result<AgentMaintainedCondition, ApiError> {
+    let path = maintained_condition_config_path(condition_id)?;
+    let condition: AgentMaintainedCondition = load_json(&path, "maintained condition")?;
+    condition.validate().map_err(|error| {
+        ApiError::ConfigError(format!(
+            "invalid maintained condition config '{}': {error}",
+            path.display()
+        ))
+    })?;
+    if condition.condition_id != condition_id {
+        return Err(ApiError::ConfigError(format!(
+            "maintained condition config '{}' declares condition_id '{}' but was selected as '{}'",
+            path.display(),
+            condition.condition_id,
+            condition_id
+        )));
+    }
+    Ok(condition)
 }
 
 /// Load and owner-validate the selected complete Strategy theory package.

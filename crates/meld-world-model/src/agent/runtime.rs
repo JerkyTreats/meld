@@ -13,6 +13,7 @@ use crate::agent::curation::{curate_goal_satisfaction, curate_threshold_rule, Ag
 use crate::agent::store::AgentStore;
 use crate::agent::strategy::{authorize_curation_outcome_with_theory, AgentStrategyRuntimeConfig};
 use crate::agent::subscription::AgentSubscription;
+use crate::agent::AgentMaintainedConditionBinding;
 use crate::belief::BeliefQuery;
 use crate::planner::PlannerQuery;
 
@@ -188,6 +189,7 @@ pub struct AgentGoalCurationRuntime<'a> {
     store: &'a AgentStore,
     strategy: Option<AgentStrategyRuntimeConfig>,
     curation_rule_revision: Option<crate::belief::TheoryRevisionRef>,
+    maintained_condition: Option<AgentMaintainedConditionBinding>,
 }
 
 impl<'a> AgentGoalCurationRuntime<'a> {
@@ -200,6 +202,7 @@ impl<'a> AgentGoalCurationRuntime<'a> {
             store,
             strategy: None,
             curation_rule_revision: None,
+            maintained_condition: None,
         }
     }
 
@@ -212,6 +215,7 @@ impl<'a> AgentGoalCurationRuntime<'a> {
             store,
             strategy: Some(strategy),
             curation_rule_revision: None,
+            maintained_condition: None,
         }
     }
 
@@ -221,6 +225,15 @@ impl<'a> AgentGoalCurationRuntime<'a> {
         revision: crate::belief::TheoryRevisionRef,
     ) -> Self {
         self.curation_rule_revision = Some(revision);
+        self
+    }
+
+    /// Pin the exact maintained condition selected for this runtime facade.
+    pub fn with_maintained_condition(
+        mut self,
+        maintained_condition: AgentMaintainedConditionBinding,
+    ) -> Self {
+        self.maintained_condition = Some(maintained_condition);
         self
     }
 
@@ -398,7 +411,7 @@ impl<'a> AgentGoalCurationRuntime<'a> {
         report: &mut AgentRuntimeReport,
     ) -> Option<AgentCurationOutcome> {
         let curation = AgentCuration::new(self.store);
-        let input = match curation.assemble_input(
+        let mut input = match curation.assemble_input(
             &delivery,
             belief_query,
             planner_query,
@@ -411,6 +424,10 @@ impl<'a> AgentGoalCurationRuntime<'a> {
                 return None;
             }
         };
+        if let Some(maintained_condition) = &self.maintained_condition {
+            input.agent.maintained_condition = Some(maintained_condition.clone());
+            input.agent.maintained_condition_revision = Some(maintained_condition.revision.clone());
+        }
         let strategy_world_state = input.planner_projection.world_state.clone();
         let strategy_snapshot_id = planner_snapshot_identity(&input.planner_projection);
         let mut outcome = match curate_threshold_rule(input) {

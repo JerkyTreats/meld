@@ -1,0 +1,10 @@
+{
+  "condition_id": "docs_freshness",
+  "dimension_id": "docs_freshness",
+  "desired": { "Above": { "Literal": { "Number": 0.7 } } },
+  "goal_priority": {
+    "urgency": 50,
+    "cost_ceiling": null
+  },
+  "desired_summary": "confidence>0.7"
+}

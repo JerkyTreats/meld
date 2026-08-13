@@ -748,6 +748,7 @@ provider_id = "main-provider"
 belief_family_id = "docs_freshness"
 evidence_mapping_id = "docs_freshness_outcome_interpretation_v1"
 curation_rule_id = "docs_freshness"
+maintained_condition_id = "docs_freshness"
 strategy_theory_id = "docs_freshness"
 claim_policy_id = "docs-claims-strict-v1"
 "#,

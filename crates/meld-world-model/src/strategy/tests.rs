@@ -379,6 +379,7 @@ fn agent_settles_the_exact_verified_candidate_into_command_and_decision() {
         )))
         .unwrap(),
         source_kind: "maintenance".into(),
+        maintained_condition_id: None,
     };
     let decision = AgentCurationDecision {
         decision_id: "decision-docs".into(),
@@ -389,6 +390,7 @@ fn agent_settles_the_exact_verified_candidate_into_command_and_decision() {
         goal_mutation_command_id: None,
         strategy_authorization: None,
         curation_rule_revision: None,
+        maintained_condition_revision: None,
         dedupe_key: dedupe_key.clone(),
         input_refs: AgentCurationInputRefs {
             belief_revision_id: Some("belief-revision-docs".into()),

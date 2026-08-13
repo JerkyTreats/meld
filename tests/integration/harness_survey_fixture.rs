@@ -109,6 +109,7 @@ pub fn survey_binding(
             belief_family_id: FAMILY_ID.to_string(),
             evidence_mapping_id: "docs_freshness".to_string(),
             curation_rule_id: "docs_freshness".to_string(),
+            maintained_condition_id: "docs_freshness".to_string(),
             strategy_theory_id: "docs_freshness".to_string(),
             claim_policy_id: "docs-claims-strict-v1".to_string(),
         },
@@ -128,6 +129,7 @@ pub fn world_init() -> HarnessWorldInit {
         content: WorldInitContent {
             family_config: serde_json::from_str(specimen_family_json()).unwrap(),
             curation_rule: AgentCurationRuleConfig {
+                maintained_condition_id: None,
                 dimension_id: FAMILY_ID.to_string(),
                 threshold: 0.7,
                 priority_urgency: 50,

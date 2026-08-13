@@ -103,12 +103,15 @@ impl DocsFreshnessFirstProofFixture {
             seed_provenance: "trusted init".to_string(),
             curation_rule: None,
             curation_rule_revision: None,
+            maintained_condition: None,
+            maintained_condition_revision: None,
             created_at_seq: 0,
         }
     }
 
     pub fn curation_rule_config(&self) -> AgentCurationRuleConfig {
         AgentCurationRuleConfig {
+            maintained_condition_id: None,
             dimension_id: DIMENSION_ID.to_string(),
             threshold: THRESHOLD,
             priority_urgency: PRIORITY_URGENCY,

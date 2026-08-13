@@ -1,13 +1,13 @@
 //! Pure agent curation and delivery handling.
 
-use meld_lang::{evaluate, Goal, GoalLifecycle, GoalPriority, GoalSource, Proposition, Term};
+use meld_lang::{evaluate, Goal, GoalLifecycle, GoalSource, Proposition, Term};
 
 use crate::agent::contracts::{
-    condition_key, deterministic_id, threshold_target, ActiveGoalSummary,
-    AdvanceSubscriptionCommand, AgentCurationDecision, AgentCurationDedupeKey, AgentCurationInput,
-    AgentCurationInputRefs, AgentCurationOutcome, AgentCurationRuleConfig, AgentDecisionKind,
-    AgentDelivery, AgentGoalCommand, AgentGoalMutationCommand, AgentGoalMutationKind,
-    AgentGoalSatisfactionInput, AgentSatisfactionReview,
+    condition_key, deterministic_id, ActiveGoalSummary, AdvanceSubscriptionCommand,
+    AgentCurationDecision, AgentCurationDedupeKey, AgentCurationInput, AgentCurationInputRefs,
+    AgentCurationOutcome, AgentCurationRuleConfig, AgentDecisionKind, AgentDelivery,
+    AgentGoalCommand, AgentGoalMutationCommand, AgentGoalMutationKind, AgentGoalSatisfactionInput,
+    AgentSatisfactionReview,
 };
 use crate::agent::store::AgentStore;
 use crate::agent::subscription::AgentSubscription;
@@ -247,12 +247,38 @@ pub fn curate_threshold_rule(
     input: AgentCurationInput,
 ) -> Result<AgentCurationOutcome, StorageError> {
     input.rule_config.validate()?;
-    let dedupe_key = AgentCurationDedupeKey::threshold_rule(
-        input.agent.agent_id.clone(),
-        &input.agent.subject,
-        &input.agent.branch_scope,
-        &input.rule_config,
-    );
+    let exact_condition = input.agent.maintained_condition.is_some();
+    let maintained_condition = match &input.agent.maintained_condition {
+        Some(binding) => {
+            binding.validate()?;
+            binding.condition.clone()
+        }
+        None => crate::agent::AgentMaintainedCondition::from_legacy_rule(&input.rule_config)?,
+    };
+    if exact_condition
+        && input.rule_config.maintained_condition_id.as_deref()
+            != Some(maintained_condition.condition_id.as_str())
+    {
+        return Err(StorageError::InvalidPath(
+            "curation rule does not reference the installed maintained condition".to_string(),
+        ));
+    }
+    let target = maintained_condition.target_for(input.agent.subject.clone())?;
+    let dedupe_key = if exact_condition {
+        AgentCurationDedupeKey::maintained_condition(
+            input.agent.agent_id.clone(),
+            &input.agent.subject,
+            &input.agent.branch_scope,
+            &maintained_condition,
+        )
+    } else {
+        AgentCurationDedupeKey::threshold_rule(
+            input.agent.agent_id.clone(),
+            &input.agent.subject,
+            &input.agent.branch_scope,
+            &input.rule_config,
+        )
+    };
     let revision_id = input.input_refs.belief_revision_id.clone();
     let decision_key = format!("{}::{revision_id:?}", dedupe_key.index_key());
     let decision_id = deterministic_id("decision", &decision_key);
@@ -293,7 +319,7 @@ pub fn curate_threshold_rule(
             "belief view branch scope mismatch".to_string(),
         ));
     }
-    if view.key.dimension_id != input.rule_config.dimension_id {
+    if view.key.dimension_id != maintained_condition.dimension_id {
         return Ok(absorbed_or_indeterminate(
             input,
             dedupe_key,
@@ -313,41 +339,60 @@ pub fn curate_threshold_rule(
             None,
         ));
     }
-    let confidence = view.planner_projection.confidence;
-    if confidence >= input.rule_config.threshold {
-        return Ok(absorbed_or_indeterminate(
-            input,
-            dedupe_key,
-            decision_id,
-            AgentDecisionKind::Absorbed,
-            "belief confidence is sufficient",
-            None,
-        ));
+    match evaluate(&input.planner_projection.world_state, &target) {
+        meld_lang::EvalResult::Satisfied => {
+            return Ok(absorbed_or_indeterminate(
+                input,
+                dedupe_key,
+                decision_id,
+                AgentDecisionKind::Absorbed,
+                "maintained condition holds",
+                None,
+            ));
+        }
+        meld_lang::EvalResult::Indeterminate { .. } => {
+            return Ok(absorbed_or_indeterminate(
+                input,
+                dedupe_key,
+                decision_id,
+                AgentDecisionKind::Indeterminate,
+                "maintained condition is indeterminate",
+                None,
+            ));
+        }
+        meld_lang::EvalResult::Unsatisfied { .. } => {}
     }
 
     let command_key = format!("{}::{revision_id:?}", dedupe_key.index_key());
     let command_id = deterministic_id("goal-command", &command_key);
     let goal_id = deterministic_id("goal", &dedupe_key.index_key());
-    let goal = Goal {
-        goal_id,
-        agent_id: input.agent.agent_id.clone(),
-        target: threshold_target(
-            input.agent.subject.clone(),
-            input.rule_config.dimension_id.clone(),
-            input.rule_config.target_condition(),
-        ),
-        priority: GoalPriority {
-            urgency: input.rule_config.priority_urgency,
-            cost_ceiling: None,
-        },
-        source: GoalSource::BeliefDivergence {
-            dimension: input.rule_config.dimension_id.clone(),
+    let confidence = view.planner_projection.confidence;
+    let source = if exact_condition {
+        GoalSource::MaintainedConditionBreach {
+            maintained_condition_id: maintained_condition.condition_id.clone(),
+            dimension: maintained_condition.dimension_id.clone(),
             observed: format!(
                 "{}={}",
                 view.planner_projection.confidence_field, confidence
             ),
-            desired: input.rule_config.desired_summary.clone(),
-        },
+            desired: maintained_condition.desired_summary.clone(),
+        }
+    } else {
+        GoalSource::BeliefDivergence {
+            dimension: maintained_condition.dimension_id.clone(),
+            observed: format!(
+                "{}={}",
+                view.planner_projection.confidence_field, confidence
+            ),
+            desired: maintained_condition.desired_summary.clone(),
+        }
+    };
+    let goal = Goal {
+        goal_id,
+        agent_id: input.agent.agent_id.clone(),
+        target,
+        priority: maintained_condition.goal_priority,
+        source,
         lifecycle: GoalLifecycle::Proposed,
     };
     let command = AgentGoalCommand {
@@ -687,6 +732,7 @@ fn decision(
         goal_mutation_command_id: None,
         strategy_authorization: None,
         curation_rule_revision,
+        maintained_condition_revision: input.agent.maintained_condition_revision.clone(),
         dedupe_key,
         input_refs: input.input_refs,
         reason: reason.to_string(),
@@ -725,6 +771,7 @@ fn satisfaction_decision(
         goal_mutation_command_id,
         strategy_authorization: None,
         curation_rule_revision: None,
+        maintained_condition_revision: input.agent.maintained_condition_revision.clone(),
         dedupe_key,
         input_refs: input.input_refs,
         reason: reason.to_string(),
@@ -762,6 +809,7 @@ fn no_candidate_dedupe_key(input: &AgentGoalSatisfactionInput) -> AgentCurationD
         dimension_id: input.subscription.belief_key.dimension_id.clone(),
         target_condition_key: "no-active-goal".to_string(),
         source_kind: "goal_satisfaction_review".to_string(),
+        maintained_condition_id: None,
     }
 }
 
@@ -788,6 +836,13 @@ fn dedupe_key_for_goal(
         ),
     };
 
+    let maintained_condition_id = match &goal.source {
+        GoalSource::MaintainedConditionBreach {
+            maintained_condition_id,
+            ..
+        } => Some(maintained_condition_id.clone()),
+        _ => None,
+    };
     Ok(AgentCurationDedupeKey {
         agent_id: agent.agent_id.clone(),
         subject_key,
@@ -795,6 +850,7 @@ fn dedupe_key_for_goal(
         dimension_id,
         target_condition_key,
         source_kind: goal_source_kind(&goal.source).to_string(),
+        maintained_condition_id,
     })
 }
 
@@ -814,6 +870,7 @@ fn target_dimension_key(dimension: &Term) -> String {
 
 fn goal_source_kind(source: &GoalSource) -> &'static str {
     match source {
+        GoalSource::MaintainedConditionBreach { .. } => "maintained_condition_breach",
         GoalSource::BeliefDivergence { .. } => "belief_divergence",
         GoalSource::UserDirected { .. } => "user_directed",
         GoalSource::Maintenance { .. } => "maintenance",

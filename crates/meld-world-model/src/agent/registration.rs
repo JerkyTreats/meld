@@ -34,6 +34,8 @@ impl<'a> AgentRegistration<'a> {
             seed_provenance: request.seed_provenance,
             curation_rule: request.curation_rule,
             curation_rule_revision: request.curation_rule_revision,
+            maintained_condition: request.maintained_condition,
+            maintained_condition_revision: request.maintained_condition_revision,
             status: AgentStatus::Registered,
             created_at_seq: request.created_at_seq,
             updated_at_seq: request.created_at_seq,
@@ -62,6 +64,31 @@ impl<'a> AgentRegistration<'a> {
         }
         record.curation_rule_revision = Some(revision);
         record.curation_rule = None;
+        record.updated_at_seq = updated_at_seq;
+        self.store.put_agent(&record)?;
+        Ok(record)
+    }
+
+    /// Bind one record to an exact standing maintained condition.
+    pub fn bind_maintained_condition_revision(
+        &self,
+        agent_id: &str,
+        binding: crate::agent::AgentMaintainedConditionBinding,
+        updated_at_seq: u64,
+    ) -> Result<AgentRecord, StorageError> {
+        binding.validate()?;
+        let Some(mut record) = self.store.get_agent(agent_id)? else {
+            return Err(StorageError::InvalidPath(format!(
+                "unknown agent '{agent_id}'"
+            )));
+        };
+        if record.maintained_condition.as_ref() == Some(&binding)
+            && record.maintained_condition_revision.as_ref() == Some(&binding.revision)
+        {
+            return Ok(record);
+        }
+        record.maintained_condition_revision = Some(binding.revision.clone());
+        record.maintained_condition = Some(binding);
         record.updated_at_seq = updated_at_seq;
         self.store.put_agent(&record)?;
         Ok(record)

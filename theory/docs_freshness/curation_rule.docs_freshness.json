@@ -1,4 +1,5 @@
 {
+  "maintained_condition_id": "docs_freshness",
   "dimension_id": "docs_freshness",
   "threshold": 0.7,
   "priority_urgency": 50,

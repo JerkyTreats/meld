@@ -38,6 +38,17 @@ pub struct GoalPriority {
 /// Provenance for why a goal exists.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum GoalSource {
+    /// A standing maintained condition is currently breached.
+    MaintainedConditionBreach {
+        /// Stable identity of the standing condition that caused this Goal.
+        maintained_condition_id: String,
+        /// Belief dimension whose desired condition was breached.
+        dimension: String,
+        /// Observed state summary.
+        observed: String,
+        /// Desired state summary.
+        desired: String,
+    },
     /// Belief diverged from desired state.
     BeliefDivergence {
         /// Belief dimension that diverged.

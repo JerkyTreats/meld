@@ -12,10 +12,11 @@ use meld_world_model::agent::{
     AgentActivationStatus, AgentCuration, AgentCurationDedupeKey, AgentCurationInput,
     AgentCurationInputRefs, AgentCurationRuleConfig, AgentDecisionKind, AgentDelivery,
     AgentGoalCommand, AgentGoalCurationRuntime, AgentGoalMutationCommand, AgentGoalMutationKind,
-    AgentGoalSatisfactionInput, AgentQuery, AgentRegistration, AgentSatisfactionCurationRuntime,
-    AgentSatisfactionReview, AgentSinkError, AgentSinkReceiptKind, AgentSinkSubmission,
-    AgentStatus, AgentStore, AgentSubscription, AgentSubscriptionRecord, AgentSubscriptionStatus,
-    SeedAgentRegistration, SubscribeAgentCommand,
+    AgentGoalSatisfactionInput, AgentMaintainedCondition, AgentMaintainedConditionRegistryStore,
+    AgentQuery, AgentRegistration, AgentSatisfactionCurationRuntime, AgentSatisfactionReview,
+    AgentSinkError, AgentSinkReceiptKind, AgentSinkSubmission, AgentStatus, AgentStore,
+    AgentSubscription, AgentSubscriptionRecord, AgentSubscriptionStatus, SeedAgentRegistration,
+    SubscribeAgentCommand,
 };
 use meld_world_model::belief::{
     BeliefProvenanceSummary, BeliefQuery, BeliefStore, BranchScope, ContradictionState,
@@ -81,6 +82,8 @@ fn seed_agent_registration() -> SeedAgentRegistration {
         seed_provenance: "trusted init".to_string(),
         curation_rule: None,
         curation_rule_revision: None,
+        maintained_condition: None,
+        maintained_condition_revision: None,
         created_at_seq: 0,
     }
 }
@@ -98,6 +101,7 @@ fn belief_key() -> meld_world_model::BeliefKey {
 
 fn rule_config() -> AgentCurationRuleConfig {
     AgentCurationRuleConfig {
+        maintained_condition_id: None,
         dimension_id: DIMENSION_ID.to_string(),
         threshold: THRESHOLD,
         priority_urgency: PRIORITY_URGENCY,
@@ -245,6 +249,30 @@ fn curation_input(confidence: f64) -> AgentCurationInput {
             planner_warnings: Vec::new(),
         },
     }
+}
+
+fn exact_curation_input(confidence: f64) -> AgentCurationInput {
+    let mut input = curation_input(confidence);
+    let condition = AgentMaintainedCondition {
+        condition_id: "docs_freshness".to_string(),
+        dimension_id: DIMENSION_ID.to_string(),
+        desired: Condition::Above(Term::Literal(Literal::Number(THRESHOLD))),
+        goal_priority: GoalPriority {
+            urgency: PRIORITY_URGENCY,
+            cost_ceiling: None,
+        },
+        desired_summary: "confidence>0.7".to_string(),
+    };
+    let registry = AgentMaintainedConditionRegistryStore::new(
+        sled::Config::new().temporary(true).open().unwrap(),
+    )
+    .unwrap();
+    let revision = registry.install(condition, 1).unwrap().1;
+    let binding = revision.binding().unwrap();
+    input.agent.maintained_condition_revision = Some(binding.revision.clone());
+    input.agent.maintained_condition = Some(binding);
+    input.rule_config.maintained_condition_id = Some("docs_freshness".to_string());
+    input
 }
 
 fn low_confidence_goal_command() -> AgentGoalCommand {
@@ -898,6 +926,80 @@ fn agent_high_confidence_absorbs() {
     let outcome = curate_threshold_rule(curation_input(0.9)).unwrap();
     assert_eq!(outcome.decision.decision, AgentDecisionKind::Absorbed);
     assert!(outcome.goal_command.is_none());
+}
+
+#[test]
+fn exact_maintained_condition_breach_emits_one_causally_linked_goal() {
+    let input = exact_curation_input(0.2);
+    let expected_revision = input.agent.maintained_condition_revision.clone();
+
+    let outcome = curate_threshold_rule(input).unwrap();
+    let command = outcome.goal_command.expect("breach must emit one Goal");
+
+    assert_eq!(outcome.decision.decision, AgentDecisionKind::GoalCommand);
+    assert_eq!(
+        outcome.decision.maintained_condition_revision,
+        expected_revision
+    );
+    assert_eq!(
+        command.dedupe_key.maintained_condition_id.as_deref(),
+        Some("docs_freshness")
+    );
+    assert!(matches!(
+        command.goal.source,
+        GoalSource::MaintainedConditionBreach {
+            maintained_condition_id,
+            ..
+        } if maintained_condition_id == "docs_freshness"
+    ));
+}
+
+#[test]
+fn exact_maintained_condition_holds_without_creating_a_goal() {
+    let outcome = curate_threshold_rule(exact_curation_input(0.9)).unwrap();
+
+    assert_eq!(outcome.decision.decision, AgentDecisionKind::Absorbed);
+    assert!(outcome.goal_command.is_none());
+    assert!(outcome.decision.maintained_condition_revision.is_some());
+}
+
+#[test]
+fn exact_maintained_condition_existing_goal_absorbs_the_same_breach() {
+    let mut input = exact_curation_input(0.2);
+    let mut goal = curate_threshold_rule(input.clone())
+        .unwrap()
+        .goal_command
+        .unwrap()
+        .goal;
+    goal.lifecycle = GoalLifecycle::Active;
+    input.active_goals = ActiveGoalSummary::from_goals(vec![goal]);
+
+    let outcome = curate_threshold_rule(input).unwrap();
+
+    assert_eq!(outcome.decision.decision, AgentDecisionKind::Absorbed);
+    assert!(outcome.goal_command.is_none());
+}
+
+#[test]
+fn exact_goal_command_rejects_a_different_condition_cause() {
+    let mut command = curate_threshold_rule(exact_curation_input(0.2))
+        .unwrap()
+        .goal_command
+        .unwrap();
+    let GoalSource::MaintainedConditionBreach {
+        maintained_condition_id,
+        ..
+    } = &mut command.goal.source
+    else {
+        panic!("expected maintained condition breach");
+    };
+    *maintained_condition_id = "other-condition".to_string();
+
+    let error = command.validate().unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("goal source maintained condition"));
 }
 
 #[test]

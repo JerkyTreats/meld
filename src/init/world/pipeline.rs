@@ -21,8 +21,8 @@ use meld_events::{
 };
 use meld_world_model::agent::{
     AgentCurationRuleBinding, AgentCurationRuleConfig, AgentCurationRuleRegistryStore,
-    AgentRegistration, AgentStatus, AgentStore, AgentSubscription, SeedAgentRegistration,
-    SubscribeAgentCommand,
+    AgentMaintainedCondition, AgentMaintainedConditionRegistryStore, AgentRegistration,
+    AgentStatus, AgentStore, AgentSubscription, SeedAgentRegistration, SubscribeAgentCommand,
 };
 use meld_world_model::belief::genesis::{
     UnobservedScopeDeclaration, EPISTEMIC_GENESIS_STREAM_ID, UNOBSERVED_SCOPE_EVENT_TYPE,
@@ -118,6 +118,7 @@ pub struct WorldInitContent {
 pub struct WorldInitTheoryBundle {
     pub family: BeliefFamilyConfig,
     pub curation_rule: AgentCurationRuleConfig,
+    pub maintained_condition: AgentMaintainedCondition,
     pub outcome_mapping: OutcomeMappingSetConfig,
     pub strategy_theory: StrategyTheoryPackage,
     pub executable_contracts: Vec<CapabilityTypeContract>,
@@ -129,6 +130,7 @@ pub struct CompleteTheoryInstall<'a> {
     pub selection: SelectedStewardshipPackage,
     pub bundle: WorldInitTheoryBundle,
     pub curation_rules: &'a AgentCurationRuleRegistryStore,
+    pub maintained_conditions: &'a AgentMaintainedConditionRegistryStore,
     pub outcome_mappings: &'a OutcomeMappingRegistryStore,
     pub strategy_theories: &'a StrategyTheoryRegistryStore,
     pub executable_contracts: &'a CapabilityContractRegistryStore,
@@ -258,6 +260,10 @@ impl<'a> WorldInitPipeline<'a> {
                 observed_seq,
             )
             .map_err(|error| WorldInitError::Theory(error.to_string()))?;
+        let (condition_disposition, condition) = install
+            .maintained_conditions
+            .install(install.bundle.maintained_condition.clone(), observed_seq)
+            .map_err(|error| WorldInitError::Theory(error.to_string()))?;
         let (mapping_disposition, mapping) = install
             .outcome_mappings
             .install(install.bundle.outcome_mapping.clone(), observed_seq)
@@ -296,6 +302,12 @@ impl<'a> WorldInitPipeline<'a> {
                 .map_err(|error| WorldInitError::Theory(error.to_string()))?
                 .as_ref()
                 != Some(&curation)
+            || install
+                .maintained_conditions
+                .resolve(&condition.condition_id, &condition.content_hash)
+                .map_err(|error| WorldInitError::Theory(error.to_string()))?
+                .as_ref()
+                != Some(&condition)
             || install
                 .outcome_mappings
                 .resolve(&mapping.mapping_id, &mapping.content_hash)
@@ -338,6 +350,7 @@ impl<'a> WorldInitPipeline<'a> {
             install.selection.clone(),
             family.revision_ref(),
             curation.revision_ref(),
+            condition.revision_ref(),
             mapping.revision_ref(),
             strategy.revision_ref(),
             capabilities
@@ -356,6 +369,7 @@ impl<'a> WorldInitPipeline<'a> {
         let owner_changed = [
             family_disposition,
             curation_disposition,
+            condition_disposition,
             mapping_disposition,
             strategy_disposition,
         ]
@@ -365,6 +379,7 @@ impl<'a> WorldInitPipeline<'a> {
         let mut record_ids = vec![
             format_revision(&family.revision_ref()),
             format_revision(&curation.revision_ref()),
+            format_revision(&condition.revision_ref()),
             format_revision(&mapping.revision_ref()),
             format_revision(&strategy.revision_ref()),
         ];
@@ -430,6 +445,31 @@ impl<'a> WorldInitPipeline<'a> {
         } else {
             None
         };
+        let maintained_condition_binding = if let Some(install) = &self.complete_theory {
+            let receipt = install
+                .receipts
+                .current(&install.selection)
+                .map_err(|error| WorldInitError::Identity(error.to_string()))?;
+            let revision = install
+                .maintained_conditions
+                .resolve(
+                    &receipt.maintained_condition.id,
+                    &receipt.maintained_condition.content_hash,
+                )
+                .map_err(|error| WorldInitError::Identity(error.to_string()))?
+                .ok_or_else(|| {
+                    WorldInitError::Identity(
+                        "installed maintained condition revision is missing".to_string(),
+                    )
+                })?;
+            Some(
+                revision
+                    .binding()
+                    .map_err(|error| WorldInitError::Identity(error.to_string()))?,
+            )
+        } else {
+            None
+        };
         let rule_binding = if rule_revision.is_none() {
             Some(
                 AgentCurationRuleBinding::for_rule(content.curation_rule.clone())
@@ -459,6 +499,10 @@ impl<'a> WorldInitPipeline<'a> {
                 seed_provenance: content.provenance.clone(),
                 curation_rule: rule_binding,
                 curation_rule_revision: rule_revision.clone(),
+                maintained_condition: maintained_condition_binding.clone(),
+                maintained_condition_revision: maintained_condition_binding
+                    .as_ref()
+                    .map(|binding| binding.revision.clone()),
                 created_at_seq: content.observed_seq,
             })
             .map_err(|error| WorldInitError::Identity(error.to_string()))?;
@@ -469,6 +513,19 @@ impl<'a> WorldInitPipeline<'a> {
         let record = match rule_revision {
             Some(revision) if needs_rule_migration => registration
                 .bind_curation_rule_revision(&content.agent_id, revision, content.observed_seq)
+                .map_err(|error| WorldInitError::Identity(error.to_string()))?,
+            _ => record,
+        };
+        let needs_condition_migration = maintained_condition_binding
+            .as_ref()
+            .is_some_and(|binding| record.maintained_condition.as_ref() != Some(binding));
+        let record = match maintained_condition_binding {
+            Some(binding) if needs_condition_migration => registration
+                .bind_maintained_condition_revision(
+                    &content.agent_id,
+                    binding,
+                    content.observed_seq,
+                )
                 .map_err(|error| WorldInitError::Identity(error.to_string()))?,
             _ => record,
         };
@@ -504,8 +561,14 @@ impl<'a> WorldInitPipeline<'a> {
         } else if let Some(installed) = &record.curation_rule {
             record_ids.push(format!("curation_rule::{}", installed.content_hash));
         }
-        let changed =
-            !agent_existed || !subscription_existed || needs_operational || needs_rule_migration;
+        if let Some(installed) = &record.maintained_condition_revision {
+            record_ids.push(format_revision(installed));
+        }
+        let changed = !agent_existed
+            || !subscription_existed
+            || needs_operational
+            || needs_rule_migration
+            || needs_condition_migration;
         Ok(WorldInitStageReport {
             stage: WorldInitStage::GenesisIdentities,
             disposition: if changed {
@@ -571,6 +634,7 @@ fn validate_selected_bundle(
     bundle: &WorldInitTheoryBundle,
 ) -> Result<(), String> {
     if bundle.family.family_id != selection.belief_family_id
+        || bundle.maintained_condition.condition_id != selection.maintained_condition_id
         || bundle.outcome_mapping.mapping_id != selection.evidence_mapping_id
         || bundle.strategy_theory.snapshot.theory_id != selection.strategy_theory_id
         || bundle.claim_policy.policy_id != selection.claim_policy_id
@@ -579,6 +643,14 @@ fn validate_selected_bundle(
     }
     if bundle.curation_rule.dimension_id != bundle.family.dimension_id {
         return Err("curation rule dimension does not match the belief family".to_string());
+    }
+    if bundle.maintained_condition.dimension_id != bundle.family.dimension_id
+        || bundle.curation_rule.maintained_condition_id.as_deref()
+            != Some(bundle.maintained_condition.condition_id.as_str())
+    {
+        return Err(
+            "curation rule, maintained condition, and belief family do not agree".to_string(),
+        );
     }
     if bundle
         .strategy_theory

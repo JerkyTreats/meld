@@ -21,7 +21,7 @@ use crate::init::world::pipeline::{
 };
 use crate::init::world::theory::{
     load_belief_family_config, load_claim_policy, load_curation_rule_config,
-    load_outcome_mapping_config, load_strategy_theory_package,
+    load_maintained_condition, load_outcome_mapping_config, load_strategy_theory_package,
 };
 use crate::init::world::{WorldInitReport, WorldInitRequest, WorldInitStage};
 use crate::runtime::assembly::ProductRuntimeAssembly;
@@ -111,6 +111,7 @@ pub fn run_world_init(
 
     let family_config = load_belief_family_config(&binding.package.belief_family_id)?;
     let curation_rule = load_curation_rule_config(&binding.package.curation_rule_id)?;
+    let maintained_condition = load_maintained_condition(&binding.package.maintained_condition_id)?;
     let outcome_mapping = load_outcome_mapping_config(&binding.package.evidence_mapping_id)?;
     let strategy_theory = load_strategy_theory_package(&binding.package.strategy_theory_id)?;
     let claim_policy = load_claim_policy(&binding.package.claim_policy_id)?;
@@ -161,12 +162,14 @@ pub fn run_world_init(
         bundle: WorldInitTheoryBundle {
             family: content.family_config.clone(),
             curation_rule: content.curation_rule.clone(),
+            maintained_condition,
             outcome_mapping,
             strategy_theory,
             executable_contracts,
             claim_policy,
         },
         curation_rules: stores.curation_rule_registry.as_ref(),
+        maintained_conditions: stores.maintained_condition_registry.as_ref(),
         outcome_mappings: stores.outcome_mapping_registry.as_ref(),
         strategy_theories: stores.strategy_theory_registry.as_ref(),
         executable_contracts: stores.capability_contract_registry.as_ref(),

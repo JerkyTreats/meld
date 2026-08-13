@@ -190,6 +190,9 @@ pub struct TheorySelection {
     /// Curation rule reference bound at agent registration.
     pub curation_rule_id: String,
 
+    /// Standing maintained-condition identity owned by the Agent domain.
+    pub maintained_condition_id: String,
+
     /// Complete Strategy theory package identity.
     pub strategy_theory_id: String,
 
@@ -382,6 +385,10 @@ fn validate_declaration(
             &declaration.theory.curation_rule_id,
         ),
         (
+            "theory.maintained_condition_id",
+            &declaration.theory.maintained_condition_id,
+        ),
+        (
             "theory.strategy_theory_id",
             &declaration.theory.strategy_theory_id,
         ),
@@ -417,6 +424,7 @@ mod tests {
                 belief_family_id: "docs_freshness".to_string(),
                 evidence_mapping_id: "docs_freshness_outcome_interpretation_v1".to_string(),
                 curation_rule_id: "docs_freshness".to_string(),
+                maintained_condition_id: "docs_freshness".to_string(),
                 strategy_theory_id: "docs_freshness".to_string(),
                 claim_policy_id: "docs-claims-strict-v1".to_string(),
             },

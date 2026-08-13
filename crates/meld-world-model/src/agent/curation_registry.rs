@@ -150,6 +150,7 @@ mod tests {
 
     fn rule(threshold: f64) -> AgentCurationRuleConfig {
         AgentCurationRuleConfig {
+            maintained_condition_id: None,
             dimension_id: "freshness".into(),
             threshold,
             priority_urgency: 1,

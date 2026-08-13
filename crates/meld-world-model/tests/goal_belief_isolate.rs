@@ -160,6 +160,7 @@ fn mapping_config() -> OutcomeMappingConfig {
 
 fn curation_rule() -> AgentCurationRuleConfig {
     AgentCurationRuleConfig {
+        maintained_condition_id: None,
         dimension_id: FAMILY_ID.to_string(),
         threshold: RULE_THRESHOLD,
         priority_urgency: 50,
@@ -294,6 +295,8 @@ impl IsolateSession {
                 seed_provenance: "trusted init".to_string(),
                 curation_rule: Some(AgentCurationRuleBinding::for_rule(curation_rule()).unwrap()),
                 curation_rule_revision: None,
+                maintained_condition: None,
+                maintained_condition_revision: None,
                 created_at_seq: 2,
             })
             .unwrap();

@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use meld_lang::{Condition, Goal, GoalLifecycle, Literal, Proposition, Term};
+use meld_lang::{Condition, Goal, GoalLifecycle, GoalSource, Literal, Proposition, Term};
 use serde::{Deserialize, Serialize};
 
 use crate::belief::{BeliefKey, BranchScope};
@@ -127,6 +127,12 @@ pub struct AgentRecord {
     /// Exact curation-rule revision selected for newly elevated records.
     #[serde(default)]
     pub curation_rule_revision: Option<crate::belief::TheoryRevisionRef>,
+    /// Standing desired state that survives transient Goal lifecycles.
+    #[serde(default)]
+    pub maintained_condition: Option<super::AgentMaintainedConditionBinding>,
+    /// Exact maintained-condition revision selected for this Agent.
+    #[serde(default)]
+    pub maintained_condition_revision: Option<crate::belief::TheoryRevisionRef>,
     /// Current agent lifecycle status.
     pub status: AgentStatus,
     /// Sequence assigned when the record was first stored.
@@ -151,6 +157,24 @@ impl AgentRecord {
         if let Some(reference) = &self.curation_rule_revision {
             reference.validate_for_registry("agent_curation_rule")?;
         }
+        if let Some(binding) = &self.maintained_condition {
+            binding.validate()?;
+        }
+        if let Some(reference) = &self.maintained_condition_revision {
+            reference.validate_for_registry("agent_maintained_condition")?;
+        }
+        match (
+            &self.maintained_condition,
+            &self.maintained_condition_revision,
+        ) {
+            (Some(binding), Some(reference)) if &binding.revision == reference => {}
+            (None, None) => {}
+            _ => {
+                return Err(StorageError::InvalidPath(
+                    "agent maintained condition body and revision must match".to_string(),
+                ))
+            }
+        }
         Ok(())
     }
 
@@ -168,6 +192,17 @@ impl AgentRecord {
         })?;
         binding.validate()?;
         Ok(&binding.rule)
+    }
+
+    /// Resolve the installed standing condition or lower the legacy rule.
+    pub fn effective_maintained_condition(
+        &self,
+    ) -> Result<super::AgentMaintainedCondition, StorageError> {
+        if let Some(binding) = &self.maintained_condition {
+            binding.validate()?;
+            return Ok(binding.condition.clone());
+        }
+        super::AgentMaintainedCondition::from_legacy_rule(self.installed_curation_rule()?)
     }
 }
 
@@ -248,6 +283,9 @@ pub struct AgentCurationDedupeKey {
     pub target_condition_key: String,
     /// Runtime configured source family for the goal.
     pub source_kind: String,
+    /// Standing condition that owns this Goal family on elevated paths.
+    #[serde(default)]
+    pub maintained_condition_id: Option<String>,
 }
 
 impl AgentCurationDedupeKey {
@@ -265,12 +303,31 @@ impl AgentCurationDedupeKey {
             dimension_id: rule.dimension_id.clone(),
             target_condition_key: rule.target_condition_key(),
             source_kind: rule.source_kind.clone(),
+            maintained_condition_id: None,
+        }
+    }
+
+    /// Build the dedupe key for one standing condition.
+    pub fn maintained_condition(
+        agent_id: impl Into<String>,
+        subject: &DomainObjectRef,
+        branch_scope: &BranchScope,
+        condition: &super::AgentMaintainedCondition,
+    ) -> Self {
+        Self {
+            agent_id: agent_id.into(),
+            subject_key: subject.index_key(),
+            branch_id: branch_scope.branch_id.clone(),
+            dimension_id: condition.dimension_id.clone(),
+            target_condition_key: condition_key(&condition.desired),
+            source_kind: "maintained_condition_breach".to_string(),
+            maintained_condition_id: Some(condition.condition_id.clone()),
         }
     }
 
     /// Return the canonical storage key for dedupe indexes.
     pub fn index_key(&self) -> String {
-        format!(
+        let legacy = format!(
             "{}::{}::{}::{}::{}::{}",
             self.agent_id,
             self.subject_key,
@@ -278,7 +335,11 @@ impl AgentCurationDedupeKey {
             self.dimension_id,
             self.target_condition_key,
             self.source_kind
-        )
+        );
+        match &self.maintained_condition_id {
+            Some(condition_id) => format!("{legacy}::{condition_id}"),
+            None => legacy,
+        }
     }
 
     /// Validate every dedupe component used in storage indexes.
@@ -289,6 +350,9 @@ impl AgentCurationDedupeKey {
         require_non_empty("dedupe dimension id", &self.dimension_id)?;
         require_non_empty("dedupe target condition key", &self.target_condition_key)?;
         require_non_empty("dedupe source kind", &self.source_kind)?;
+        if let Some(condition_id) = &self.maintained_condition_id {
+            require_non_empty("dedupe maintained condition id", condition_id)?;
+        }
         Ok(())
     }
 }
@@ -296,6 +360,9 @@ impl AgentCurationDedupeKey {
 /// Runtime configuration for a threshold based curation rule.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentCurationRuleConfig {
+    /// Standing condition selected by elevated curation theory.
+    #[serde(default)]
+    pub maintained_condition_id: Option<String>,
     /// Belief dimension the rule evaluates.
     pub dimension_id: String,
     /// Confidence threshold below which a goal may be proposed.
@@ -311,6 +378,9 @@ pub struct AgentCurationRuleConfig {
 impl AgentCurationRuleConfig {
     /// Validate the dimension, finite threshold, and source metadata.
     pub fn validate(&self) -> Result<(), StorageError> {
+        if let Some(condition_id) = &self.maintained_condition_id {
+            require_non_empty("rule maintained condition id", condition_id)?;
+        }
         require_non_empty("rule dimension id", &self.dimension_id)?;
         if !(0.0..=1.0).contains(&self.threshold) || !self.threshold.is_finite() {
             return Err(StorageError::InvalidPath(
@@ -452,6 +522,9 @@ pub struct AgentCurationDecision {
     /// Exact curation-rule revision used for a Goal-producing decision.
     #[serde(default)]
     pub curation_rule_revision: Option<crate::belief::TheoryRevisionRef>,
+    /// Exact maintained-condition revision used for this decision.
+    #[serde(default)]
+    pub maintained_condition_revision: Option<crate::belief::TheoryRevisionRef>,
     /// Dedupe key that defines the command family.
     pub dedupe_key: AgentCurationDedupeKey,
     /// References to belief and planner inputs used by the decision.
@@ -470,6 +543,9 @@ impl AgentCurationDecision {
         require_non_empty("subscription id", &self.subscription_id)?;
         self.dedupe_key.validate()?;
         self.input_refs.validate()?;
+        if let Some(reference) = &self.maintained_condition_revision {
+            reference.validate_for_registry("agent_maintained_condition")?;
+        }
         require_non_empty("decision reason", &self.reason)?;
         Ok(())
     }
@@ -581,6 +657,12 @@ pub struct SeedAgentRegistration {
     /// Exact curation-rule revision installed with the seed registration.
     #[serde(default)]
     pub curation_rule_revision: Option<crate::belief::TheoryRevisionRef>,
+    /// Standing condition installed with the seed registration.
+    #[serde(default)]
+    pub maintained_condition: Option<super::AgentMaintainedConditionBinding>,
+    /// Exact maintained-condition revision installed with the seed registration.
+    #[serde(default)]
+    pub maintained_condition_revision: Option<crate::belief::TheoryRevisionRef>,
     /// Sequence used for create and update timestamps.
     pub created_at_seq: u64,
 }
@@ -600,6 +682,24 @@ impl SeedAgentRegistration {
         }
         if let Some(reference) = &self.curation_rule_revision {
             reference.validate_for_registry("agent_curation_rule")?;
+        }
+        if let Some(binding) = &self.maintained_condition {
+            binding.validate()?;
+        }
+        if let Some(reference) = &self.maintained_condition_revision {
+            reference.validate_for_registry("agent_maintained_condition")?;
+        }
+        match (
+            &self.maintained_condition,
+            &self.maintained_condition_revision,
+        ) {
+            (Some(binding), Some(reference)) if &binding.revision == reference => {}
+            (None, None) => {}
+            _ => {
+                return Err(StorageError::InvalidPath(
+                    "seed maintained condition body and revision must match".to_string(),
+                ))
+            }
         }
         Ok(())
     }
@@ -1019,18 +1119,6 @@ pub(crate) fn require_non_empty(label: &str, value: &str) -> Result<(), StorageE
     Ok(())
 }
 
-pub(crate) fn threshold_target(
-    subject: DomainObjectRef,
-    dimension_id: String,
-    condition: Condition,
-) -> Proposition {
-    Proposition::Holds {
-        subject: Term::Object(subject),
-        dimension: Term::Dimension(dimension_id),
-        condition,
-    }
-}
-
 pub(crate) fn condition_key(condition: &Condition) -> String {
     serde_json::to_string(condition).expect("condition serialization is infallible")
 }
@@ -1049,6 +1137,9 @@ pub(crate) fn deterministic_id(prefix: &str, key: &str) -> String {
 }
 
 fn goal_matches_dedupe(goal: &Goal, dedupe_key: &AgentCurationDedupeKey) -> bool {
+    if !goal_source_matches_dedupe(&goal.source, dedupe_key) {
+        return false;
+    }
     match &goal.target {
         Proposition::Holds {
             subject,
@@ -1104,7 +1195,24 @@ fn require_goal_matches_dedupe(
         return dedupe_mismatch("goal target condition");
     }
 
+    if !goal_source_matches_dedupe(&goal.source, dedupe_key) {
+        return dedupe_mismatch("goal source maintained condition");
+    }
+
     Ok(())
+}
+
+fn goal_source_matches_dedupe(source: &GoalSource, dedupe_key: &AgentCurationDedupeKey) -> bool {
+    let Some(expected_condition_id) = &dedupe_key.maintained_condition_id else {
+        return true;
+    };
+    matches!(
+        source,
+        GoalSource::MaintainedConditionBreach {
+            maintained_condition_id,
+            ..
+        } if maintained_condition_id == expected_condition_id
+    )
 }
 
 fn dedupe_mismatch(field: &str) -> Result<(), StorageError> {

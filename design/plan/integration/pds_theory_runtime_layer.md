@@ -4,7 +4,7 @@ Date: 2026-07-30
 Status: active
 Scope: the implementation-readiness map of the settled PDS layer — operational domain theory against the written Meld runtime — including the scaffolding matrix, the current seams, and the layer-settlement rule for the next layer up
 
-Note 2026-08-13: Theory Elevation Step 1 installed every live docs semantic body through exact owner registries and complete receipts. Step 2 replaced expression-shaped production composition with named declaration lowering. The direct docs PDS composer is now test-only, belief-context family selection flows from the physical binding, and the stale Method-era source artifacts are retired.
+Note 2026-08-13: Theory Elevation Step 1 installed every live docs semantic body through exact owner registries and complete receipts. Step 2 replaced expression-shaped production composition with named declaration lowering. Step 3 installed Agent-owned maintained conditions as exact revisions that cause transient Goals. The direct docs PDS composer is now test-only, belief-context family selection flows from the physical binding, and the stale Method-era source artifacts are retired.
 
 ## Purpose
 
@@ -19,6 +19,7 @@ Each Meld coupling consumes operational domain theory through one seam. The matr
 | Belief family | `belief_family.<id>.json` | `theory.belief_family_id` | world-model belief registry selected by complete receipt | durable exact owner revision |
 | Evidence mapping set | `outcome_interpretation.<id>.json` | `theory.evidence_mapping_id` | world-model belief mapping registry selected by complete receipt | durable exact owner revision |
 | Curation rule | `curation_rule.<id>.json` | `theory.curation_rule_id` | world-model Agent registry selected by complete receipt | durable exact owner revision |
+| Maintained condition | `maintained_condition.<id>.json` | `theory.maintained_condition_id` | world-model Agent registry selected by complete receipt | durable exact owner revision |
 | Strategy theory | `strategy_theory.<id>.json` | `theory.strategy_theory_id` | world-model Strategy registry selected by complete receipt | durable exact owner revision |
 | Executable contract | capability implementation publication | derived from Strategy capability selectors | execution capability registry selected by complete receipt | durable exact owner revision |
 | Claim policy | `claim_policy.<id>.json` | `theory.claim_policy_id` | docs claim-policy registry selected by complete receipt | durable exact owner revision |
@@ -35,7 +36,7 @@ Family-declared semantics travel inside the belief family body and never in runt
 - Canonical configuration uses named tables under `stewardship.declarations`. The older `stewardship.docs_freshness` table is a temporary compatibility reader that lowers into the same value.
 - Strategy activation is owned by meld world model. Capability implementations bind by exact type, version, and content identity. Neither path selects by expression name.
 - Belief-context hydration consumes the family identity carried by the selected physical binding. Context does not choose an application family.
-- The declaration remains a minimal Step 2 selection. Maintained conditions and authority are not inferred from it.
+- The declaration remains a minimal selection. It names the maintained-condition owner body but does not infer condition semantics or authority.
 
 ## Pipeline Authority
 
@@ -48,7 +49,7 @@ flowchart LR
     ground --> runtime["belief, curation,<br/>planning, dispatch"]
 ```
 
-Authority at each stage: the named declaration selects identity and physical scope but does not yet represent standing conditions or effective authority. The authored package supplies owner semantics for installation. Installed revisions are the only theory the runtime cites. Grounding decides application and the runtime settles answers. The final user intent surface remains unsettled.
+Authority at each stage: the named declaration selects identity and physical scope but does not interpret standing conditions or represent effective authority. The authored package supplies owner semantics for installation. Installed revisions are the only theory the runtime cites. Grounding decides application and the runtime settles answers. The final user intent surface remains unsettled.
 
 ## Layer Settlement Rule
 

@@ -17,7 +17,7 @@
 
 use std::path::{Path, PathBuf};
 
-use meld_world_model::agent::AgentCurationRuleConfig;
+use meld_world_model::agent::{AgentCurationRuleConfig, AgentMaintainedCondition};
 use meld_world_model::belief::{BeliefConfigLoader, ConfiguredOutcomeMappingSet};
 use meld_world_model::strategy::{validate_strategy_theory_package, StrategyTheoryPackage};
 
@@ -26,7 +26,7 @@ use crate::docs::claim_validation::DocsClaimPolicy;
 use crate::error::ApiError;
 use crate::init::world::theory::{
     belief_family_config_path, claim_policy_config_path, curation_rule_config_path,
-    outcome_mapping_config_path, strategy_theory_config_path,
+    maintained_condition_config_path, outcome_mapping_config_path, strategy_theory_config_path,
 };
 
 /// Disposition of one provisioned theory body.
@@ -98,6 +98,24 @@ pub fn provision_theory_source(
         .map_err(|error| source_error(source_dir, "curation_rule", error))?;
     let destination = curation_rule_config_path(&package.curation_rule_id)?;
     prepared.push(("curation_rule", destination, rule_raw));
+
+    let condition_raw = read_single(source_dir, "maintained_condition")?;
+    let condition: AgentMaintainedCondition = serde_json::from_str(&condition_raw)
+        .map_err(|error| source_error(source_dir, "maintained_condition", error))?;
+    condition
+        .validate()
+        .map_err(|error| source_error(source_dir, "maintained_condition", error))?;
+    if condition.condition_id != package.maintained_condition_id {
+        return Err(ApiError::ConfigError(format!(
+            "theory source maintained condition declares condition_id '{}' but the selection names '{}'",
+            condition.condition_id, package.maintained_condition_id
+        )));
+    }
+    prepared.push((
+        "maintained_condition",
+        maintained_condition_config_path(&package.maintained_condition_id)?,
+        condition_raw,
+    ));
 
     let strategy_raw = read_single(source_dir, "strategy_theory")?;
     let strategy: StrategyTheoryPackage = serde_json::from_str(&strategy_raw)

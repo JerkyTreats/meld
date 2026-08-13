@@ -1340,6 +1340,7 @@ mod tests {
 
     fn rule() -> meld_world_model::AgentCurationRuleConfig {
         meld_world_model::AgentCurationRuleConfig {
+            maintained_condition_id: None,
             dimension_id: "docs_freshness".to_string(),
             threshold: 0.7,
             priority_urgency: 8,

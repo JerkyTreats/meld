@@ -1098,6 +1098,7 @@ mod tests {
                 goal_mutation_command_id: None,
                 strategy_authorization: None,
                 curation_rule_revision: None,
+                maintained_condition_revision: None,
                 dedupe_key: AgentCurationDedupeKey {
                     agent_id: "seed.docs_freshness".to_string(),
                     subject_key: subject().index_key(),
@@ -1105,6 +1106,7 @@ mod tests {
                     dimension_id: "docs_freshness".to_string(),
                     target_condition_key: "confidence>0.7".to_string(),
                     source_kind: "belief_divergence".to_string(),
+                    maintained_condition_id: None,
                 },
                 input_refs: AgentCurationInputRefs {
                     belief_revision_id: Some(REVISION_ID.to_string()),

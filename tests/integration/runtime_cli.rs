@@ -8,6 +8,7 @@ use meld::runtime::storage::ProductStorageLayout;
 use meld::runtime::supervisor::{RuntimeId, SupervisorReportStore};
 use meld::runtime::theory::{ResolvedStewardshipTheory, TheoryInstallationReceipt};
 use meld_events::{AppendMode, DomainObjectRef, EventEnvelope};
+use meld_lang::{Condition, GoalSource, Literal, Term};
 use serde_json::json;
 use serde_json::Value;
 use std::path::Path;
@@ -436,6 +437,17 @@ fn stewardship_receipts_activate_routes_and_preserve_a_b_lineage() {
             agent.curation_rule_revision.as_ref(),
             Some(&receipt.curation_rule)
         );
+        assert_eq!(
+            agent.maintained_condition_revision.as_ref(),
+            Some(&receipt.maintained_condition)
+        );
+        assert_eq!(
+            agent
+                .maintained_condition
+                .as_ref()
+                .map(|binding| &binding.revision),
+            Some(&receipt.maintained_condition)
+        );
         assert!(agent.curation_rule.is_none());
         // The stewardship composition carries the route seed but stays a
         // truthful unresolved binding until the foreground run composes the
@@ -495,12 +507,26 @@ fn stewardship_receipts_activate_routes_and_preserve_a_b_lineage() {
             Some(&receipt.curation_rule)
         );
         assert_eq!(
+            authorized.maintained_condition_revision.as_ref(),
+            Some(&receipt.maintained_condition)
+        );
+        assert_eq!(
             authorized
                 .strategy_authorization
                 .as_ref()
                 .and_then(|authorization| authorization.strategy_theory_revision.as_ref()),
             Some(&receipt.strategy_theory)
         );
+        assert!(product
+            .stores()
+            .goal_store
+            .goal_records()
+            .unwrap()
+            .iter()
+            .any(|record| matches!(
+                record.goal.source,
+                GoalSource::MaintainedConditionBreach { .. }
+            )));
 
         let curation_a = product
             .stores()
@@ -512,16 +538,34 @@ fn stewardship_receipts_activate_routes_and_preserve_a_b_lineage() {
             .unwrap()
             .unwrap();
         let mut curation_b_body = curation_a.rule.clone();
-        curation_b_body.threshold = 0.91;
+        curation_b_body.desired_summary = "confidence above 0.7".to_string();
         let (_, curation_b) = product
             .stores()
             .curation_rule_registry
             .install(&receipt.curation_rule.id, curation_b_body, 100)
             .unwrap();
+        let condition_a = product
+            .stores()
+            .maintained_condition_registry
+            .resolve(
+                &receipt.maintained_condition.id,
+                &receipt.maintained_condition.content_hash,
+            )
+            .unwrap()
+            .unwrap();
+        let mut condition_b_body = condition_a.condition.clone();
+        condition_b_body.desired = Condition::Above(Term::Literal(Literal::Number(0.7)));
+        condition_b_body.desired_summary = "confidence above 0.7".to_string();
+        let (_, condition_b) = product
+            .stores()
+            .maintained_condition_registry
+            .install(condition_b_body, 100)
+            .unwrap();
         let receipt_b = TheoryInstallationReceipt::new(
             selection.clone(),
             receipt.belief_family.clone(),
             curation_b.revision_ref(),
+            condition_b.revision_ref(),
             receipt.outcome_mapping.clone(),
             receipt.strategy_theory.clone(),
             receipt.executable_contracts.clone(),
@@ -577,6 +621,7 @@ fn stewardship_receipts_activate_routes_and_preserve_a_b_lineage() {
             ResolvedStewardshipTheory::resolve_receipt(product_b.stores(), &receipt.receipt_id)
                 .unwrap();
         assert_eq!(historical_a.curation_rule, curation_a);
+        assert_eq!(historical_a.maintained_condition, condition_a);
         let decisions_b = product_b
             .stores()
             .agent_store
@@ -585,20 +630,20 @@ fn stewardship_receipts_activate_routes_and_preserve_a_b_lineage() {
         assert!(decisions_b.iter().any(|decision| {
             decision.curation_rule_revision.as_ref() == Some(&receipt.curation_rule)
         }));
-        let authorized_b = decisions_b
+        let decision_b = decisions_b
             .iter()
             .find(|decision| {
                 decision.curation_rule_revision.as_ref() == Some(&receipt_b.curation_rule)
-                    && decision.strategy_authorization.is_some()
+                    && decision.maintained_condition_revision.as_ref()
+                        == Some(&receipt_b.maintained_condition)
             })
-            .expect("revision B must produce its own exact authorization lineage");
+            .expect("revision B must produce its own exact decision lineage");
         assert_eq!(
-            authorized_b
-                .strategy_authorization
-                .as_ref()
-                .and_then(|authorization| authorization.strategy_theory_revision.as_ref()),
-            Some(&receipt_b.strategy_theory)
+            decision_b.decision,
+            meld_world_model::agent::AgentDecisionKind::Absorbed
         );
+        assert!(decision_b.strategy_authorization.is_none());
+        assert_eq!(decision_b.reason, "matching active goal already exists");
 
         drop(run_context_b);
         provider.shutdown();
@@ -627,6 +672,7 @@ provider_id = "steward-provider"
 belief_family_id = "docs_freshness"
 evidence_mapping_id = "docs_freshness_outcome_interpretation_v1"
 curation_rule_id = "docs_freshness"
+maintained_condition_id = "docs_freshness"
 strategy_theory_id = "docs_freshness"
 claim_policy_id = "docs-claims-strict-v1"
 "#,
