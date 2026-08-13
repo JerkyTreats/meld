@@ -41,8 +41,8 @@ use meld_execution::task_network::{
 };
 use meld_lang::Method;
 use meld_world_model::agent::{
-    AgentGoalCurationActor, AgentSatisfactionCurationActor, AgentStepReport, AgentStepRequest,
-    AgentStore,
+    AgentCurationRuleBinding, AgentGoalCurationActor, AgentSatisfactionCurationActor,
+    AgentStepReport, AgentStepRequest, AgentStore,
 };
 use meld_world_model::belief::{
     BeliefAssessmentActor, BeliefAssessmentReport, BeliefAssessmentRequest, BeliefFamilyRegistry,
@@ -73,6 +73,7 @@ use crate::runtime::storage::{
     OpenProductStores, ProductStorageLayout, ProductStorageRoot, StoreScope,
 };
 use crate::runtime::supervisor::SupervisorStore;
+use crate::runtime::theory::ResolvedStewardshipTheory;
 
 /// Root product runtime assembly.
 ///
@@ -402,14 +403,17 @@ impl StewardshipActorBindings {
 
 /// Injected theory and route bindings for one stewardship composition.
 ///
-/// Assembly never bakes theory bodies into factories. Theory with a durable
-/// registry (the belief family, the curation rule on the agent record)
-/// resolves at tick time from that registry. The remaining kinds have no
-/// durable registry yet, so composition callers inject them here; a missing
-/// injection leaves the dependent actor a truthful unresolved required
-/// binding instead of manufacturing behavior.
+/// Production assembly hydrates every semantic body from one complete exact
+/// receipt snapshot. The loose fields below remain only for compatibility
+/// fixtures while they migrate to installed receipts.
+// TODO compat-shim: remove loose fields after every harness fixture builds a
+// complete receipt-resolved snapshot and compatibility parity remains green.
 #[derive(Default)]
 pub struct StewardshipTheoryBindings {
+    /// Complete exact semantic image injected by receipt-aware harness callers.
+    ///
+    /// Production assembly resolves this value from the active receipt.
+    pub resolved: Option<Arc<ResolvedStewardshipTheory>>,
     /// Installed outcome-to-evidence mapping set configuration.
     ///
     /// The installed unit is the mapping set: one selected identity whose
@@ -555,6 +559,8 @@ pub struct DispatchRouteSeed {
     pub subject_path: PathBuf,
     /// Durable agent identity that stewards the subject.
     pub agent_id: String,
+    /// Belief family selected by the stewardship declaration.
+    pub belief_family_id: String,
     /// Provider key guaranteed present in the root provider map.
     pub provider_id: String,
     /// Event ledger session partition shared with the composed actors.
@@ -567,6 +573,142 @@ pub struct StewardshipComposition {
     pub binding: PhysicalBinding,
     /// Injected theory and route bindings.
     pub theory: StewardshipTheoryBindings,
+}
+
+fn hydrate_stewardship_theory(
+    stores: &OpenProductStores,
+    binding: &PhysicalBinding,
+    theory: &mut StewardshipTheoryBindings,
+    diagnostics: &mut Vec<AssemblyDiagnostic>,
+) {
+    let resolved = match theory.resolved.clone() {
+        Some(resolved) => resolved,
+        None => match ResolvedStewardshipTheory::resolve(stores, &binding.package) {
+            Ok(resolved) => Arc::new(resolved),
+            Err(error) => {
+                diagnostics.push(AssemblyDiagnostic {
+                    code: error
+                        .to_string()
+                        .split(':')
+                        .next()
+                        .unwrap_or("theory_image_unresolved")
+                        .to_string(),
+                    message: error.to_string(),
+                });
+                return;
+            }
+        },
+    };
+    let provider = match crate::provider::ProviderExecutionBinding::new(
+        binding.provider_id.clone(),
+        crate::provider::ProviderRuntimeOverrides::default(),
+    ) {
+        Ok(provider) => provider,
+        Err(error) => {
+            diagnostics.push(AssemblyDiagnostic {
+                code: "theory_image_inconsistent".to_string(),
+                message: error.to_string(),
+            });
+            return;
+        }
+    };
+    let contracts = resolved
+        .executable_contracts
+        .iter()
+        .map(|revision| revision.contract.clone())
+        .collect::<Vec<_>>();
+    let capability_runtime =
+        match activate_exact_capabilities(binding, &resolved, provider, &contracts) {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                diagnostics.push(AssemblyDiagnostic {
+                    code: "theory_image_inconsistent".to_string(),
+                    message: error.to_string(),
+                });
+                return;
+            }
+        };
+    let subject = match DomainObjectRef::new("workspace_fs", "node", binding.subject.clone()) {
+        Ok(subject) => subject,
+        Err(error) => {
+            diagnostics.push(AssemblyDiagnostic {
+                code: "theory_image_inconsistent".to_string(),
+                message: error.to_string(),
+            });
+            return;
+        }
+    };
+    let mut strategy = match meld_world_model::AgentStrategyRuntimeConfig::activate_installed(
+        resolved.strategy_theory.package.clone(),
+        subject,
+        binding.agent_id.clone(),
+    ) {
+        Ok(strategy) => strategy,
+        Err(error) => {
+            diagnostics.push(AssemblyDiagnostic {
+                code: "theory_image_inconsistent".to_string(),
+                message: error.to_string(),
+            });
+            return;
+        }
+    };
+    strategy.theory_revision = Some(resolved.strategy_theory.revision_ref());
+    theory.outcome_mapping = Some(resolved.outcome_mapping.config.clone());
+    theory.strategy = Some(strategy);
+    theory.planning = Some(PlanningTheoryBinding {
+        methods: Vec::new(),
+        capability_catalog: capability_runtime.catalog.clone(),
+        available_actions: AvailableActionSet {
+            actions: Vec::new(),
+        },
+        method_realizations: Vec::new(),
+        requested_dimensions: resolved
+            .strategy_theory
+            .package
+            .requested_dimensions
+            .clone(),
+    });
+    theory.capability_runtime = Some(capability_runtime);
+    theory.resolved = Some(resolved);
+}
+
+/// Bind built-in product capability implementations by exact contract.
+///
+/// This adapter composes implementation publishers. It never selects by
+/// stewardship expression and it rejects any installed contract for which
+/// the process has no exact invoker.
+fn activate_exact_capabilities(
+    binding: &PhysicalBinding,
+    resolved: &ResolvedStewardshipTheory,
+    provider: crate::provider::ProviderExecutionBinding,
+    contracts: &[crate::capability::CapabilityTypeContract],
+) -> Result<ProductCapabilityRuntime, crate::error::ApiError> {
+    let mut catalog = CapabilityCatalog::new();
+    let mut registry = crate::capability::CapabilityExecutorRegistry::new();
+    crate::docs::capability::register_exact_contracts(
+        crate::docs::capability::DocsCapabilityConfig {
+            target_root: binding.workspace_root.clone(),
+            subject_id: binding.subject.clone(),
+            agent_id: binding.agent_id.clone(),
+            provider,
+        },
+        resolved.claim_policy.policy.clone(),
+        contracts,
+        &mut catalog,
+        &mut registry,
+    )?;
+    for contract in contracts {
+        if registry
+            .get(&contract.capability_type_id, contract.capability_version)
+            .is_none()
+        {
+            return Err(crate::error::ApiError::ConfigError(format!(
+                "installed capability '{}' version '{}' has no product invoker",
+                contract.capability_type_id, contract.capability_version
+            )));
+        }
+    }
+    Ok(ProductCapabilityRuntime { catalog, registry })
 }
 
 /// In-process package-route plan handoffs between planning and dispatch.
@@ -630,6 +772,7 @@ fn dispatch_route_seed(
         workspace_root: binding.workspace_root.clone(),
         subject_path: PathBuf::from(&binding.subject),
         agent_id: binding.agent_id.clone(),
+        belief_family_id: binding.package.belief_family_id.clone(),
         provider_id: binding.provider_id.clone(),
         session_id: bindings.session_id.clone(),
     }
@@ -710,6 +853,7 @@ struct BeliefAssessmentFactory {
     subject_binding: BeliefSubjectBinding,
     perspective: PerspectiveKey,
     branch_scope: BranchScope,
+    family_revision: Option<meld_world_model::belief::BeliefFamilyRevision>,
 }
 
 #[derive(Clone)]
@@ -721,8 +865,10 @@ struct EvidenceIngestionFactory {
     replay: ProductEventReplayPort,
     cursor: EventConsumerRegistryCapability,
     mapping: Arc<ConfiguredOutcomeMappingSet>,
+    mapping_revision: Option<meld_world_model::belief::TheoryRevisionRef>,
     perspective: PerspectiveKey,
     branch_scope: BranchScope,
+    family_revision: Option<meld_world_model::belief::BeliefFamilyRevision>,
 }
 
 /// Which bounded agent actor an [`AgentActorFactory`] builds.
@@ -744,6 +890,7 @@ struct AgentActorFactory {
     goal_command: ExecutionGoalCommandPort,
     goal_mutation: ExecutionGoalMutationPort,
     strategy: Option<meld_world_model::AgentStrategyRuntimeConfig>,
+    curation_rule: Option<AgentCurationRuleBinding>,
 }
 
 #[derive(Clone)]
@@ -1163,10 +1310,13 @@ impl ProductRuntimeAssembly {
             }
             (None, None) => None,
         };
-        let scope = registration_set
+        let mut scope = registration_set
             .as_ref()
             .map(|set| scope_for_registration_set(set, &registry))
             .unwrap_or_else(StoreScope::all);
+        if stewardship.is_some() {
+            scope.theory = true;
+        }
 
         let stores = Arc::new(OpenProductStores::open_scoped(&layout, &scope)?);
         let supervisor_store_path = config
@@ -1202,7 +1352,13 @@ impl ProductRuntimeAssembly {
 
         let mut diagnostics = Vec::new();
         let composed_stewardship = match stewardship {
-            Some(composition) => {
+            Some(mut composition) => {
+                hydrate_stewardship_theory(
+                    stores.as_ref(),
+                    &composition.binding,
+                    &mut composition.theory,
+                    &mut diagnostics,
+                );
                 let bindings = StewardshipActorBindings::derive(&composition.binding)?;
                 let network = match stores.task_networks.opened() {
                     Some(factory) => Some(Arc::new(Mutex::new(
@@ -1773,7 +1929,9 @@ impl RuntimeSemanticHandleFactory {
                     return Ok(Self::None);
                 };
                 let family_id = composed.bindings.belief_family_id.clone();
-                if !family_installed(registry, &family_id, runtime_id, diagnostics) {
+                if composed.theory.resolved.is_none()
+                    && !family_installed(registry, &family_id, runtime_id, diagnostics)
+                {
                     return Ok(Self::None);
                 }
                 Ok(Self::BeliefAssessment(Box::new(BeliefAssessmentFactory {
@@ -1788,6 +1946,11 @@ impl RuntimeSemanticHandleFactory {
                     },
                     perspective: composed.bindings.perspective.clone(),
                     branch_scope: composed.bindings.branch_scope.clone(),
+                    family_revision: composed
+                        .theory
+                        .resolved
+                        .as_ref()
+                        .map(|resolved| resolved.belief_family.clone()),
                 })))
             }
             "world_model.evidence_ingestion" => {
@@ -1802,7 +1965,9 @@ impl RuntimeSemanticHandleFactory {
                     return Ok(Self::None);
                 };
                 let family_id = composed.bindings.belief_family_id.clone();
-                if !family_installed(registry, &family_id, runtime_id, diagnostics) {
+                if composed.theory.resolved.is_none()
+                    && !family_installed(registry, &family_id, runtime_id, diagnostics)
+                {
                     return Ok(Self::None);
                 }
                 let Some(mapping_config) = composed.theory.outcome_mapping.clone() else {
@@ -1848,8 +2013,18 @@ impl RuntimeSemanticHandleFactory {
                         replay: ports.event_replay().clone(),
                         cursor: composed.cursor_registry.clone(),
                         mapping,
+                        mapping_revision: composed
+                            .theory
+                            .resolved
+                            .as_ref()
+                            .map(|resolved| resolved.outcome_mapping.revision_ref()),
                         perspective: composed.bindings.perspective.clone(),
                         branch_scope: composed.bindings.branch_scope.clone(),
+                        family_revision: composed
+                            .theory
+                            .resolved
+                            .as_ref()
+                            .map(|resolved| resolved.belief_family.clone()),
                     },
                 )))
             }
@@ -1899,6 +2074,21 @@ impl RuntimeSemanticHandleFactory {
                 } else {
                     AgentActorKind::SatisfactionCuration
                 };
+                let curation_rule = composed
+                    .theory
+                    .resolved
+                    .as_ref()
+                    .map(|resolved| {
+                        AgentCurationRuleBinding::for_revision(
+                            &resolved.curation_rule.rule_id,
+                            &resolved.curation_rule.content_hash,
+                            resolved.curation_rule.rule.clone(),
+                        )
+                    })
+                    .transpose()
+                    .map_err(|error| {
+                        RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
+                    })?;
                 Ok(Self::AgentActor(Box::new(AgentActorFactory {
                     kind,
                     runtime_id: runtime_id.to_string(),
@@ -1910,6 +2100,7 @@ impl RuntimeSemanticHandleFactory {
                     goal_command: goal_command.clone(),
                     goal_mutation: goal_mutation.clone(),
                     strategy: composed.theory.strategy.clone(),
+                    curation_rule,
                 })))
             }
             "execution.planning" => {
@@ -2022,17 +2213,23 @@ impl RuntimeSemanticHandleFactory {
             }
             Self::BeliefAssessment(factory) => {
                 RuntimeSemanticHandle::BeliefAssessment(Box::new(BeliefAssessmentHandle {
-                    actor: BeliefAssessmentActor::new(
-                        "world_model.belief_assessment",
-                        Arc::clone(&factory.belief_store),
-                        Arc::clone(&factory.traversal_store),
-                        Arc::clone(&factory.registry)
-                            as Arc<dyn BeliefFamilyRegistry + Send + Sync>,
-                        vec![factory.family_id.clone()],
-                        vec![factory.subject_binding.clone()],
-                        factory.perspective.clone(),
-                        factory.branch_scope.clone(),
-                    ),
+                    actor: {
+                        let actor = BeliefAssessmentActor::new(
+                            "world_model.belief_assessment",
+                            Arc::clone(&factory.belief_store),
+                            Arc::clone(&factory.traversal_store),
+                            Arc::clone(&factory.registry)
+                                as Arc<dyn BeliefFamilyRegistry + Send + Sync>,
+                            vec![factory.family_id.clone()],
+                            vec![factory.subject_binding.clone()],
+                            factory.perspective.clone(),
+                            factory.branch_scope.clone(),
+                        );
+                        match factory.family_revision.clone() {
+                            Some(revision) => actor.with_pinned_families(vec![revision]),
+                            None => actor,
+                        }
+                    },
                     subject_key: factory.subject_binding.subject.index_key(),
                     sequence: DurableStepSequence::new(
                         Arc::clone(&factory.belief_store),
@@ -2042,25 +2239,35 @@ impl RuntimeSemanticHandleFactory {
             }
             Self::EvidenceIngestion(factory) => {
                 RuntimeSemanticHandle::EvidenceIngestion(Box::new(EvidenceIngestionHandle {
-                    actor: EvidenceIngestionActor::new(
-                        "world_model.evidence_ingestion",
-                        Arc::clone(&factory.belief_store),
-                        Arc::clone(&factory.traversal_store),
-                        Arc::clone(&factory.registry)
-                            as Arc<dyn BeliefFamilyRegistry + Send + Sync>,
-                        factory.family_id.clone(),
-                        Arc::new(factory.replay.clone()) as Arc<dyn EvidenceEventReplaySource>,
-                        Arc::new(factory.cursor.clone())
-                            as Arc<dyn DurableConsumerCursor + Send + Sync>,
-                        Arc::clone(&factory.mapping)
-                            as Arc<dyn OutcomeEvidenceMapping + Send + Sync>,
-                        // The ingestion mapping id always derives from the
-                        // installed mapping itself, so a selected-versus-
-                        // installed mismatch is unconstructible here.
-                        factory.mapping.mapping_id(),
-                        factory.perspective.clone(),
-                        factory.branch_scope.clone(),
-                    ),
+                    actor: {
+                        let actor = EvidenceIngestionActor::new(
+                            "world_model.evidence_ingestion",
+                            Arc::clone(&factory.belief_store),
+                            Arc::clone(&factory.traversal_store),
+                            Arc::clone(&factory.registry)
+                                as Arc<dyn BeliefFamilyRegistry + Send + Sync>,
+                            factory.family_id.clone(),
+                            Arc::new(factory.replay.clone()) as Arc<dyn EvidenceEventReplaySource>,
+                            Arc::new(factory.cursor.clone())
+                                as Arc<dyn DurableConsumerCursor + Send + Sync>,
+                            Arc::clone(&factory.mapping)
+                                as Arc<dyn OutcomeEvidenceMapping + Send + Sync>,
+                            // The ingestion mapping id always derives from the
+                            // installed mapping itself, so a selected-versus-
+                            // installed mismatch is unconstructible here.
+                            factory.mapping.mapping_id(),
+                            factory.perspective.clone(),
+                            factory.branch_scope.clone(),
+                        );
+                        let actor = match factory.mapping_revision.clone() {
+                            Some(revision) => actor.with_mapping_revision(revision),
+                            None => actor,
+                        };
+                        match factory.family_revision.clone() {
+                            Some(revision) => actor.with_family_revision(revision),
+                            None => actor,
+                        }
+                    },
                 }))
             }
             Self::AgentActor(factory) => {
@@ -2082,6 +2289,10 @@ impl RuntimeSemanticHandleFactory {
                                 Arc::clone(&factory.belief_store),
                                 Arc::clone(&factory.traversal_store),
                             ),
+                        };
+                        let actor = match factory.curation_rule.clone() {
+                            Some(rule) => actor.with_curation_rule(rule),
+                            None => actor,
                         };
                         (Some(actor), None)
                     }
@@ -3830,6 +4041,7 @@ mod tests {
         );
         config.system.storage.product_root = Some(storage_root.to_path_buf());
         config.stewardship = StewardshipConfig {
+            declarations: Default::default(),
             docs_freshness: Some(DocsFreshnessSelection {
                 expression: "docs_freshness".to_string(),
                 target_root: workspace.to_path_buf(),
@@ -3840,6 +4052,8 @@ mod tests {
                     belief_family_id: FAMILY_ID.to_string(),
                     evidence_mapping_id: MAPPING_ID.to_string(),
                     curation_rule_id: "docs_freshness".to_string(),
+                    strategy_theory_id: "docs_freshness".to_string(),
+                    claim_policy_id: "docs-claims-strict-v1".to_string(),
                 },
             }),
         };
@@ -3997,6 +4211,7 @@ mod tests {
                         )
                         .unwrap(),
                     ),
+                    curation_rule_revision: None,
                     created_at_seq: 2,
                 })
                 .unwrap();
@@ -4306,6 +4521,7 @@ mod tests {
         let seed = assembly.dispatch_route_seed().unwrap();
         assert_eq!(seed.subject_path, PathBuf::from("docs"));
         assert_eq!(seed.agent_id, STEWARD_AGENT_ID);
+        assert_eq!(seed.belief_family_id, FAMILY_ID);
         assert_eq!(seed.provider_id, "main-provider");
         assert_eq!(seed.session_id, "stewardship::docs_freshness");
         assert_eq!(seed.workspace_root, harness.binding.workspace_root);

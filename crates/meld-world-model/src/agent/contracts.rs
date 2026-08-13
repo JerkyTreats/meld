@@ -124,6 +124,9 @@ pub struct AgentRecord {
     /// call. Absent on records created before the binding existed.
     #[serde(default)]
     pub curation_rule: Option<AgentCurationRuleBinding>,
+    /// Exact curation-rule revision selected for newly elevated records.
+    #[serde(default)]
+    pub curation_rule_revision: Option<crate::belief::TheoryRevisionRef>,
     /// Current agent lifecycle status.
     pub status: AgentStatus,
     /// Sequence assigned when the record was first stored.
@@ -144,6 +147,9 @@ impl AgentRecord {
         require_non_empty("seed provenance", &self.seed_provenance)?;
         if let Some(binding) = &self.curation_rule {
             binding.validate()?;
+        }
+        if let Some(reference) = &self.curation_rule_revision {
+            reference.validate_for_registry("agent_curation_rule")?;
         }
         Ok(())
     }
@@ -338,6 +344,9 @@ pub struct AgentCurationRuleBinding {
     pub rule: AgentCurationRuleConfig,
     /// Content hash over the serialized rule, the revision identity.
     pub content_hash: String,
+    /// Exact registry reference for elevated Agent records.
+    #[serde(default)]
+    pub revision: Option<crate::belief::TheoryRevisionRef>,
 }
 
 impl AgentCurationRuleBinding {
@@ -345,7 +354,27 @@ impl AgentCurationRuleBinding {
     pub fn for_rule(rule: AgentCurationRuleConfig) -> Result<Self, StorageError> {
         rule.validate()?;
         let content_hash = Self::content_hash_for(&rule)?;
-        Ok(Self { rule, content_hash })
+        Ok(Self {
+            rule,
+            content_hash,
+            revision: None,
+        })
+    }
+
+    /// Build a compatibility binding that also cites its exact owner revision.
+    pub fn for_revision(
+        rule_id: &str,
+        revision_content_hash: &str,
+        rule: AgentCurationRuleConfig,
+    ) -> Result<Self, StorageError> {
+        let mut binding = Self::for_rule(rule)?;
+        binding.revision = Some(crate::belief::TheoryRevisionRef {
+            registry: "agent_curation_rule".to_string(),
+            id: rule_id.to_string(),
+            content_hash: revision_content_hash.to_string(),
+        });
+        binding.validate()?;
+        Ok(binding)
     }
 
     /// Compute the canonical content hash for a rule configuration.
@@ -366,6 +395,9 @@ impl AgentCurationRuleBinding {
             return Err(StorageError::InvalidPath(
                 "curation rule content hash does not match rule content".to_string(),
             ));
+        }
+        if let Some(revision) = &self.revision {
+            revision.validate_for_registry("agent_curation_rule")?;
         }
         Ok(())
     }
@@ -417,6 +449,9 @@ pub struct AgentCurationDecision {
     /// Exact Strategy authorization settled with this decision.
     #[serde(default)]
     pub strategy_authorization: Option<crate::strategy::StrategyAuthorization>,
+    /// Exact curation-rule revision used for a Goal-producing decision.
+    #[serde(default)]
+    pub curation_rule_revision: Option<crate::belief::TheoryRevisionRef>,
     /// Dedupe key that defines the command family.
     pub dedupe_key: AgentCurationDedupeKey,
     /// References to belief and planner inputs used by the decision.
@@ -543,6 +578,9 @@ pub struct SeedAgentRegistration {
     /// Curation rule installed with the seed registration.
     #[serde(default)]
     pub curation_rule: Option<AgentCurationRuleBinding>,
+    /// Exact curation-rule revision installed with the seed registration.
+    #[serde(default)]
+    pub curation_rule_revision: Option<crate::belief::TheoryRevisionRef>,
     /// Sequence used for create and update timestamps.
     pub created_at_seq: u64,
 }
@@ -559,6 +597,9 @@ impl SeedAgentRegistration {
         require_non_empty("seed provenance", &self.seed_provenance)?;
         if let Some(binding) = &self.curation_rule {
             binding.validate()?;
+        }
+        if let Some(reference) = &self.curation_rule_revision {
+            reference.validate_for_registry("agent_curation_rule")?;
         }
         Ok(())
     }

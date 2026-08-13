@@ -79,6 +79,7 @@ fn outcome(artifact_type: &str, stale_probability: f64) -> OutcomeMappingInput {
     )
     .with_record_id("publication-assessment");
     OutcomeMappingInput {
+        mapping_revision: None,
         record: EventRecord::from_envelope(envelope, 7),
         mapping_id: MAPPING_ID.to_string(),
     }

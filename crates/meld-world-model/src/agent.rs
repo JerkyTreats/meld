@@ -3,6 +3,7 @@
 pub mod actor;
 pub mod contracts;
 pub mod curation;
+pub mod curation_registry;
 pub mod goal_port;
 pub mod query;
 pub mod registration;
@@ -15,6 +16,7 @@ pub mod subscription;
 pub use actor::*;
 pub use contracts::*;
 pub use curation::*;
+pub use curation_registry::*;
 pub use goal_port::{CurationGoalSetPort, CURATION_GOAL_SET_PORT_ID};
 pub use query::AgentQuery;
 pub use registration::AgentRegistration;

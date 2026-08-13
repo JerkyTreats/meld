@@ -21,10 +21,6 @@ use std::collections::BTreeMap;
 /// Artifact type id for the seeded belief context bundle.
 pub const BELIEF_CONTEXT_BUNDLE_ARTIFACT_TYPE_ID: &str = "belief_context_bundle";
 
-/// Belief family consulted by the first slice. `docs_freshness` is the only
-/// loaded family; selection falls back to recency for uncovered subjects.
-pub const BELIEF_CONTEXT_FAMILY_ID: &str = "docs_freshness";
-
 /// Maximum covered subjects seeded into one bundle. A coarse pre-filter, not
 /// the byte-cap guarantee: assertion reference lists are unbounded upstream,
 /// so [`hydrate_belief_context_bundle`] additionally trims the retained set
@@ -153,7 +149,13 @@ pub fn hydrate_belief_context_bundle(
     api: &(impl ContextReadPort + BeliefContextReadPort + ?Sized),
     node_id: NodeID,
     subject_path: &str,
+    family_id: &str,
 ) -> Result<BeliefContextBundle, ApiError> {
+    if family_id.trim().is_empty() {
+        return Err(ApiError::ConfigError(
+            "Belief context family id must not be empty".to_string(),
+        ));
+    }
     let subject_node_id = hex::encode(node_id);
     let mut subject_assertions = BTreeMap::new();
     let mut pending = vec![node_id];
@@ -163,7 +165,7 @@ pub fn hydrate_belief_context_bundle(
         };
         pending.extend(record.children.iter().copied());
         let current_hex = hex::encode(current);
-        if let Some(signal) = api.current_belief_signal(&current_hex, BELIEF_CONTEXT_FAMILY_ID)? {
+        if let Some(signal) = api.current_belief_signal(&current_hex, family_id)? {
             subject_assertions.insert(current_hex, assertion_from_signal(signal));
         }
     }
@@ -173,7 +175,7 @@ pub fn hydrate_belief_context_bundle(
         schema_version: 1,
         subject_node_id,
         subject_path: subject_path.to_string(),
-        family_id: BELIEF_CONTEXT_FAMILY_ID.to_string(),
+        family_id: family_id.to_string(),
         as_of_seq: high_water_seq(&subject_assertions),
         subject_assertions,
         omitted_subject_count,
@@ -365,6 +367,8 @@ pub fn classify_belief_assertion(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const BELIEF_CONTEXT_FAMILY_ID: &str = "docs_freshness";
 
     fn assertion(
         stale: bool,

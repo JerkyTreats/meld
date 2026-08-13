@@ -19,11 +19,14 @@ use std::path::{Path, PathBuf};
 
 use meld_world_model::agent::AgentCurationRuleConfig;
 use meld_world_model::belief::{BeliefConfigLoader, ConfiguredOutcomeMappingSet};
+use meld_world_model::strategy::{validate_strategy_theory_package, StrategyTheoryPackage};
 
 use crate::config::SelectedStewardshipPackage;
+use crate::docs::claim_validation::DocsClaimPolicy;
 use crate::error::ApiError;
 use crate::init::world::theory::{
-    belief_family_config_path, curation_rule_config_path, outcome_mapping_config_path,
+    belief_family_config_path, claim_policy_config_path, curation_rule_config_path,
+    outcome_mapping_config_path, strategy_theory_config_path,
 };
 
 /// Disposition of one provisioned theory body.
@@ -59,7 +62,7 @@ pub fn provision_theory_source(
             source_dir.display()
         )));
     }
-    let mut report = TheorySourceReport::default();
+    let mut prepared = Vec::new();
 
     let family_raw = read_single(source_dir, "belief_family")?;
     let family = BeliefConfigLoader::load_json(&family_raw)
@@ -71,9 +74,7 @@ pub fn provision_theory_source(
         )));
     }
     let destination = belief_family_config_path(&package.belief_family_id)?;
-    report
-        .bodies
-        .push(write_body("belief_family", &destination, &family_raw)?);
+    prepared.push(("belief_family", destination, family_raw));
 
     let mapping_raw = read_single(source_dir, "outcome_interpretation")?;
     let mapping: meld_world_model::belief::OutcomeMappingSetConfig =
@@ -88,11 +89,7 @@ pub fn provision_theory_source(
         )));
     }
     let destination = outcome_mapping_config_path(&package.evidence_mapping_id)?;
-    report.bodies.push(write_body(
-        "outcome_interpretation",
-        &destination,
-        &mapping_raw,
-    )?);
+    prepared.push(("outcome_interpretation", destination, mapping_raw));
 
     let rule_raw = read_single(source_dir, "curation_rule")?;
     let rule: AgentCurationRuleConfig = serde_json::from_str(&rule_raw)
@@ -100,11 +97,49 @@ pub fn provision_theory_source(
     rule.validate()
         .map_err(|error| source_error(source_dir, "curation_rule", error))?;
     let destination = curation_rule_config_path(&package.curation_rule_id)?;
-    report
-        .bodies
-        .push(write_body("curation_rule", &destination, &rule_raw)?);
+    prepared.push(("curation_rule", destination, rule_raw));
 
-    Ok(report)
+    let strategy_raw = read_single(source_dir, "strategy_theory")?;
+    let strategy: StrategyTheoryPackage = serde_json::from_str(&strategy_raw)
+        .map_err(|error| source_error(source_dir, "strategy_theory", error))?;
+    validate_strategy_theory_package(&strategy)
+        .map_err(|error| source_error(source_dir, "strategy_theory", error))?;
+    if strategy.snapshot.theory_id != package.strategy_theory_id {
+        return Err(ApiError::ConfigError(format!(
+            "theory source Strategy package declares theory_id '{}' but the selection names '{}'",
+            strategy.snapshot.theory_id, package.strategy_theory_id
+        )));
+    }
+    prepared.push((
+        "strategy_theory",
+        strategy_theory_config_path(&package.strategy_theory_id)?,
+        strategy_raw,
+    ));
+
+    let claim_raw = read_single(source_dir, "claim_policy")?;
+    let claim: DocsClaimPolicy = serde_json::from_str(&claim_raw)
+        .map_err(|error| source_error(source_dir, "claim_policy", error))?;
+    claim
+        .validate()
+        .map_err(|error| source_error(source_dir, "claim_policy", error))?;
+    if claim.policy_id != package.claim_policy_id {
+        return Err(ApiError::ConfigError(format!(
+            "theory source claim policy declares policy_id '{}' but the selection names '{}'",
+            claim.policy_id, package.claim_policy_id
+        )));
+    }
+    prepared.push((
+        "claim_policy",
+        claim_policy_config_path(&package.claim_policy_id)?,
+        claim_raw,
+    ));
+
+    let bodies = prepared
+        .into_iter()
+        .map(|(kind, destination, raw)| write_body(kind, &destination, &raw))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(TheorySourceReport { bodies })
 }
 
 /// Locate exactly one `<kind>.<id>.json` body and return its content.

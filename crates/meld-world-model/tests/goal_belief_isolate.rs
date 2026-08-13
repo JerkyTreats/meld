@@ -293,6 +293,7 @@ impl IsolateSession {
                 directive: "curate docs freshness goals".to_string(),
                 seed_provenance: "trusted init".to_string(),
                 curation_rule: Some(AgentCurationRuleBinding::for_rule(curation_rule()).unwrap()),
+                curation_rule_revision: None,
                 created_at_seq: 2,
             })
             .unwrap();

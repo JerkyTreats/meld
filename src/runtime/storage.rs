@@ -3,17 +3,23 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use meld_execution::capability::CapabilityContractRegistryStore;
 use meld_execution::goals::PersistentGoalSetStore;
 use meld_execution::task::TaskArtifactRepoFactory;
 use meld_execution::task_network::store::TaskNetworkStoreFactory;
-use meld_world_model::agent::AgentStore;
-use meld_world_model::belief::{BeliefFamilyRegistryStore, BeliefStore};
+use meld_world_model::agent::{AgentCurationRuleRegistryStore, AgentStore};
+use meld_world_model::belief::{
+    BeliefFamilyRegistryStore, BeliefStore, OutcomeMappingRegistryStore,
+};
+use meld_world_model::strategy::StrategyTheoryRegistryStore;
 use meld_world_model::world_state::graph::store::TraversalStore;
 use meld_world_model::world_state::store::WorldStateStore;
 use thiserror::Error;
 
 use crate::context::frame::FrameStorage;
+use crate::docs::claim_validation::DocsClaimPolicyRegistryStore;
 use crate::prompt_context::PromptContextArtifactStorage;
+use crate::runtime::theory::TheoryInstallationReceiptStore;
 use crate::store::SledNodeRecordStore;
 
 /// Product storage root for durable runtime state.
@@ -38,6 +44,8 @@ pub struct ProductStorageLayout {
     pub workspace_db: PathBuf,
     /// Shared world model database for graph, belief, agent, and compatibility state.
     pub world_model_db: PathBuf,
+    /// Shared physical database for execution, docs, and root theory records.
+    pub theory_db: PathBuf,
     /// Execution goal set database owned by `meld-execution`.
     pub execution_goals_db: PathBuf,
     /// Shared task artifact database opened through execution-owned repo factories.
@@ -64,6 +72,8 @@ pub struct StoreScope {
     pub workspace: bool,
     /// Shared world model database, including the belief family registry.
     pub world_model: bool,
+    /// Shared theory database and its typed owner stores.
+    pub theory: bool,
     /// Execution goal set database.
     pub execution_goals: bool,
     /// Task execution databases: artifacts, package progress, task networks.
@@ -80,6 +90,7 @@ impl StoreScope {
         Self {
             workspace: true,
             world_model: true,
+            theory: true,
             execution_goals: true,
             task_execution: true,
             context_frames: true,
@@ -97,6 +108,7 @@ impl StoreScope {
         Self {
             workspace: self.workspace || other.workspace,
             world_model: self.world_model || other.world_model,
+            theory: self.theory || other.theory,
             execution_goals: self.execution_goals || other.execution_goals,
             task_execution: self.task_execution || other.task_execution,
             context_frames: self.context_frames || other.context_frames,
@@ -167,6 +179,12 @@ pub struct OpenProductStores {
     pub belief_store: ScopedResource<Arc<BeliefStore>>,
     /// World model belief-family theory registry (Runtime Initialization stage 2 home).
     pub belief_family_registry: ScopedResource<Arc<BeliefFamilyRegistryStore>>,
+    /// Agent-owned exact curation-rule registry.
+    pub curation_rule_registry: ScopedResource<Arc<AgentCurationRuleRegistryStore>>,
+    /// Belief-owned exact outcome-mapping registry.
+    pub outcome_mapping_registry: ScopedResource<Arc<OutcomeMappingRegistryStore>>,
+    /// Strategy-owned exact theory-package registry.
+    pub strategy_theory_registry: ScopedResource<Arc<StrategyTheoryRegistryStore>>,
     /// World model agent state.
     pub agent_store: ScopedResource<Arc<AgentStore>>,
     /// Compatibility store for legacy world state claims while migration remains active.
@@ -181,6 +199,14 @@ pub struct OpenProductStores {
     /// artifact repositories, and the aggregate publication outbox. Same
     /// database as `task_artifacts`.
     pub execution_db: ScopedResource<sled::Db>,
+    /// Execution-owned exact capability-contract registry.
+    pub capability_contract_registry: ScopedResource<Arc<CapabilityContractRegistryStore>>,
+    /// Docs-owned exact claim-policy registry.
+    pub claim_policy_registry: ScopedResource<Arc<DocsClaimPolicyRegistryStore>>,
+    /// Root-owned complete installation receipt store.
+    pub theory_receipts: ScopedResource<Arc<TheoryInstallationReceiptStore>>,
+    /// Shared physical theory database for checkpoint flushing only.
+    pub theory_db: ScopedResource<sled::Db>,
     /// Context frame blob storage.
     pub frame_storage: ScopedResource<Arc<FrameStorage>>,
     /// Prompt context artifact blob storage.
@@ -222,6 +248,7 @@ impl ProductStorageLayout {
             ledger_db: root.join("ledger.sled"),
             workspace_db: root.join("workspace.sled"),
             world_model_db: root.join("world_model.sled"),
+            theory_db: root.join("theory.sled"),
             execution_goals_db: root.join("execution").join("goals.sled"),
             task_artifacts_db: root.join("execution").join("task_artifacts.sled"),
             task_networks_root: root.join("execution").join("task_networks"),
@@ -297,7 +324,16 @@ impl OpenProductStores {
             ScopedResource::closed("node_store")
         };
 
-        let (traversal, belief, family_registry, agent, legacy) = if scope.world_model {
+        let (
+            traversal,
+            belief,
+            family_registry,
+            curation_registry,
+            outcome_registry,
+            strategy_registry,
+            agent,
+            legacy,
+        ) = if scope.world_model {
             let world_model_db = open_db(&layout.world_model_db)?;
             (
                 ScopedResource::open(
@@ -316,6 +352,27 @@ impl OpenProductStores {
                     ),
                 ),
                 ScopedResource::open(
+                    "curation_rule_registry",
+                    Arc::new(
+                        AgentCurationRuleRegistryStore::new(world_model_db.clone())
+                            .map_err(to_world_model)?,
+                    ),
+                ),
+                ScopedResource::open(
+                    "outcome_mapping_registry",
+                    Arc::new(
+                        OutcomeMappingRegistryStore::new(world_model_db.clone())
+                            .map_err(to_world_model)?,
+                    ),
+                ),
+                ScopedResource::open(
+                    "strategy_theory_registry",
+                    Arc::new(
+                        StrategyTheoryRegistryStore::new(world_model_db.clone())
+                            .map_err(to_world_model)?,
+                    ),
+                ),
+                ScopedResource::open(
                     "agent_store",
                     Arc::new(AgentStore::new(world_model_db.clone()).map_err(to_world_model)?),
                 ),
@@ -329,10 +386,49 @@ impl OpenProductStores {
                 ScopedResource::closed("traversal_store"),
                 ScopedResource::closed("belief_store"),
                 ScopedResource::closed("belief_family_registry"),
+                ScopedResource::closed("curation_rule_registry"),
+                ScopedResource::closed("outcome_mapping_registry"),
+                ScopedResource::closed("strategy_theory_registry"),
                 ScopedResource::closed("agent_store"),
                 ScopedResource::closed("legacy_world_state_store"),
             )
         };
+
+        let (capability_contract_registry, claim_policy_registry, theory_receipts, theory_db) =
+            if scope.theory {
+                let theory_db = open_db(&layout.theory_db)?;
+                (
+                    ScopedResource::open(
+                        "capability_contract_registry",
+                        Arc::new(
+                            CapabilityContractRegistryStore::new(theory_db.clone())
+                                .map_err(to_execution)?,
+                        ),
+                    ),
+                    ScopedResource::open(
+                        "claim_policy_registry",
+                        Arc::new(
+                            DocsClaimPolicyRegistryStore::new(theory_db.clone())
+                                .map_err(to_context)?,
+                        ),
+                    ),
+                    ScopedResource::open(
+                        "theory_receipts",
+                        Arc::new(
+                            TheoryInstallationReceiptStore::new(theory_db.clone())
+                                .map_err(to_context)?,
+                        ),
+                    ),
+                    ScopedResource::open("theory_db", theory_db),
+                )
+            } else {
+                (
+                    ScopedResource::closed("capability_contract_registry"),
+                    ScopedResource::closed("claim_policy_registry"),
+                    ScopedResource::closed("theory_receipts"),
+                    ScopedResource::closed("theory_db"),
+                )
+            };
 
         let goal_store = if scope.execution_goals {
             let execution_goals_db = open_db(&layout.execution_goals_db)?;
@@ -391,12 +487,19 @@ impl OpenProductStores {
             traversal_store: traversal,
             belief_store: belief,
             belief_family_registry: family_registry,
+            curation_rule_registry: curation_registry,
+            outcome_mapping_registry: outcome_registry,
+            strategy_theory_registry: strategy_registry,
             agent_store: agent,
             legacy_world_state_store: legacy,
             goal_store,
             task_networks,
             task_artifacts,
             execution_db,
+            capability_contract_registry,
+            claim_policy_registry,
+            theory_receipts,
+            theory_db,
             frame_storage,
             prompt_artifacts,
         })
@@ -427,6 +530,9 @@ impl OpenProductStores {
         }
         if let Some(store) = self.goal_store.opened() {
             store.flush().map_err(to_execution)?;
+        }
+        if let Some(db) = self.theory_db.opened() {
+            db.flush().map_err(to_sled)?;
         }
         if let Some(factory) = self.task_artifacts.opened() {
             factory.flush().map_err(to_execution)?;
@@ -490,6 +596,10 @@ mod tests {
             PathBuf::from("/tmp/meld-runtime/world_model.sled")
         );
         assert_eq!(
+            layout.theory_db,
+            PathBuf::from("/tmp/meld-runtime/theory.sled")
+        );
+        assert_eq!(
             layout.execution_goals_db,
             PathBuf::from("/tmp/meld-runtime/execution/goals.sled")
         );
@@ -532,6 +642,7 @@ mod tests {
         assert!(!stores.prompt_artifacts.is_open());
         assert!(layout.world_model_db.exists());
         assert!(!layout.workspace_db.exists());
+        assert!(!layout.theory_db.exists());
         assert!(!layout.execution_goals_db.exists());
         assert!(!layout.task_artifacts_db.exists());
         assert!(!layout.task_networks_root.exists());
@@ -550,6 +661,29 @@ mod tests {
         assert!(stores.node_store.is_open());
         assert!(stores.execution_db.is_open());
         assert!(stores.legacy_world_state_store.is_open());
+        assert!(stores.theory_receipts.is_open());
         stores.flush_boundary().unwrap();
+    }
+
+    #[test]
+    fn theory_scope_opens_only_the_shared_theory_group() {
+        let temp = tempfile::tempdir().unwrap();
+        let layout = ProductStorageLayout::from_root(temp.path());
+        let scope = StoreScope {
+            theory: true,
+            ..StoreScope::none()
+        };
+
+        let stores = OpenProductStores::open_scoped(&layout, &scope).unwrap();
+
+        assert!(stores.capability_contract_registry.is_open());
+        assert!(stores.claim_policy_registry.is_open());
+        assert!(stores.theory_receipts.is_open());
+        assert!(stores.theory_db.is_open());
+        assert!(!stores.belief_family_registry.is_open());
+        assert!(!stores.node_store.is_open());
+        assert!(layout.theory_db.exists());
+        assert!(!layout.world_model_db.exists());
+        assert!(!layout.workspace_db.exists());
     }
 }

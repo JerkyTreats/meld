@@ -122,6 +122,7 @@ fn docs_writer_task_compiles_bottom_up_dependencies() {
                 )
                 .unwrap(),
                 frame_type: "context-docs-writer".to_string(),
+                belief_family_id: None,
                 force: true,
                 session_id: None,
             },
@@ -206,6 +207,7 @@ fn docs_writer_task_runs_to_completion() {
                 )
                 .unwrap(),
                 frame_type: "context-docs-writer".to_string(),
+                belief_family_id: None,
                 force: true,
                 session_id: Some("session_docs_writer".to_string()),
             },
@@ -305,6 +307,7 @@ fn docs_writer_task_accepts_wrapped_structured_output() {
                 )
                 .unwrap(),
                 frame_type: "context-docs-writer".to_string(),
+                belief_family_id: None,
                 force: true,
                 session_id: Some("session_docs_writer_wrapped".to_string()),
             },
@@ -396,6 +399,7 @@ fn docs_writer_task_expansion_is_idempotent() {
                 )
                 .unwrap(),
                 frame_type: "context-docs-writer".to_string(),
+                belief_family_id: None,
                 force: true,
                 session_id: None,
             },
@@ -565,6 +569,7 @@ fn docs_writer_task_reuses_existing_child_readme_outputs() {
                 )
                 .unwrap(),
                 frame_type: "context-docs-writer".to_string(),
+                belief_family_id: None,
                 force: false,
                 session_id: Some("session_docs_writer".to_string()),
             },

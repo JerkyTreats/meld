@@ -1,13 +1,13 @@
-//! Minimal docs freshness stewardship selection schema and source-aware validation.
+//! Stewardship declaration selection and source-aware validation.
 //!
-//! Owner: root config. The selection names what the runtime stewards and
+//! Owner: root config. A declaration names what the runtime stewards and
 //! which theory it does so under — always by identity. Theory bodies
 //! (evidence probability, satisfaction thresholds, task package meaning,
 //! stale-signal interpretation) live in their owning domains and are
 //! selected here by id per Runtime Initialization stage 2.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
 /// Origin label used when a field's config source cannot be determined.
@@ -19,7 +19,14 @@ const UNKNOWN_SOURCE: &str = "unknown configuration source";
 /// simply derives no stewardship bindings.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StewardshipConfig {
-    /// The minimal docs freshness selection, when the user selected one.
+    /// Canonical named stewardship declarations.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub declarations: BTreeMap<String, StewardshipDeclaration>,
+
+    /// Legacy docs freshness selection.
+    // TODO compat-shim: remove after shipped configuration and every
+    // characterization fixture use stewardship.declarations and the
+    // canonical declaration loading tests remain green.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docs_freshness: Option<DocsFreshnessSelection>,
 }
@@ -27,8 +34,116 @@ pub struct StewardshipConfig {
 impl StewardshipConfig {
     /// True when no stewardship expression is selected.
     pub fn is_empty(&self) -> bool {
-        self.docs_freshness.is_none()
+        self.declarations.is_empty() && self.docs_freshness.is_none()
     }
+
+    /// Lower canonical and compatibility inputs into one declaration set.
+    pub fn lowered_declarations(
+        &self,
+    ) -> Result<Vec<NamedStewardshipDeclaration>, Vec<SelectionFieldError>> {
+        let mut lowered = self
+            .declarations
+            .iter()
+            .map(
+                |(declaration_id, declaration)| NamedStewardshipDeclaration {
+                    declaration_id: declaration_id.clone(),
+                    source_path: format!("stewardship.declarations.{declaration_id}"),
+                    declaration: declaration.clone(),
+                },
+            )
+            .collect::<Vec<_>>();
+        if let Some(legacy) = &self.docs_freshness {
+            const LEGACY_ID: &str = "docs_freshness";
+            if self.declarations.contains_key(LEGACY_ID) {
+                return Err(vec![SelectionFieldError {
+                    source: UNKNOWN_SOURCE.to_string(),
+                    field: "stewardship.docs_freshness".to_string(),
+                    message: "conflicts with canonical declaration id 'docs_freshness'".to_string(),
+                }]);
+            }
+            lowered.push(NamedStewardshipDeclaration {
+                declaration_id: LEGACY_ID.to_string(),
+                source_path: "stewardship.docs_freshness".to_string(),
+                declaration: legacy.clone().into(),
+            });
+        }
+        Ok(lowered)
+    }
+
+    /// Validate every lowered declaration with source attribution.
+    pub fn validate_sourced(
+        &self,
+        origins: &SelectionOrigins,
+    ) -> Result<(), Vec<SelectionFieldError>> {
+        let mut errors = Vec::new();
+        for (declaration_id, declaration) in &self.declarations {
+            let path = format!("stewardship.declarations.{declaration_id}");
+            if declaration_id.trim().is_empty() {
+                errors.push(SelectionFieldError {
+                    source: origins.source_for(&path),
+                    field: path.clone(),
+                    message: "declaration id must not be empty".to_string(),
+                });
+            }
+            if let Err(mut declaration_errors) = declaration.validate_sourced(origins, &path) {
+                errors.append(&mut declaration_errors);
+            }
+        }
+        if let Some(legacy) = &self.docs_freshness {
+            if let Err(mut legacy_errors) = legacy.validate_sourced(origins) {
+                errors.append(&mut legacy_errors);
+            }
+            if self.declarations.contains_key("docs_freshness") {
+                errors.push(SelectionFieldError {
+                    source: origins.source_for("stewardship.docs_freshness"),
+                    field: "stewardship.docs_freshness".to_string(),
+                    message: "conflicts with canonical declaration id 'docs_freshness'".to_string(),
+                });
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
+    }
+}
+
+/// One canonical named declaration after configuration lowering.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamedStewardshipDeclaration {
+    /// Stable configuration-local declaration identity.
+    pub declaration_id: String,
+    /// Source-shaped path retained for actionable binding diagnostics.
+    pub source_path: String,
+    /// Canonical expression selection.
+    pub declaration: StewardshipDeclaration,
+}
+
+/// Minimal canonical stewardship declaration for the implemented runtime.
+///
+/// This is intentionally smaller than the eventual principal-facing PDS
+/// declaration. Maintained conditions and authority enter in later program
+/// steps rather than being inferred here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StewardshipDeclaration {
+    /// Name of the stewardship expression this declaration instantiates.
+    pub expression: String,
+
+    /// Target workspace subtree root the expression stewards. Absolute.
+    pub target_root: PathBuf,
+
+    /// Subject identity the stewardship expression is about.
+    pub subject: String,
+
+    /// Durable agent identity that stewards the subject.
+    pub agent_id: String,
+
+    /// Key into the root provider map binding the model provider.
+    pub provider_id: String,
+
+    /// Selected theory identities, resolved by their owning domains.
+    pub theory: TheorySelection,
 }
 
 /// One minimal docs freshness stewardship selection.
@@ -38,7 +153,7 @@ impl StewardshipConfig {
 /// identical regardless of process working directory; the CLI passes its
 /// path argument as the explicit default target per the recorded
 /// requirements-gate decision.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocsFreshnessSelection {
     /// Name of the stewardship expression this selection instantiates.
     /// Must be `docs_freshness` for this selection shape.
@@ -64,7 +179,7 @@ pub struct DocsFreshnessSelection {
 ///
 /// Identities only: the owning domains resolve each id to a content-hash
 /// revision at installation time (Runtime Initialization stage 2).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TheorySelection {
     /// Belief family identity in the world model registry.
     pub belief_family_id: String,
@@ -74,6 +189,12 @@ pub struct TheorySelection {
 
     /// Curation rule reference bound at agent registration.
     pub curation_rule_id: String,
+
+    /// Complete Strategy theory package identity.
+    pub strategy_theory_id: String,
+
+    /// Docs claim policy identity.
+    pub claim_policy_id: String,
 }
 
 /// One rejected docs freshness selection field with its config source.
@@ -102,9 +223,9 @@ impl std::error::Error for SelectionFieldError {}
 /// validation error can name the source that supplied the invalid field.
 #[derive(Debug, Clone, Default)]
 pub struct SelectionOrigins {
-    /// Origin of the selection table itself; attributed to missing fields.
-    table_origin: Option<String>,
-    /// Origin per field path relative to the selection table.
+    /// Origin used when no more specific path was captured.
+    fallback_origin: Option<String>,
+    /// Origin per complete field path.
     fields: HashMap<String, String>,
 }
 
@@ -112,7 +233,7 @@ impl SelectionOrigins {
     /// Origins where every field is attributed to one named source.
     pub fn uniform(source: &str) -> Self {
         Self {
-            table_origin: Some(source.to_string()),
+            fallback_origin: Some(source.to_string()),
             fields: HashMap::new(),
         }
     }
@@ -132,34 +253,57 @@ impl SelectionOrigins {
         let config::ValueKind::Table(stewardship) = &stewardship.kind else {
             return origins;
         };
-        let Some(docs) = stewardship.get("docs_freshness") else {
-            return origins;
-        };
-        origins.table_origin = docs.origin().map(str::to_string);
-        if let config::ValueKind::Table(docs) = &docs.kind {
-            for (key, value) in docs {
-                if let config::ValueKind::Table(nested) = &value.kind {
-                    for (nested_key, nested_value) in nested {
-                        if let Some(origin) = nested_value.origin() {
-                            origins
-                                .fields
-                                .insert(format!("{key}.{nested_key}"), origin.to_string());
-                        }
-                    }
-                } else if let Some(origin) = value.origin() {
-                    origins.fields.insert(key.clone(), origin.to_string());
-                }
+        origins.capture_table("stewardship", stewardship);
+        origins
+    }
+
+    fn capture_table(&mut self, prefix: &str, table: &config::Map<String, config::Value>) {
+        for (key, value) in table {
+            let path = format!("{prefix}.{key}");
+            if let Some(origin) = value.origin() {
+                self.fields.insert(path.clone(), origin.to_string());
+            }
+            if let config::ValueKind::Table(nested) = &value.kind {
+                self.capture_table(&path, nested);
             }
         }
-        origins
     }
 
     fn source_for(&self, field: &str) -> String {
         self.fields
             .get(field)
-            .or(self.table_origin.as_ref())
+            .or_else(|| {
+                field
+                    .rmatch_indices('.')
+                    .find_map(|(index, _)| self.fields.get(&field[..index]))
+            })
+            .or(self.fallback_origin.as_ref())
             .cloned()
             .unwrap_or_else(|| UNKNOWN_SOURCE.to_string())
+    }
+}
+
+impl StewardshipDeclaration {
+    /// Validate every declaration field without expression vocabulary.
+    pub fn validate_sourced(
+        &self,
+        origins: &SelectionOrigins,
+        path: &str,
+    ) -> Result<(), Vec<SelectionFieldError>> {
+        validate_declaration(self, origins, path, false)
+    }
+}
+
+impl From<DocsFreshnessSelection> for StewardshipDeclaration {
+    fn from(selection: DocsFreshnessSelection) -> Self {
+        Self {
+            expression: selection.expression,
+            target_root: selection.target_root,
+            subject: selection.subject,
+            agent_id: selection.agent_id,
+            provider_id: selection.provider_id,
+            theory: selection.theory,
+        }
     }
 }
 
@@ -172,58 +316,89 @@ impl DocsFreshnessSelection {
         &self,
         origins: &SelectionOrigins,
     ) -> Result<(), Vec<SelectionFieldError>> {
-        let mut errors = Vec::new();
-        let mut reject = |field: &str, message: String| {
-            errors.push(SelectionFieldError {
-                source: origins.source_for(field),
-                field: format!("stewardship.docs_freshness.{field}"),
-                message,
-            });
-        };
+        validate_declaration(
+            &StewardshipDeclaration::from(self.clone()),
+            origins,
+            "stewardship.docs_freshness",
+            true,
+        )
+    }
+}
 
-        if self.expression != "docs_freshness" {
-            reject(
+fn validate_declaration(
+    declaration: &StewardshipDeclaration,
+    origins: &SelectionOrigins,
+    path: &str,
+    require_docs_expression: bool,
+) -> Result<(), Vec<SelectionFieldError>> {
+    let mut errors = Vec::new();
+    let mut reject = |field: &str, message: String| {
+        let field = format!("{path}.{field}");
+        errors.push(SelectionFieldError {
+            source: origins.source_for(&field),
+            field,
+            message,
+        });
+    };
+
+    if require_docs_expression && declaration.expression != "docs_freshness" {
+        reject(
                 "expression",
                 format!(
                     "must be 'docs_freshness', got '{}'; other stewardship expressions are not selectable here",
-                    self.expression
+                    declaration.expression
                 ),
             );
-        }
-        if self.target_root.as_os_str().is_empty() {
-            reject("target_root", "must not be empty".to_string());
-        } else if !self.target_root.is_absolute() {
-            // Relative targets would resolve against the process working
-            // directory, breaking binding determinism across invocations.
-            reject(
-                "target_root",
-                format!(
-                    "must be an absolute path, got '{}'",
-                    self.target_root.display()
-                ),
-            );
-        }
-        for (field, value) in [
-            ("subject", &self.subject),
-            ("agent_id", &self.agent_id),
-            ("provider_id", &self.provider_id),
-            ("theory.belief_family_id", &self.theory.belief_family_id),
-            (
-                "theory.evidence_mapping_id",
-                &self.theory.evidence_mapping_id,
+    } else if declaration.expression.trim().is_empty() {
+        reject("expression", "must not be empty".to_string());
+    }
+    if declaration.target_root.as_os_str().is_empty() {
+        reject("target_root", "must not be empty".to_string());
+    } else if !declaration.target_root.is_absolute() {
+        // Relative targets would resolve against the process working
+        // directory, breaking binding determinism across invocations.
+        reject(
+            "target_root",
+            format!(
+                "must be an absolute path, got '{}'",
+                declaration.target_root.display()
             ),
-            ("theory.curation_rule_id", &self.theory.curation_rule_id),
-        ] {
-            if value.trim().is_empty() {
-                reject(field, "must not be empty".to_string());
-            }
+        );
+    }
+    for (field, value) in [
+        ("subject", &declaration.subject),
+        ("agent_id", &declaration.agent_id),
+        ("provider_id", &declaration.provider_id),
+        (
+            "theory.belief_family_id",
+            &declaration.theory.belief_family_id,
+        ),
+        (
+            "theory.evidence_mapping_id",
+            &declaration.theory.evidence_mapping_id,
+        ),
+        (
+            "theory.curation_rule_id",
+            &declaration.theory.curation_rule_id,
+        ),
+        (
+            "theory.strategy_theory_id",
+            &declaration.theory.strategy_theory_id,
+        ),
+        (
+            "theory.claim_policy_id",
+            &declaration.theory.claim_policy_id,
+        ),
+    ] {
+        if value.trim().is_empty() {
+            reject(field, "must not be empty".to_string());
         }
+    }
 
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors)
-        }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
     }
 }
 
@@ -242,8 +417,14 @@ mod tests {
                 belief_family_id: "docs_freshness".to_string(),
                 evidence_mapping_id: "docs_freshness_outcome_interpretation_v1".to_string(),
                 curation_rule_id: "docs_freshness".to_string(),
+                strategy_theory_id: "docs_freshness".to_string(),
+                claim_policy_id: "docs-claims-strict-v1".to_string(),
             },
         }
+    }
+
+    fn valid_declaration() -> StewardshipDeclaration {
+        valid_selection().into()
     }
 
     #[test]
@@ -300,12 +481,55 @@ mod tests {
         selection.theory.belief_family_id = String::new();
         let mut origins = SelectionOrigins::uniform("table source");
         origins.fields.insert(
-            "theory.belief_family_id".to_string(),
+            "stewardship.docs_freshness.theory.belief_family_id".to_string(),
             "field source".to_string(),
         );
 
         let errors = selection.validate_sourced(&origins).unwrap_err();
 
         assert_eq!(errors[0].source, "field source");
+    }
+
+    #[test]
+    fn canonical_declaration_accepts_expression_names_as_data() {
+        let mut declaration = valid_declaration();
+        declaration.expression = "repository_health".to_string();
+
+        let result = declaration.validate_sourced(
+            &SelectionOrigins::uniform("test source"),
+            "stewardship.declarations.repository",
+        );
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn legacy_selection_lowers_into_the_canonical_shape() {
+        let config = StewardshipConfig {
+            declarations: BTreeMap::new(),
+            docs_freshness: Some(valid_selection()),
+        };
+
+        let lowered = config.lowered_declarations().unwrap();
+
+        assert_eq!(lowered.len(), 1);
+        assert_eq!(lowered[0].declaration_id, "docs_freshness");
+        assert_eq!(lowered[0].declaration, valid_declaration());
+    }
+
+    #[test]
+    fn canonical_and_legacy_ids_cannot_collide() {
+        let config = StewardshipConfig {
+            declarations: BTreeMap::from([("docs_freshness".to_string(), valid_declaration())]),
+            docs_freshness: Some(valid_selection()),
+        };
+
+        let errors = config
+            .validate_sourced(&SelectionOrigins::uniform("test source"))
+            .unwrap_err();
+
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("conflicts")));
     }
 }

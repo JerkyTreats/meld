@@ -20,7 +20,7 @@ use serde_json::Value;
 
 use crate::belief::contracts::{require_non_empty, EvidenceValue, PromotedEvidenceRecord};
 use crate::belief::outcome::mapping::{
-    promoted_evidence_identity, OutcomeEvidenceMapping, OutcomeMappingDisposition,
+    promoted_evidence_identity_for_revision, OutcomeEvidenceMapping, OutcomeMappingDisposition,
     OutcomeMappingInput,
 };
 use crate::error::StorageError;
@@ -521,7 +521,14 @@ fn promote_matched_record(
         }
     }
 
-    let evidence_id = promoted_evidence_identity(record_id, &input.mapping_id);
+    let evidence_id = promoted_evidence_identity_for_revision(
+        record_id,
+        &input.mapping_id,
+        input
+            .mapping_revision
+            .as_ref()
+            .map(|reference| reference.content_hash.as_str()),
+    );
     let record = PromotedEvidenceRecord {
         source_kind: config.source_kind.clone(),
         // The frozen identity doubles as the promoted source id so the
@@ -541,6 +548,7 @@ fn promote_matched_record(
             .or_else(|| Some(envelope.recorded_at.clone())),
         transaction_seq: input.record.seq,
         content_hash: envelope.content_hash.clone(),
+        outcome_mapping_revision: input.mapping_revision.clone(),
         fields,
     };
     OutcomeMappingDisposition::Applicable {

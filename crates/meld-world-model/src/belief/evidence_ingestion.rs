@@ -119,8 +119,10 @@ pub struct EvidenceIngestionActor {
     cursor: Arc<dyn DurableConsumerCursor + Send + Sync>,
     mapping: Arc<dyn OutcomeEvidenceMapping + Send + Sync>,
     mapping_id: String,
+    mapping_revision: Option<crate::belief::TheoryRevisionRef>,
     perspective: PerspectiveKey,
     branch_scope: BranchScope,
+    family_revision: Option<crate::belief::BeliefFamilyRevision>,
 }
 
 impl EvidenceIngestionActor {
@@ -149,9 +151,23 @@ impl EvidenceIngestionActor {
             cursor,
             mapping,
             mapping_id: mapping_id.into(),
+            mapping_revision: None,
             perspective,
             branch_scope,
+            family_revision: None,
         }
+    }
+
+    /// Stamp exact mapping lineage on promoted evidence and rejections.
+    pub fn with_mapping_revision(mut self, revision: crate::belief::TheoryRevisionRef) -> Self {
+        self.mapping_revision = Some(revision);
+        self
+    }
+
+    /// Freeze the exact belief-family revision for this actor lifetime.
+    pub fn with_family_revision(mut self, revision: crate::belief::BeliefFamilyRevision) -> Self {
+        self.family_revision = Some(revision);
+        self
     }
 
     /// Stable actor identity carried in reports and ingestion ownership.
@@ -256,24 +272,27 @@ impl EvidenceIngestionActor {
         // runs under the currently installed theory revision. Without an
         // installed family the batch is left untouched: advancing the
         // cursor here would permanently skip applicable evidence.
-        let revision = match self.registry.current(&self.family_id) {
-            Ok(Some(revision)) => revision,
-            Ok(None) => {
-                report.retryable_errors.push(issue(
-                    Some(self.family_id.clone()),
-                    "family_not_installed",
-                    "no current registry revision for configured family",
-                ));
-                return report;
-            }
-            Err(error) => {
-                report.fatal_errors.push(issue(
-                    Some(self.family_id.clone()),
-                    "registry_read_failed",
-                    &error.to_string(),
-                ));
-                return report;
-            }
+        let revision = match self.family_revision.clone() {
+            Some(revision) => revision,
+            None => match self.registry.current(&self.family_id) {
+                Ok(Some(revision)) => revision,
+                Ok(None) => {
+                    report.retryable_errors.push(issue(
+                        Some(self.family_id.clone()),
+                        "family_not_installed",
+                        "no current registry revision for configured family",
+                    ));
+                    return report;
+                }
+                Err(error) => {
+                    report.fatal_errors.push(issue(
+                        Some(self.family_id.clone()),
+                        "registry_read_failed",
+                        &error.to_string(),
+                    ));
+                    return report;
+                }
+            },
         };
         let snapshot = ConfigSnapshot {
             config: revision.config.clone(),
@@ -298,6 +317,7 @@ impl EvidenceIngestionActor {
             let disposition = self.mapping.map_outcome(&OutcomeMappingInput {
                 record: record.clone(),
                 mapping_id: self.mapping_id.clone(),
+                mapping_revision: self.mapping_revision.clone(),
             });
             match disposition {
                 OutcomeMappingDisposition::Applicable {
@@ -348,7 +368,12 @@ impl EvidenceIngestionActor {
                     durable_through = seq;
                 }
                 OutcomeMappingDisposition::Invalid { reason } => {
-                    let rejection = invalid_outcome_rejection(&record, &self.mapping_id, &reason);
+                    let rejection = invalid_outcome_rejection(
+                        &record,
+                        &self.mapping_id,
+                        self.mapping_revision.clone(),
+                        &reason,
+                    );
                     match self.store.put_rejection(&rejection) {
                         Ok(()) => {
                             report.invalid_count += 1;
@@ -420,6 +445,7 @@ impl EvidenceIngestionActor {
 fn invalid_outcome_rejection(
     record: &EventRecord,
     mapping_id: &str,
+    mapping_revision: Option<crate::belief::TheoryRevisionRef>,
     reason: &str,
 ) -> EvidenceRejection {
     let source_id = record
@@ -436,6 +462,7 @@ fn invalid_outcome_rejection(
         reason: reason.to_string(),
         source_cursor_start: record.seq,
         source_cursor_end: record.seq,
+        outcome_mapping_revision: mapping_revision.map(Box::new),
     }
 }
 

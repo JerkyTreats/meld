@@ -20,22 +20,28 @@ use meld_events::{
     AppendDisposition, AppendMode, DomainObjectRef, EventAppendCapability, EventEnvelope,
 };
 use meld_world_model::agent::{
-    AgentCurationRuleBinding, AgentCurationRuleConfig, AgentRegistration, AgentStatus, AgentStore,
-    AgentSubscription, SeedAgentRegistration, SubscribeAgentCommand,
+    AgentCurationRuleBinding, AgentCurationRuleConfig, AgentCurationRuleRegistryStore,
+    AgentRegistration, AgentStatus, AgentStore, AgentSubscription, SeedAgentRegistration,
+    SubscribeAgentCommand,
 };
 use meld_world_model::belief::genesis::{
     UnobservedScopeDeclaration, EPISTEMIC_GENESIS_STREAM_ID, UNOBSERVED_SCOPE_EVENT_TYPE,
 };
 use meld_world_model::belief::{
     configured_belief_key, BeliefFamilyConfig, BeliefFamilyRegistry, BranchScope,
-    TheoryInstallDisposition,
+    OutcomeMappingRegistryStore, OutcomeMappingSetConfig, TheoryInstallDisposition,
 };
+use meld_world_model::strategy::{StrategyTheoryPackage, StrategyTheoryRegistryStore};
 use meld_world_model::PerspectiveKey;
 use thiserror::Error;
 
+use crate::config::SelectedStewardshipPackage;
+use crate::docs::claim_validation::{DocsClaimPolicy, DocsClaimPolicyRegistryStore};
 use crate::init::world::{
     StageDisposition, WorldInitReport, WorldInitRequest, WorldInitStage, WorldInitStageReport,
 };
+use crate::runtime::theory::{TheoryInstallationReceipt, TheoryInstallationReceiptStore};
+use meld_execution::capability::{CapabilityContractRegistryStore, CapabilityTypeContract};
 
 /// Domain that owns the epistemic genesis fact appended by stage 4.
 const GENESIS_DOMAIN_ID: &str = "world_model";
@@ -107,6 +113,29 @@ pub struct WorldInitContent {
     pub observed_seq: u64,
 }
 
+/// Complete validated semantic image supplied to owner installation commands.
+#[derive(Debug, Clone)]
+pub struct WorldInitTheoryBundle {
+    pub family: BeliefFamilyConfig,
+    pub curation_rule: AgentCurationRuleConfig,
+    pub outcome_mapping: OutcomeMappingSetConfig,
+    pub strategy_theory: StrategyTheoryPackage,
+    pub executable_contracts: Vec<CapabilityTypeContract>,
+    pub claim_policy: DocsClaimPolicy,
+}
+
+/// Exact owner stores needed to install and activate a complete image.
+pub struct CompleteTheoryInstall<'a> {
+    pub selection: SelectedStewardshipPackage,
+    pub bundle: WorldInitTheoryBundle,
+    pub curation_rules: &'a AgentCurationRuleRegistryStore,
+    pub outcome_mappings: &'a OutcomeMappingRegistryStore,
+    pub strategy_theories: &'a StrategyTheoryRegistryStore,
+    pub executable_contracts: &'a CapabilityContractRegistryStore,
+    pub claim_policies: &'a DocsClaimPolicyRegistryStore,
+    pub receipts: &'a TheoryInstallationReceiptStore,
+}
+
 /// Normalize a stage selection to pipeline order without duplicates.
 ///
 /// The request only selects the subset: duplicates collapse and request
@@ -128,6 +157,7 @@ pub struct WorldInitPipeline<'a> {
     registry: &'a mut dyn BeliefFamilyRegistry,
     agent_store: &'a AgentStore,
     append: &'a EventAppendCapability,
+    complete_theory: Option<CompleteTheoryInstall<'a>>,
 }
 
 impl<'a> WorldInitPipeline<'a> {
@@ -141,7 +171,14 @@ impl<'a> WorldInitPipeline<'a> {
             registry,
             agent_store,
             append,
+            complete_theory: None,
         }
+    }
+
+    /// Bind the complete image and all owner stores for the elevated path.
+    pub fn with_complete_theory(mut self, install: CompleteTheoryInstall<'a>) -> Self {
+        self.complete_theory = Some(install);
+        self
     }
 
     /// Run the selected stages in pipeline order and report per stage.
@@ -177,6 +214,9 @@ impl<'a> WorldInitPipeline<'a> {
         &mut self,
         content: &WorldInitContent,
     ) -> Result<WorldInitStageReport, WorldInitError> {
+        if self.complete_theory.is_some() {
+            return self.install_complete_theory(content.observed_seq);
+        }
         let (disposition, revision) = self
             .registry
             .install(content.family_config.clone(), content.observed_seq)
@@ -192,6 +232,164 @@ impl<'a> WorldInitPipeline<'a> {
                 "{}::{}::{}",
                 revision_ref.registry, revision_ref.id, revision_ref.content_hash
             )],
+        })
+    }
+
+    fn install_complete_theory(
+        &mut self,
+        observed_seq: u64,
+    ) -> Result<WorldInitStageReport, WorldInitError> {
+        let install = self
+            .complete_theory
+            .as_ref()
+            .expect("complete theory checked");
+        validate_selected_bundle(&install.selection, &install.bundle)
+            .map_err(WorldInitError::Theory)?;
+
+        let (family_disposition, family) = self
+            .registry
+            .install(install.bundle.family.clone(), observed_seq)
+            .map_err(|error| WorldInitError::Theory(error.to_string()))?;
+        let (curation_disposition, curation) = install
+            .curation_rules
+            .install(
+                &install.selection.curation_rule_id,
+                install.bundle.curation_rule.clone(),
+                observed_seq,
+            )
+            .map_err(|error| WorldInitError::Theory(error.to_string()))?;
+        let (mapping_disposition, mapping) = install
+            .outcome_mappings
+            .install(install.bundle.outcome_mapping.clone(), observed_seq)
+            .map_err(|error| WorldInitError::Theory(error.to_string()))?;
+
+        let mut capability_changed = false;
+        let mut capabilities = Vec::new();
+        for contract in &install.bundle.executable_contracts {
+            let (changed, revision) = install
+                .executable_contracts
+                .install(contract.clone(), observed_seq)
+                .map_err(|error| WorldInitError::Theory(error.to_string()))?;
+            capability_changed |= changed;
+            capabilities.push(revision);
+        }
+        validate_strategy_contracts(&install.bundle.strategy_theory, &capabilities)
+            .map_err(WorldInitError::Theory)?;
+        let (strategy_disposition, strategy) = install
+            .strategy_theories
+            .install(install.bundle.strategy_theory.clone(), observed_seq)
+            .map_err(|error| WorldInitError::Theory(error.to_string()))?;
+        let (claim_changed, claim) = install
+            .claim_policies
+            .install(install.bundle.claim_policy.clone(), observed_seq)
+            .map_err(|error| WorldInitError::Theory(error.to_string()))?;
+
+        if self
+            .registry
+            .resolve(&family.family_id, &family.content_hash)
+            .map_err(|error| WorldInitError::Theory(error.to_string()))?
+            .as_ref()
+            != Some(&family)
+            || install
+                .curation_rules
+                .resolve(&curation.rule_id, &curation.content_hash)
+                .map_err(|error| WorldInitError::Theory(error.to_string()))?
+                .as_ref()
+                != Some(&curation)
+            || install
+                .outcome_mappings
+                .resolve(&mapping.mapping_id, &mapping.content_hash)
+                .map_err(|error| WorldInitError::Theory(error.to_string()))?
+                .as_ref()
+                != Some(&mapping)
+            || install
+                .strategy_theories
+                .resolve(&strategy.theory_id, &strategy.content_hash)
+                .map_err(|error| WorldInitError::Theory(error.to_string()))?
+                .as_ref()
+                != Some(&strategy)
+            || install
+                .claim_policies
+                .resolve(&claim.revision_ref())
+                .map_err(|error| WorldInitError::Theory(error.to_string()))?
+                .as_ref()
+                != Some(&claim)
+        {
+            return Err(WorldInitError::Theory(
+                "an owner did not resolve the exact revision it installed".to_string(),
+            ));
+        }
+        for capability in &capabilities {
+            if install
+                .executable_contracts
+                .resolve(&capability.revision_ref())
+                .map_err(|error| WorldInitError::Theory(error.to_string()))?
+                .as_ref()
+                != Some(capability)
+            {
+                return Err(WorldInitError::Theory(
+                    "execution did not resolve the exact contract revision it installed"
+                        .to_string(),
+                ));
+            }
+        }
+
+        let receipt = TheoryInstallationReceipt::new(
+            install.selection.clone(),
+            family.revision_ref(),
+            curation.revision_ref(),
+            mapping.revision_ref(),
+            strategy.revision_ref(),
+            capabilities
+                .iter()
+                .map(|item| item.revision_ref())
+                .collect(),
+            claim.revision_ref(),
+            observed_seq,
+        )
+        .map_err(|error| WorldInitError::Theory(error.to_string()))?;
+        let receipt_changed = install
+            .receipts
+            .install(receipt.clone())
+            .map_err(|error| WorldInitError::Theory(error.to_string()))?;
+
+        let owner_changed = [
+            family_disposition,
+            curation_disposition,
+            mapping_disposition,
+            strategy_disposition,
+        ]
+        .contains(&TheoryInstallDisposition::Installed)
+            || capability_changed
+            || claim_changed;
+        let mut record_ids = vec![
+            format_revision(&family.revision_ref()),
+            format_revision(&curation.revision_ref()),
+            format_revision(&mapping.revision_ref()),
+            format_revision(&strategy.revision_ref()),
+        ];
+        record_ids.extend(capabilities.iter().map(|revision| {
+            let reference = revision.revision_ref();
+            format!(
+                "capability_contract::{}::{}::{}",
+                reference.selector.capability_type_id,
+                reference.selector.capability_version,
+                reference.content_identity
+            )
+        }));
+        record_ids.push(format!(
+            "claim_policy::{}::{}",
+            claim.policy.policy_id, claim.content_identity
+        ));
+        record_ids.push(format!("theory_receipt::{}", receipt.receipt_id));
+        Ok(WorldInitStageReport {
+            stage: WorldInitStage::InstallTheory,
+            disposition: if owner_changed || receipt_changed {
+                StageDisposition::Applied
+            } else {
+                StageDisposition::Unchanged
+            },
+            record_ids,
         })
     }
 
@@ -223,8 +421,23 @@ impl<'a> WorldInitPipeline<'a> {
             &content.perspective,
             &content.branch_scope,
         );
-        let rule_binding = AgentCurationRuleBinding::for_rule(content.curation_rule.clone())
-            .map_err(|error| WorldInitError::Identity(error.to_string()))?;
+        let rule_revision = if let Some(install) = &self.complete_theory {
+            let receipt = install
+                .receipts
+                .current(&install.selection)
+                .map_err(|error| WorldInitError::Identity(error.to_string()))?;
+            Some(receipt.curation_rule)
+        } else {
+            None
+        };
+        let rule_binding = if rule_revision.is_none() {
+            Some(
+                AgentCurationRuleBinding::for_rule(content.curation_rule.clone())
+                    .map_err(|error| WorldInitError::Identity(error.to_string()))?,
+            )
+        } else {
+            None
+        };
 
         // Existence is checked before each command because the idempotent
         // commands return the same record whether or not they created it;
@@ -244,10 +457,21 @@ impl<'a> WorldInitPipeline<'a> {
                 observation_scope: content.observation_scope.clone(),
                 directive: content.directive.clone(),
                 seed_provenance: content.provenance.clone(),
-                curation_rule: Some(rule_binding),
+                curation_rule: rule_binding,
+                curation_rule_revision: rule_revision.clone(),
                 created_at_seq: content.observed_seq,
             })
             .map_err(|error| WorldInitError::Identity(error.to_string()))?;
+        let needs_rule_migration = rule_revision.as_ref().is_some_and(|revision| {
+            record.curation_rule_revision.as_ref() != Some(revision)
+                || record.curation_rule.is_some()
+        });
+        let record = match rule_revision {
+            Some(revision) if needs_rule_migration => registration
+                .bind_curation_rule_revision(&content.agent_id, revision, content.observed_seq)
+                .map_err(|error| WorldInitError::Identity(error.to_string()))?,
+            _ => record,
+        };
 
         let subscription_existed = self
             .agent_store
@@ -275,10 +499,13 @@ impl<'a> WorldInitPipeline<'a> {
             format!("agent::{}", record.agent_id),
             format!("agent_subscription::{}", subscription.subscription_id),
         ];
-        if let Some(installed) = &record.curation_rule {
+        if let Some(installed) = &record.curation_rule_revision {
+            record_ids.push(format_revision(installed));
+        } else if let Some(installed) = &record.curation_rule {
             record_ids.push(format!("curation_rule::{}", installed.content_hash));
         }
-        let changed = !agent_existed || !subscription_existed || needs_operational;
+        let changed =
+            !agent_existed || !subscription_existed || needs_operational || needs_rule_migration;
         Ok(WorldInitStageReport {
             stage: WorldInitStage::GenesisIdentities,
             disposition: if changed {
@@ -337,6 +564,83 @@ impl<'a> WorldInitPipeline<'a> {
             record_ids: vec![declaration.record_id()],
         })
     }
+}
+
+fn validate_selected_bundle(
+    selection: &SelectedStewardshipPackage,
+    bundle: &WorldInitTheoryBundle,
+) -> Result<(), String> {
+    if bundle.family.family_id != selection.belief_family_id
+        || bundle.outcome_mapping.mapping_id != selection.evidence_mapping_id
+        || bundle.strategy_theory.snapshot.theory_id != selection.strategy_theory_id
+        || bundle.claim_policy.policy_id != selection.claim_policy_id
+    {
+        return Err("selected theory identities do not match the loaded owner bodies".to_string());
+    }
+    if bundle.curation_rule.dimension_id != bundle.family.dimension_id {
+        return Err("curation rule dimension does not match the belief family".to_string());
+    }
+    if bundle
+        .strategy_theory
+        .requested_dimensions
+        .iter()
+        .any(|dimension| dimension != &bundle.family.dimension_id)
+    {
+        return Err(
+            "Strategy requested dimension is unavailable from the belief family".to_string(),
+        );
+    }
+    for rule in &bundle.strategy_theory.snapshot.settlement_rules {
+        if !bundle
+            .family
+            .evidence_schemas
+            .iter()
+            .any(|schema| schema.schema_id == rule.evidence_route.evidence_schema_id)
+        {
+            return Err(format!(
+                "Strategy evidence route '{}' cites an unknown belief evidence schema",
+                rule.evidence_route.route_id
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_strategy_contracts(
+    strategy: &StrategyTheoryPackage,
+    contracts: &[meld_execution::capability::CapabilityContractRevision],
+) -> Result<(), String> {
+    for capability in &strategy.capabilities {
+        let selector = capability
+            .operator
+            .resolution
+            .specific
+            .as_ref()
+            .ok_or_else(|| {
+                format!(
+                    "Strategy capability '{}' has no exact execution selector",
+                    capability.operator.operator_id
+                )
+            })?;
+        if !contracts.iter().any(|revision| {
+            revision.contract.capability_type_id == selector.capability_type_id
+                && revision.contract.capability_version == selector.capability_version
+                && revision.content_identity == capability.contract_id
+        }) {
+            return Err(format!(
+                "Strategy capability '{}' cites an unknown executable contract revision",
+                capability.operator.operator_id
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn format_revision(reference: &meld_world_model::belief::TheoryRevisionRef) -> String {
+    format!(
+        "{}::{}::{}",
+        reference.registry, reference.id, reference.content_hash
+    )
 }
 
 #[cfg(test)]

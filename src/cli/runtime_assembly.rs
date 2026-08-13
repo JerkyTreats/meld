@@ -12,8 +12,7 @@ use crate::error::{ApiError, StorageError};
 use crate::events::binding::{resolve_product_event_authority, ProductEventBindingError};
 use crate::heads::HeadIndex;
 use crate::runtime::assembly::{
-    PlanningTheoryBinding, ProductCapabilityRuntime, ProductRuntimeAssembly, ProductRuntimeConfig,
-    StewardshipComposition, StewardshipTheoryBindings,
+    ProductRuntimeAssembly, ProductRuntimeConfig, StewardshipComposition, StewardshipTheoryBindings,
 };
 use crate::runtime::storage::ProductStorageLayout;
 use crate::session::{SessionRuntime, SessionStore};
@@ -50,26 +49,15 @@ impl CliRuntimeAssembly {
             &legacy_store_path,
         )
         .map_err(binding_error)?;
-        // Stage 0 resolution followed by composed machine hydration: when a
-        // docs freshness stewardship expression targets this workspace, the
-        // product assembly derives its registration set and actor bindings
-        // from the validated physical binding, and the selected theory
-        // bodies compose from the XDG theory root. A selection that targets
-        // a different workspace leaves this invocation on the plain
-        // composition — that stewardship expression is not this runtime's.
-        let stewardship = match config.stewardship.docs_freshness.as_ref() {
-            Some(_) => {
-                let binding = PhysicalBinding::resolve(config)?;
-                let canonical_workspace = workspace_root
-                    .canonicalize()
-                    .unwrap_or_else(|_| workspace_root.to_path_buf());
-                (binding.workspace_root == canonical_workspace).then(|| {
-                    let theory = compose_stewardship_theory(&binding);
-                    StewardshipComposition { binding, theory }
-                })
-            }
-            None => None,
-        };
+        // Stage 0 lowers every configured declaration through the same
+        // physical binding contract, then selects by the addressed target.
+        // A declaration for another workspace does not activate here, while
+        // ambiguous ownership of this target fails truthfully.
+        let stewardship =
+            PhysicalBinding::resolve_for_target(config, workspace_root)?.map(|binding| {
+                let theory = compose_stewardship_theory(&binding);
+                StewardshipComposition { binding, theory }
+            });
         // Operator runtime enablement opens the default valve: each named
         // runtime leaves the default-disabled set. Naming a runtime that is
         // not disabled by default is an error rather than a silent no-op.
@@ -234,71 +222,9 @@ impl CliRuntimeAssembly {
     }
 }
 
-/// Compose the selected theory bodies for one stewardship binding.
-///
-/// Composition is best-effort by design, mirroring the production dispatch
-/// route composition: a theory kind that cannot load leaves its dependent
-/// actor a truthful unresolved required binding — with the assembly
-/// diagnostic naming the gap — instead of failing the invocation. Theory
-/// bodies resolve from the XDG theory root only, where `meld world init
-/// --theory-source` provisions them.
-fn compose_stewardship_theory(binding: &PhysicalBinding) -> StewardshipTheoryBindings {
-    let outcome_mapping = loaded(
-        "outcome mapping",
-        crate::init::world::theory::load_outcome_mapping_config(
-            &binding.package.evidence_mapping_id,
-        ),
-    );
-    let pds = loaded("docs PDS", compose_docs_pds(binding));
-    let strategy = pds.as_ref().map(|pds| pds.strategy.clone());
-    let planning = pds.as_ref().map(|pds| PlanningTheoryBinding {
-        methods: Vec::new(),
-        capability_catalog: pds.catalog.clone(),
-        available_actions: meld_execution::planning::AvailableActionSet {
-            actions: Vec::new(),
-        },
-        method_realizations: Vec::new(),
-        requested_dimensions: pds.requested_dimensions.clone(),
-    });
-    let capability_runtime = pds.map(|pds| ProductCapabilityRuntime {
-        catalog: pds.catalog,
-        registry: pds.registry,
-    });
-    StewardshipTheoryBindings {
-        outcome_mapping,
-        strategy,
-        capability_runtime,
-        planning,
-        dispatch: None,
-    }
-}
-
-fn compose_docs_pds(
-    binding: &PhysicalBinding,
-) -> Result<crate::docs::pds::DocsPdsRuntime, ApiError> {
-    use crate::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
-
-    let provider = ProviderExecutionBinding::new(
-        binding.provider_id.clone(),
-        ProviderRuntimeOverrides::default(),
-    )?;
-    crate::docs::pds::compose(crate::docs::capability::DocsCapabilityConfig {
-        target_root: binding.workspace_root.clone(),
-        subject_id: binding.subject.clone(),
-        agent_id: binding.agent_id.clone(),
-        provider,
-    })
-}
-
-/// Unwrap one composed theory load, downgrading failure to a warning.
-fn loaded<T, E: std::fmt::Display>(label: &str, result: Result<T, E>) -> Option<T> {
-    match result {
-        Ok(value) => Some(value),
-        Err(error) => {
-            tracing::warn!(error = %error, "{label} composition skipped");
-            None
-        }
-    }
+/// Defer semantic hydration to receipt-aware product assembly.
+fn compose_stewardship_theory(_binding: &PhysicalBinding) -> StewardshipTheoryBindings {
+    StewardshipTheoryBindings::default()
 }
 
 fn binding_error(error: ProductEventBindingError) -> ApiError {

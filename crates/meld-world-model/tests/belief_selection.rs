@@ -190,6 +190,7 @@ fn promoted_record(node: DomainObjectRef, seq: u64) -> PromotedEvidenceRecord {
     fields.insert("stale_probability".to_string(), EvidenceValue::Scalar(0.0));
     fields.insert("review_probability".to_string(), EvidenceValue::Scalar(0.2));
     PromotedEvidenceRecord {
+        outcome_mapping_revision: None,
         source_kind: "content_written".to_string(),
         source_id: format!("content-written-{seq}"),
         subject: node.clone(),

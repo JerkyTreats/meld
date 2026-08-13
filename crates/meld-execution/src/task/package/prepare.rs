@@ -702,6 +702,7 @@ mod tests {
                 runtime_overrides: ProviderRuntimeOverrides::default(),
             },
             frame_type: "context-docs-writer".to_string(),
+            belief_family_id: None,
             force: true,
             session_id: Some("session-1".to_string()),
         }

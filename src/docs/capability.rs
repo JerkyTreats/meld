@@ -396,6 +396,110 @@ fn contract(
     }
 }
 
+/// Publish the complete docs capability contract set without constructing executors.
+pub fn published_contracts() -> Vec<CapabilityTypeContract> {
+    vec![
+        contract(INSPECT_SCOPE, &[], EVIDENCE_BUNDLE, EffectKind::Emit),
+        contract(
+            DRAFT_PATCH_SET,
+            &[EVIDENCE_BUNDLE],
+            PATCH_SET,
+            EffectKind::Emit,
+        ),
+        contract(
+            VALIDATE_PATCH_SET,
+            &[EVIDENCE_BUNDLE, PATCH_SET],
+            VALIDATED_PATCH_SET,
+            EffectKind::Emit,
+        ),
+        contract(
+            PUBLISH_PATCH_SET,
+            &[VALIDATED_PATCH_SET],
+            PUBLICATION_RECEIPT,
+            EffectKind::Write,
+        ),
+        contract(
+            ASSESS_PUBLISHED_SCOPE,
+            &[PUBLICATION_RECEIPT],
+            FRESHNESS_ASSESSMENT,
+            EffectKind::Emit,
+        ),
+    ]
+}
+
+/// Register docs invokers selected by exact installed contracts.
+///
+/// Selection is by capability type, version, and content identity. The
+/// stewardship expression name does not participate in implementation
+/// binding.
+pub fn register_exact_contracts(
+    config: DocsCapabilityConfig,
+    claim_policy: DocsClaimPolicy,
+    exact_contracts: &[CapabilityTypeContract],
+    catalog: &mut crate::capability::CapabilityCatalog,
+    registry: &mut crate::capability::CapabilityExecutorRegistry,
+) -> Result<usize, ApiError> {
+    claim_policy.validate()?;
+    let mut registered = 0;
+    registered += register_exact(
+        InspectScopeCapability::new(config.clone()),
+        exact_contracts,
+        catalog,
+        registry,
+    )? as usize;
+    registered += register_exact(
+        DraftPatchSetCapability::new(config.clone()),
+        exact_contracts,
+        catalog,
+        registry,
+    )? as usize;
+    registered += register_exact(
+        ValidatePatchSetCapability::new(config.clone(), claim_policy.clone()),
+        exact_contracts,
+        catalog,
+        registry,
+    )? as usize;
+    registered += register_exact(
+        PublishPatchSetCapability::new(config.clone(), claim_policy),
+        exact_contracts,
+        catalog,
+        registry,
+    )? as usize;
+    registered += register_exact(
+        AssessPublishedScopeCapability::new(config),
+        exact_contracts,
+        catalog,
+        registry,
+    )? as usize;
+    Ok(registered)
+}
+
+fn register_exact<I>(
+    invoker: I,
+    exact_contracts: &[CapabilityTypeContract],
+    catalog: &mut crate::capability::CapabilityCatalog,
+    registry: &mut crate::capability::CapabilityExecutorRegistry,
+) -> Result<bool, ApiError>
+where
+    I: CapabilityInvoker<Error = ApiError, ExecutionApi = dyn ExecutionRuntimeContext> + 'static,
+{
+    let published = invoker.contract();
+    let Some(exact) = exact_contracts.iter().find(|contract| {
+        contract.capability_type_id == published.capability_type_id
+            && contract.capability_version == published.capability_version
+    }) else {
+        return Ok(false);
+    };
+    if exact.content_identity() != published.content_identity() {
+        return Err(ApiError::ConfigError(format!(
+            "docs executor contract identity drift for '{}' version '{}'",
+            exact.capability_type_id, exact.capability_version
+        )));
+    }
+    registry.register(catalog, invoker)?;
+    Ok(true)
+}
+
 fn is_provider_capability(capability_type_id: &str) -> bool {
     matches!(capability_type_id, DRAFT_PATCH_SET | VALIDATE_PATCH_SET)
 }
@@ -941,6 +1045,19 @@ mod tests {
         ReadmeClaimReport,
     };
 
+    fn capability_config(root: &Path) -> DocsCapabilityConfig {
+        DocsCapabilityConfig {
+            target_root: root.to_path_buf(),
+            subject_id: "subject".to_string(),
+            agent_id: "agent".to_string(),
+            provider: ProviderExecutionBinding::new(
+                "provider",
+                crate::provider::ProviderRuntimeOverrides::default(),
+            )
+            .unwrap(),
+        }
+    }
+
     fn claim_policy() -> DocsClaimPolicy {
         DocsClaimPolicy {
             policy_id: "test-policy".to_string(),
@@ -1014,6 +1131,48 @@ mod tests {
         std::fs::write(root.path().join("src/README.md"), "# Source\n").unwrap();
         let after = inspect_scope(root.path()).unwrap();
         assert_eq!(before.source_fingerprint, after.source_fingerprint);
+    }
+
+    #[test]
+    fn exact_contract_activation_registers_every_selected_docs_invoker() {
+        let root = tempfile::tempdir().unwrap();
+        let contracts = published_contracts();
+        let mut catalog = crate::capability::CapabilityCatalog::new();
+        let mut registry = crate::capability::CapabilityExecutorRegistry::new();
+
+        let count = register_exact_contracts(
+            capability_config(root.path()),
+            claim_policy(),
+            &contracts,
+            &mut catalog,
+            &mut registry,
+        )
+        .unwrap();
+
+        assert_eq!(count, contracts.len());
+        assert!(contracts.iter().all(|contract| registry
+            .get(&contract.capability_type_id, contract.capability_version)
+            .is_some()));
+    }
+
+    #[test]
+    fn exact_contract_activation_rejects_implementation_drift() {
+        let root = tempfile::tempdir().unwrap();
+        let mut contracts = published_contracts();
+        contracts[0].execution_contract.retry_class = "drifted".to_string();
+        let mut catalog = crate::capability::CapabilityCatalog::new();
+        let mut registry = crate::capability::CapabilityExecutorRegistry::new();
+
+        let error = register_exact_contracts(
+            capability_config(root.path()),
+            claim_policy(),
+            &contracts,
+            &mut catalog,
+            &mut registry,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("identity drift"));
     }
 
     #[test]

@@ -29,6 +29,30 @@ pub struct TheoryRevisionRef {
     pub content_hash: String,
 }
 
+impl TheoryRevisionRef {
+    /// Validate nonempty exact-reference coordinates and expected ownership.
+    pub fn validate_for_registry(&self, expected_registry: &str) -> Result<(), StorageError> {
+        for (label, value) in [
+            ("theory registry", self.registry.as_str()),
+            ("theory id", self.id.as_str()),
+            ("theory content hash", self.content_hash.as_str()),
+        ] {
+            if value.trim().is_empty() {
+                return Err(StorageError::InvalidPath(format!(
+                    "{label} must not be empty"
+                )));
+            }
+        }
+        if self.registry != expected_registry {
+            return Err(StorageError::InvalidPath(format!(
+                "theory reference registry '{}' does not match expected registry '{expected_registry}'",
+                self.registry
+            )));
+        }
+        Ok(())
+    }
+}
+
 /// One installed belief-family revision.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BeliefFamilyRevision {

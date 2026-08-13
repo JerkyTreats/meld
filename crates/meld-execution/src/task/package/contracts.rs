@@ -95,6 +95,9 @@ pub struct WorkflowPackageTriggerRequest {
     pub provider: crate::execution::ProviderExecutionBinding,
     /// Context frame type produced or consumed by this execution path.
     pub frame_type: String,
+    /// Belief family selected by the declaration that initiated this run.
+    /// Required only when belief-context hydration is enabled.
+    pub belief_family_id: Option<String>,
     /// True when execution should bypass cached or existing output.
     pub force: bool,
     /// Session identifier carried across the execution boundary.

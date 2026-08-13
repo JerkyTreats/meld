@@ -11,26 +11,23 @@
 //! - belief families:   `$XDG_CONFIG_HOME/meld/theory/belief_families/<id>.json`
 //! - curation rules:    `$XDG_CONFIG_HOME/meld/theory/curation_rules/<id>.json`
 //! - outcome mappings:  `$XDG_CONFIG_HOME/meld/theory/outcome_mappings/<id>.json`
-//! - planning theory:   `$XDG_CONFIG_HOME/meld/theory/planning/<expression>/`
-//!   holding `methods/*.json`, `available_actions.json`, and
-//!   `method_realizations.json`
+//! - Strategy packages: `$XDG_CONFIG_HOME/meld/theory/strategy_theories/<id>.json`
+//! - claim policies:    `$XDG_CONFIG_HOME/meld/theory/claim_policies/<id>.json`
 //!
 //! A file's content identity must match the selection identity: a belief
 //! family file whose `family_id` differs from its selected id is rejected
-//! rather than silently installed under the wrong name. Planning theory is
-//! keyed by the stewardship expression because the selection names no
-//! separate planning identity.
+//! rather than silently installed under the wrong name.
 
 use std::path::PathBuf;
 
-use meld_execution::planning::{AvailableActionSet, MethodRealizationBinding};
-use meld_lang::Method;
 use meld_world_model::agent::AgentCurationRuleConfig;
 use meld_world_model::belief::{
     BeliefConfigLoader, BeliefFamilyConfig, ConfiguredOutcomeMappingSet, OutcomeMappingSetConfig,
 };
+use meld_world_model::strategy::{validate_strategy_theory_package, StrategyTheoryPackage};
 
 use crate::config::xdg;
+use crate::docs::claim_validation::DocsClaimPolicy;
 use crate::error::ApiError;
 
 /// Root directory for theory configuration bodies.
@@ -52,6 +49,22 @@ pub fn curation_rule_config_path(rule_id: &str) -> Result<PathBuf, ApiError> {
     Ok(theory_config_root()?
         .join("curation_rules")
         .join(format!("{rule_id}.json")))
+}
+
+/// Path of the complete Strategy theory package for one selected id.
+pub fn strategy_theory_config_path(theory_id: &str) -> Result<PathBuf, ApiError> {
+    validate_theory_id("strategy theory id", theory_id)?;
+    Ok(theory_config_root()?
+        .join("strategy_theories")
+        .join(format!("{theory_id}.json")))
+}
+
+/// Path of the docs claim policy for one selected id.
+pub fn claim_policy_config_path(policy_id: &str) -> Result<PathBuf, ApiError> {
+    validate_theory_id("claim policy id", policy_id)?;
+    Ok(theory_config_root()?
+        .join("claim_policies")
+        .join(format!("{policy_id}.json")))
 }
 
 /// Load and validate the belief family selected by id.
@@ -108,18 +121,49 @@ pub fn load_curation_rule_config(rule_id: &str) -> Result<AgentCurationRuleConfi
     Ok(rule)
 }
 
+/// Load and owner-validate the selected complete Strategy theory package.
+pub fn load_strategy_theory_package(theory_id: &str) -> Result<StrategyTheoryPackage, ApiError> {
+    let path = strategy_theory_config_path(theory_id)?;
+    let package: StrategyTheoryPackage = load_json(&path, "strategy theory")?;
+    validate_strategy_theory_package(&package).map_err(|error| {
+        ApiError::ConfigError(format!(
+            "invalid strategy theory config '{}': {error}",
+            path.display()
+        ))
+    })?;
+    if package.snapshot.theory_id != theory_id {
+        return Err(ApiError::ConfigError(format!(
+            "strategy theory config '{}' declares theory_id '{}' but was selected as '{}'",
+            path.display(),
+            package.snapshot.theory_id,
+            theory_id
+        )));
+    }
+    Ok(package)
+}
+
+/// Load and owner-validate the selected docs claim policy.
+pub fn load_claim_policy(policy_id: &str) -> Result<DocsClaimPolicy, ApiError> {
+    let path = claim_policy_config_path(policy_id)?;
+    let policy: DocsClaimPolicy = load_json(&path, "docs claim policy")?;
+    policy.validate()?;
+    if policy.policy_id != policy_id {
+        return Err(ApiError::ConfigError(format!(
+            "docs claim policy '{}' declares policy_id '{}' but was selected as '{}'",
+            path.display(),
+            policy.policy_id,
+            policy_id
+        )));
+    }
+    Ok(policy)
+}
+
 /// Path of the outcome mapping set configuration file for one selected id.
 pub fn outcome_mapping_config_path(mapping_id: &str) -> Result<PathBuf, ApiError> {
     validate_theory_id("outcome mapping id", mapping_id)?;
     Ok(theory_config_root()?
         .join("outcome_mappings")
         .join(format!("{mapping_id}.json")))
-}
-
-/// Root directory of planning theory for one stewardship expression.
-pub fn planning_theory_root(expression: &str) -> Result<PathBuf, ApiError> {
-    validate_theory_id("stewardship expression", expression)?;
-    Ok(theory_config_root()?.join("planning").join(expression))
 }
 
 /// Load and validate the outcome mapping set selected by id.
@@ -158,66 +202,7 @@ pub fn load_outcome_mapping_config(mapping_id: &str) -> Result<OutcomeMappingSet
     Ok(config)
 }
 
-/// Load the planning methods installed for one stewardship expression.
-///
-/// Files load in deterministic path order so the method candidate order is
-/// stable across boots. Verification against the capability catalog is the
-/// method library's concern at assembly time, not a load concern.
-pub fn load_planning_methods(expression: &str) -> Result<Vec<Method>, ApiError> {
-    let dir = planning_theory_root(expression)?.join("methods");
-    let entries = std::fs::read_dir(&dir).map_err(|error| {
-        ApiError::ConfigError(format!(
-            "cannot read planning methods directory '{}': {error}",
-            dir.display()
-        ))
-    })?;
-    let mut files: Vec<PathBuf> = entries
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| {
-            path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("json")
-        })
-        .collect();
-    files.sort();
-    let mut methods = Vec::new();
-    for file in files {
-        let raw = std::fs::read_to_string(&file).map_err(|error| {
-            ApiError::ConfigError(format!(
-                "cannot read planning method '{}': {error}",
-                file.display()
-            ))
-        })?;
-        let method: Method = serde_json::from_str(&raw).map_err(|error| {
-            ApiError::ConfigError(format!(
-                "invalid planning method '{}': {error}",
-                file.display()
-            ))
-        })?;
-        methods.push(method);
-    }
-    if methods.is_empty() {
-        return Err(ApiError::ConfigError(format!(
-            "planning methods directory '{}' contains no method files",
-            dir.display()
-        )));
-    }
-    Ok(methods)
-}
-
-/// Load the available-action set installed for one stewardship expression.
-pub fn load_available_actions(expression: &str) -> Result<AvailableActionSet, ApiError> {
-    let path = planning_theory_root(expression)?.join("available_actions.json");
-    load_planning_json(&path, "available actions")
-}
-
-/// Load the method realizations installed for one stewardship expression.
-pub fn load_method_realizations(
-    expression: &str,
-) -> Result<Vec<MethodRealizationBinding>, ApiError> {
-    let path = planning_theory_root(expression)?.join("method_realizations.json");
-    load_planning_json(&path, "method realizations")
-}
-
-fn load_planning_json<T: serde::de::DeserializeOwned>(
+fn load_json<T: serde::de::DeserializeOwned>(
     path: &std::path::Path,
     label: &str,
 ) -> Result<T, ApiError> {

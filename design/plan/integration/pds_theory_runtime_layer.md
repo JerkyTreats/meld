@@ -4,7 +4,7 @@ Date: 2026-07-30
 Status: active
 Scope: the implementation-readiness map of the settled PDS layer — operational domain theory against the written Meld runtime — including the scaffolding matrix, the current seams, and the layer-settlement rule for the next layer up
 
-Note 2026-08-12: commit 4894b73 deleted the authored planning-theory provisioning from `src/init/world/source.rs`, and the live path now composes the docs stewardship image in code. Elevation of that hand-lowered image into durable theory registries and declaration lowering proceeds under [Theory Elevation Program](theory_elevation_program.md).
+Note 2026-08-13: Theory Elevation Step 1 installed every live docs semantic body through exact owner registries and complete receipts. Step 2 replaced expression-shaped production composition with named declaration lowering. The direct docs PDS composer is now test-only, belief-context family selection flows from the physical binding, and the stale Method-era source artifacts are retired.
 
 ## Purpose
 
@@ -16,40 +16,43 @@ Each Meld coupling consumes operational domain theory through one seam. The matr
 
 | Theory kind | Artifact form | Selection identity | Seam | Durability |
 |---|---|---|---|---|
-| Belief family | `belief_family.<id>.json` | `theory.belief_family_id` | stage 2 install into the belief family registry; actors resolve per tick | durable registry, content-hash revisions |
-| Evidence mapping set | `outcome_interpretation.<id>.json` | `theory.evidence_mapping_id` | composed at CLI assembly load into the ingestion actor; rules may discriminate on outcome payload content, first exercised by the completed interpretation splitting on the package-declared semantic yield class | composition injection until the durable mapping registry lands |
-| Curation rule | `curation_rule.<id>.json` | `theory.curation_rule_id` | stage 3 binds the rule to the agent record by content hash | durable on the agent record |
-| Planning methods | `methods/*.json` | keyed by expression | composed at CLI assembly load into the planning theory binding | composition injection, no durable registry |
-| Available actions | `available_actions.<expression>.json` | keyed by expression | composed at CLI assembly load into the planning theory binding | composition injection |
-| Method realizations | `method_realizations.<expression>.json` | keyed by expression | composed at CLI assembly load into the planning theory binding | composition injection |
-| Task package | built-in package document | package id fixed by expression | loaded from the binary's built-in registry | shipped, not yet selectable theory |
-| Maintained scope and authority | stewardship selection | `stewardship.<expression>` config table | stage 0 physical binding resolution | hand-authored XDG configuration |
+| Belief family | `belief_family.<id>.json` | `theory.belief_family_id` | world-model belief registry selected by complete receipt | durable exact owner revision |
+| Evidence mapping set | `outcome_interpretation.<id>.json` | `theory.evidence_mapping_id` | world-model belief mapping registry selected by complete receipt | durable exact owner revision |
+| Curation rule | `curation_rule.<id>.json` | `theory.curation_rule_id` | world-model Agent registry selected by complete receipt | durable exact owner revision |
+| Strategy theory | `strategy_theory.<id>.json` | `theory.strategy_theory_id` | world-model Strategy registry selected by complete receipt | durable exact owner revision |
+| Executable contract | capability implementation publication | derived from Strategy capability selectors | execution capability registry selected by complete receipt | durable exact owner revision |
+| Claim policy | `claim_policy.<id>.json` | `theory.claim_policy_id` | docs claim-policy registry selected by complete receipt | durable exact owner revision |
+| Maintained scope | named stewardship declaration | `stewardship.declarations.<id>` config table | generic stage 0 physical binding resolution | canonical config selection for Step 2 |
+| Authority | deferred | deferred to Step 4 | no runtime relationship yet | not implemented |
 
 Family-declared semantics travel inside the belief family body and never in runtime code: observationality and anchor coupling are the two declared so far, and the family owns any future assessment semantics the same way.
 
 ## Current Seams
 
-- Theory packages live as `theory/<expression>/` directories in the shipped layout. `meld world init --theory-source` provisions a package into the XDG theory root, identity-checked against the selection before any write and byte-idempotent.
-- The XDG theory root is the only load root. Loaders reject a body whose content identity differs from its selected identity.
-- The stewardship selection is the compatibility form of a canonical PDS declaration: a human-authored table naming the expression, physical target, agent, provider, and three theory identities.
-- Stage 2 installation is the compatibility form of consuming a compiled stewardship image, as the initialization contract records. The provisioned theory package is the image's hand-authored antecedent.
+- Authored compatibility packages live as `theory/<expression>/` directories. `meld world init --theory-source` provisions all selected bodies into the XDG theory root after full identity validation and before any write.
+- World initialization is the only production reader of authored XDG bodies. It installs owner revisions and commits a complete receipt last.
+- Runtime assembly resolves one active receipt and freezes every exact owner revision for the composition lifetime.
+- Canonical configuration uses named tables under `stewardship.declarations`. The older `stewardship.docs_freshness` table is a temporary compatibility reader that lowers into the same value.
+- Strategy activation is owned by meld world model. Capability implementations bind by exact type, version, and content identity. Neither path selects by expression name.
+- Belief-context hydration consumes the family identity carried by the selected physical binding. Context does not choose an application family.
+- The declaration remains a minimal Step 2 selection. Maintained conditions and authority are not inferred from it.
 
 ## Pipeline Authority
 
 ```mermaid
 flowchart LR
-    intent["intent surface<br/>unsettled"] --> decl["canonical declaration<br/>unsettled"]
-    decl --> pkg["theory package<br/>compatibility form"]
+    intent["intent surface<br/>unsettled"] --> decl["named declaration<br/>Step 2 minimal form"]
+    decl --> pkg["authored theory source<br/>compatibility form"]
     pkg --> install["stage 2 install<br/>registries"]
     install --> ground["directive grounding"]
     ground --> runtime["belief, curation,<br/>planning, dispatch"]
 ```
 
-Authority at each stage: the declaration layer, once settled, is what a user approves and diffs; the theory package is the lowered object form the runtime installs; installed revisions are the only theory the runtime cites; grounding decides application; the runtime settles answers. Today the two left stages are a human writing configuration and JSON, and this document says so rather than pretending otherwise.
+Authority at each stage: the named declaration selects identity and physical scope but does not yet represent standing conditions or effective authority. The authored package supplies owner semantics for installation. Installed revisions are the only theory the runtime cites. Grounding decides application and the runtime settles answers. The final user intent surface remains unsettled.
 
 ## Layer Settlement Rule
 
-The declaration-to-theory layer canonicalizes against this map: its lowering target is the theory-kind table above, its identity discipline is the selection-by-identity rule, and its authority handoff is the approval boundary before provisioning. Nothing in that layer may require a runtime seam this map does not already carry, and any new seam lands here first as runtime work before the upper layer may depend on it.
+Declaration lowering canonicalizes against this map: its target is the theory-kind table above, its identity discipline is the selection-by-identity rule, and it never creates missing owner meaning. Later declaration features may depend only on runtime seams already present here. Any missing seam lands first through its owning runtime domain.
 
 ## Related Documentation
 

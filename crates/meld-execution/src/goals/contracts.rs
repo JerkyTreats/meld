@@ -49,6 +49,12 @@ pub struct ExecutionStrategyAuthorization {
     pub bindings: meld_lang::Bindings,
     /// Exact Capability contract identities selected by Strategy.
     pub capability_contract_ids: Vec<String>,
+    /// Stable Strategy theory identity used by Agent authorization.
+    #[serde(default)]
+    pub strategy_theory_id: Option<String>,
+    /// Exact Strategy theory content hash used by Agent authorization.
+    #[serde(default)]
+    pub strategy_theory_content_hash: Option<String>,
     /// Optional reusable Method lineage.
     pub method_id: Option<String>,
 }

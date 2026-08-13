@@ -16,8 +16,13 @@ use meld_world_model::PerspectiveKey;
 
 use crate::config::{ConfigLoader, PhysicalBinding};
 use crate::error::ApiError;
-use crate::init::world::pipeline::{WorldInitContent, WorldInitPipeline};
-use crate::init::world::theory::{load_belief_family_config, load_curation_rule_config};
+use crate::init::world::pipeline::{
+    CompleteTheoryInstall, WorldInitContent, WorldInitPipeline, WorldInitTheoryBundle,
+};
+use crate::init::world::theory::{
+    load_belief_family_config, load_claim_policy, load_curation_rule_config,
+    load_outcome_mapping_config, load_strategy_theory_package,
+};
 use crate::init::world::{WorldInitReport, WorldInitRequest, WorldInitStage};
 use crate::runtime::assembly::ProductRuntimeAssembly;
 
@@ -67,7 +72,12 @@ pub fn run_world_init(
 
     // Stage 0 inputs: XDG-only configuration and the physical binding.
     let config = ConfigLoader::load_global()?;
-    let binding = PhysicalBinding::resolve(&config)?;
+    let binding = PhysicalBinding::resolve_for_target(&config, target_path)?.ok_or_else(|| {
+        ApiError::ConfigError(format!(
+            "no stewardship declaration targets '{}'",
+            target_path.display()
+        ))
+    })?;
 
     // An explicit theory source provisions the XDG theory root before the
     // loaders resolve selection identities against it. Provisioning is
@@ -101,6 +111,13 @@ pub fn run_world_init(
 
     let family_config = load_belief_family_config(&binding.package.belief_family_id)?;
     let curation_rule = load_curation_rule_config(&binding.package.curation_rule_id)?;
+    let outcome_mapping = load_outcome_mapping_config(&binding.package.evidence_mapping_id)?;
+    let strategy_theory = load_strategy_theory_package(&binding.package.strategy_theory_id)?;
+    let claim_policy = load_claim_policy(&binding.package.claim_policy_id)?;
+    let executable_contracts = select_strategy_contracts(
+        &strategy_theory,
+        &crate::capability::published_product_contracts(),
+    )?;
 
     // The world-model registry opens over the same shared world-model
     // database the assembly holds; composition derives the handle from the
@@ -139,7 +156,25 @@ pub fn run_world_init(
         observed_seq,
     };
 
+    let complete = CompleteTheoryInstall {
+        selection: binding.package.clone(),
+        bundle: WorldInitTheoryBundle {
+            family: content.family_config.clone(),
+            curation_rule: content.curation_rule.clone(),
+            outcome_mapping,
+            strategy_theory,
+            executable_contracts,
+            claim_policy,
+        },
+        curation_rules: stores.curation_rule_registry.as_ref(),
+        outcome_mappings: stores.outcome_mapping_registry.as_ref(),
+        strategy_theories: stores.strategy_theory_registry.as_ref(),
+        executable_contracts: stores.capability_contract_registry.as_ref(),
+        claim_policies: stores.claim_policy_registry.as_ref(),
+        receipts: stores.theory_receipts.as_ref(),
+    };
     WorldInitPipeline::new(&mut registry, stores.agent_store.as_ref(), &append)
+        .with_complete_theory(complete)
         .run(&request, &content)
         .map_err(|error| world_init_error(error.to_string()))
 }
@@ -170,6 +205,48 @@ fn parse_stage_args(stage_args: &[String]) -> Result<Vec<WorldInitStage>, ApiErr
 
 fn world_init_error(message: impl Into<String>) -> ApiError {
     ApiError::ConfigError(format!("World init failed: {}", message.into()))
+}
+
+fn select_strategy_contracts(
+    strategy: &meld_world_model::strategy::StrategyTheoryPackage,
+    published: &[meld_execution::capability::CapabilityTypeContract],
+) -> Result<Vec<meld_execution::capability::CapabilityTypeContract>, ApiError> {
+    let mut selected = Vec::new();
+    for capability in &strategy.capabilities {
+        let selector = capability
+            .operator
+            .resolution
+            .specific
+            .as_ref()
+            .ok_or_else(|| {
+                ApiError::ConfigError(format!(
+                    "Strategy capability '{}' has no exact executable selector",
+                    capability.operator.operator_id
+                ))
+            })?;
+        let contract = published
+            .iter()
+            .find(|contract| {
+                contract.capability_type_id == selector.capability_type_id
+                    && contract.capability_version == selector.capability_version
+                    && contract.content_identity() == capability.contract_id
+            })
+            .ok_or_else(|| {
+                ApiError::ConfigError(format!(
+                    "Strategy capability '{}' has no exact product implementation",
+                    capability.operator.operator_id
+                ))
+            })?;
+        if !selected.iter().any(
+            |existing: &meld_execution::capability::CapabilityTypeContract| {
+                existing.capability_type_id == contract.capability_type_id
+                    && existing.capability_version == contract.capability_version
+            },
+        ) {
+            selected.push(contract.clone());
+        }
+    }
+    Ok(selected)
 }
 
 #[cfg(test)]
@@ -209,5 +286,36 @@ mod tests {
     fn unknown_stage_arg_is_rejected() {
         let error = parse_stage_args(&["activate".to_string()]).unwrap_err();
         assert!(error.to_string().contains("unknown stage 'activate'"));
+    }
+
+    #[test]
+    fn strategy_selects_product_contracts_by_exact_identity() {
+        let strategy: meld_world_model::strategy::StrategyTheoryPackage = serde_json::from_str(
+            include_str!("../../../theory/docs_freshness/strategy_theory.docs_freshness.json"),
+        )
+        .unwrap();
+
+        let selected =
+            select_strategy_contracts(&strategy, &crate::capability::published_product_contracts())
+                .unwrap();
+
+        assert_eq!(selected.len(), strategy.capabilities.len());
+    }
+
+    #[test]
+    fn strategy_contract_selection_rejects_missing_implementation() {
+        let mut strategy: meld_world_model::strategy::StrategyTheoryPackage = serde_json::from_str(
+            include_str!("../../../theory/docs_freshness/strategy_theory.docs_freshness.json"),
+        )
+        .unwrap();
+        strategy.capabilities[0].contract_id = "absent-contract".to_string();
+
+        let error =
+            select_strategy_contracts(&strategy, &crate::capability::published_product_contracts())
+                .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("no exact product implementation"));
     }
 }

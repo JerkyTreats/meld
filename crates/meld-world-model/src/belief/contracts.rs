@@ -247,6 +247,9 @@ pub struct EvidenceItem {
     pub transaction_seq: u64,
     #[serde(default)]
     pub content_hash: Option<String>,
+    /// Exact outcome-mapping revision that interpreted the source record.
+    #[serde(default)]
+    pub outcome_mapping_revision: Option<TheoryRevisionRef>,
     pub provenance: BeliefProvenanceSummary,
 }
 
@@ -267,6 +270,9 @@ pub struct PromotedEvidenceRecord {
     pub reference_time: Option<String>,
     pub transaction_seq: u64,
     pub content_hash: Option<String>,
+    /// Exact outcome-mapping revision that promoted this record.
+    #[serde(default)]
+    pub outcome_mapping_revision: Option<TheoryRevisionRef>,
     pub fields: BTreeMap<String, EvidenceValue>,
 }
 
@@ -310,6 +316,9 @@ pub struct EvidenceRejection {
     pub reason: String,
     pub source_cursor_start: u64,
     pub source_cursor_end: u64,
+    /// Exact outcome-mapping revision involved in rejection.
+    #[serde(default)]
+    pub outcome_mapping_revision: Option<Box<TheoryRevisionRef>>,
 }
 
 /// Compact posterior value exposed by a committed revision and view.

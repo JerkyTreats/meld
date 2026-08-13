@@ -187,6 +187,7 @@ fn compiled_shape_for_case(case: &BottomUpCompileCase) -> NormalizedCompileShape
                 )
                 .unwrap(),
                 frame_type: "context-docs-writer".to_string(),
+                belief_family_id: None,
                 force: true,
                 session_id: None,
             },

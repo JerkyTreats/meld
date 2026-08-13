@@ -11,7 +11,7 @@ use crate::agent::contracts::{
 };
 use crate::agent::curation::{curate_goal_satisfaction, curate_threshold_rule, AgentCuration};
 use crate::agent::store::AgentStore;
-use crate::agent::strategy::{authorize_curation_outcome, AgentStrategyRuntimeConfig};
+use crate::agent::strategy::{authorize_curation_outcome_with_theory, AgentStrategyRuntimeConfig};
 use crate::agent::subscription::AgentSubscription;
 use crate::belief::BeliefQuery;
 use crate::planner::PlannerQuery;
@@ -187,6 +187,7 @@ impl AgentRuntimeReport {
 pub struct AgentGoalCurationRuntime<'a> {
     store: &'a AgentStore,
     strategy: Option<AgentStrategyRuntimeConfig>,
+    curation_rule_revision: Option<crate::belief::TheoryRevisionRef>,
 }
 
 impl<'a> AgentGoalCurationRuntime<'a> {
@@ -198,6 +199,7 @@ impl<'a> AgentGoalCurationRuntime<'a> {
         Self {
             store,
             strategy: None,
+            curation_rule_revision: None,
         }
     }
 
@@ -209,7 +211,17 @@ impl<'a> AgentGoalCurationRuntime<'a> {
         Self {
             store,
             strategy: Some(strategy),
+            curation_rule_revision: None,
         }
+    }
+
+    /// Pin the exact curation-rule revision used by this runtime facade.
+    pub fn with_curation_rule_revision(
+        mut self,
+        revision: crate::belief::TheoryRevisionRef,
+    ) -> Self {
+        self.curation_rule_revision = Some(revision);
+        self
     }
 
     /// Curate one delivery, submit any goal command, and advance the cursor.
@@ -408,27 +420,34 @@ impl<'a> AgentGoalCurationRuntime<'a> {
                 return None;
             }
         };
+        if let Some(revision) = &self.curation_rule_revision {
+            outcome.decision.curation_rule_revision = Some(revision.clone());
+        }
         if let Some(strategy) = &self.strategy {
             if outcome.goal_command.is_some() {
                 let mut problem = strategy.problem.clone();
                 problem.world_state = strategy_world_state;
                 problem.planner_snapshot_id = strategy_snapshot_id;
-                outcome =
-                    match authorize_curation_outcome(outcome, problem, strategy.bounds.clone()) {
-                        Ok(outcome) => outcome,
-                        Err(mut failure) => {
-                            // Failure to authorize is an Agent abstention, not
-                            // an execution error and not permission to submit
-                            // the original unaudited Goal command.
-                            failure.outcome.decision.decision = AgentDecisionKind::Indeterminate;
-                            failure.outcome.decision.reason = format!(
-                                "Strategy produced no authorization under {:?}: {:?}",
-                                failure.completion, failure.grounds
-                            );
-                            failure.outcome.goal_command = None;
-                            *failure.outcome
-                        }
-                    };
+                outcome = match authorize_curation_outcome_with_theory(
+                    outcome,
+                    problem,
+                    strategy.bounds.clone(),
+                    strategy.theory_revision.clone(),
+                ) {
+                    Ok(outcome) => outcome,
+                    Err(mut failure) => {
+                        // Failure to authorize is an Agent abstention, not
+                        // an execution error and not permission to submit
+                        // the original unaudited Goal command.
+                        failure.outcome.decision.decision = AgentDecisionKind::Indeterminate;
+                        failure.outcome.decision.reason = format!(
+                            "Strategy produced no authorization under {:?}: {:?}",
+                            failure.completion, failure.grounds
+                        );
+                        failure.outcome.goal_command = None;
+                        *failure.outcome
+                    }
+                };
             }
         }
         let persisted = match self.store.put_decision(&outcome.decision) {

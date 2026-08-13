@@ -1005,6 +1005,7 @@ mod tests {
             .unwrap();
         belief
             .put_evidence(&EvidenceItem {
+                outcome_mapping_revision: None,
                 evidence_id: EVIDENCE_ID.to_string(),
                 candidate_key: belief_key(),
                 source_fact_ids: vec![FACT_ID.to_string()],
@@ -1096,6 +1097,7 @@ mod tests {
                 goal_command_id: Some(COMMAND_ID.to_string()),
                 goal_mutation_command_id: None,
                 strategy_authorization: None,
+                curation_rule_revision: None,
                 dedupe_key: AgentCurationDedupeKey {
                     agent_id: "seed.docs_freshness".to_string(),
                     subject_key: subject().index_key(),

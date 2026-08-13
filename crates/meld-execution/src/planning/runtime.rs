@@ -344,6 +344,14 @@ where
     {
         let goal = record.goal;
         let strategy_authorization = record.strategy_authorization;
+        if strategy_authorization
+            .as_ref()
+            .is_some_and(|authorization| {
+                authorization_already_materialized(task_network.state(), authorization)
+            })
+        {
+            return;
+        }
         let projection_request = projection_request_for_goal(request, &goal);
         let projected = match projection.project(projection_request.clone()) {
             Ok(projected) => projected,
@@ -745,6 +753,29 @@ fn plan_already_materialized(
             crate::task_network::mutation::Mutation::Inject(inject) => {
                 state.tasks.contains_key(&inject.task_node.task_instance_id)
             }
+        })
+}
+
+fn authorization_already_materialized(
+    state: &crate::task_network::state::NetworkState,
+    authorization: &ExecutionStrategyAuthorization,
+) -> bool {
+    let required = authorization
+        .composition
+        .steps
+        .iter()
+        .filter_map(|step| match &step.kind {
+            StepKind::Op(operator) => Some((step.step_id.as_str(), operator.operator_id.as_str())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    !required.is_empty()
+        && required.iter().all(|(step_id, operator_id)| {
+            state.tasks.values().any(|task| {
+                task.lineage.goal_id == authorization.goal_id
+                    && task.lineage.step_id == *step_id
+                    && task.lineage.operator_id == *operator_id
+            })
         })
 }
 

@@ -84,6 +84,7 @@ pub struct BeliefAssessmentActor {
     subjects: Vec<BeliefSubjectBinding>,
     perspective: PerspectiveKey,
     branch_scope: BranchScope,
+    pinned_families: Option<Vec<BeliefFamilyRevision>>,
 }
 
 impl BeliefAssessmentActor {
@@ -108,7 +109,14 @@ impl BeliefAssessmentActor {
             subjects,
             perspective,
             branch_scope,
+            pinned_families: None,
         }
+    }
+
+    /// Freeze exact family revisions for the lifetime of this actor.
+    pub fn with_pinned_families(mut self, revisions: Vec<BeliefFamilyRevision>) -> Self {
+        self.pinned_families = Some(revisions);
+        self
     }
 
     /// Stable actor identity carried in reports and lease ownership.
@@ -334,6 +342,9 @@ impl BeliefAssessmentActor {
         &self,
         report: &mut BeliefAssessmentReport,
     ) -> Result<Vec<BeliefFamilyRevision>, ()> {
+        if let Some(families) = &self.pinned_families {
+            return Ok(families.clone());
+        }
         let mut family_ids = self.family_ids.clone();
         family_ids.sort();
         family_ids.dedup();

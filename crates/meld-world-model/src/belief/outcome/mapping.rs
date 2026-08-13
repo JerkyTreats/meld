@@ -13,6 +13,7 @@ use meld_events::EventRecord;
 use serde::Serialize;
 
 use crate::belief::contracts::PromotedEvidenceRecord;
+use crate::belief::TheoryRevisionRef;
 
 /// Durable consumer identity for world-model evidence ingestion.
 ///
@@ -27,6 +28,8 @@ pub struct OutcomeMappingInput {
     pub record: EventRecord,
     /// Installed mapping identity selected by the stewardship expression.
     pub mapping_id: String,
+    /// Exact mapping revision frozen for this composition.
+    pub mapping_revision: Option<TheoryRevisionRef>,
 }
 
 /// Mapping decision for one replayed record.
@@ -70,14 +73,25 @@ pub trait OutcomeEvidenceMapping {
 /// named-field structure so no delimiter inside either identity can make
 /// two distinct inputs collide.
 pub fn promoted_evidence_identity(publication_record_id: &str, mapping_id: &str) -> String {
+    promoted_evidence_identity_for_revision(publication_record_id, mapping_id, None)
+}
+
+/// Exact promoted evidence identity including the mapping revision when present.
+pub fn promoted_evidence_identity_for_revision(
+    publication_record_id: &str,
+    mapping_id: &str,
+    mapping_content_hash: Option<&str>,
+) -> String {
     #[derive(Serialize)]
     struct Identity<'a> {
         publication_record_id: &'a str,
         mapping_id: &'a str,
+        mapping_content_hash: Option<&'a str>,
     }
     let bytes = serde_json::to_vec(&Identity {
         publication_record_id,
         mapping_id,
+        mapping_content_hash,
     })
     .expect("evidence identity serialization cannot fail");
     format!("evidence-{}", blake3::hash(&bytes).to_hex())

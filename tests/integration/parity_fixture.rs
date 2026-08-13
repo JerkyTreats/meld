@@ -654,6 +654,7 @@ pub fn try_run_workflow_route(
                 )
                 .unwrap(),
                 frame_type: PARITY_FRAME_TYPE.to_string(),
+                belief_family_id: None,
                 force: true,
                 session_id: Some("session_parity_baseline".to_string()),
             },
@@ -763,6 +764,7 @@ pub fn run_incremental_workflow_scenario(
                     )
                     .unwrap(),
                     frame_type: PARITY_FRAME_TYPE.to_string(),
+                    belief_family_id: None,
                     force,
                     session_id: Some(session_id.to_string()),
                 },

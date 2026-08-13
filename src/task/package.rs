@@ -92,12 +92,18 @@ pub fn prepare_registered_workflow_task_run(
             // Hydrates the trigger target's belief view into the seed bundle.
             // Only invoked for belief_context-enabled workflows.
             |node_id: NodeID| {
+                let family_id = request.belief_family_id.as_deref().ok_or_else(|| {
+                    ApiError::ConfigError(format!(
+                        "Workflow '{}' enables belief context but its trigger has no belief family binding",
+                        request.workflow_id
+                    ))
+                })?;
                 let node_record = api
                     .read_node_record(&node_id)?
                     .ok_or(ApiError::NodeNotFound(node_id))?;
                 let subject_path =
                     workspace_relative_subject_path(workspace_root, &node_record.path);
-                let bundle = hydrate_belief_context_bundle(api, node_id, &subject_path)?;
+                let bundle = hydrate_belief_context_bundle(api, node_id, &subject_path, family_id)?;
                 serde_json::to_value(&bundle).map_err(|err| {
                     ApiError::ConfigError(format!(
                         "Failed to encode belief context bundle artifact: {}",

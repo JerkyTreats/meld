@@ -1,0 +1,13 @@
+{
+  "policy_id": "docs-claims-strict-v1",
+  "minimum_claim_confidence": 0.8,
+  "minimum_groundedness": 0.8,
+  "maximum_unsupported_claim_mass": 0.0,
+  "maximum_contradiction_claim_mass": 0.0,
+  "maximum_revision_attempts": 2,
+  "title_weight": 1.0,
+  "prose_weight": 1.0,
+  "list_item_weight": 0.8,
+  "code_line_weight": 1.25,
+  "table_row_weight": 0.8
+}

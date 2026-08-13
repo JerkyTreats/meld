@@ -7,8 +7,9 @@ use meld_lang::{
 
 use super::*;
 use crate::agent::{
-    authorize_curation_outcome, AgentCurationDecision, AgentCurationDedupeKey,
-    AgentCurationInputRefs, AgentCurationOutcome, AgentDecisionKind, AgentGoalCommand,
+    authorize_curation_outcome, authorize_curation_outcome_with_theory, AgentCurationDecision,
+    AgentCurationDedupeKey, AgentCurationInputRefs, AgentCurationOutcome, AgentDecisionKind,
+    AgentGoalCommand,
 };
 use crate::belief::{BeliefKey, BranchScope};
 use crate::world_state::graph::PerspectiveKey;
@@ -387,6 +388,7 @@ fn agent_settles_the_exact_verified_candidate_into_command_and_decision() {
         goal_command_id: Some("command-docs".into()),
         goal_mutation_command_id: None,
         strategy_authorization: None,
+        curation_rule_revision: None,
         dedupe_key: dedupe_key.clone(),
         input_refs: AgentCurationInputRefs {
             belief_revision_id: Some("belief-revision-docs".into()),
@@ -421,6 +423,23 @@ fn agent_settles_the_exact_verified_candidate_into_command_and_decision() {
         }),
         goal_mutation_command: None,
     };
+    let revision = crate::belief::TheoryRevisionRef {
+        registry: "strategy_theory".to_string(),
+        id: "docs_freshness".to_string(),
+        content_hash: "exact-revision".to_string(),
+    };
+    let exact = authorize_curation_outcome_with_theory(
+        outcome.clone(),
+        problem(),
+        StrategySearchBounds {
+            max_expansions: 8,
+            max_depth: 4,
+        },
+        Some(revision.clone()),
+    )
+    .unwrap();
+    let exact_authorization = exact.decision.strategy_authorization.unwrap();
+
     let authorized = authorize_curation_outcome(
         outcome,
         problem(),
@@ -438,6 +457,11 @@ fn agent_settles_the_exact_verified_candidate_into_command_and_decision() {
         .unwrap();
 
     assert_eq!(decision_authorization, command_authorization);
+    assert_eq!(exact_authorization.strategy_theory_revision, Some(revision));
+    assert_ne!(
+        exact_authorization.authorization_id,
+        command_authorization.authorization_id
+    );
     assert_eq!(command_authorization.agent_decision_id, "decision-docs");
     assert!(matches!(
         verify_candidate(&problem(), &command_authorization.candidate),

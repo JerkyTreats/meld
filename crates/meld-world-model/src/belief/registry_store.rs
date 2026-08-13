@@ -91,7 +91,19 @@ impl BeliefFamilyRegistryStore {
         else {
             return Ok(None);
         };
-        Ok(Some(serde_json::from_slice(&raw).map_err(to_storage_data)?))
+        let revision: BeliefFamilyRevision =
+            serde_json::from_slice(&raw).map_err(to_storage_data)?;
+        let snapshot = BeliefConfigLoader::snapshot(revision.config.clone())?;
+        if revision.family_id != family_id
+            || revision.config.family_id != family_id
+            || revision.content_hash != content_hash
+            || snapshot.hash != revision.content_hash
+        {
+            return Err(StorageError::InvalidPath(
+                "belief family revision content identity is corrupt".to_string(),
+            ));
+        }
+        Ok(Some(revision))
     }
 }
 
@@ -107,28 +119,14 @@ impl BeliefFamilyRegistry for BeliefFamilyRegistryStore {
         let snapshot = BeliefConfigLoader::snapshot(config)?;
         let family_id = snapshot.config.family_id.clone();
         if self.current_hash(&family_id)?.as_deref() == Some(snapshot.hash.as_str()) {
-            // Self-heal a head that cites a missing revision record: the
-            // caller supplied identical content, so rewriting the record
-            // restores resolvability without changing installed identity.
-            let revision = match self.read_revision(&family_id, &snapshot.hash)? {
-                Some(existing) => existing,
-                None => {
-                    let revision = BeliefFamilyRevision {
-                        family_id: family_id.clone(),
-                        content_hash: snapshot.hash.clone(),
-                        config: snapshot.config,
-                        installed_at_seq,
-                    };
-                    self.revisions
-                        .insert(
-                            revision_key(&family_id, &revision.content_hash).as_bytes(),
-                            serde_json::to_vec(&revision).map_err(to_storage_data)?,
-                        )
-                        .map_err(to_storage_io)?;
-                    self.db.flush().map_err(to_storage_io)?;
-                    revision
-                }
-            };
+            let revision = self
+                .read_revision(&family_id, &snapshot.hash)?
+                .ok_or_else(|| {
+                    StorageError::InvalidPath(format!(
+                        "current head for family '{family_id}' cites missing revision '{}'",
+                        snapshot.hash
+                    ))
+                })?;
             return Ok((TheoryInstallDisposition::Unchanged, revision));
         }
         // A previously installed hash keeps its original record so lineage

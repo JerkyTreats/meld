@@ -1,28 +1,17 @@
-//! Docs freshness PDS publication.
+//! Regression fixture for the retired hand-composed docs PDS image.
+//!
+//! Production composition lowers declarations through installed receipts.
+//! These tests retain the original direct search and lowering proof while
+//! using the same owner activation contracts as production.
 
 use meld_events::DomainObjectRef;
-use meld_lang::{
-    CapabilityRef, Condition, CostEstimate, Effect, Goal, GoalLifecycle, GoalPriority, GoalSource,
-    Literal, Operator, Proposition, Resolution, SlotConstraint, Term, WorldState,
-};
-use meld_world_model::{
-    AgentStrategyRuntimeConfig, ProspectiveEvidenceRoute, StrategyCapability,
-    StrategyEvaluationPolicy, StrategyProblem, StrategySearchBounds, StrategySettlementRule,
-    StrategyTheorySnapshot,
-};
+use meld_lang::{GoalLifecycle, Proposition, Term, WorldState};
+use meld_world_model::{AgentStrategyRuntimeConfig, StrategyTheoryPackage};
 
 use crate::capability::{CapabilityCatalog, CapabilityExecutorRegistry, CapabilityTypeContract};
-use crate::docs::capability::{
-    AssessPublishedScopeCapability, DocsCapabilityConfig, DraftPatchSetCapability,
-    InspectScopeCapability, PublishPatchSetCapability, ValidatePatchSetCapability,
-    ASSESS_PUBLISHED_SCOPE, DRAFT_PATCH_SET, EVIDENCE_BUNDLE, FRESHNESS_ASSESSMENT, INSPECT_SCOPE,
-    PATCH_SET, PUBLICATION_RECEIPT, PUBLISH_PATCH_SET, VALIDATED_PATCH_SET, VALIDATE_PATCH_SET,
-};
+use crate::docs::capability::DocsCapabilityConfig;
 use crate::docs::claim_validation::DocsClaimPolicy;
 use crate::error::ApiError;
-
-pub const ASSESSMENT_OUTCOME_CONTRACT: &str = "docs.freshness_assessed.v1";
-pub const ASSESSMENT_EVIDENCE_SCHEMA: &str = "docs_freshness_assessment_v1";
 
 #[derive(Clone)]
 pub struct DocsPdsRuntime {
@@ -32,218 +21,89 @@ pub struct DocsPdsRuntime {
     pub requested_dimensions: Vec<String>,
 }
 
+#[cfg(test)]
 pub fn compose(config: DocsCapabilityConfig) -> Result<DocsPdsRuntime, ApiError> {
-    let claim_policy = docs_claim_policy();
+    let subject = DomainObjectRef::new("workspace_fs", "node", config.subject_id.clone())?;
+    let package = serde_json::from_str(include_str!(
+        "../../theory/docs_freshness/strategy_theory.docs_freshness.json"
+    ))
+    .map_err(|error| ApiError::ConfigError(error.to_string()))?;
+    let claim_policy = serde_json::from_str(include_str!(
+        "../../theory/docs_freshness/claim_policy.docs-claims-strict-v1.json"
+    ))
+    .map_err(|error| ApiError::ConfigError(error.to_string()))?;
+    let mut runtime = compose_with_theory(
+        config,
+        package,
+        claim_policy,
+        crate::docs::capability::published_contracts(),
+    )?;
+    runtime.strategy.problem.goal.target = Proposition::Holds {
+        subject: Term::Object(subject),
+        dimension: Term::Dimension("docs_freshness".to_string()),
+        condition: meld_lang::Condition::Above(Term::Literal(meld_lang::Literal::Number(0.7))),
+    };
+    Ok(runtime)
+}
+
+/// Compose docs executors against one exact receipt-resolved theory image.
+pub fn compose_with_theory(
+    config: DocsCapabilityConfig,
+    package: StrategyTheoryPackage,
+    claim_policy: DocsClaimPolicy,
+    exact_contracts: Vec<CapabilityTypeContract>,
+) -> Result<DocsPdsRuntime, ApiError> {
+    let subject = DomainObjectRef::new("workspace_fs", "node", config.subject_id.clone())?;
     let mut catalog = CapabilityCatalog::new();
     let mut registry = CapabilityExecutorRegistry::new();
-    registry.register(&mut catalog, InspectScopeCapability::new(config.clone()))?;
-    registry.register(&mut catalog, DraftPatchSetCapability::new(config.clone()))?;
-    registry.register(
+    crate::docs::capability::register_exact_contracts(
+        config.clone(),
+        claim_policy,
+        &exact_contracts,
         &mut catalog,
-        ValidatePatchSetCapability::new(config.clone(), claim_policy.clone()),
+        &mut registry,
     )?;
-    registry.register(
-        &mut catalog,
-        PublishPatchSetCapability::new(config.clone(), claim_policy),
-    )?;
-    registry.register(
-        &mut catalog,
-        AssessPublishedScopeCapability::new(config.clone()),
-    )?;
-    let capabilities = strategy_capabilities(&catalog);
-    let strategy = strategy_runtime(capabilities, &config)?;
+    if catalog.iter().count() != exact_contracts.len() {
+        return Err(ApiError::ConfigError(
+            "receipt executable contract set is incomplete for docs runtime".to_string(),
+        ));
+    }
+    for capability in &package.capabilities {
+        let specific = capability
+            .operator
+            .resolution
+            .specific
+            .as_ref()
+            .ok_or_else(|| {
+                ApiError::ConfigError(format!(
+                    "strategy capability '{}' is not pinned to an executable contract",
+                    capability.operator.operator_id
+                ))
+            })?;
+        let contract = catalog
+            .get(&specific.capability_type_id, specific.capability_version)
+            .ok_or_else(|| {
+                ApiError::ConfigError(format!(
+                    "strategy capability '{}' version '{}' is absent from the receipt catalog",
+                    specific.capability_type_id, specific.capability_version
+                ))
+            })?;
+        if contract.content_identity() != capability.contract_id {
+            return Err(ApiError::ConfigError(format!(
+                "strategy capability contract identity drift for '{}' version '{}'",
+                specific.capability_type_id, specific.capability_version
+            )));
+        }
+    }
+    let requested_dimensions = package.requested_dimensions.clone();
+    let strategy =
+        AgentStrategyRuntimeConfig::activate_installed(package, subject, config.agent_id.clone())
+            .map_err(|error| ApiError::ConfigError(error.to_string()))?;
     Ok(DocsPdsRuntime {
         catalog,
         registry,
         strategy,
-        requested_dimensions: vec!["docs_freshness".to_string()],
-    })
-}
-
-fn docs_claim_policy() -> DocsClaimPolicy {
-    DocsClaimPolicy {
-        policy_id: "docs-claims-strict-v1".to_string(),
-        minimum_claim_confidence: 0.8,
-        minimum_groundedness: 0.8,
-        maximum_unsupported_claim_mass: 0.0,
-        maximum_contradiction_claim_mass: 0.0,
-        maximum_revision_attempts: 2,
-        title_weight: 1.0,
-        prose_weight: 1.0,
-        list_item_weight: 0.8,
-        code_line_weight: 1.25,
-        table_row_weight: 0.8,
-    }
-}
-
-fn strategy_capabilities(catalog: &CapabilityCatalog) -> Vec<StrategyCapability> {
-    vec![
-        strategy_capability(
-            catalog.get(INSPECT_SCOPE, 1).unwrap(),
-            "inspect-docs-scope",
-            &[],
-            EVIDENCE_BUNDLE,
-            "docs.scope_inspected.v1",
-            Vec::new(),
-        ),
-        strategy_capability(
-            catalog.get(DRAFT_PATCH_SET, 1).unwrap(),
-            "draft-docs-patch-set",
-            &[EVIDENCE_BUNDLE],
-            PATCH_SET,
-            "docs.patch_set_drafted.v1",
-            Vec::new(),
-        ),
-        strategy_capability(
-            catalog.get(VALIDATE_PATCH_SET, 1).unwrap(),
-            "validate-docs-patch-set",
-            &[EVIDENCE_BUNDLE, PATCH_SET],
-            VALIDATED_PATCH_SET,
-            "docs.patch_set_validated.v1",
-            Vec::new(),
-        ),
-        strategy_capability(
-            catalog.get(PUBLISH_PATCH_SET, 1).unwrap(),
-            "publish-docs-patch-set",
-            &[VALIDATED_PATCH_SET],
-            PUBLICATION_RECEIPT,
-            "docs.patch_set_published.v1",
-            Vec::new(),
-        ),
-        strategy_capability(
-            catalog.get(ASSESS_PUBLISHED_SCOPE, 1).unwrap(),
-            "assess-published-docs-scope",
-            &[PUBLICATION_RECEIPT],
-            FRESHNESS_ASSESSMENT,
-            ASSESSMENT_OUTCOME_CONTRACT,
-            vec![Effect::Assert(Proposition::Exists {
-                scope: Term::Variable("?subject".to_string()),
-                artifact_type: Term::ArtifactType(FRESHNESS_ASSESSMENT.to_string()),
-            })],
-        ),
-    ]
-}
-
-fn strategy_capability(
-    contract: &CapabilityTypeContract,
-    operator_id: &str,
-    inputs: &[&str],
-    output: &str,
-    outcome_contract_id: &str,
-    effects: Vec<Effect>,
-) -> StrategyCapability {
-    StrategyCapability {
-        contract_id: contract.content_identity(),
-        operator: Operator {
-            operator_id: operator_id.to_string(),
-            // Publishing the capability in this activated PDS catalog is the
-            // availability claim. The validated physical binding supplies its
-            // target scope, including for intentionally unanchored belief
-            // families, so graph accessibility is not an operator precondition.
-            preconditions: Vec::new(),
-            effects,
-            cost: CostEstimate {
-                time_ms: if matches!(
-                    contract.capability_type_id.as_str(),
-                    DRAFT_PATCH_SET | VALIDATE_PATCH_SET
-                ) {
-                    60_000
-                } else {
-                    100
-                },
-                money_microdollars: 0,
-                provider_calls: u32::from(matches!(
-                    contract.capability_type_id.as_str(),
-                    DRAFT_PATCH_SET | VALIDATE_PATCH_SET
-                )),
-            },
-            resolution: Resolution {
-                requires_inputs: inputs
-                    .iter()
-                    .map(|artifact| SlotConstraint {
-                        artifact_type: Term::ArtifactType((*artifact).to_string()),
-                        required: true,
-                    })
-                    .collect(),
-                requires_outputs: vec![SlotConstraint {
-                    artifact_type: Term::ArtifactType(output.to_string()),
-                    required: true,
-                }],
-                scope_kind: Some("repository".to_string()),
-                tags: vec!["docs".to_string()],
-                specific: Some(CapabilityRef {
-                    capability_type_id: contract.capability_type_id.clone(),
-                    capability_version: contract.capability_version,
-                }),
-            },
-        },
-        outcome_contract_id: outcome_contract_id.to_string(),
-    }
-}
-
-fn strategy_runtime(
-    capabilities: Vec<StrategyCapability>,
-    config: &DocsCapabilityConfig,
-) -> Result<AgentStrategyRuntimeConfig, ApiError> {
-    let placeholder_subject =
-        DomainObjectRef::new("workspace_fs", "node", config.subject_id.clone())?;
-    let placeholder_goal = Goal {
-        goal_id: "docs-strategy-template".to_string(),
-        agent_id: config.agent_id.clone(),
-        target: Proposition::Holds {
-            subject: Term::Object(placeholder_subject.clone()),
-            dimension: Term::Dimension("docs_freshness".to_string()),
-            condition: Condition::Above(Term::Literal(Literal::Number(0.7))),
-        },
-        priority: GoalPriority {
-            urgency: 1,
-            cost_ceiling: None,
-        },
-        source: GoalSource::Maintenance {
-            invariant_description: "documentation freshness".to_string(),
-        },
-        lifecycle: GoalLifecycle::Proposed,
-    };
-    Ok(AgentStrategyRuntimeConfig {
-        problem: StrategyProblem {
-            problem_id: "docs-freshness-strategy-v1".to_string(),
-            goal: placeholder_goal,
-            world_state: WorldState::new(vec![Proposition::Accessible {
-                scope: Term::Object(placeholder_subject),
-            }])
-            .map_err(|error| ApiError::ConfigError(format!("{error:?}")))?,
-            planner_snapshot_id: "runtime-projection".to_string(),
-            theory: StrategyTheorySnapshot {
-                theory_id: "docs-freshness-settlement-v1".to_string(),
-                settlement_rules: vec![StrategySettlementRule {
-                    goal_pattern: Proposition::Holds {
-                        subject: Term::Variable("?subject".to_string()),
-                        dimension: Term::Dimension("docs_freshness".to_string()),
-                        condition: Condition::Above(Term::Variable("?threshold".to_string())),
-                    },
-                    settlement_obligation: Proposition::Exists {
-                        scope: Term::Variable("?subject".to_string()),
-                        artifact_type: Term::ArtifactType(FRESHNESS_ASSESSMENT.to_string()),
-                    },
-                    evidence_route: ProspectiveEvidenceRoute {
-                        route_id: "docs-freshness-assessment-route-v1".to_string(),
-                        dimension_id: "docs_freshness".to_string(),
-                        outcome_contract_id: ASSESSMENT_OUTCOME_CONTRACT.to_string(),
-                        evidence_schema_id: ASSESSMENT_EVIDENCE_SCHEMA.to_string(),
-                    },
-                }],
-            },
-            capabilities,
-            methods: Vec::new(),
-            evaluation_policy: StrategyEvaluationPolicy {
-                policy_id: "minimal-capability-chain-v1".to_string(),
-                prefer_fewer_steps: true,
-            },
-        },
-        bounds: StrategySearchBounds {
-            max_expansions: 32,
-            max_depth: 8,
-        },
+        requested_dimensions,
     })
 }
 
@@ -257,6 +117,7 @@ mod tests {
         PlanningResult, PlanningRuntime, PlanningWorldStateFrameRef,
     };
     use meld_execution::task::TaskCompiler;
+    use meld_lang::{Condition, Literal};
     use meld_world_model::{search, StrategyCandidateOrigin, StrategySearchRequest};
 
     #[test]
@@ -346,6 +207,8 @@ mod tests {
             composition: candidate.composition.clone(),
             bindings: candidate.bindings.clone(),
             capability_contract_ids: candidate.capability_contract_ids.clone(),
+            strategy_theory_id: None,
+            strategy_theory_content_hash: None,
             method_id: None,
         };
         let mut active_goal = problem.goal;
@@ -384,7 +247,7 @@ mod tests {
             )
             .unwrap();
         let PlanningResult::Composed(composition) = planned else {
-            panic!("expected authorized composition");
+            panic!("expected authorized composition, got {planned:?}");
         };
         let plan = ExecutionCompositionLowerer::new(TaskCompiler::new(), pds.catalog)
             .lower(CompositionLoweringRequest {

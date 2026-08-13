@@ -26,3 +26,12 @@ pub use runtime::{
 
 pub type CapabilityExecutorRegistry =
     meld_execution::capability::CapabilityExecutorRegistry<ApiError, dyn ExecutionRuntimeContext>;
+
+/// Publish every capability contract implemented by this product binary.
+///
+/// This is implementation inventory, not stewardship expression dispatch.
+/// Initialization selects exact entries through the installed Strategy
+/// package and runtime activation requires matching invokers.
+pub fn published_product_contracts() -> Vec<CapabilityTypeContract> {
+    crate::docs::capability::published_contracts()
+}

@@ -95,6 +95,7 @@ fn registration(with_rule: bool) -> SeedAgentRegistration {
         seed_provenance: "trusted init".to_string(),
         curation_rule: with_rule
             .then(|| AgentCurationRuleBinding::for_rule(rule_config()).unwrap()),
+        curation_rule_revision: None,
         created_at_seq: 0,
     }
 }

@@ -17,5 +17,7 @@ pub mod self_observation;
 pub mod storage;
 /// Root supervisor lifecycle storage.
 pub mod supervisor;
+/// Durable theory installation receipts and exact resolution.
+pub mod theory;
 /// Runtime CLI adapter.
 pub mod tooling;

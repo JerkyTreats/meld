@@ -158,6 +158,7 @@ impl BeliefEvidenceNormalizer {
                 reference_time: None,
                 transaction_seq: anchor.ended_at_seq.unwrap_or(anchor.selected_at_seq),
                 content_hash: None,
+                outcome_mapping_revision: None,
                 provenance: provenance_summary,
             });
         }
@@ -241,6 +242,7 @@ impl BeliefEvidenceNormalizer {
                 reference_time: promoted.reference_time.clone(),
                 transaction_seq: promoted.transaction_seq,
                 content_hash: promoted.content_hash.clone(),
+                outcome_mapping_revision: promoted.outcome_mapping_revision.clone(),
                 provenance: provenance_summary,
             });
         }
@@ -280,6 +282,7 @@ impl BeliefEvidenceNormalizer {
             reason: reason.to_string(),
             source_cursor_start: anchor.selected_at_seq,
             source_cursor_end: anchor.ended_at_seq.unwrap_or(anchor.selected_at_seq),
+            outcome_mapping_revision: None,
         }
     }
 
@@ -297,6 +300,7 @@ impl BeliefEvidenceNormalizer {
             reason: reason.to_string(),
             source_cursor_start: promoted.source_cursor_start,
             source_cursor_end: promoted.source_cursor_end,
+            outcome_mapping_revision: promoted.outcome_mapping_revision.clone().map(Box::new),
         }
     }
 }

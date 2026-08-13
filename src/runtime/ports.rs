@@ -562,6 +562,14 @@ impl ExecutionGoalCommandPort {
                     }
                 };
                 meld_execution::goals::ExecutionStrategyAuthorization {
+                    strategy_theory_id: authorization
+                        .strategy_theory_revision
+                        .as_ref()
+                        .map(|reference| reference.id.clone()),
+                    strategy_theory_content_hash: authorization
+                        .strategy_theory_revision
+                        .as_ref()
+                        .map(|reference| reference.content_hash.clone()),
                     authorization_id: authorization.authorization_id,
                     agent_decision_id: authorization.agent_decision_id,
                     candidate_id: authorization.candidate.candidate_id,
@@ -1008,6 +1016,8 @@ pub struct ProductionDispatchRouteContext {
     pub subject_path: PathBuf,
     /// Durable agent identity driving the workflow.
     pub agent_id: String,
+    /// Belief family selected by the stewardship declaration.
+    pub belief_family_id: String,
     /// Validated provider binding from the stewardship selection.
     pub provider: ProviderExecutionBinding,
     /// Frame type the docs route publishes under.
@@ -1081,6 +1091,7 @@ impl PackageRunPreparer for WorkflowPackageRunPreparer {
             agent_id: self.core.agent_id.clone(),
             provider: self.core.provider.clone(),
             frame_type: self.core.frame_type.clone(),
+            belief_family_id: Some(self.core.belief_family_id.clone()),
             // Incremental by identity: node ids are content-addressed, so a
             // node holding a current frame is fresh by construction and only
             // changed subtrees expand into work. Forcing here would

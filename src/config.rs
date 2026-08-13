@@ -33,8 +33,8 @@ mod workspace;
 pub use facade::ConfigLoader;
 pub use stewardship::binding::{PhysicalBinding, SelectedStewardshipPackage};
 pub use stewardship::selection::{
-    DocsFreshnessSelection, SelectionFieldError, SelectionOrigins, StewardshipConfig,
-    TheorySelection,
+    DocsFreshnessSelection, NamedStewardshipDeclaration, SelectionFieldError, SelectionOrigins,
+    StewardshipConfig, StewardshipDeclaration, TheorySelection,
 };
 pub use workspace::StorageConfig;
 
@@ -217,14 +217,13 @@ impl MerkleConfig {
             errors.push(ValidationError::Workflow(e));
         }
 
-        // Load paths validate the docs selection with real source origins;
+        // Load paths validate declarations with real source origins;
         // this direct-validation path can only attribute the merged value.
-        if let Some(selection) = &self.stewardship.docs_freshness {
-            if let Err(field_errors) =
-                selection.validate_sourced(&SelectionOrigins::uniform("merged configuration"))
-            {
-                errors.extend(field_errors.into_iter().map(ValidationError::Stewardship));
-            }
+        if let Err(field_errors) = self
+            .stewardship
+            .validate_sourced(&SelectionOrigins::uniform("merged configuration"))
+        {
+            errors.extend(field_errors.into_iter().map(ValidationError::Stewardship));
         }
 
         // Check for duplicate agent IDs
@@ -738,17 +737,19 @@ provider_type = "ollama"
 model = "test-model"
 endpoint = "http://localhost:11434"
 
-[stewardship.docs_freshness]
-expression = "docs_freshness"
+[stewardship.declarations.docs]
+expression = "documentation_maintenance"
 target_root = "{}"
 subject = "{}"
 agent_id = "docs-steward"
 provider_id = "main-provider"
 
-[stewardship.docs_freshness.theory]
+[stewardship.declarations.docs.theory]
 belief_family_id = "docs_freshness"
 evidence_mapping_id = "docs_freshness_outcome_interpretation_v1"
 curation_rule_id = "docs_freshness"
+strategy_theory_id = "docs_freshness"
+claim_policy_id = "docs-claims-strict-v1"
 "#,
             target_root.display(),
             subject
@@ -772,7 +773,7 @@ curation_rule_id = "docs_freshness"
 
         let message = error.to_string();
         assert!(
-            message.contains("stewardship.docs_freshness.subject"),
+            message.contains("stewardship.declarations.docs.subject"),
             "error should name the invalid field, got: {message}"
         );
         let canonical_source = config_file.canonicalize().unwrap();
@@ -797,8 +798,8 @@ curation_rule_id = "docs_freshness"
         let config = ConfigLoader::load_global().unwrap();
         assert!(config.validate().is_ok());
 
-        let selection = config.stewardship.docs_freshness.as_ref().unwrap();
-        assert_eq!(selection.expression, "docs_freshness");
+        let selection = config.stewardship.declarations.get("docs").unwrap();
+        assert_eq!(selection.expression, "documentation_maintenance");
         assert_eq!(selection.subject, "docs");
         assert_eq!(selection.theory.belief_family_id, "docs_freshness");
         // Loading and validation are stage 0: no state under the target.

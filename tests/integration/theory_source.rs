@@ -10,7 +10,8 @@ use std::path::{Path, PathBuf};
 use meld::config::SelectedStewardshipPackage;
 use meld::init::world::source::provision_theory_source;
 use meld::init::world::theory::{
-    load_belief_family_config, load_curation_rule_config, load_outcome_mapping_config,
+    load_belief_family_config, load_claim_policy, load_curation_rule_config,
+    load_outcome_mapping_config, load_strategy_theory_package,
 };
 
 use crate::integration::test_utils::with_xdg_env;
@@ -27,6 +28,8 @@ fn shipped_selection() -> SelectedStewardshipPackage {
         belief_family_id: "docs_freshness".to_string(),
         evidence_mapping_id: "docs_freshness_outcome_interpretation_v1".to_string(),
         curation_rule_id: "docs_freshness".to_string(),
+        strategy_theory_id: "docs_freshness".to_string(),
+        claim_policy_id: "docs-claims-strict-v1".to_string(),
     }
 }
 
@@ -44,7 +47,9 @@ fn shipped_theory_provisions_and_loads_through_every_selection_identity() {
         assert!(kinds.contains(&"belief_family"));
         assert!(kinds.contains(&"outcome_interpretation"));
         assert!(kinds.contains(&"curation_rule"));
-        assert_eq!(kinds.len(), 3);
+        assert!(kinds.contains(&"strategy_theory"));
+        assert!(kinds.contains(&"claim_policy"));
+        assert_eq!(kinds.len(), 5);
         assert!(report.bodies.iter().all(|body| body.changed));
 
         let family = load_belief_family_config("docs_freshness").unwrap();
@@ -79,6 +84,13 @@ fn shipped_theory_provisions_and_loads_through_every_selection_identity() {
 
         let rule = load_curation_rule_config("docs_freshness").unwrap();
         assert_eq!(rule.dimension_id, "docs_freshness");
+
+        let strategy = load_strategy_theory_package("docs_freshness").unwrap();
+        assert_eq!(strategy.snapshot.theory_id, "docs_freshness");
+        assert_eq!(strategy.capabilities.len(), 5);
+
+        let claim_policy = load_claim_policy("docs-claims-strict-v1").unwrap();
+        assert_eq!(claim_policy.policy_id, "docs-claims-strict-v1");
     });
 }
 
@@ -141,6 +153,8 @@ provider_id = "steward-provider"
 belief_family_id = "docs_freshness"
 evidence_mapping_id = "docs_freshness_outcome_interpretation_v1"
 curation_rule_id = "docs_freshness"
+strategy_theory_id = "docs_freshness"
+claim_policy_id = "docs-claims-strict-v1"
 "#,
         target_root = target_root.display()
     );
@@ -155,15 +169,7 @@ fn boot_diagnostic_codes(workspace_root: &Path, config_path: &Path) -> Vec<Strin
         Some(config_path.to_path_buf()),
     )
     .unwrap();
-    let capabilities = run_context
-        .product_runtime()
-        .capability_runtime()
-        .expect("PDS capability runtime");
-    assert!(capabilities.catalog.contains("docs.inspect_scope", 1));
-    assert!(capabilities
-        .catalog
-        .contains("docs.assess_published_scope", 1));
-    assert!(!capabilities.catalog.contains("merkle_traversal", 1));
+    assert!(run_context.product_runtime().capability_runtime().is_none());
     run_context
         .product_runtime()
         .diagnostics()
@@ -173,7 +179,7 @@ fn boot_diagnostic_codes(workspace_root: &Path, config_path: &Path) -> Vec<Strin
 }
 
 #[test]
-fn pds_composes_without_legacy_planning_files() {
+fn authored_files_do_not_activate_runtime_without_a_durable_receipt() {
     let test_dir = tempfile::TempDir::new().unwrap();
     with_xdg_env(&test_dir, || {
         let workspace = tempfile::TempDir::new().unwrap();
@@ -181,32 +187,24 @@ fn pds_composes_without_legacy_planning_files() {
         std::fs::create_dir_all(&workspace_root).unwrap();
         let config_path = write_shipped_selection_config(&workspace_root);
 
-        // PDS capability and Strategy vocabulary compose independently of
-        // the provisioned belief and evidence theory files.
         let codes = boot_diagnostic_codes(&workspace_root, &config_path);
         assert!(
-            !codes
+            codes
                 .iter()
-                .any(|code| code == "planning_theory_unresolved"),
-            "PDS planning unexpectedly depended on legacy files: {codes:?}"
+                .any(|code| code == "theory_image_not_installed"),
+            "missing durable activation diagnostic: {codes:?}"
         );
 
         provision_theory_source(&shipped_theory_dir(), &shipped_selection()).unwrap();
 
-        // Provisioning belief and evidence theory does not change the PDS
-        // capability catalog or introduce a workflow dependency.
+        // Source provisioning copies authored inputs only. World init owns
+        // durable owner installation and commits the activation receipt.
         let codes = boot_diagnostic_codes(&workspace_root, &config_path);
         assert!(
-            !codes
+            codes
                 .iter()
-                .any(|code| code == "planning_theory_unresolved"),
-            "planning theory stayed unresolved after provisioning: {codes:?}"
-        );
-        assert!(
-            !codes
-                .iter()
-                .any(|code| code == "evidence_mapping_unresolved"),
-            "evidence mapping stayed unresolved after provisioning: {codes:?}"
+                .any(|code| code == "theory_image_not_installed"),
+            "source files activated without a receipt: {codes:?}"
         );
     });
 }

@@ -80,6 +80,7 @@ fn seed_agent_registration() -> SeedAgentRegistration {
         directive: "curate docs freshness goals".to_string(),
         seed_provenance: "trusted init".to_string(),
         curation_rule: None,
+        curation_rule_revision: None,
         created_at_seq: 0,
     }
 }

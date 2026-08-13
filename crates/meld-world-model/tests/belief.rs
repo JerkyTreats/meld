@@ -263,6 +263,7 @@ fn weighted_promoted_record(node: DomainObjectRef, seq: u64) -> PromotedEvidence
     fields.insert("scope_signal".to_string(), EvidenceValue::Scalar(1.0));
     fields.insert("aggregate_signal".to_string(), EvidenceValue::Scalar(0.0));
     PromotedEvidenceRecord {
+        outcome_mapping_revision: None,
         source_kind: "execution_package_aggregate".to_string(),
         source_id: format!("package-aggregate-{seq}"),
         subject: node.clone(),
@@ -319,6 +320,7 @@ fn promoted_content_record(node: DomainObjectRef, seq: u64) -> PromotedEvidenceR
     fields.insert("stale_probability".to_string(), EvidenceValue::Scalar(0.0));
     fields.insert("review_probability".to_string(), EvidenceValue::Scalar(0.2));
     PromotedEvidenceRecord {
+        outcome_mapping_revision: None,
         source_kind: "content_written".to_string(),
         source_id: format!("content-written-{seq}"),
         subject: node.clone(),
@@ -967,6 +969,7 @@ fn belief_store_persists_rejections_and_config_snapshots() {
     let belief_store =
         BeliefStore::new(sled::open(belief_dir.path().join("belief")).unwrap()).unwrap();
     let rejection = EvidenceRejection {
+        outcome_mapping_revision: None,
         rejection_id: "rejection-a".to_string(),
         source_id: "source-a".to_string(),
         reason: "unsupported".to_string(),

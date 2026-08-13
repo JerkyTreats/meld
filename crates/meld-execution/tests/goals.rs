@@ -47,6 +47,8 @@ fn strategy_authorization(goal_id: &str) -> ExecutionStrategyAuthorization {
         },
         bindings: meld_lang::Bindings::empty(),
         capability_contract_ids: vec!["docs.write-v1".into()],
+        strategy_theory_id: None,
+        strategy_theory_content_hash: None,
         method_id: None,
     }
 }

@@ -116,6 +116,7 @@ impl RunContext {
             workspace_root: seed.workspace_root.clone(),
             subject_path: seed.subject_path.clone(),
             agent_id: seed.agent_id.clone(),
+            belief_family_id: seed.belief_family_id.clone(),
             provider,
             // The registered workflow route derives its default frame type
             // from the agent identity; the dispatch route follows the same

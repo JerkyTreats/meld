@@ -673,6 +673,11 @@ fn decision(
     reason: &str,
     goal_command_id: Option<String>,
 ) -> AgentCurationDecision {
+    let curation_rule_revision = input
+        .agent
+        .curation_rule
+        .as_ref()
+        .and_then(|binding| binding.revision.clone());
     AgentCurationDecision {
         decision_id,
         agent_id: input.agent.agent_id,
@@ -681,6 +686,7 @@ fn decision(
         goal_command_id,
         goal_mutation_command_id: None,
         strategy_authorization: None,
+        curation_rule_revision,
         dedupe_key,
         input_refs: input.input_refs,
         reason: reason.to_string(),
@@ -718,6 +724,7 @@ fn satisfaction_decision(
         goal_command_id: None,
         goal_mutation_command_id,
         strategy_authorization: None,
+        curation_rule_revision: None,
         dedupe_key,
         input_refs: input.input_refs,
         reason: reason.to_string(),

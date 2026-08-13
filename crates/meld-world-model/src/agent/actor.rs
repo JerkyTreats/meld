@@ -4,8 +4,9 @@
 //! number of eligible items under an injected sequence — no wall clock and
 //! no caller-manufactured deliveries or review sequences. Eligibility comes
 //! from durable state through [`crate::agent::selection`], the curation rule
-//! resolves from the durable agent record, and curated output crosses into
-//! execution only through the named [`CurationGoalSetPort`] seam. A step
+//! is frozen by exact runtime composition with a record-backed compatibility
+//! path, and curated output crosses into execution only through the named
+//! [`CurationGoalSetPort`] seam. A step
 //! over unchanged durable state selects nothing and commits no work.
 //!
 //! The request and report pair is domain-owned. Root runtime contracts adapt
@@ -22,7 +23,7 @@ use crate::agent::runtime::{
 use crate::agent::selection::AgentWorkSelector;
 use crate::agent::store::AgentStore;
 use crate::agent::strategy::AgentStrategyRuntimeConfig;
-use crate::agent::AgentSinkReceipt;
+use crate::agent::{AgentCurationRuleBinding, AgentSinkReceipt};
 use crate::belief::{BeliefQuery, BeliefStore};
 use crate::error::StorageError;
 use crate::planner::PlannerQuery;
@@ -159,6 +160,7 @@ impl AgentActorCore {
 pub struct AgentGoalCurationActor {
     core: AgentActorCore,
     strategy: Option<AgentStrategyRuntimeConfig>,
+    curation_rule: Option<AgentCurationRuleBinding>,
 }
 
 impl AgentGoalCurationActor {
@@ -179,6 +181,7 @@ impl AgentGoalCurationActor {
                 traversal_store,
             },
             strategy: None,
+            curation_rule: None,
         }
     }
 
@@ -200,7 +203,14 @@ impl AgentGoalCurationActor {
                 traversal_store,
             },
             strategy: Some(strategy),
+            curation_rule: None,
         }
+    }
+
+    /// Freeze the exact curation-rule revision selected for this composition.
+    pub fn with_curation_rule(mut self, curation_rule: AgentCurationRuleBinding) -> Self {
+        self.curation_rule = Some(curation_rule);
+        self
     }
 
     /// Stable actor identity carried in reports.
@@ -212,8 +222,9 @@ impl AgentGoalCurationActor {
     ///
     /// Sequencing per item is owned by the curation runtime: decision
     /// persisted and flushed, then port submission, then receipt, then
-    /// cursor advance. The rule resolves from the durable agent record and
-    /// the step fails truthfully when no rule is installed.
+    /// cursor advance. The exact composition rule takes precedence over the
+    /// compatibility record body, and the step fails truthfully when neither
+    /// is available.
     pub fn bounded_step<Q, P>(
         &self,
         request: &AgentStepRequest,
@@ -228,7 +239,7 @@ impl AgentGoalCurationActor {
         if !self.core.begin(request, &mut report) {
             return report;
         }
-        let agent = match self.core.agent_store.get_agent(&self.core.agent_id) {
+        let mut agent = match self.core.agent_store.get_agent(&self.core.agent_id) {
             Ok(Some(agent)) => agent,
             Ok(None) => {
                 report.fatal(
@@ -243,8 +254,9 @@ impl AgentGoalCurationActor {
                 return report;
             }
         };
-        // The durable record is the rule's home; refusing to run without an
-        // installed rule is the truthful failure the durable-home rule wants.
+        if let Some(curation_rule) = &self.curation_rule {
+            agent.curation_rule = Some(curation_rule.clone());
+        }
         let rule = match agent.installed_curation_rule() {
             Ok(rule) => rule.clone(),
             Err(error) => {
@@ -290,6 +302,14 @@ impl AgentGoalCurationActor {
                 strategy.clone(),
             ),
             None => AgentGoalCurationRuntime::new(&self.core.agent_store),
+        };
+        let runtime = match self
+            .curation_rule
+            .as_ref()
+            .and_then(|binding| binding.revision.clone())
+        {
+            Some(revision) => runtime.with_curation_rule_revision(revision),
+            None => runtime,
         };
         for delivery in selection.items {
             report.items_attempted += 1;

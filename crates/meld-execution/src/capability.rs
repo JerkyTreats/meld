@@ -64,6 +64,8 @@ pub mod catalog;
 pub mod contracts;
 /// Capability invoker registry and invocation result boundary.
 pub mod invocation;
+/// Durable exact capability contract revisions.
+pub mod registry;
 /// Runtime payload validation for bound capability invocations.
 pub mod runtime;
 
@@ -75,6 +77,10 @@ pub use contracts::{
     OutputSlotSpec, ScopeContract,
 };
 pub use invocation::{CapabilityExecutorRegistry, CapabilityInvocationResult, CapabilityInvoker};
+pub use registry::{
+    CapabilityContractRegistryStore, CapabilityContractRevision, CapabilityContractRevisionRef,
+    CapabilityContractRevisionStoreError,
+};
 pub use runtime::{
     ArtifactValueRef, CapabilityExecutionContext, CapabilityInvocationPayload,
     CapabilityRuntimeInit, InputValueSource, SuppliedInputValue, SuppliedValueRef, UpstreamLineage,

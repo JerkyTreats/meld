@@ -18,6 +18,12 @@ const MAX_EVIDENCE_QUOTE_CHARS: usize = 160;
 const MAX_REVISION_REPORT_CHARS: usize = 8 * 1024;
 const MAX_CHILD_README_BYTES: usize = 3 * 1024;
 
+mod registry;
+
+pub use registry::{
+    DocsClaimPolicyRegistryStore, DocsClaimPolicyRevision, DocsClaimPolicyRevisionRef,
+};
+
 /// PDS-owned policy for accepting a generated documentation artifact.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DocsClaimPolicy {

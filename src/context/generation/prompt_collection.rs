@@ -10,7 +10,6 @@
 use crate::agent::profile::prompt_contract::PromptContract;
 use crate::context::belief_context::{
     classify_belief_assertion, BeliefContextAssertion, BeliefContextBundle, BeliefSelectionClass,
-    BELIEF_CONTEXT_FAMILY_ID,
 };
 use crate::context::generation::contracts::{GenerationOrchestrationRequest, PromptAssemblyOutput};
 use crate::error::ApiError;
@@ -179,19 +178,20 @@ fn render_belief_context_section(bundle: &BeliefContextBundle) -> Option<String>
 fn belief_annotation_line(
     class: &BeliefSelectionClass,
     assertion: &BeliefContextAssertion,
+    family_id: &str,
 ) -> String {
     match class {
         BeliefSelectionClass::Endorsed => format!(
             "Belief: {} endorsed, status={}, confidence={} (as of sequence {})",
-            BELIEF_CONTEXT_FAMILY_ID, assertion.status, assertion.confidence, assertion.as_of_seq
+            family_id, assertion.status, assertion.confidence, assertion.as_of_seq
         ),
         BeliefSelectionClass::Stale => format!(
             "Belief: {} stale, status={}, confidence={} (as of sequence {})",
-            BELIEF_CONTEXT_FAMILY_ID, assertion.status, assertion.confidence, assertion.as_of_seq
+            family_id, assertion.status, assertion.confidence, assertion.as_of_seq
         ),
         BeliefSelectionClass::Contradicted => format!(
             "Belief: {} contradicted (unresolved as of sequence {}) — prior content withheld",
-            BELIEF_CONTEXT_FAMILY_ID, assertion.as_of_seq
+            family_id, assertion.as_of_seq
         ),
         BeliefSelectionClass::Uncovered => String::new(),
     }
@@ -259,7 +259,7 @@ fn collect_directory_child_context_text(
                         "Path: {}\nType: {}\n{}",
                         child_path,
                         child_kind,
-                        belief_annotation_line(&class, assertion)
+                        belief_annotation_line(&class, assertion, &bundle.family_id)
                     )
                 }
                 (_, assertion) => match assertion {
@@ -267,7 +267,7 @@ fn collect_directory_child_context_text(
                         "Path: {}\nType: {}\n{}\nContent:\n{}",
                         child_path,
                         child_kind,
-                        belief_annotation_line(&class, assertion),
+                        belief_annotation_line(&class, assertion, &bundle.family_id),
                         child_text
                     ),
                     _ => format!(
@@ -331,11 +331,15 @@ fn collect_scoped_node_frame_context(
     let class = classify_belief_assertion(assertion);
     Ok(match (&class, assertion) {
         (BeliefSelectionClass::Contradicted, Some(assertion)) => {
-            belief_annotation_line(&class, assertion)
+            belief_annotation_line(&class, assertion, &bundle.family_id)
         }
         (BeliefSelectionClass::Uncovered, _) | (_, None) => joined,
         (_, Some(assertion)) => {
-            format!("{}\n{}", belief_annotation_line(&class, assertion), joined)
+            format!(
+                "{}\n{}",
+                belief_annotation_line(&class, assertion, &bundle.family_id),
+                joined
+            )
         }
     })
 }

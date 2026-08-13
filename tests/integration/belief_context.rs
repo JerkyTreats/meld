@@ -8,9 +8,7 @@ use crate::integration::{
 use meld::agent::profile::prompt_contract::PromptContract;
 use meld::capability::{CapabilityCatalog, CapabilityExecutorRegistry};
 use meld::cli::{Commands, RunContext};
-use meld::context::belief_context::{
-    hydrate_belief_context_bundle, BeliefContextBundle, BELIEF_CONTEXT_FAMILY_ID,
-};
+use meld::context::belief_context::{hydrate_belief_context_bundle, BeliefContextBundle};
 use meld::context::frame::{Basis, Frame};
 use meld::context::generation::contracts::{GenerationOrchestrationRequest, PromptAssemblyOutput};
 use meld::context::generation::prompt_collection::{
@@ -40,6 +38,7 @@ use tempfile::TempDir;
 
 const FRAME_TYPE: &str = "context-docs-writer";
 const AGENT_ID: &str = "docs-writer";
+const BELIEF_CONTEXT_FAMILY_ID: &str = "docs_freshness";
 const WORKFLOW_ID: &str = "docs_writer_thread_v1";
 
 fn belief_key(subject_hex: &str) -> BeliefKey {
@@ -260,6 +259,7 @@ fn run_docs_writer_with_seeded_belief(temp_dir: &TempDir, repo_id: &str) -> Docs
             )
             .unwrap(),
             frame_type: FRAME_TYPE.to_string(),
+            belief_family_id: Some(BELIEF_CONTEXT_FAMILY_ID.to_string()),
             force: true,
             session_id: None,
         },
@@ -445,7 +445,9 @@ fn belief_context_bundle_and_selection_deterministic_across_reopen() {
                 false,
             )
             .unwrap();
-            let bundle = hydrate_belief_context_bundle(api, src_node, "src").unwrap();
+            let bundle =
+                hydrate_belief_context_bundle(api, src_node, "src", BELIEF_CONTEXT_FAMILY_ID)
+                    .unwrap();
             let node_record = api.node_store().get(&src_node).unwrap().unwrap();
             let output = build_prompt_messages_with_belief(
                 api,
@@ -559,7 +561,13 @@ fn belief_context_bundle_and_selection_deterministic_across_reopen() {
         // Regression: the seeded bundle, not the live belief store, governs
         // prompt assembly. Mutating docs_freshness beliefs after hydration
         // must leave the rendered prompt and lineage digests unchanged.
-        let bundle = hydrate_belief_context_bundle(run_context.api(), src_node, "src").unwrap();
+        let bundle = hydrate_belief_context_bundle(
+            run_context.api(),
+            src_node,
+            "src",
+            BELIEF_CONTEXT_FAMILY_ID,
+        )
+        .unwrap();
         let node_record = run_context
             .api()
             .node_store()
@@ -786,7 +794,8 @@ fn belief_endorsed_selection_excludes_contradicted_child_while_recency_unchanged
         // BeliefEndorsed selection excludes the contradicted child's content
         // and flags it as unresolved; the stale child stays, annotated and
         // ranked ahead of the flagged subject.
-        let bundle = hydrate_belief_context_bundle(api, src_node, "src").unwrap();
+        let bundle =
+            hydrate_belief_context_bundle(api, src_node, "src", BELIEF_CONTEXT_FAMILY_ID).unwrap();
         assert!(
             bundle
                 .assertion_for_subject(&bundle.subject_node_id)
@@ -881,7 +890,8 @@ fn belief_empty_bundle_keeps_flag_on_prompt_byte_identical() {
 
         // No belief exists anywhere in the workspace: hydration yields an
         // explicitly empty bundle.
-        let bundle = hydrate_belief_context_bundle(api, src_node, "src").unwrap();
+        let bundle =
+            hydrate_belief_context_bundle(api, src_node, "src", BELIEF_CONTEXT_FAMILY_ID).unwrap();
         assert!(bundle.subject_assertions.is_empty());
         assert_eq!(bundle.as_of_seq, 0);
         assert_eq!(bundle.omitted_subject_count, 0);

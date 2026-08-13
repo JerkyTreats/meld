@@ -228,6 +228,8 @@ fn authorized_planning_bypasses_method_search_and_revalidates_exact_composition(
             .bind("scope".into(), node("readme"))
             .unwrap(),
         capability_contract_ids: vec![catalog().get("docs.write", 1).unwrap().content_identity()],
+        strategy_theory_id: None,
+        strategy_theory_content_hash: None,
         method_id: None,
     };
     let world_state = WorldState::new(vec![Proposition::Accessible {
@@ -284,6 +286,8 @@ fn authorized_planning_rejects_drifted_contract_identity() {
         composition,
         bindings: Bindings::empty(),
         capability_contract_ids: vec!["stale-contract-identity".into()],
+        strategy_theory_id: None,
+        strategy_theory_content_hash: None,
         method_id: None,
     };
     let result = runtime

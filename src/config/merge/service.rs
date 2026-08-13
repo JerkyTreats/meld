@@ -63,23 +63,22 @@ impl MergeService {
     }
 }
 
-/// Deserialize the merged config and run source-aware docs freshness
-/// validation, so an invalid docs field names its config source and field.
+/// Deserialize the merged config and run source-aware declaration
+/// validation, so an invalid field names its config source and path.
 fn finish(config: config::Config) -> Result<MerkleConfig, ConfigError> {
     // Origins must be captured before deserialization consumes the tree.
     let origins = SelectionOrigins::from_source(&config);
     let merkle: MerkleConfig = config.try_deserialize()?;
-    if let Some(selection) = &merkle.stewardship.docs_freshness {
-        selection.validate_sourced(&origins).map_err(|errors| {
+    merkle
+        .stewardship
+        .validate_sourced(&origins)
+        .map_err(|errors| {
             let joined = errors
                 .iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>()
                 .join("; ");
-            ConfigError::Message(format!(
-                "invalid docs freshness stewardship selection: {joined}"
-            ))
+            ConfigError::Message(format!("invalid stewardship declaration: {joined}"))
         })?;
-    }
     Ok(merkle)
 }

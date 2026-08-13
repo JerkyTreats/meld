@@ -10,11 +10,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use meld_world_model::belief::{
-    promoted_evidence_identity, BeliefFamilyRegistry, BeliefFamilyRegistryStore, BeliefKey,
-    BeliefStore, BranchScope, ConfiguredOutcomeMapping, EvidenceEventReplaySource,
-    EvidenceIngestionActor, EvidenceIngestionRequest, EvidenceValue, OutcomeContentRule,
-    OutcomeEvidenceMapping, OutcomeFieldRule, OutcomeMappingConfig, OutcomeMappingDisposition,
-    OutcomeMappingInput, OutcomeSubjectBinding, OutcomeValueSource, EVIDENCE_CONSUMER_ID,
+    promoted_evidence_identity, promoted_evidence_identity_for_revision, BeliefFamilyRegistry,
+    BeliefFamilyRegistryStore, BeliefKey, BeliefStore, BranchScope, ConfiguredOutcomeMapping,
+    EvidenceEventReplaySource, EvidenceIngestionActor, EvidenceIngestionRequest, EvidenceValue,
+    OutcomeContentRule, OutcomeEvidenceMapping, OutcomeFieldRule, OutcomeMappingConfig,
+    OutcomeMappingDisposition, OutcomeMappingInput, OutcomeSubjectBinding, OutcomeValueSource,
+    TheoryRevisionRef, EVIDENCE_CONSUMER_ID,
 };
 use meld_world_model::events::error::EventAuthorityError;
 use meld_world_model::events::{
@@ -298,6 +299,7 @@ fn mapping_produces_the_frozen_promoted_evidence_identity() {
     let record = EventRecord::from_envelope(success_envelope("publication-a", Some("node-a")), 3);
 
     let disposition = mapping.map_outcome(&OutcomeMappingInput {
+        mapping_revision: None,
         record,
         mapping_id: MAPPING_ID.to_string(),
     });
@@ -327,6 +329,33 @@ fn mapping_produces_the_frozen_promoted_evidence_identity() {
         record.fields.get("review_probability"),
         Some(&EvidenceValue::Scalar(0.2))
     );
+
+    let revision = TheoryRevisionRef {
+        registry: "outcome_mapping".to_string(),
+        id: MAPPING_ID.to_string(),
+        content_hash: "mapping-revision-a".to_string(),
+    };
+    let exact = mapping.map_outcome(&OutcomeMappingInput {
+        mapping_revision: Some(revision.clone()),
+        record: EventRecord::from_envelope(success_envelope("publication-a", Some("node-a")), 3),
+        mapping_id: MAPPING_ID.to_string(),
+    });
+    let OutcomeMappingDisposition::Applicable {
+        evidence_id,
+        record,
+    } = exact
+    else {
+        panic!("expected exact applicable disposition");
+    };
+    assert_eq!(
+        evidence_id,
+        promoted_evidence_identity_for_revision(
+            "publication-a",
+            MAPPING_ID,
+            Some(&revision.content_hash),
+        )
+    );
+    assert_eq!(record.outcome_mapping_revision, Some(revision));
 }
 
 #[test]
@@ -334,6 +363,7 @@ fn mapping_understands_non_matching_records_and_rejects_unusable_matches() {
     let mapping = ConfiguredOutcomeMapping::new(mapping_config()).unwrap();
     let map = |record| {
         mapping.map_outcome(&OutcomeMappingInput {
+            mapping_revision: None,
             record,
             mapping_id: MAPPING_ID.to_string(),
         })

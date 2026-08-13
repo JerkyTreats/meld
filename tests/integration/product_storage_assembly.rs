@@ -23,6 +23,7 @@ fn product_storage_layout_derives_required_paths() {
     assert_eq!(layout.ledger_db, layout.root.join("ledger.sled"));
     assert_eq!(layout.workspace_db, layout.root.join("workspace.sled"));
     assert_eq!(layout.world_model_db, layout.root.join("world_model.sled"));
+    assert_eq!(layout.theory_db, layout.root.join("theory.sled"));
     assert_eq!(
         layout.execution_goals_db,
         layout.root.join("execution").join("goals.sled")
@@ -68,6 +69,7 @@ fn product_storage_open_creates_dirs_and_opens_stores() {
     assert!(layout.ledger_db.exists());
     assert!(layout.workspace_db.exists());
     assert!(layout.world_model_db.exists());
+    assert!(layout.theory_db.exists());
     assert!(layout.execution_goals_db.exists());
     assert!(layout.task_artifacts_db.exists());
     assert!(layout.task_networks_root.exists());
@@ -243,6 +245,7 @@ fn agent_record(subject: &DomainObjectRef) -> AgentRecord {
         seed_provenance: "test".to_string(),
         status: AgentStatus::Operational,
         curation_rule: None,
+        curation_rule_revision: None,
         created_at_seq: 1,
         updated_at_seq: 1,
     }

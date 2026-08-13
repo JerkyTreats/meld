@@ -1,11 +1,12 @@
-use meld::cli::{Commands, RunContext, RuntimeCommands};
-use meld::config::ConfigLoader;
+use meld::cli::{Commands, RunContext, RuntimeCommands, WorldCommands};
+use meld::config::{ConfigLoader, PhysicalBinding};
 use meld::error::ApiError;
 use meld::events::binding::resolve_product_event_authority;
 use meld::runtime::assembly::ProductRuntimeAssembly;
 use meld::runtime::contracts::{RuntimeLaunchStatus, RuntimeStatusReader};
 use meld::runtime::storage::ProductStorageLayout;
 use meld::runtime::supervisor::{RuntimeId, SupervisorReportStore};
+use meld::runtime::theory::{ResolvedStewardshipTheory, TheoryInstallationReceipt};
 use meld_events::{AppendMode, DomainObjectRef, EventEnvelope};
 use serde_json::json;
 use serde_json::Value;
@@ -382,7 +383,7 @@ fn runtime_run_publishes_durable_lifecycle_snapshots() {
 }
 
 #[test]
-fn stewardship_boot_composes_production_dispatch_routes() {
+fn stewardship_receipts_activate_routes_and_preserve_a_b_lineage() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
         meld::init::initialize_workflows(false).unwrap();
@@ -397,7 +398,45 @@ fn stewardship_boot_composes_production_dispatch_routes() {
         run_context
             .execute(&Commands::Scan { force: true })
             .unwrap();
+        assert!(run_context.product_runtime().capability_runtime().is_none());
+        run_context
+            .execute(&Commands::World {
+                command: WorldCommands::Init {
+                    path: workspace_root.clone(),
+                    stages: Vec::new(),
+                    theory_source: Some(
+                        Path::new(env!("CARGO_MANIFEST_DIR"))
+                            .join("theory")
+                            .join("docs_freshness"),
+                    ),
+                    format: "json".to_string(),
+                },
+            })
+            .unwrap();
+        drop(run_context);
+
+        let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
         let product = run_context.product_runtime();
+        let selection = PhysicalBinding::resolve(&ConfigLoader::load_global().unwrap())
+            .unwrap()
+            .package;
+        assert_eq!(selection.expression, "documentation_maintenance");
+        let receipt = product
+            .stores()
+            .theory_receipts
+            .current(&selection)
+            .unwrap();
+        let agent = product
+            .stores()
+            .agent_store
+            .get_agent("docs-writer")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            agent.curation_rule_revision.as_ref(),
+            Some(&receipt.curation_rule)
+        );
+        assert!(agent.curation_rule.is_none());
         // The stewardship composition carries the route seed but stays a
         // truthful unresolved binding until the foreground run composes the
         // production routes.
@@ -413,7 +452,7 @@ fn stewardship_boot_composes_production_dispatch_routes() {
             .execute(&runtime_run_json(
                 Some("runtime-cli-dispatch"),
                 1,
-                Some(1),
+                Some(100),
                 "on-heartbeat-expiry",
             ))
             .unwrap();
@@ -442,7 +481,126 @@ fn stewardship_boot_composes_production_dispatch_routes() {
         }
         assert!(!capability_runtime.catalog.contains("merkle_traversal", 1));
 
+        let decisions = product
+            .stores()
+            .agent_store
+            .recent_decisions("docs-writer", 32)
+            .unwrap();
+        let authorized = decisions
+            .iter()
+            .find(|decision| decision.strategy_authorization.is_some())
+            .expect("receipt-backed curation must reach Strategy authorization");
+        assert_eq!(
+            authorized.curation_rule_revision.as_ref(),
+            Some(&receipt.curation_rule)
+        );
+        assert_eq!(
+            authorized
+                .strategy_authorization
+                .as_ref()
+                .and_then(|authorization| authorization.strategy_theory_revision.as_ref()),
+            Some(&receipt.strategy_theory)
+        );
+
+        let curation_a = product
+            .stores()
+            .curation_rule_registry
+            .resolve(
+                &receipt.curation_rule.id,
+                &receipt.curation_rule.content_hash,
+            )
+            .unwrap()
+            .unwrap();
+        let mut curation_b_body = curation_a.rule.clone();
+        curation_b_body.threshold = 0.91;
+        let (_, curation_b) = product
+            .stores()
+            .curation_rule_registry
+            .install(&receipt.curation_rule.id, curation_b_body, 100)
+            .unwrap();
+        let receipt_b = TheoryInstallationReceipt::new(
+            selection.clone(),
+            receipt.belief_family.clone(),
+            curation_b.revision_ref(),
+            receipt.outcome_mapping.clone(),
+            receipt.strategy_theory.clone(),
+            receipt.executable_contracts.clone(),
+            receipt.claim_policy.clone(),
+            100,
+        )
+        .unwrap();
+        product
+            .stores()
+            .theory_receipts
+            .install(receipt_b.clone())
+            .unwrap();
+        product
+            .event_authority()
+            .append_capability()
+            .append_durable(
+                EventEnvelope::new_domain(
+                    "2026-08-12T00:00:00Z".to_string(),
+                    "runtime-cli-revision-b",
+                    "world_model",
+                    "epistemic-genesis-b",
+                    "world_model.unobserved_scope",
+                    None,
+                    json!({ "revision": "b" }),
+                )
+                .with_record_id("runtime-cli-revision-b")
+                .with_graph(vec![agent.subject.clone()], Vec::new()),
+                AppendMode::Idempotent,
+            )
+            .unwrap();
         drop(run_context);
+
+        let run_context_b = RunContext::new(workspace_root.clone(), None).unwrap();
+        run_context_b
+            .execute(&runtime_run_json(
+                Some("runtime-cli-dispatch-b"),
+                1,
+                Some(100),
+                "on-heartbeat-expiry",
+            ))
+            .unwrap();
+        let product_b = run_context_b.product_runtime();
+        assert_eq!(
+            product_b
+                .stores()
+                .theory_receipts
+                .current(&selection)
+                .unwrap()
+                .receipt_id,
+            receipt_b.receipt_id
+        );
+        let historical_a =
+            ResolvedStewardshipTheory::resolve_receipt(product_b.stores(), &receipt.receipt_id)
+                .unwrap();
+        assert_eq!(historical_a.curation_rule, curation_a);
+        let decisions_b = product_b
+            .stores()
+            .agent_store
+            .recent_decisions("docs-writer", 64)
+            .unwrap();
+        assert!(decisions_b.iter().any(|decision| {
+            decision.curation_rule_revision.as_ref() == Some(&receipt.curation_rule)
+        }));
+        let authorized_b = decisions_b
+            .iter()
+            .find(|decision| {
+                decision.curation_rule_revision.as_ref() == Some(&receipt_b.curation_rule)
+                    && decision.strategy_authorization.is_some()
+            })
+            .expect("revision B must produce its own exact authorization lineage");
+        assert_eq!(
+            authorized_b
+                .strategy_authorization
+                .as_ref()
+                .and_then(|authorization| authorization.strategy_theory_revision.as_ref()),
+            Some(&receipt_b.strategy_theory)
+        );
+
+        drop(run_context_b);
         provider.shutdown();
     });
 }
@@ -458,21 +616,26 @@ provider_type = "local"
 model = "test-model"
 endpoint = "{endpoint}"
 
-[stewardship.docs_freshness]
-expression = "docs_freshness"
+[stewardship.declarations.docs]
+expression = "documentation_maintenance"
 target_root = "{target_root}"
 subject = "docs"
 agent_id = "docs-writer"
 provider_id = "steward-provider"
 
-[stewardship.docs_freshness.theory]
+[stewardship.declarations.docs.theory]
 belief_family_id = "docs_freshness"
 evidence_mapping_id = "docs_freshness_outcome_interpretation_v1"
 curation_rule_id = "docs_freshness"
+strategy_theory_id = "docs_freshness"
+claim_policy_id = "docs-claims-strict-v1"
 "#,
         target_root = target_root.display()
     );
-    std::fs::write(config_dir.join("config.toml"), config).unwrap();
+    std::fs::write(config_dir.join("config.toml"), &config).unwrap();
+    let global_config_dir = Path::new(&std::env::var("XDG_CONFIG_HOME").unwrap()).join("meld");
+    std::fs::create_dir_all(&global_config_dir).unwrap();
+    std::fs::write(global_config_dir.join("config.toml"), config).unwrap();
 }
 
 fn workspace(temp_dir: &TempDir) -> std::path::PathBuf {

@@ -193,6 +193,7 @@ where
                 agent_id: request.agent_id.clone(),
                 provider: request.provider.clone(),
                 frame_type: request.frame_type.clone(),
+                belief_family_id: None,
                 force: request.force,
                 session_id: event_context.map(|ctx| ctx.session_id.clone()),
             },

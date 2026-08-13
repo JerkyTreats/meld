@@ -68,6 +68,7 @@ pub mod evidence_ingestion;
 pub mod genesis;
 pub mod ingestion;
 pub mod outcome;
+pub mod outcome_registry;
 pub mod query;
 pub mod registry;
 pub mod registry_store;
@@ -97,9 +98,10 @@ pub use outcome::interpretation::{
     OutcomeMappingConfig, OutcomeMappingSetConfig, OutcomeSubjectBinding, OutcomeValueSource,
 };
 pub use outcome::mapping::{
-    promoted_evidence_identity, OutcomeEvidenceMapping, OutcomeMappingDisposition,
-    OutcomeMappingInput, EVIDENCE_CONSUMER_ID,
+    promoted_evidence_identity, promoted_evidence_identity_for_revision, OutcomeEvidenceMapping,
+    OutcomeMappingDisposition, OutcomeMappingInput, EVIDENCE_CONSUMER_ID,
 };
+pub use outcome_registry::{OutcomeMappingRegistryStore, OutcomeMappingRevision};
 pub use query::BeliefQuery;
 pub use registry::{
     BeliefFamilyRegistry, BeliefFamilyRevision, TheoryInstallDisposition, TheoryRevisionRef,

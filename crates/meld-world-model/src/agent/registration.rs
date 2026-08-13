@@ -33,10 +33,36 @@ impl<'a> AgentRegistration<'a> {
             directive: request.directive,
             seed_provenance: request.seed_provenance,
             curation_rule: request.curation_rule,
+            curation_rule_revision: request.curation_rule_revision,
             status: AgentStatus::Registered,
             created_at_seq: request.created_at_seq,
             updated_at_seq: request.created_at_seq,
         };
+        self.store.put_agent(&record)?;
+        Ok(record)
+    }
+
+    /// Migrate or bind one record to an exact curation-rule revision.
+    pub fn bind_curation_rule_revision(
+        &self,
+        agent_id: &str,
+        revision: crate::belief::TheoryRevisionRef,
+        updated_at_seq: u64,
+    ) -> Result<AgentRecord, StorageError> {
+        revision.validate_for_registry("agent_curation_rule")?;
+        let Some(mut record) = self.store.get_agent(agent_id)? else {
+            return Err(StorageError::InvalidPath(format!(
+                "unknown agent '{agent_id}'"
+            )));
+        };
+        if record.curation_rule_revision.as_ref() == Some(&revision)
+            && record.curation_rule.is_none()
+        {
+            return Ok(record);
+        }
+        record.curation_rule_revision = Some(revision);
+        record.curation_rule = None;
+        record.updated_at_seq = updated_at_seq;
         self.store.put_agent(&record)?;
         Ok(record)
     }

@@ -43,6 +43,12 @@ flowchart TD
     S5 --> S6
 ```
 
+## Program Progress
+
+- Step 1 is implemented with durable exact owner revisions and complete receipts.
+- Step 2 is implemented with named declaration lowering, owner activation, exact capability binding, declaration-selected belief context, and no root expression dispatch.
+- Steps 3 through 6 remain pending.
+
 ### Step 1 — Theory durability symmetry
 
 Apply the belief-family registry pattern — stable identity, content hash, append-only revisions, historical resolution — to every theory kind the docs image hand-lowers: settlement rules, prospective evidence routes, claim policies, outcome contract bindings, and capability strategy views. Registries are per domain, following existing ownership, not one central store. Success: every string identity in the docs stewardship image resolves through a durable registry, and the exact executed semantics of a past run are recoverable by revision.
@@ -81,10 +87,10 @@ With durable theory registries and the settled-replay contract, promote validate
 
 Residuals adopted by this program:
 
-- The hand-lowered stewardship image in `src/docs/pds.rs` and its unconditional root composition — steps 1 and 2.
-- The hardcoded belief-context family binding in `src/context/belief_context.rs` — step 2.
-- The stale on-disk Method artifact `theory/docs_freshness/methods/refresh_docs_v1.json`, dead since planning-theory provisioning was deleted — retire in step 2.
-- Claim-policy thresholds and weights as package-preset material — step 1, with preset expansion deferred to the declaration layer.
+- The hand-lowered production image and unconditional root composition were closed by steps 1 and 2. `src/docs/pds.rs` remains test-only.
+- The hardcoded belief-context family binding was closed in step 2. Hydration now consumes the selected physical binding.
+- The stale on-disk Method, available-action, and realization artifacts were retired in step 2.
+- Claim-policy thresholds and weights are durable owner theory after step 1. Preset expansion remains deferred beyond the minimal step 2 declaration.
 
 Residuals tracked in their home documents, not gated by this program:
 

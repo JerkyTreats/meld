@@ -65,6 +65,21 @@ pub struct StrategySearchBounds {
     pub max_depth: usize,
 }
 
+/// Complete installed Strategy theory body.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StrategyTheoryPackage {
+    /// Settlement and prospective evidence semantics.
+    pub snapshot: StrategyTheorySnapshot,
+    /// Atomic construction vocabulary.
+    pub capabilities: Vec<StrategyCapability>,
+    /// Deterministic candidate comparison policy.
+    pub evaluation_policy: StrategyEvaluationPolicy,
+    /// Structural limits for bounded search.
+    pub search_bounds: StrategySearchBounds,
+    /// Belief projection dimensions required by this package.
+    pub requested_dimensions: Vec<String>,
+}
+
 /// Complete immutable input to the pure Strategy function.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StrategyProblem {
@@ -153,6 +168,9 @@ pub struct StrategyAuthorization {
     pub candidate: StrategyCandidate,
     /// Evaluation policy applied before authorization.
     pub evaluation_policy_id: String,
+    /// Exact complete Strategy theory revision used for construction.
+    #[serde(default)]
+    pub strategy_theory_revision: Option<crate::belief::TheoryRevisionRef>,
 }
 
 /// Why a branch could not become an eligible candidate.
