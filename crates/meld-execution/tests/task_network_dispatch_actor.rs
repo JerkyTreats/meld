@@ -847,6 +847,8 @@ fn active_authority_policy_denies_missing_lineage_before_invocation() {
         .iter()
         .any(|issue| issue.code == "effective_authority_denied"));
     assert!(fixture.claim_invocations().is_empty());
+    assert_eq!(report.input_revision, report.output_revision);
+    assert!(store.state().claims.is_empty());
 }
 
 #[test]

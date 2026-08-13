@@ -49,6 +49,8 @@ flowchart TD
 - Step 4 is implemented with exact execution-owned policy revisions and independent Agent, admission, planning, and dispatch enforcement.
 - Steps 5 and 6 remain pending.
 
+The delivered base through Step 4 is independently reconciled in the [Fresh Review Of Steps 1 Through 4](theory_elevation_steps_1_through_4_fresh_review.md).
+
 ### Step 1 — Theory durability symmetry
 
 Apply the belief-family registry pattern — stable identity, content hash, append-only revisions, historical resolution — to every theory kind the docs image hand-lowers: settlement rules, prospective evidence routes, claim policies, outcome contract bindings, and capability strategy views. Registries are per domain, following existing ownership, not one central store. Success: every string identity in the docs stewardship image resolves through a durable registry, and the exact executed semantics of a past run are recoverable by revision.

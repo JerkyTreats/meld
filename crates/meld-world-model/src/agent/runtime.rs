@@ -467,6 +467,8 @@ impl<'a> AgentGoalCurationRuntime<'a> {
                         // an execution error and not permission to submit
                         // the original unaudited Goal command.
                         failure.outcome.decision.decision = AgentDecisionKind::Indeterminate;
+                        failure.outcome.decision.goal_command_id = None;
+                        failure.outcome.decision.strategy_authorization = None;
                         failure.outcome.decision.reason = format!(
                             "Strategy produced no authorization under {:?}: {:?}",
                             failure.completion, failure.grounds

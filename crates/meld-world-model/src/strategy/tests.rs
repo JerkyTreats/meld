@@ -471,6 +471,8 @@ fn agent_settles_the_exact_verified_candidate_into_command_and_decision() {
     )
     .unwrap();
     assert_eq!(denied.decision.decision, AgentDecisionKind::Indeterminate);
+    assert!(denied.decision.goal_command_id.is_none());
+    assert!(denied.decision.strategy_authorization.is_none());
     assert!(denied.goal_command.is_none());
 
     policy.restricted_action_ids.clear();

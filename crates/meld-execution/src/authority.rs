@@ -166,6 +166,71 @@ pub fn revalidate_authority(
     Ok(())
 }
 
+/// Revalidate one task action against retained authority and the active policy.
+pub fn revalidate_action_authority(
+    binding: &AuthorityPolicyBinding,
+    decision: &AuthorityDecision,
+    action_id: &str,
+) -> Result<(), AuthorityDenial> {
+    binding.validate()?;
+    decision.validate()?;
+    if action_id.trim().is_empty() {
+        return Err(AuthorityDenial::InvalidDecision(
+            "task action identity must be non-empty".to_string(),
+        ));
+    }
+    if decision.policy_id != binding.policy.policy_id
+        || decision.policy_content_hash != binding.content_hash
+        || decision.principal_id != binding.policy.principal_id
+    {
+        return Err(AuthorityDenial::StalePolicy);
+    }
+    if decision.subject != binding.policy.subject {
+        return Err(AuthorityDenial::ScopeMismatch);
+    }
+    if !decision
+        .requested_action_ids
+        .iter()
+        .any(|requested| requested == action_id)
+    {
+        return Err(AuthorityDenial::NotRequested(action_id.to_string()));
+    }
+    if !decision
+        .authorized_action_ids
+        .iter()
+        .any(|authorized| authorized == action_id)
+    {
+        return Err(AuthorityDenial::InvalidDecision(format!(
+            "task action '{action_id}' is absent from effective authority"
+        )));
+    }
+    if !binding
+        .policy
+        .principal_granted_action_ids
+        .iter()
+        .any(|granted| granted == action_id)
+    {
+        return Err(AuthorityDenial::NotGranted(action_id.to_string()));
+    }
+    if !binding
+        .policy
+        .runtime_allowed_action_ids
+        .iter()
+        .any(|allowed| allowed == action_id)
+    {
+        return Err(AuthorityDenial::RuntimeDenied(action_id.to_string()));
+    }
+    if binding
+        .policy
+        .restricted_action_ids
+        .iter()
+        .any(|restricted| restricted == action_id)
+    {
+        return Err(AuthorityDenial::Restricted(action_id.to_string()));
+    }
+    Ok(())
+}
+
 fn revision_key(id: &str, hash: &str) -> Result<Vec<u8>, AuthorityPolicyStoreError> {
     encode(&(id, hash))
 }
@@ -216,6 +281,26 @@ mod tests {
                 .resolve(&first.policy.policy_id, &first.content_hash)
                 .unwrap(),
             Some(first)
+        );
+    }
+
+    #[test]
+    fn task_action_revalidation_rejects_tampered_request_lineage() {
+        let body = policy();
+        let binding =
+            AuthorityPolicyBinding::new(body.clone(), body.content_hash().unwrap()).unwrap();
+        let decision = AuthorityDecision {
+            policy_id: body.policy_id.clone(),
+            policy_content_hash: binding.content_hash.clone(),
+            principal_id: body.principal_id.clone(),
+            subject: body.subject.clone(),
+            requested_action_ids: vec!["docs.inspect".to_string()],
+            authorized_action_ids: vec!["docs.publish".to_string()],
+        };
+
+        assert_eq!(
+            revalidate_action_authority(&binding, &decision, "docs.publish").unwrap_err(),
+            AuthorityDenial::NotRequested("docs.publish".to_string())
         );
     }
 }

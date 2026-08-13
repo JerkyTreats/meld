@@ -175,6 +175,8 @@ pub fn authorize_curation_outcome_with_authority(
                 Ok(decision) => Some(decision),
                 Err(denial) => {
                     outcome.decision.decision = AgentDecisionKind::Indeterminate;
+                    outcome.decision.goal_command_id = None;
+                    outcome.decision.strategy_authorization = None;
                     outcome.decision.reason = format!("effective authority denied: {denial}");
                     outcome.goal_command = None;
                     return Ok(outcome);

@@ -53,6 +53,7 @@
 //! assert_eq!(request.max_items, 2);
 //! ```
 
+use crate::authority::revalidate_action_authority;
 use crate::capability::{
     BoundCapabilityInstance, CapabilityInvocationPayload, CapabilityInvocationResult,
 };
@@ -919,6 +920,20 @@ where
                 report.budget_exhausted = true;
                 return;
             }
+            let authority_check = network
+                .network_state()
+                .tasks
+                .get(task_instance_id)
+                .ok_or_else(|| format!("ready task '{task_instance_id}' is absent"))
+                .and_then(|node| validate_task_authority(self.authority_policy.as_ref(), node));
+            if let Err(error) = authority_check {
+                report.fatal(
+                    Some(task_instance_id.clone()),
+                    "effective_authority_denied",
+                    error,
+                );
+                continue;
+            }
             *remaining -= 1;
             report.items_attempted += 1;
             let Some(claim) = self.claim_ready_task(network, task_instance_id, report) else {
@@ -1184,43 +1199,8 @@ fn validate_task_authority(
 ) -> Result<(), String> {
     match (active_policy, &node.lineage.authority_decision) {
         (Some(policy), Some(decision)) => {
-            policy.validate().map_err(|error| error.to_string())?;
-            decision.validate().map_err(|error| error.to_string())?;
-            if decision.policy_id != policy.policy.policy_id
-                || decision.policy_content_hash != policy.content_hash
-                || decision.principal_id != policy.policy.principal_id
-                || decision.subject != policy.policy.subject
-            {
-                return Err("task authority cites a different active policy or scope".to_string());
-            }
-            if !decision
-                .authorized_action_ids
-                .contains(&node.lineage.capability_type_id)
-            {
-                return Err(format!(
-                    "task capability '{}' is absent from effective authority",
-                    node.lineage.capability_type_id
-                ));
-            }
-            if !policy
-                .policy
-                .principal_granted_action_ids
-                .contains(&node.lineage.capability_type_id)
-                || !policy
-                    .policy
-                    .runtime_allowed_action_ids
-                    .contains(&node.lineage.capability_type_id)
-                || policy
-                    .policy
-                    .restricted_action_ids
-                    .contains(&node.lineage.capability_type_id)
-            {
-                return Err(format!(
-                    "task capability '{}' is denied by the active policy",
-                    node.lineage.capability_type_id
-                ));
-            }
-            Ok(())
+            revalidate_action_authority(policy, decision, &node.lineage.capability_type_id)
+                .map_err(|error| error.to_string())
         }
         (Some(_), None) => Err("task has no authority decision under an active policy".to_string()),
         (None, Some(_)) => {

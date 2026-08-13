@@ -6,6 +6,7 @@ use thiserror::Error;
 
 use crate::config::SelectedStewardshipPackage;
 use crate::docs::claim_validation::DocsClaimPolicyRevisionRef;
+use meld_events::DomainObjectRef;
 use meld_execution::authority::{AuthorityPolicyRevision, AuthorityPolicyRevisionRef};
 use meld_execution::capability::CapabilityContractRevisionRef;
 use meld_execution::capability::{CapabilityCatalog, CapabilityContractRevision};
@@ -225,16 +226,26 @@ pub struct ResolvedStewardshipTheory {
 }
 
 impl ResolvedStewardshipTheory {
+    /// Validate this exact image against one physical activation binding.
+    pub fn validate_activation(
+        &self,
+        selection: &SelectedStewardshipPackage,
+        subject: &DomainObjectRef,
+    ) -> Result<(), TheoryResolutionError> {
+        self.validate(selection, Some(subject))
+    }
+
     /// Resolve the active receipt and every exact owner body once.
     pub fn resolve(
         stores: &OpenProductStores,
         selection: &SelectedStewardshipPackage,
+        subject: &DomainObjectRef,
     ) -> Result<Self, TheoryResolutionError> {
         let receipt = stores
             .theory_receipts
             .current(selection)
             .map_err(TheoryResolutionError::Receipt)?;
-        Self::resolve_exact(stores, selection, receipt)
+        Self::resolve_exact(stores, selection, Some(subject), receipt)
     }
 
     /// Resolve one historical receipt and every body it pinned.
@@ -248,12 +259,13 @@ impl ResolvedStewardshipTheory {
             .map_err(TheoryResolutionError::Receipt)?
             .ok_or_else(|| missing("installation receipt"))?;
         let selection = receipt.selection.clone();
-        Self::resolve_exact(stores, &selection, receipt)
+        Self::resolve_exact(stores, &selection, None, receipt)
     }
 
     fn resolve_exact(
         stores: &OpenProductStores,
         selection: &SelectedStewardshipPackage,
+        expected_subject: Option<&DomainObjectRef>,
         receipt: TheoryInstallationReceipt,
     ) -> Result<Self, TheoryResolutionError> {
         let belief_family = stores
@@ -331,7 +343,7 @@ impl ResolvedStewardshipTheory {
             authority_policy,
             claim_policy,
         };
-        resolved.validate(selection)?;
+        resolved.validate(selection, expected_subject)?;
         Ok(resolved)
     }
 
@@ -349,6 +361,7 @@ impl ResolvedStewardshipTheory {
     fn validate(
         &self,
         selection: &SelectedStewardshipPackage,
+        expected_subject: Option<&DomainObjectRef>,
     ) -> Result<(), TheoryResolutionError> {
         if &self.receipt.selection != selection
             || self.belief_family.revision_ref() != self.receipt.belief_family
@@ -365,9 +378,11 @@ impl ResolvedStewardshipTheory {
         }
         if self.authority_policy.policy.policy_id != selection.authority_policy_id
             || self.authority_policy.policy.principal_id != selection.principal_id
+            || expected_subject
+                .is_some_and(|subject| &self.authority_policy.policy.subject != subject)
         {
             return Err(TheoryResolutionError::Inconsistent(
-                "resolved authority policy does not match the selected policy and principal"
+                "resolved authority policy does not match the selected policy, principal, and subject"
                     .to_string(),
             ));
         }
@@ -578,6 +593,10 @@ mod tests {
         }
     }
 
+    fn subject() -> DomainObjectRef {
+        DomainObjectRef::new("workspace_fs", "node", "docs").unwrap()
+    }
+
     #[test]
     fn receipt_activation_preserves_an_already_resolved_historical_image() {
         let temp = tempfile::tempdir().unwrap();
@@ -688,7 +707,8 @@ mod tests {
         .unwrap();
         assert_eq!(reordered.receipt_id, receipt_a.receipt_id);
         stores.theory_receipts.install(receipt_a.clone()).unwrap();
-        let resolved_a = ResolvedStewardshipTheory::resolve(&stores, &selection()).unwrap();
+        let resolved_a =
+            ResolvedStewardshipTheory::resolve(&stores, &selection(), &subject()).unwrap();
 
         let mut curation_b_body = curation;
         curation_b_body.threshold = 0.91;
@@ -721,7 +741,8 @@ mod tests {
         )
         .unwrap();
         stores.theory_receipts.install(receipt_b.clone()).unwrap();
-        let resolved_b = ResolvedStewardshipTheory::resolve(&stores, &selection()).unwrap();
+        let resolved_b =
+            ResolvedStewardshipTheory::resolve(&stores, &selection(), &subject()).unwrap();
         let reloaded_a =
             ResolvedStewardshipTheory::resolve_receipt(&stores, &receipt_a.receipt_id).unwrap();
 
@@ -757,6 +778,11 @@ mod tests {
             .resolve("docs_freshness", &curation_a.content_hash)
             .unwrap()
             .is_some());
+        let other_subject = DomainObjectRef::new("workspace_fs", "node", "other").unwrap();
+        assert!(matches!(
+            ResolvedStewardshipTheory::resolve(&stores, &selection(), &other_subject),
+            Err(TheoryResolutionError::Inconsistent(message)) if message.contains("subject")
+        ));
     }
 
     #[test]
@@ -827,7 +853,7 @@ mod tests {
         stores.theory_receipts.install(receipt).unwrap();
 
         assert!(matches!(
-            ResolvedStewardshipTheory::resolve(&stores, &selection()),
+            ResolvedStewardshipTheory::resolve(&stores, &selection(), &subject()),
             Err(TheoryResolutionError::Missing(message)) if message.contains("belief family")
         ));
     }

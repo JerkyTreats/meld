@@ -583,9 +583,19 @@ fn hydrate_stewardship_theory(
     theory: &mut StewardshipTheoryBindings,
     diagnostics: &mut Vec<AssemblyDiagnostic>,
 ) {
+    let subject = match DomainObjectRef::new("workspace_fs", "node", binding.subject.clone()) {
+        Ok(subject) => subject,
+        Err(error) => {
+            diagnostics.push(AssemblyDiagnostic {
+                code: "theory_image_inconsistent".to_string(),
+                message: error.to_string(),
+            });
+            return;
+        }
+    };
     let resolved = match theory.resolved.clone() {
         Some(resolved) => resolved,
-        None => match ResolvedStewardshipTheory::resolve(stores, &binding.package) {
+        None => match ResolvedStewardshipTheory::resolve(stores, &binding.package, &subject) {
             Ok(resolved) => Arc::new(resolved),
             Err(error) => {
                 diagnostics.push(AssemblyDiagnostic {
@@ -601,6 +611,13 @@ fn hydrate_stewardship_theory(
             }
         },
     };
+    if let Err(error) = resolved.validate_activation(&binding.package, &subject) {
+        diagnostics.push(AssemblyDiagnostic {
+            code: "theory_image_inconsistent".to_string(),
+            message: error.to_string(),
+        });
+        return;
+    }
     let provider = match crate::provider::ProviderExecutionBinding::new(
         binding.provider_id.clone(),
         crate::provider::ProviderRuntimeOverrides::default(),
@@ -630,16 +647,6 @@ fn hydrate_stewardship_theory(
                 return;
             }
         };
-    let subject = match DomainObjectRef::new("workspace_fs", "node", binding.subject.clone()) {
-        Ok(subject) => subject,
-        Err(error) => {
-            diagnostics.push(AssemblyDiagnostic {
-                code: "theory_image_inconsistent".to_string(),
-                message: error.to_string(),
-            });
-            return;
-        }
-    };
     let mut strategy = match meld_world_model::AgentStrategyRuntimeConfig::activate_installed(
         resolved.strategy_theory.package.clone(),
         subject,

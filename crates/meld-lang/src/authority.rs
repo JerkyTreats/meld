@@ -30,6 +30,7 @@ impl AuthorityPolicy {
     pub fn validate(&self) -> Result<(), AuthorityDenial> {
         require_non_empty("authority policy id", &self.policy_id)?;
         require_non_empty("authority principal id", &self.principal_id)?;
+        validate_subject("authority policy subject", &self.subject)?;
         validate_action_set(
             "principal granted action ids",
             &self.principal_granted_action_ids,
@@ -109,6 +110,7 @@ impl AuthorityDecision {
             &self.policy_content_hash,
         )?;
         require_non_empty("authority decision principal id", &self.principal_id)?;
+        validate_subject("authority decision subject", &self.subject)?;
         validate_action_set("requested action ids", &self.requested_action_ids)?;
         validate_action_set("authorized action ids", &self.authorized_action_ids)?;
         if self.authorized_action_ids.is_empty() {
@@ -285,6 +287,12 @@ fn require_non_empty(label: &str, value: &str) -> Result<(), AuthorityDenial> {
         )));
     }
     Ok(())
+}
+
+fn validate_subject(label: &str, subject: &DomainObjectRef) -> Result<(), AuthorityDenial> {
+    require_non_empty(&format!("{label} domain id"), &subject.domain_id)?;
+    require_non_empty(&format!("{label} object kind"), &subject.object_kind)?;
+    require_non_empty(&format!("{label} object id"), &subject.object_id)
 }
 
 #[cfg(test)]
