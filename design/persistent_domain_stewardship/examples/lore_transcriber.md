@@ -454,9 +454,12 @@ This case stresses:
 
 If these behaviors lower through existing Meld theory and runtime contracts without a bespoke lore runtime, the case provides evidence that PDS can host persistent semantic curation as well as operational maintenance.
 
+The concrete external-product constraints, current runtime limitations, and acceptance criteria for using Meld as a freeform narrative database are specified in [Freeform Narrative Database Constraint Case](freeform_narrative_database.md).
+
 ## Read With
 
 - [Persistent Domain Stewardship](../../cognitive_architecture/persistent_domain_stewardship.md)
 - [Use-Case Decomposition](../use_case_decomposition.md)
 - [Roleplay Character Continuity Steward](roleplay_character.md)
+- [Freeform Narrative Database Constraint Case](freeform_narrative_database.md)
 - [Software Quality Stewardship Example](software_quality.md)

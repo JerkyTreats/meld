@@ -98,6 +98,9 @@ This interpretation remains subject to the open decisions and experiments in thi
 - [Lore Transcriber And Canon Steward](examples/lore_transcriber.md)  
   Detailed decomposition of persistent entity and claim curation, including alias resolution, merge/split lineage, provenance, contradiction, supersession, and derived-definition freshness.
 
+- [Freeform Narrative Database Constraint Case](examples/freeform_narrative_database.md)
+  Grounds the lore candidate in an external story-to-visual product and defines current Meld limitations, database acceptance criteria, later stewardship criteria, domain boundaries, and explicit non-integration.
+
 - [Software Quality Stewardship](examples/software_quality.md)  
   Full expert decomposition across reliability, persistence, performance, usability, maintainability, and documentation.
 

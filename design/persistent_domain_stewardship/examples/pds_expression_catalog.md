@@ -265,6 +265,8 @@ Conditional. Strongest for shared, mutable, long-running worlds. A single-sessio
 
 Detailed in [Lore Transcriber And Canon Steward](lore_transcriber.md).
 
+The current story-to-visual product constraint and the concrete threshold for Meld as its narrative database are detailed in [Freeform Narrative Database Constraint Case](freeform_narrative_database.md).
+
 ### Mandate
 
 Maintain durable entity identity, source-backed claims, conflict visibility, supersession, and current derived definitions for an evolving corpus.

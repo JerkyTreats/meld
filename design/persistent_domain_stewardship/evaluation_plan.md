@@ -351,6 +351,54 @@ Test whether a user can understand what one steward is doing without reading dom
 
 The unified projection answers these questions while linking to authoritative domain detail.
 
+## Experiment 11: Freeform Narrative Database Boundary
+
+### Goal
+
+Determine whether an external story-to-visual product can use Meld as a narrative database through generic event, graph, and served contracts before introducing PDS stewardship behavior.
+
+### Constraint case
+
+[Freeform Narrative Database Constraint Case](examples/freeform_narrative_database.md)
+
+### Baselines
+
+- extraction plus source and span store
+- extraction plus a conventional knowledge graph
+- Meld event and graph integration without PDS
+- Meld event and graph integration with activated lore stewardship
+
+### Required scenarios
+
+- bounded publication of a story revision
+- exact source-evidence recovery from a graph claim
+- ambiguous character identity without automatic merge
+- approved merge and later split with lineage
+- contradictory scoped claims
+- current character and scene hydration for an external renderer
+- targeted refresh after an accepted appearance claim changes
+- replay after interruption and process restart
+
+### Measures
+
+- changes required in PDS core
+- changes required in root route code
+- expression-specific branches in generic event or graph code
+- exact evidence recovery rate
+- duplicate and incorrect identity decisions
+- current-state and history query latency
+- affected-only refresh cost
+- external client dependence on private stores or internal Rust modules
+- improvement from stewardship over the database-only baseline
+
+### Success indication
+
+The database-only path works through generic served contracts, and the stewardship path adds measurable reconciliation or maintenance value without adding narrative-specific semantics to PDS core.
+
+### Falsification
+
+If narrative ingestion requires a central Meld ontology, private storage access, or narrative-specific root control flow, the proposed boundary is wrong. If stewardship adds no material improvement over the database-only baseline, retain Meld as infrastructure for this use case without presenting it as PDS.
+
 ## Evidence Capture
 
 Each experiment should record:
