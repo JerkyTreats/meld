@@ -1,0 +1,12 @@
+{
+  "mapping_id": "dependency_security_outcome_mapping_v1",
+  "rules": [{
+    "mapping_id": "security_unobserved_scope_v1",
+    "source_kind": "world_model_unobserved_scope",
+    "match_domain_id": "world_model",
+    "match_event_type": "world_model.unobserved_scope",
+    "match_content": [],
+    "subject": {"object_kind":"node","domain_id":"workspace_fs","from":{"source":"envelope_objects"}},
+    "evidence_fields": [{"field":"clean_within_coverage_probability","source":{"source":"constant","value":0.0}}]
+  }]
+}

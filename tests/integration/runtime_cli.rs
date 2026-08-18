@@ -422,11 +422,15 @@ fn stewardship_receipts_activate_routes_and_preserve_a_b_lineage() {
             .unwrap()
             .package;
         assert_eq!(selection.expression, "documentation_maintenance");
-        let receipt = product
-            .stores()
-            .theory_receipts
-            .current(&selection)
-            .unwrap();
+        let resolved = ResolvedStewardshipTheory::resolve(
+            product.stores(),
+            &selection,
+            &DomainObjectRef::new("workspace_fs", "node", "docs").unwrap(),
+        )
+        .unwrap();
+        let package_receipt_id = resolved.package_receipt_id.clone();
+        let receipt = resolved.receipt;
+        assert_ne!(package_receipt_id, receipt.receipt_id);
         let agent = product
             .stores()
             .agent_store
@@ -618,9 +622,13 @@ fn stewardship_receipts_activate_routes_and_preserve_a_b_lineage() {
                 .receipt_id,
             receipt_b.receipt_id
         );
-        let historical_a =
-            ResolvedStewardshipTheory::resolve_receipt(product_b.stores(), &receipt.receipt_id)
-                .unwrap();
+        let historical_a = ResolvedStewardshipTheory::resolve_pds_receipt(
+            product_b.stores(),
+            &selection,
+            &agent.subject,
+            &package_receipt_id,
+        )
+        .unwrap();
         assert_eq!(historical_a.curation_rule, curation_a);
         assert_eq!(historical_a.maintained_condition, condition_a);
         let decisions_b = product_b

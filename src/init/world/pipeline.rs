@@ -43,6 +43,7 @@ use crate::init::world::{
     StageDisposition, WorldInitReport, WorldInitRequest, WorldInitStage, WorldInitStageReport,
 };
 use crate::runtime::theory::{TheoryInstallationReceipt, TheoryInstallationReceiptStore};
+use crate::theory::PdsPackageInstallationReceiptV1;
 use meld_execution::capability::{CapabilityContractRegistryStore, CapabilityTypeContract};
 
 /// Domain that owns the epistemic genesis fact appended by stage 4.
@@ -140,6 +141,13 @@ pub struct CompleteTheoryInstall<'a> {
     pub authority_policies: &'a AuthorityPolicyRegistryStore,
     pub claim_policies: &'a DocsClaimPolicyRegistryStore,
     pub receipts: &'a TheoryInstallationReceiptStore,
+    pub routed: Option<RoutedTheoryInstall>,
+}
+
+#[derive(Debug, Clone)]
+pub struct RoutedTheoryInstall {
+    pub receipt: PdsPackageInstallationReceiptV1,
+    pub changed: bool,
 }
 
 /// Normalize a stage selection to pipeline order without duplicates.
@@ -250,6 +258,34 @@ impl<'a> WorldInitPipeline<'a> {
             .complete_theory
             .as_ref()
             .expect("complete theory checked");
+        if let Some(routed) = &install.routed {
+            let mut record_ids: Vec<String> = routed
+                .receipt
+                .components
+                .iter()
+                .map(|component| {
+                    format!(
+                        "{}::{}::{}",
+                        component.owner_revision.registry,
+                        component.owner_revision.id,
+                        component.owner_revision.content_hash
+                    )
+                })
+                .collect();
+            record_ids.push(format!(
+                "pds_package_receipt::{}",
+                routed.receipt.receipt_id
+            ));
+            return Ok(WorldInitStageReport {
+                stage: WorldInitStage::InstallTheory,
+                disposition: if routed.changed {
+                    StageDisposition::Applied
+                } else {
+                    StageDisposition::Unchanged
+                },
+                record_ids,
+            });
+        }
         validate_selected_bundle(&install.selection, &install.bundle, subject)
             .map_err(WorldInitError::Theory)?;
 
@@ -458,25 +494,35 @@ impl<'a> WorldInitPipeline<'a> {
             &content.branch_scope,
         );
         let rule_revision = if let Some(install) = &self.complete_theory {
-            let receipt = install
-                .receipts
-                .current(&install.selection)
-                .map_err(|error| WorldInitError::Identity(error.to_string()))?;
-            Some(receipt.curation_rule)
+            if let Some(routed) = &install.routed {
+                Some(routed_world_ref(
+                    &routed.receipt,
+                    "world-model",
+                    "agent-curation-rule",
+                )?)
+            } else {
+                let receipt = install
+                    .receipts
+                    .current(&install.selection)
+                    .map_err(|error| WorldInitError::Identity(error.to_string()))?;
+                Some(receipt.curation_rule)
+            }
         } else {
             None
         };
         let maintained_condition_binding = if let Some(install) = &self.complete_theory {
-            let receipt = install
-                .receipts
-                .current(&install.selection)
-                .map_err(|error| WorldInitError::Identity(error.to_string()))?;
+            let maintained_ref = if let Some(routed) = &install.routed {
+                routed_world_ref(&routed.receipt, "world-model", "agent-maintained-condition")?
+            } else {
+                install
+                    .receipts
+                    .current(&install.selection)
+                    .map_err(|error| WorldInitError::Identity(error.to_string()))?
+                    .maintained_condition
+            };
             let revision = install
                 .maintained_conditions
-                .resolve(
-                    &receipt.maintained_condition.id,
-                    &receipt.maintained_condition.content_hash,
-                )
+                .resolve(&maintained_ref.id, &maintained_ref.content_hash)
                 .map_err(|error| WorldInitError::Identity(error.to_string()))?
                 .ok_or_else(|| {
                     WorldInitError::Identity(
@@ -648,6 +694,32 @@ impl<'a> WorldInitPipeline<'a> {
             record_ids: vec![declaration.record_id()],
         })
     }
+}
+
+fn routed_world_ref(
+    receipt: &PdsPackageInstallationReceiptV1,
+    owner: &str,
+    kind: &str,
+) -> Result<meld_world_model::belief::TheoryRevisionRef, WorldInitError> {
+    let route = crate::theory::TheoryRouteId::new(owner, kind, 1);
+    let mut matches = receipt
+        .components
+        .iter()
+        .filter(|component| component.route == route);
+    let component = matches.next().ok_or_else(|| {
+        WorldInitError::Identity(format!("routed receipt is missing route '{}'", route.key()))
+    })?;
+    if matches.next().is_some() {
+        return Err(WorldInitError::Identity(format!(
+            "routed receipt contains several '{}' components",
+            route.key()
+        )));
+    }
+    Ok(meld_world_model::belief::TheoryRevisionRef {
+        registry: component.owner_revision.registry.clone(),
+        id: component.owner_revision.id.clone(),
+        content_hash: component.owner_revision.content_hash.clone(),
+    })
 }
 
 fn validate_selected_bundle(

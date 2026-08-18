@@ -1,8 +1,10 @@
 # Stewardship Facet Protocol
 
-Date: 2026-07-16  
-Status: proposed  
+Date: 2026-08-18
+Status: aligned design exploration
 Scope: candidate connector between the PDS control plane and domain-owned stewardship semantics
+
+> The canonical cognition boundary is fixed in [Persistent Domain Stewardship](../cognitive_architecture/persistent_domain_stewardship.md). This protocol may route PDS semantic facets and separately assemble runtime contributions, but a PDS package does not own exact capabilities, Methods, construction policy, search controls, projection requests, or effective authority.
 
 ## Purpose
 
@@ -24,10 +26,10 @@ Examples:
 - an event-to-graph projection plan
 - a belief-family definition
 - an Agent charter and concern policy
-- an execution method library
+- Strategy action-class and outcome semantics
 - a context-projection policy
 - an outcome-evidence mapping
-- an authority-requirement declaration
+- governance vocabulary and constraints
 
 The owning domain defines the facet's schema, validation, compilation, activation, and inspection semantics.
 
@@ -94,9 +96,8 @@ observation
 projection
 belief
 agent_charter
-context_projection
-method_library
-capability_requirements
+projection_semantics
+strategy_semantics
 outcome_verification
 governance
 ```
@@ -121,8 +122,7 @@ struct CompiledFacetEnvelope {
 
     exports: Vec<SymbolExport>,
     imports: Vec<SymbolImport>,
-    activation_requirements: Vec<ActivationRequirement>,
-    requested_authority: Vec<AuthorityRequirement>,
+    semantic_requirements: Vec<SemanticRequirement>,
     diagnostics: Vec<FacetDiagnostic>,
 }
 ```
@@ -141,7 +141,6 @@ Example exports:
 object_type: software.service
 belief_family: performance.health
 action_class: performance.run_benchmark
-method: performance.investigate_regression
 artifact_type: performance.benchmark_report
 verification_profile: release_grade
 ```
@@ -167,7 +166,7 @@ The PDS linker validates:
 - activation requirement closure
 - package-level lineage
 
-The linker does not validate the internal semantic meaning of a belief comparator or execution method.
+The linker does not validate the internal semantic meaning of a belief comparator or an action-class contract.
 
 ## Connector Options
 
@@ -253,9 +252,11 @@ PDS produces generic registration commands. Root `meld` adapters translate them 
 
 ## Current Recommendation
 
-Use Option C for a tightly bounded first proof if necessary, but preserve contracts that can evolve toward Option A.
+Use a narrow owner theory-route handler for state-free validation, installation, and exact resolution. Use a separate owner activation-contributor contract for physical requirements, preparation, readiness, safe points, stop, and result admission.
 
-Do not freeze one universal PDS schema before testing federated domain compilation.
+Root adapters remain presentation and physical composition only. The router must not receive foreign stores or decode owner bodies.
+
+Do not freeze the full protocol in this document as one universal connector. Implement only the route and activation behavior exercised by documentation freshness and dependency security, then compare both consumers before promoting any wider lifecycle surface.
 
 ## Compilation Lifecycle
 
@@ -274,7 +275,7 @@ link imports and exports
     ↓
 resolve profile presets and overrides
     ↓
-validate activation and authority requirements
+validate semantic and governance requirements
     ↓
 run package and domain conformance scenarios
     ↓
@@ -289,8 +290,7 @@ struct CompiledStewardshipImage {
     profile_surface: CompiledProfileSurface,
     facets: Vec<CompiledFacetEnvelope>,
     symbol_table: LinkedSymbolTable,
-    activation_graph: ActivationDependencyGraph,
-    requested_authority: Vec<AuthorityRequirement>,
+    semantic_dependency_graph: SemanticDependencyGraph,
     scenario_summary: ScenarioSummary,
     provenance: CompilationProvenance,
 }
@@ -307,7 +307,7 @@ An assignment binds:
 - profile
 - principal
 - concrete subject scope
-- authority grant
+- requested authority and principal grant lineage
 - lifecycle
 
 An activation binds:
@@ -318,7 +318,7 @@ An activation binds:
 - runtime placement
 - operational budgets
 
-This separation remains a recommendation rather than a settled requirement.
+This separation is a canonical requirement. Assignment-requested authority and activation-selected capabilities are not compiled PDS semantics.
 
 ## Activation Receipts
 
@@ -371,7 +371,7 @@ Retired
 Candidate process:
 
 1. Resolve package, profile, assignment, and activation inputs.
-2. Calculate effective authority.
+2. Calculate effective authority from the assignment and current grants.
 3. Ask each domain to prepare its registrations.
 4. Persist preparation receipts.
 5. Activate in dependency order.
@@ -388,8 +388,8 @@ A package upgrade may change:
 - exported symbols
 - belief semantics
 - Agent policy
-- methods
-- authority requests
+- Strategy semantic contracts
+- governance constraints
 - outcome verification
 - activation requirements
 
@@ -397,7 +397,7 @@ Candidate upgrade process:
 
 ```text
 compile new image
-→ compare semantic and authority diff
+→ compare semantic and governance diff
 → prepare migrations per domain
 → obtain required approval
 → activate at a sequence boundary
@@ -429,8 +429,8 @@ PDS combines statuses into one stewardship projection without becoming authorita
 
 - PDS must not execute arbitrary facet source code while parsing.
 - Domain compiler and connector implementations are trusted plugins or built-in code.
-- Package-requested authority remains a request.
-- Activation uses the intersection of package request, principal grant, runtime policy, and current restrictions.
+- Assignment-requested authority remains a request.
+- Activation uses the intersection of assignment request, principal grant, runtime policy, and current restrictions.
 - Dispatch must enforce authority independently of package activation.
 - Facet payloads and receipts require version and hash validation.
 
@@ -441,7 +441,7 @@ PDS combines statuses into one stewardship projection without becoming authorita
 3. Add a game-faction steward without adding new PDS core fields.
 4. Upgrade one belief facet while preserving profile intent.
 5. Change one activation binding without changing assignment identity.
-6. Simulate a failed execution-facet activation after belief and Agent preparation.
+6. Simulate a failed capability contribution after belief and Agent preparation.
 7. Verify exact-hash replay across package upgrade.
 
 ## Falsification

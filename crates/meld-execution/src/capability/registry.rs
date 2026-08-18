@@ -9,7 +9,7 @@ use super::CapabilityTypeContract;
 
 const TREE_REVISIONS: &str = "capability_contract_registry_revisions";
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 /// Exact reference to one executable capability contract revision.
 pub struct CapabilityContractRevisionRef {
     /// Stable capability type and version selector.

@@ -8,6 +8,8 @@ Initial domain assessment: [Theory Durability Symmetry Assessment By Domain](the
 Contract review: [Theory Durability Symmetry Contract Coherence Assessment](theory_durability_symmetry_contract_coherence_assessment.md)
 Scope: Theory Elevation Step 1
 
+> Historical compatibility design. The complete `StrategyTheoryPackage` below was intentionally preserved for delivery symmetry. [Canonical Persistent Domain Stewardship](../../cognitive_architecture/persistent_domain_stewardship.md) now requires its semantic theory, capability, Method, policy, projection, search, and authority concerns to become independently owned inputs.
+
 ## Objective
 
 Implement durable, owner-resolved revisions for every semantic body used by the docs freshness runtime. A runtime composition must activate only a complete installed revision set, use that exact set for its lifetime, and leave durable lineage that remains resolvable after later installations activate newer receipts.

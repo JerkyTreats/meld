@@ -205,6 +205,8 @@ pub struct TheoryInstallationReceiptStore {
 /// Immutable exact semantic image frozen for one runtime composition.
 #[derive(Debug, Clone)]
 pub struct ResolvedStewardshipTheory {
+    /// Canonical package receipt identity, generic for routed packages.
+    pub package_receipt_id: String,
     /// Complete receipt that selected every exact body.
     pub receipt: TheoryInstallationReceipt,
     /// Exact belief-family revision.
@@ -241,11 +243,31 @@ impl ResolvedStewardshipTheory {
         selection: &SelectedStewardshipPackage,
         subject: &DomainObjectRef,
     ) -> Result<Self, TheoryResolutionError> {
-        let receipt = stores
-            .theory_receipts
-            .current(selection)
-            .map_err(TheoryResolutionError::Receipt)?;
-        Self::resolve_exact(stores, selection, Some(subject), receipt)
+        match stores.theory_receipts.current(selection) {
+            Ok(receipt) => return Self::resolve_exact(stores, selection, Some(subject), receipt),
+            Err(TheoryReceiptError::NotInstalled) => {}
+            Err(failure) => return Err(TheoryResolutionError::Receipt(failure)),
+        }
+        let routed_heads = stores
+            .pds_packages
+            .heads()
+            .map_err(|failure| TheoryResolutionError::Inconsistent(failure.to_string()))?;
+        if routed_heads.len() == 1 {
+            return Self::resolve_pds_receipt(
+                stores,
+                selection,
+                subject,
+                &routed_heads[0].receipt_id,
+            );
+        }
+        if routed_heads.len() > 1 {
+            return Err(TheoryResolutionError::Inconsistent(
+                "several routed package heads require an explicit assignment receipt".to_string(),
+            ));
+        }
+        Err(TheoryResolutionError::Receipt(
+            TheoryReceiptError::NotInstalled,
+        ))
     }
 
     /// Resolve one historical receipt and every body it pinned.
@@ -262,11 +284,126 @@ impl ResolvedStewardshipTheory {
         Self::resolve_exact(stores, &selection, None, receipt)
     }
 
+    /// Resolve one routed package receipt into the existing owner runtime view.
+    pub fn resolve_pds_receipt(
+        stores: &OpenProductStores,
+        selection: &SelectedStewardshipPackage,
+        subject: &DomainObjectRef,
+        package_receipt_id: &str,
+    ) -> Result<Self, TheoryResolutionError> {
+        let package = stores
+            .pds_packages
+            .resolve_receipt(package_receipt_id)
+            .map_err(|failure| TheoryResolutionError::Inconsistent(failure.to_string()))?
+            .ok_or_else(|| missing("PDS package receipt"))?;
+        let route = |owner: &str, kind: &str| crate::theory::TheoryRouteId::new(owner, kind, 1);
+        let one = |wanted: crate::theory::TheoryRouteId| {
+            let mut matches = package
+                .components
+                .iter()
+                .filter(|component| component.route == wanted);
+            let first = matches
+                .next()
+                .ok_or_else(|| missing("routed owner component"))?;
+            if matches.next().is_some() {
+                return Err(TheoryResolutionError::Inconsistent(format!(
+                    "route '{}' requires one runtime component",
+                    wanted.key()
+                )));
+            }
+            Ok(first.owner_revision.clone())
+        };
+        let world_ref = |reference: crate::theory::TheoryRevisionRef| TheoryRevisionRef {
+            registry: reference.registry,
+            id: reference.id,
+            content_hash: reference.content_hash,
+        };
+        let belief_family = world_ref(one(route("world-model", "belief-family"))?);
+        let curation_rule = world_ref(one(route("world-model", "agent-curation-rule"))?);
+        let maintained_condition =
+            world_ref(one(route("world-model", "agent-maintained-condition"))?);
+        let outcome_mapping = world_ref(one(route("world-model", "outcome-mapping"))?);
+        let strategy_theory = world_ref(one(route("world-model", "strategy-theory"))?);
+        let authority = one(route("execution", "authority-policy"))?;
+        let claim = one(route("docs", "claim-policy"))?;
+        let mut executable_contracts = Vec::new();
+        for component in package
+            .components
+            .iter()
+            .filter(|component| component.route == route("execution", "capability-contract"))
+        {
+            let (type_id, version) =
+                component
+                    .owner_revision
+                    .id
+                    .rsplit_once(".v")
+                    .ok_or_else(|| {
+                        TheoryResolutionError::Inconsistent(
+                            "invalid capability owner ref".to_string(),
+                        )
+                    })?;
+            executable_contracts.push(CapabilityContractRevisionRef {
+                selector: meld_lang::CapabilityRef {
+                    capability_type_id: type_id.to_string(),
+                    capability_version: version.parse().map_err(|_| {
+                        TheoryResolutionError::Inconsistent(
+                            "invalid capability owner ref version".to_string(),
+                        )
+                    })?,
+                },
+                content_identity: component.owner_revision.content_hash.clone(),
+            });
+        }
+        let compatibility_receipt = TheoryInstallationReceipt::new(
+            selection.clone(),
+            belief_family,
+            curation_rule,
+            maintained_condition,
+            outcome_mapping,
+            strategy_theory,
+            executable_contracts,
+            AuthorityPolicyRevisionRef {
+                policy_id: authority.id,
+                content_hash: authority.content_hash,
+            },
+            DocsClaimPolicyRevisionRef {
+                policy_id: claim.id,
+                content_identity: claim.content_hash,
+            },
+            package.installed_at_seq,
+        )
+        .map_err(|failure| TheoryResolutionError::Inconsistent(failure.to_string()))?;
+        Self::resolve_exact_with_package_id(
+            stores,
+            selection,
+            Some(subject),
+            compatibility_receipt,
+            package_receipt_id.to_string(),
+        )
+    }
+
     fn resolve_exact(
         stores: &OpenProductStores,
         selection: &SelectedStewardshipPackage,
         expected_subject: Option<&DomainObjectRef>,
         receipt: TheoryInstallationReceipt,
+    ) -> Result<Self, TheoryResolutionError> {
+        let package_receipt_id = receipt.receipt_id.clone();
+        Self::resolve_exact_with_package_id(
+            stores,
+            selection,
+            expected_subject,
+            receipt,
+            package_receipt_id,
+        )
+    }
+
+    fn resolve_exact_with_package_id(
+        stores: &OpenProductStores,
+        selection: &SelectedStewardshipPackage,
+        expected_subject: Option<&DomainObjectRef>,
+        receipt: TheoryInstallationReceipt,
+        package_receipt_id: String,
     ) -> Result<Self, TheoryResolutionError> {
         let belief_family = stores
             .belief_family_registry
@@ -333,6 +470,7 @@ impl ResolvedStewardshipTheory {
             .map_err(owner_error)?
             .ok_or_else(|| missing("docs claim policy"))?;
         let resolved = Self {
+            package_receipt_id,
             receipt,
             belief_family,
             curation_rule,

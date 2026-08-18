@@ -4,6 +4,8 @@ Date: 2026-08-13
 Status: illustrative constraint case
 Scope: a concrete external-product use case used to expose Meld and PDS requirements for freeform narrative structure
 
+> This long-form source case predates the canonical cognition split. Use the normalized [use case](freeform_narrative_database/README.md), [router specification](freeform_narrative_database/router_spec.md), and [Canonical Persistent Domain Stewardship](../../cognitive_architecture/persistent_domain_stewardship.md) when ownership language conflicts.
+
 ## Purpose
 
 This case grounds the lore and roleplay candidates in a product that is being designed now.

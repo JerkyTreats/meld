@@ -408,7 +408,17 @@ impl DeterministicDocsProvider {
     /// Spawns the provider for a run rooted at `workspace_root`. The root
     /// is only used to normalize absolute node paths out of prompts.
     pub fn spawn(workspace_root: &Path) -> Self {
-        Self::spawn_with_evidence_sabotage(workspace_root, 0)
+        Self::spawn_with_mode(workspace_root, 0, false)
+    }
+
+    /// Spawns a deterministic provider for the current routed docs PDS.
+    ///
+    /// The routed capability validates generated README claims through the
+    /// claim-assessment protocol rather than the legacy workflow verifier
+    /// prompt. This mode cites one exact source line so deterministic guards
+    /// exercise the real acceptance path.
+    pub fn spawn_for_routed_validation(workspace_root: &Path) -> Self {
+        Self::spawn_with_mode(workspace_root, 0, true)
     }
 
     /// Spawns the provider with the first `sabotage_first` evidence-gather
@@ -417,6 +427,14 @@ impl DeterministicDocsProvider {
     /// Pass a number larger than any plausible attempt budget to model a
     /// permanently failing turn.
     pub fn spawn_with_evidence_sabotage(workspace_root: &Path, sabotage_first: usize) -> Self {
+        Self::spawn_with_mode(workspace_root, sabotage_first, false)
+    }
+
+    fn spawn_with_mode(
+        workspace_root: &Path,
+        sabotage_first: usize,
+        routed_validation: bool,
+    ) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let endpoint = format!("http://{address}");
@@ -439,6 +457,8 @@ impl DeterministicDocsProvider {
                 let completion = if is_evidence_request && sabotaged < sabotage_first {
                     sabotaged += 1;
                     "I could not locate any citable claims in the provided context.".to_string()
+                } else if routed_validation {
+                    routed_validation_completion(&request, &workspace_marker)
                 } else {
                     deterministic_completion(&request, &workspace_marker)
                 };
@@ -479,6 +499,71 @@ impl DeterministicDocsProvider {
         let _ = stream.read(&mut [0u8; 64]);
         self.handle.join().unwrap()
     }
+}
+
+fn routed_validation_completion(request: &[u8], workspace_marker: &str) -> String {
+    let body_start = find_header_end(request).expect("provider request missing header block");
+    let body: Value =
+        serde_json::from_slice(&request[body_start..]).expect("provider request body is not JSON");
+    let user_content = body
+        .get("messages")
+        .and_then(Value::as_array)
+        .and_then(|messages| {
+            messages
+                .iter()
+                .rev()
+                .find(|message| message.get("role").and_then(Value::as_str) == Some("user"))
+        })
+        .and_then(|message| message.get("content").and_then(Value::as_str))
+        .expect("provider request has no user message");
+
+    if let Some(claim_json) = user_content
+        .strip_prefix("Assess every claim in this JSON array:\n")
+        .and_then(|remaining| {
+            remaining
+                .split_once("\n\nEvidence inventory:")
+                .map(|pair| pair.0)
+        })
+    {
+        let claims: Vec<Value> = serde_json::from_str(claim_json).unwrap();
+        let assessments = claims
+            .into_iter()
+            .map(|claim| {
+                let claim_id = claim["claim_id"].as_str().unwrap();
+                let statement = claim["statement"].as_str().unwrap();
+                serde_json::json!({
+                    "claim_id": claim_id,
+                    "verdict": "supported",
+                    "confidence": 1.0,
+                    "citations": [{"scope": "direct", "quote": statement}],
+                    "rationale": "Exact direct source line"
+                })
+            })
+            .collect::<Vec<_>>();
+        return serde_json::json!({"assessments": assessments}).to_string();
+    }
+
+    let normalized = user_content.replace(workspace_marker, WORKSPACE_ROOT_MARKER);
+    let digest = stable_hash_hex(normalized.as_bytes());
+    let direct = normalized
+        .split_once("Direct source evidence:\n")
+        .and_then(|pair| {
+            pair.1
+                .split_once("\n\nDescendant README evidence:")
+                .map(|pair| pair.0)
+        })
+        .unwrap_or("");
+    let source_line = direct
+        .lines()
+        .map(str::trim)
+        .find(|line| {
+            !line.is_empty()
+                && !line.starts_with("--- ")
+                && !line.starts_with('#')
+                && !line.starts_with("```")
+        })
+        .unwrap_or("Source files are present in this directory.");
+    format!("# Fixture Module {digest}\n\n## Source evidence\n\n{source_line}\n")
 }
 
 /// Locates the end of an HTTP header block in a raw request buffer.

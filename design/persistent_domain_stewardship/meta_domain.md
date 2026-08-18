@@ -1,8 +1,10 @@
 # PDS Meta-Domain
 
-Date: 2026-07-16  
-Status: proposed  
+Date: 2026-08-18
+Status: aligned integration options
 Scope: options for integrating Persistent Domain Stewardship across Meld while preserving domain authority
+
+> The semantic boundary is fixed in [Canonical Persistent Domain Stewardship](../cognitive_architecture/persistent_domain_stewardship.md). These options vary package integration and ownership mechanics, not whether PDS may own situated cognition.
 
 ## Concern
 
@@ -31,7 +33,9 @@ PDS must preserve these ownership rules:
 - source domains own source truth and promoted observation semantics
 - the world model owns graph materialization, evidence, beliefs, and planner projection
 - the Agent domain owns perspective and normative judgment
-- execution owns goals, planning, task networks, dispatch, and outcome publication
+- Agent owns maintained-condition judgment and Goal creation
+- Strategy owns problem construction, search, verification, and candidates
+- execution owns task networks, dispatch, operations, and effect publication
 - capabilities own typed executable behavior
 - root `meld` owns application assembly and concrete adapters
 
@@ -68,7 +72,7 @@ It should not own:
 
 ## Option A: Central Package-Schema Meta-Domain
 
-PDS centrally defines source and compiled schemas for domain vocabulary, observations, beliefs, charters, actions, outcomes, governance, and scenarios.
+PDS centrally defines source and compiled schemas for domain vocabulary, observation meaning, belief questions, charters, abstract action and outcome semantics, governance, and scenarios.
 
 ### Advantages
 
@@ -91,9 +95,9 @@ Existing `package_model.md` substantially explores this option.
 
 It remains useful as a complete operational-domain-theory model, but it should not be treated as the only integration architecture.
 
-## Option B: Federated Stewardship Facets
+## Option B: Routed Domain-Owned Components
 
-Each participating domain owns one or more stewardship facet schemas, validators, compilers, and activation behavior.
+Each participating domain owns one or more theory component schemas, validators, installers, and activation contributions.
 
 PDS owns the package manifest, profile surface, linking, assignment, activation coordination, receipts, and inspection.
 
@@ -107,7 +111,7 @@ PDS package
     └── package/profile metadata
 ```
 
-PDS links opaque compiled facets through declared exports, imports, requirements, and lineage.
+The proposed `theory::router` links intact owner components through route identity, structural requirements, exact owner refs, and lineage. Destination domains retain semantic linking.
 
 ### Advantages
 
@@ -126,9 +130,9 @@ PDS links opaque compiled facets through declared exports, imports, requirements
 
 ### Current recommendation
 
-This is the current preferred direction because it aligns most directly with Meld's domain-isolation rules.
+This is the current preferred direction because it aligns most directly with Meld's domain-isolation rules and the delivered owner-registry pattern.
 
-It remains a recommendation pending implementation experiments.
+It remains a recommendation pending docs parity migration and the dependency-security proof.
 
 ## Option C: Root Product Composition Only
 
@@ -153,7 +157,7 @@ Root configuration and adapters directly register belief families, Agents, metho
 
 ### Status
 
-This is a plausible first-slice implementation strategy even if the long-term design uses federated facets.
+This is the historical implementation antecedent. It proved the lower runtime layer, but the next package proof should use routed owner components so another expression does not add root application branches.
 
 ## Option D: PDS As Runtime Orchestrator
 

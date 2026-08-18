@@ -1,0 +1,17 @@
+{
+  "policy_id": "cargo_fixture_security",
+  "subject_kind": "workspace",
+  "ecosystem": "cargo",
+  "required_advisory_source_id": "fixture",
+  "required_coverage": {
+    "require_complete_inventory": true,
+    "require_all_components_covered": true,
+    "require_transitive_dependencies": true
+  },
+  "currency": {
+    "maximum_source_age_seconds": 3600,
+    "maximum_inventory_age_seconds": 3600
+  },
+  "severity_threshold": "high",
+  "verification": { "require_independent_calculation": true }
+}

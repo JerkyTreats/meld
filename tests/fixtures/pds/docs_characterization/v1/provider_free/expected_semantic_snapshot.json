@@ -1,0 +1,178 @@
+{
+  "schema_version": 1,
+  "input": {
+    "expression": "docs_freshness",
+    "subject": {
+      "domain_id": "workspace_fs",
+      "object_kind": "node",
+      "object_id": "docs"
+    },
+    "principal_id": "workspace-owner",
+    "agent_id": "docs-writer",
+    "selected_theory_ids": {
+      "authority_policy": "docs_workspace_local",
+      "belief_family": "docs_freshness",
+      "claim_policy": "docs-claims-strict-v1",
+      "curation_rule": "docs_freshness",
+      "maintained_condition": "docs_freshness",
+      "outcome_mapping": "docs_freshness_outcome_interpretation_v1",
+      "strategy_theory": "docs_freshness"
+    }
+  },
+  "installation": {
+    "receipt_id": "6c234aad01b667b737369275f58228bfd069f3258794b0403f641602f8f7b7b4",
+    "owner_revision_refs": {
+      "authority_policy": "authority_policy::docs_workspace_local::9b274e70fff4011617fe53496daf5723bec81a5a16a3e4ed306cde50abc82514",
+      "belief_family": "belief_family::docs_freshness::0234c592450dfb91",
+      "claim_policy": "docs_claim_policy::docs-claims-strict-v1::docs-claim-policy-b9a55c7a5afdc0a2a24927051bbbed8347d076e68406b1ce80d666b9006d3162",
+      "curation_rule": "agent_curation_rule::docs_freshness::f0b46005f4472731cb45fd72fdce3e06e7b04762c1038c3a2ca18f9083d88af1",
+      "maintained_condition": "agent_maintained_condition::docs_freshness::39ea8646a5cf3ccfa9e490336823097c4acca7072d22613ecfcd9df335332294",
+      "outcome_mapping": "outcome_mapping::docs_freshness_outcome_interpretation_v1::54dabdada9b6e7d56f1f1d58d943a934f68a231d2cdb6448fc856c3396c1a9dc",
+      "strategy_theory": "strategy_theory::docs_freshness::8db84614a55065588022ba2d778ecb16ead4d0ae4acd6ad25a6ea60adf52c97c"
+    },
+    "capability_contract_refs": [
+      "docs.assess_published_scope@1::capability-contract-74c5ccba6c32c36a32b4d093f92b4ca463a6c6a997008d366a8d6a36cd14bd60",
+      "docs.draft_patch_set@1::capability-contract-d76dfe828a7c5b9dbbac001f36bcdde7f445417d3aa5e1f2fb38b2c7f4b5a37d",
+      "docs.inspect_scope@1::capability-contract-8a51c6c1d8268d71b0e8a7c8e5c4498e4fdb6d52cbf9c69c543d51d315c5b031",
+      "docs.publish_patch_set@1::capability-contract-be6d8d1ddbcf0f2a1e5605b31777db71b7ac081286189912b18a4b90495e79c8",
+      "docs.validate_patch_set@1::capability-contract-4c6515ebde60cb02c31bed6d6f01512ff1090c3ed1ba44ecaf049bda0af06146"
+    ],
+    "claim_policy_ref": "docs_claim_policy::docs-claims-strict-v1::docs-claim-policy-b9a55c7a5afdc0a2a24927051bbbed8347d076e68406b1ce80d666b9006d3162",
+    "strategy_theory_ref": "strategy_theory::docs_freshness::8db84614a55065588022ba2d778ecb16ead4d0ae4acd6ad25a6ea60adf52c97c"
+  },
+  "activation": {
+    "selected_capabilities": [
+      {
+        "capability_type_id": "docs.assess_published_scope",
+        "capability_version": 1,
+        "content_identity": "capability-contract-74c5ccba6c32c36a32b4d093f92b4ca463a6c6a997008d366a8d6a36cd14bd60"
+      },
+      {
+        "capability_type_id": "docs.draft_patch_set",
+        "capability_version": 1,
+        "content_identity": "capability-contract-d76dfe828a7c5b9dbbac001f36bcdde7f445417d3aa5e1f2fb38b2c7f4b5a37d"
+      },
+      {
+        "capability_type_id": "docs.inspect_scope",
+        "capability_version": 1,
+        "content_identity": "capability-contract-8a51c6c1d8268d71b0e8a7c8e5c4498e4fdb6d52cbf9c69c543d51d315c5b031"
+      },
+      {
+        "capability_type_id": "docs.publish_patch_set",
+        "capability_version": 1,
+        "content_identity": "capability-contract-be6d8d1ddbcf0f2a1e5605b31777db71b7ac081286189912b18a4b90495e79c8"
+      },
+      {
+        "capability_type_id": "docs.validate_patch_set",
+        "capability_version": 1,
+        "content_identity": "capability-contract-4c6515ebde60cb02c31bed6d6f01512ff1090c3ed1ba44ecaf049bda0af06146"
+      }
+    ],
+    "registered_invokers": [
+      "docs.assess_published_scope@1",
+      "docs.draft_patch_set@1",
+      "docs.inspect_scope@1",
+      "docs.publish_patch_set@1",
+      "docs.validate_patch_set@1"
+    ],
+    "provider_required": true,
+    "runtime_ids": [
+      "world_model.belief_assessment",
+      "world_model.agent_goal_curation",
+      "world_model.agent_satisfaction",
+      "execution.planning",
+      "execution.task_dispatch",
+      "execution.publication"
+    ]
+  },
+  "flywheel": {
+    "canonical_events": [
+      {
+        "event_type": "execution.task.succeeded",
+        "domain": "execution",
+        "subject": "workspace_fs::node::node-a",
+        "causation": "goal-b3aa98202b995b4e",
+        "payload_hash": "b47f68e09dfb24d61f5f2c747c839942458d7b60329fbb2abc338bbdfec9fdae"
+      },
+      {
+        "event_type": "execution.task.failed",
+        "domain": "execution",
+        "subject": "workspace_fs::node::node-a",
+        "causation": "goal-b3aa98202b995b4e",
+        "payload_hash": "a801029ffdcf2fab1cc0954a1565d11bcd07322d1f047d9cd16a1ddb4ca0480c"
+      }
+    ],
+    "admitted_evidence": [
+      {
+        "evidence_class": "support",
+        "source_event": "execution.task.succeeded",
+        "theory_ref": "54dabdada9b6e7d56f1f1d58d943a934f68a231d2cdb6448fc856c3396c1a9dc",
+        "semantic_value": "content_written:stale_probability=0"
+      }
+    ],
+    "belief_transitions": [
+      {
+        "from": "unobserved",
+        "to": "freshness_satisfied",
+        "cause": "execution.task.succeeded"
+      }
+    ],
+    "maintained_condition_transitions": [
+      "breached",
+      "satisfied"
+    ],
+    "goal_transitions": [
+      "active",
+      "satisfied"
+    ],
+    "task_transitions": [
+      "pending",
+      "ready",
+      "succeeded",
+      "published"
+    ],
+    "outcome_transitions": [
+      "substantive_docs_publication"
+    ],
+    "final_artifact_hashes": {
+      "docs_patch": "b47f68e09dfb24d61f5f2c747c839942458d7b60329fbb2abc338bbdfec9fdae"
+    }
+  },
+  "lifecycle": {
+    "participant_ids": [
+      "world_model.belief_assessment",
+      "world_model.agent_goal_curation",
+      "world_model.agent_satisfaction",
+      "execution.planning",
+      "execution.task_dispatch",
+      "execution.publication"
+    ],
+    "ordered_states": [
+      "active",
+      "progress",
+      "quiet_confirmed"
+    ],
+    "final_wait_reasons": [
+      "no_ready_work"
+    ],
+    "wake_sources": [
+      "event_append",
+      "heartbeat_expiry"
+    ]
+  },
+  "reopen": {
+    "resolved_receipt_id": "6c234aad01b667b737369275f58228bfd069f3258794b0403f641602f8f7b7b4",
+    "resolved_owner_refs": {
+      "authority_policy": "authority_policy::docs_workspace_local::9b274e70fff4011617fe53496daf5723bec81a5a16a3e4ed306cde50abc82514",
+      "belief_family": "belief_family::docs_freshness::0234c592450dfb91",
+      "claim_policy": "docs_claim_policy::docs-claims-strict-v1::docs-claim-policy-b9a55c7a5afdc0a2a24927051bbbed8347d076e68406b1ce80d666b9006d3162",
+      "curation_rule": "agent_curation_rule::docs_freshness::f0b46005f4472731cb45fd72fdce3e06e7b04762c1038c3a2ca18f9083d88af1",
+      "maintained_condition": "agent_maintained_condition::docs_freshness::39ea8646a5cf3ccfa9e490336823097c4acca7072d22613ecfcd9df335332294",
+      "outcome_mapping": "outcome_mapping::docs_freshness_outcome_interpretation_v1::54dabdada9b6e7d56f1f1d58d943a934f68a231d2cdb6448fc856c3396c1a9dc",
+      "strategy_theory": "strategy_theory::docs_freshness::8db84614a55065588022ba2d778ecb16ead4d0ae4acd6ad25a6ea60adf52c97c"
+    },
+    "belief_state_hash": "2067ef10ba5c9ca1c3316aee70fcdd645f9d96efc4f77dae2412d49741a24162",
+    "goal_state_hash": "984a194c27638b262189449959666f411c633b16f9262aa437b99f62eb9e1c78",
+    "task_state_hash": "1fa10faf34e6b288c0c8823ad72c9cea2b291adede6c91e81073da5ee7864505"
+  }
+}

@@ -4,6 +4,8 @@ Date: 2026-08-08
 Status: independent architecture review
 Scope: interrogate the PDS layering question starting from the principal/user surface and moving downward, without using runtime implementation convenience as the authoring model
 
+> This review predates the accepted PDS cognition boundary. Where it treats exact actions or Methods as compiled PDS output, use [Canonical Persistent Domain Stewardship](../../cognitive_architecture/persistent_domain_stewardship.md) instead.
+
 ## Question
 
 Are the current detailed PDS examples better understood as compiler-facing material than as the eventual end-user expression of a persistent domain steward?

@@ -17,7 +17,8 @@ use meld_world_model::PerspectiveKey;
 use crate::config::{ConfigLoader, PhysicalBinding};
 use crate::error::ApiError;
 use crate::init::world::pipeline::{
-    CompleteTheoryInstall, WorldInitContent, WorldInitPipeline, WorldInitTheoryBundle,
+    CompleteTheoryInstall, RoutedTheoryInstall, WorldInitContent, WorldInitPipeline,
+    WorldInitTheoryBundle,
 };
 use crate::init::world::theory::{
     load_authority_policy, load_belief_family_config, load_claim_policy, load_curation_rule_config,
@@ -182,11 +183,50 @@ pub fn run_world_init(
         authority_policies: stores.authority_policy_registry.as_ref(),
         claim_policies: stores.claim_policy_registry.as_ref(),
         receipts: stores.theory_receipts.as_ref(),
+        routed: routed_install(stores, &request, theory_source, observed_seq)?,
     };
     WorldInitPipeline::new(&mut registry, stores.agent_store.as_ref(), &append)
         .with_complete_theory(complete)
         .run(&request, &content)
         .map_err(|error| world_init_error(error.to_string()))
+}
+
+fn routed_install(
+    stores: &crate::runtime::storage::OpenProductStores,
+    request: &WorldInitRequest,
+    theory_source: Option<&Path>,
+    observed_seq: u64,
+) -> Result<Option<RoutedTheoryInstall>, ApiError> {
+    if !request.stages.contains(&WorldInitStage::InstallTheory) {
+        return Ok(None);
+    }
+    if let Some(source) = theory_source.filter(|root| root.join("pds-package.json").is_file()) {
+        let prior = stores
+            .pds_packages
+            .head(crate::docs::theory::DOCS_PACKAGE_ID)
+            .map_err(|failure| world_init_error(failure.to_string()))?;
+        let receipt = crate::docs::theory::install_package(stores, source, observed_seq)
+            .map_err(|failure| world_init_error(failure.to_string()))?;
+        let changed = prior.as_ref().map(|head| head.receipt_id.as_str())
+            != Some(receipt.receipt_id.as_str());
+        return Ok(Some(RoutedTheoryInstall { receipt, changed }));
+    }
+    let heads = stores
+        .pds_packages
+        .heads()
+        .map_err(|failure| world_init_error(failure.to_string()))?;
+    if heads.len() == 1 {
+        let receipt = stores
+            .pds_packages
+            .resolve_receipt(&heads[0].receipt_id)
+            .map_err(|failure| world_init_error(failure.to_string()))?
+            .ok_or_else(|| world_init_error("routed package head cites a missing receipt"))?;
+        return Ok(Some(RoutedTheoryInstall {
+            receipt,
+            changed: false,
+        }));
+    }
+    Ok(None)
 }
 
 /// Parse `--stage` arguments; an empty selection means every stage.

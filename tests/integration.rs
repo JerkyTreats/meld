@@ -38,6 +38,8 @@ mod outcome_evidence;
 pub(crate) mod outcome_evidence_support;
 pub(crate) mod parity_fixture;
 mod parity_fixture_contract;
+mod pds_docs_gmail_operator_verification;
+mod pds_w00_docs_characterization;
 mod product_event_authority_cutover;
 mod product_storage_assembly;
 mod progress_observability;

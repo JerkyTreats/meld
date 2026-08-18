@@ -1,7 +1,7 @@
 # Persistent Domain Stewardship Architectural Invariants
 
-Date: 2026-08-08  
-Status: proposed architectural constraints derived from the current runtime and the expanded PDS example corpus  
+Date: 2026-08-18
+Status: active constraints aligned to canonical PDS architecture
 Scope: cross-expression architectural concerns that should remain stable while PDS declarations, packages, and application-specific facets evolve
 
 ## Purpose
@@ -47,25 +47,24 @@ new expression
 
 **Continuation:** the next declaration/linking layer should remove expression-name dispatch as the way new PDS applications enter runtime composition.
 
-## Invariant 3 — Operational Theory Is State-Free; Runtime State Is Domain-Owned
+## Invariant 3 — Operational Theory Supplies Meaning Without Precomputing Cognition
 
 Theory declares meaning:
 
 - belief families;
 - evidence routes;
 - curation rules;
-- planning methods;
-- available actions;
-- method realizations;
-- task-package semantics;
 - maintained conditions;
-- authority/governance declarations.
+- settlement and prospective evidence obligations;
+- abstract action-class, outcome, constraint, and governance semantics.
 
-Theory does not own current observations, graph anchors, belief revisions, Agent decisions, goals, task state, capability attempts, or measured outcomes.
+Theory does not own current observations, graph anchors, admitted evidence, belief revisions, Agent decisions, Goals, Strategy candidates, task state, capability attempts, or measured outcomes.
 
-**Current code:** strongly held for the implemented slice. Durable runtime state remains in the owning domains.
+State-free is necessary but insufficient. Theory also does not own the active capability catalog, Method topology, Strategy evaluation policy, search bounds, static projection request, or effective authority. Those independently owned inputs are combined only when Meld constructs a current Strategy problem.
 
-**Pressure from new designs:** a lore package may declare what a canon claim means, but the current claims, disputes, and reconciliations remain runtime/domain state; a roleplay package may declare knowledge semantics, but current character knowledge remains runtime state.
+**Current code:** partially held. Durable runtime state remains in the owning domains, but `StrategyTheoryPackage` combines settlement meaning with exact capabilities, evaluation policy, bounds, requested dimensions, and requested authority.
+
+**Pressure from new designs:** a lore package may declare what a canon claim means, but current claims, disputes, reconciliations, and response Strategy remain runtime and domain state. A roleplay package may declare knowledge and disclosure semantics, but current character knowledge and response construction remain runtime state.
 
 ## Invariant 4 — Exact Semantic Revision Must Be Recoverable
 
@@ -200,12 +199,14 @@ The required relationship is:
 
 ```text
 available capability
-∩ package requested authority
+∩ assignment requested authority
 ∩ principal grant
 ∩ runtime policy
 ∩ current restrictions
 = effective authority
 ```
+
+PDS may declare governance classifications and the action classes a profile can request. It does not make the request effective.
 
 **Current code:** capability and effect contracts are typed; the generic PDS grant/governance intersection is not implemented.
 
@@ -311,6 +312,55 @@ new root semantic switches
 
 If a new expression truly requires a new generic kernel mechanism, that mechanism should be justified independently of the application's vocabulary.
 
+## Invariant 19 — Isolation Is Multi-Axis And Placement Neutral
+
+PDS isolation covers semantic revision, assignment authority, physical bindings, state, failure fate, resources, effects, result admission, and replay. A process boundary may strengthen some of those properties, but it does not prove the others.
+
+The portable relationship is:
+
+```text
+package meaning
++ assignment authority
++ activation isolation requirements
+→ domain-selected runtime placement
+```
+
+Linked libraries, subprocesses, sidecars, remote services, and persistent external controllers may implement the same owner contract. Package identity must not change merely because placement changes.
+
+**Current code:** partial. Package theory, assignment selection, effective authority, execution effect declarations, durable dispatch claims, and runtime process diagnostics already provide separate anchors. No portable PDS activation isolation contract exists.
+
+**Continuation:** model isolation requirements without turning PDS into a process supervisor or universal deployment schema.
+
+## Invariant 20 — Activation Generation, Participant Incarnation, And Operation Lineage Fence External Results
+
+Activation identity alone is too coarse for credential rotation, adapter upgrade, restart, and late callback behavior. Every assignment-wide authority realization needs an activation generation. Every operational ownership lifetime within that generation needs a participant incarnation. Capability work also keeps a stable operation key separate from attempt and dispatch-claim lineage. Passive delivery keeps subscription, delivery, and source-cursor lineage without inventing an execution claim.
+
+```text
+assignment
+→ activation
+→ activation generation
+→ participant incarnation
+→ stable operation or passive subscription
+→ attempt or passive delivery
+→ owner-validated domain result
+```
+
+Transport success, process exit, and callback authenticity do not establish domain truth. The destination domain admits a canonical product only after validating scope, source revision, evidence class, adapter lineage, and operation or passive-delivery lineage.
+
+**Current code:** partial. Execution lifecycle epochs and dispatch claims already fence task attempts. Activation generations, participant incarnations, and domain result-admission lineage are not yet common PDS contracts.
+
+**Continuation:** reuse execution lifecycle fencing while preserving a stable cross-attempt operation key, avoid inventing a PDS retry engine, and require owner adapters to classify late results from retired generations or incarnations explicitly.
+
+## Invariant 21 — Shared Runtime Does Not Imply Shared Stewardship State
+
+Assignments may share a package receipt, adapter process, service, cache, or source database. They must not thereby share principal grants, perspective, scope, selected capabilities, bindings, budgets, belief state, Goals, or task state.
+
+Sharing scope must be declared and no broader than every selected owner contract permits. A dedicated process is not automatically isolated if it shares credentials or external state, and a shared service is not automatically invalid if it preserves tenant, binding, invocation, and result-admission boundaries.
+
+**Current code:** gap at PDS assembly. Current runtime contracts support scoped durable work, but several activated package assignments and shared external adapters are not yet proven.
+
+**Continuation:** pressure-test two assignments over one subject and one shared external runtime before promoting a cardinality model.
+
 ## Cross-Design Concern Register
 
 | Concern | Docs / software | CVE / reliability | Roleplay | Lore/canon | Current common runtime | Main gap |
@@ -327,6 +377,7 @@ If a new expression truly requires a new generic kernel mechanism, that mechanis
 | authority | yes | critical | output/canon boundary | canon-edit boundary | capability effects only | principal grants/governance |
 | context hydration | useful | diagnostic | central | central | hydration refs/context domain | generic projection owner |
 | domain reconciliation semantics | software-specific | vulnerability/diagnosis-specific | narrative-specific | entity/claim-specific | generic evidence/belief substrate | domain facets, not kernel ontology |
+| runtime isolation | local and provider-backed | local scanner and persistent monitor | session and model service | importer and source service | authority, effects, claims, process diagnostics | portable activation requirement and result-admission lineage |
 
 ## Continuation Priorities
 
@@ -344,9 +395,9 @@ Settle the authoritative representation of the persistent responsibility that su
 
 Define principal grants, action classes, approvals, budgets, prohibitions, escalation, and effective authority lineage separately from capability availability.
 
-### Priority D — Complete theory revision installation
+### Priority D — Separate exact Strategy inputs
 
-Bring outcome mappings, planning methods, available actions, method realizations, and package/outcome theory to the same exact-revision standard already established by belief families where replay requires it.
+Distill stable Strategy semantic theory from activation capability snapshots, separately admitted Methods, Agent construction policy, derived projection requests, request-scoped search controls, and effective authority. Preserve exact revision and problem identity for every independently owned input.
 
 ### Priority E — Generic outcome verification declaration
 
@@ -359,6 +410,10 @@ Define bounded hydration/projection only after identifying what runtime domain s
 ### Priority G — Domain facets for new examples
 
 Implement lore claim/identity semantics and roleplay knowledge/reveal semantics as domain facets or theory after the common boundaries above are stable.
+
+### Priority H — Portable runtime isolation
+
+Separate placement from isolation guarantees, carry activation-generation, participant-incarnation, stable operation, attempt, and passive-delivery lineage to owner result admission, and prove both dedicated and shared adapter cases without introducing a PDS process supervisor.
 
 ## Acceptance Rule
 

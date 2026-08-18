@@ -18,6 +18,25 @@ belief divergence
 → Agent satisfaction
 ```
 
+## Problem input ownership
+
+The immutable Strategy problem is assembled from separately authoritative inputs. PDS supplies only the stable Strategy semantic theory. Capability and activation supply exact current affordances. Strategy supplies separately admitted Methods. Agent supplies the Goal and construction policy. Planner supplies current world state. Agent and execution supply the authority context.
+
+The boundary requires source independence:
+
+```text
+same PDS theory plus different capability snapshot
+→ potentially different candidates
+
+same Goal plus different construction policy
+→ potentially different recommendation
+
+same candidate plus different authority context
+→ potentially different admission
+```
+
+The implemented `StrategyTheoryPackage` combines several of these sources. It is a compatibility form and not the canonical PDS semantic contract.
+
 ## Candidate contract
 
 Strategy may construct a concrete candidate for a proposed Goal. Construction does not authorize the candidate or admit the Goal.
@@ -26,11 +45,11 @@ A candidate is eligible only when all of the following meaning is established:
 
 - the proposed Goal and its target are ground
 - the planner context has exact identity and matches the Goal scope
-- the Method applies to the Goal target
-- every Method precondition is satisfied
+- the candidate construction basis is either an applicable admitted Method or a novel derivation from exact capability contracts
+- every semantic and capability precondition is satisfied
 - every binding is ground
-- the resulting Composition is structurally valid
-- the Method has one unambiguous available action realization
+- every selected exact capability belongs to the immutable activation snapshot
+- the resulting action graph and Composition are structurally closed and valid
 - the action outcome meaning is governed by a valid outcome contract
 - an observational Goal has a valid prospective evidence route for its subject and dimension
 
@@ -42,7 +61,7 @@ If any required meaning is missing, indeterminate, stale, invalid, unavailable, 
 
 The Agent alone authorizes a Strategy candidate. Successful construction, retention, admission, or realization does not confer Agent authority.
 
-Authorization binds one Agent judgment to the exact Goal target, planner context, Method meaning, ground bindings, concrete Composition, action outcome meaning, prospective evidence route, and judgment policy used for the choice. This binding preserves what the Agent chose and the grounds on which it chose.
+Authorization binds one Agent judgment to the exact Goal target, planner context, construction basis, capability graph, ground bindings, concrete Composition, action outcome meaning, prospective evidence route, and judgment policy used for the choice. When the construction basis uses a Method, its exact identity and content are retained. This binding preserves what the Agent chose and the grounds on which it chose.
 
 Authorization does not include an inferred outcome, a claim of Goal satisfaction, an execution schedule, a task identity, a provider choice, learned preference, or reusable catalog knowledge. Those meanings either belong to other domains or require evidence not established by the choice.
 
@@ -58,21 +77,21 @@ Operational work derived from a settled authorization must be reproducible and i
 
 An Agent-curated Goal may enter Execution only with a nonempty Agent authorization for an eligible candidate.
 
-Admission must establish that the authorization belongs to the Agent judgment and matches the Goal, target, planner context, Method, bindings, Composition, action, outcome meaning, and prospective evidence route being admitted. Missing, empty, mismatched, or content-invalid authorization is rejected.
+Admission must establish that the authorization belongs to the Agent judgment and matches the Goal, target, planner context, construction basis, capability graph, bindings, Composition, action, outcome meaning, and prospective evidence route being admitted. Missing, empty, mismatched, or content-invalid authorization is rejected.
 
 A repeated admission of the same settled authorization must preserve the same accepted Goal and authorized meaning.
 
 ## Authorized realization contract
 
-Execution owns revalidation and realization of authorized meaning. Before mutating the task network, it must establish that the authorized Method content, ground bindings, Composition, action availability, realization, and Goal lifecycle remain valid.
+Execution owns revalidation and realization of authorized meaning. Before mutating the task network, it must establish that the authorized construction basis, exact capability contracts, ground bindings, Composition, action availability, realization, and Goal lifecycle remain valid.
 
-Execution must realize the admitted candidate exactly. It must not select a different Method, add semantic work, change the claimed outcome meaning, or substitute a different Composition or action. If current conditions no longer support exact realization, Execution fails without task-network mutation.
+Execution must realize the admitted candidate exactly. It must not select a different Method or capability graph, add semantic work, change the claimed outcome meaning, or substitute a different Composition or action. If current conditions no longer support exact realization, Execution fails without task-network mutation.
 
 Authorization permits realization. It does not permit Execution to satisfy the Goal.
 
 ## Observational evidence contract
 
-For an observational Goal, the candidate must identify a prospective route from the chosen Method and action through governed outcome meaning to admissible evidence for the Goal subject and dimension.
+For an observational Goal, the candidate must identify a prospective route from the chosen action graph through governed outcome meaning to admissible evidence for the Goal subject and dimension.
 
 The route is a prediction that realization can produce relevant evidence. It is not evidence, a belief update, an assertion that the Goal condition became true, or a guarantee that the Goal threshold will be crossed.
 

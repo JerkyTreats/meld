@@ -12,6 +12,8 @@ This catalog normalizes several candidate PDS expressions against a small compar
 
 The catalog complements the complete decomposition procedure in [Use-Case Decomposition](../use_case_decomposition.md). Detailed examples may expand an expression into domain, observation, epistemic, charter, operational, outcome, and governance models.
 
+The normalized folder corpus and per-example router specifications begin at [PDS Example Router Corpus](README.md).
+
 ## Expression Card
 
 Each expression is described through the same questions:
@@ -49,6 +51,8 @@ The fields are deliberately application-level. They lower into canonical operati
 | Physical asset maintenance | asset/component/inspection | condition, degradation, failure risk | inspect, service, schedule, isolate | CMMS/scheduled maintenance | conditional-to-strong |
 
 ## 1. Documentation Freshness Steward
+
+Router-oriented entry: [Documentation Freshness](documentation_freshness/README.md).
 
 ### Mandate
 
@@ -124,6 +128,8 @@ Selective evidence acquisition, persistent source-document lineage, uncertainty-
 Strong when the responsibility is continuous and selective. Weak when every source change deterministically regenerates a known artifact.
 
 ## 2. CVE Exposure Steward
+
+Router-oriented entry: [Dependency Security](dependency_security/README.md).
 
 ### Mandate
 
@@ -213,6 +219,8 @@ Strong when scanner findings require contextual applicability and remediation de
 
 Detailed in [Roleplay Character Continuity Steward](roleplay_character.md).
 
+Router-oriented entry: [Roleplay Character Continuity](roleplay_character_continuity/README.md).
+
 ### Mandate
 
 Maintain coherent perspective-bound character state and narrative continuity across an evolving interaction history.
@@ -265,7 +273,11 @@ Conditional. Strongest for shared, mutable, long-running worlds. A single-sessio
 
 Detailed in [Lore Transcriber And Canon Steward](lore_transcriber.md).
 
+Router-oriented entry: [Lore And Canon](lore_and_canon/README.md).
+
 The current story-to-visual product constraint and the concrete threshold for Meld as its narrative database are detailed in [Freeform Narrative Database Constraint Case](freeform_narrative_database.md).
+
+The constraint case has its own router-oriented entry at [Freeform Narrative Database](freeform_narrative_database/README.md).
 
 ### Mandate
 
@@ -316,6 +328,8 @@ Conditional. Transcription alone is not stewardship; canon maintenance is.
 
 Detailed in [Software Quality Stewardship Example](software_quality.md).
 
+Router-oriented entry: [Codebase Quality](codebase_quality/README.md).
+
 ### Mandate
 
 Maintain several software-quality concerns over an indefinitely changing repository without collapsing them into one universal quality score.
@@ -362,6 +376,8 @@ Heterogeneous evidence, selective validation, conflict among quality objectives,
 Strong.
 
 ## 6. Game Faction Strategy Steward
+
+Router-oriented entry: [Game Faction Strategy](game_faction_strategy/README.md).
 
 ### Mandate
 
@@ -435,6 +451,8 @@ Persistent divergent beliefs, provenance-sensitive testimony, active scouting, l
 Strong research fit at strategic timescales.
 
 ## 7. Service Reliability Steward
+
+Router-oriented entry: [Service Reliability](service_reliability/README.md).
 
 ### Mandate
 
@@ -512,6 +530,8 @@ Strong at the minutes-to-months operational horizon.
 
 ## 8. Learner Mastery Steward
 
+Router-oriented entry: [Learner Mastery](learner_mastery/README.md).
+
 ### Mandate
 
 Maintain an evidence-grounded model of a learner's mastery, prerequisite readiness, misconceptions, retention, and progression, then select bounded learning interventions.
@@ -586,6 +606,8 @@ Conditional but credible. Outcome evidence is delayed and confounded compared wi
 
 ## 9. Portfolio Thesis And Risk Steward
 
+Router-oriented entry: [Portfolio Thesis And Risk](portfolio_thesis_and_risk/README.md).
+
 ### Mandate
 
 Maintain research theses, invalidation conditions, mandate constraints, exposure, liquidity, and interacting risk while keeping research belief separate from execution authority.
@@ -658,6 +680,8 @@ Decision-time thesis reconstruction, counterevidence, belief decay, active resea
 Strong for thesis and risk stewardship; weak initial fit for autonomous live trading.
 
 ## 10. Physical Asset Maintenance Steward
+
+Router-oriented entry: [Physical Asset Maintenance](physical_asset_maintenance/README.md).
 
 ### Mandate
 

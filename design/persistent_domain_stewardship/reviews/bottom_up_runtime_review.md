@@ -4,6 +4,8 @@ Date: 2026-08-08
 Status: independent architecture review
 Scope: interrogate the PDS layering question starting from the implemented runtime seams and moving upward, without assuming the current hand-authored theory/package forms are appropriate user syntax
 
+> This review predates the accepted PDS cognition boundary. It accurately records runtime inputs but does not establish every input as PDS theory. Use [Canonical Persistent Domain Stewardship](../../cognitive_architecture/persistent_domain_stewardship.md) for current ownership.
+
 ## Question
 
 Given the current Meld runtime, what must a declaration/compiler supply so that new PDS expressions can execute through existing domain contracts without adding application-specific runtime branches?

@@ -6,6 +6,7 @@
 
 pub mod catalog;
 pub mod contracts;
+pub mod contribution;
 pub mod runtime;
 
 use crate::error::ApiError;
@@ -18,6 +19,7 @@ pub use contracts::{
     EffectKind, EffectSpec, ExecutionClass, ExecutionContract, InputCardinality, InputSlotSpec,
     OutputSlotSpec, ScopeContract,
 };
+pub use contribution::*;
 pub use meld_execution::capability::{CapabilityInvocationResult, CapabilityInvoker};
 pub use runtime::{
     ArtifactValueRef, CapabilityExecutionContext, CapabilityInvocationPayload,
@@ -33,5 +35,23 @@ pub type CapabilityExecutorRegistry =
 /// Initialization selects exact entries through the installed Strategy
 /// package and runtime activation requires matching invokers.
 pub fn published_product_contracts() -> Vec<CapabilityTypeContract> {
-    crate::docs::capability::published_contracts()
+    product_capability_inventory()
+        .map(|inventory| {
+            inventory
+                .contracts()
+                .map(|revision| revision.contract.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Build the deterministic compiled product capability inventory.
+pub fn product_capability_inventory(
+) -> Result<ProductCapabilityInventory, CapabilityContributionDiagnostic> {
+    ProductCapabilityInventory::assemble(vec![
+        std::sync::Arc::new(crate::docs::contribution::DocsCapabilityContributor::shipped()),
+        std::sync::Arc::new(
+            crate::dependency_security::capability::DependencySecurityCapabilityContributor,
+        ),
+    ])
 }

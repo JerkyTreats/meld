@@ -1,16 +1,18 @@
 # Theory Elevation Program
 
-Date: 2026-08-12
+Date: 2026-08-18
 Status: active
-Scope: elevate the hand-lowered docs stewardship image into durable installed theory, remove root expression dispatch, and prove runtime agnosticism through a second dissimilar expression
+Scope: elevate the hand-lowered docs stewardship image into durable installed theory, remove root expression dispatch, prove bounded runtime agnosticism, and retain later hypotheses behind explicit design gates
 
 ## Purpose
 
 The strategy landing closed the docs freshness loop dynamically. Steps 1 through 4 then elevated the complete docs image into exact durable owner revisions, removed root expression dispatch, made standing maintained conditions causal, and separated effective authority from capability availability. The generic Strategy, Agent, and execution machinery carries no docs vocabulary.
 
-The remaining program work is proof and accumulation. A dissimilar second expression must falsify hidden docs assumptions before package schemas freeze, then settled replay must reuse recorded judgment without candidate regeneration.
+The remaining architectural program concerns proof and accumulation. A dissimilar second expression must falsify hidden docs assumptions before package schemas freeze. The earlier settled-replay concept remains a hypothesis rather than an accepted endpoint. [PDS Authorized Implementation Workstreams](pds_implementation_workstreams.md) is closed as a superseded compatibility checkpoint. The active [PDS Boundary Program](pds_boundary_program.md) owns the bounded correction.
 
-This program is the active forward authority after the runtime completion program closed. It succeeds the [Runtime Completion Ground Map](runtime_completion_ground_map.md) as the current objective.
+This program remains an architectural objective, not blanket implementation authority. Active delivery authority is limited to the current phase named by the PDS Boundary Program. [PDS Design-Gated Continuations](pds_design_gated_continuations.md) records work that remains outside that authorization.
+
+[Canonical Persistent Domain Stewardship](../../cognitive_architecture/persistent_domain_stewardship.md) now fixes the target boundary. Steps 1 through 4 delivered a compatibility aggregate and remain valid evidence, but future work must split exact capabilities, Methods, construction policy, search controls, projection requests, and requested authority from PDS semantic theory.
 
 ## Ground
 
@@ -24,7 +26,7 @@ What holds on the strategy branch:
 What does not hold:
 
 - A second dissimilar expression has not yet tested the generality of the elevated seams.
-- Settled Strategy replay does not yet reuse recorded authorization without candidate regeneration.
+- No correctness or measured operational need for settled Strategy replay has been established.
 
 ## Program Sequence
 
@@ -37,7 +39,7 @@ flowchart TD
     S2 --> S5[5 second expression proof]
     S3 --> S5
     S4[4 authority distinct from capability] --> S5
-    S2 --> S6[6 settled replay and strategy promotion]
+    S2 --> S6[6 design-gated Strategy audit]
     S5 --> S6
 ```
 
@@ -47,7 +49,8 @@ flowchart TD
 - Step 2 is implemented with named declaration lowering, owner activation, exact capability binding, declaration-selected belief context, and no root expression dispatch.
 - Step 3 is implemented with Agent-owned maintained-condition revisions, complete-receipt activation, causal Goal lineage, and compatibility lowering for threshold-only records.
 - Step 4 is implemented with exact execution-owned policy revisions and independent Agent, admission, planning, and dispatch enforcement.
-- Steps 5 and 6 remain pending.
+- The bounded truth and lifecycle support in `W05` and `W06` is authorized, but full Step 5 completion is not.
+- Step 6 is not authorized and requires a full design audit and necessity proof.
 
 The delivered base through Step 4 is independently reconciled in the [Fresh Review Of Steps 1 Through 4](theory_elevation_steps_1_through_4_fresh_review.md).
 
@@ -69,26 +72,30 @@ Implementation and evidence are recorded in the [Standing Maintained Condition I
 
 ### Step 4 — Authority distinct from capability
 
-Represent effective authority as the intersection of capability availability, package request, principal grant, runtime policy, and restrictions. The stewardship reviews name authority as the place where design must not be inferred from nearby capability machinery. This step gates any expression whose interventions are consequential beyond workspace-local writes.
+Represent effective authority as the intersection of assignment request, principal grant, runtime policy, and restrictions, then verify that selected actions are covered. Capability availability remains a separate input. This step gates any expression whose interventions are consequential beyond workspace-local writes.
 
 Implementation and evidence are recorded in the [Effective Authority Implementation Design](effective_authority_implementation_design.md) and [Effective Authority Completion Evidence](effective_authority_completion_evidence.md).
 
-### Step 5 — Second expression proof
+### Step 5 — Dependency-security second expression proof
 
-Implement CVE freshness as the second stewardship expression. It is the designed inverse of docs freshness: settlement by acquisition of external advisories rather than by evaluation of produced bytes, scoped negative obligations rather than positive thresholds, durable external wake conditions, and candidate scoping over a shared manifest artifact. Its required semantics are recorded in the [CVE Freshness Use Case](../../use_cases/cve_freshness.md) as a falsification list. The expression is rejected as a generality proof if it needs a root match arm, an application-named belief subsystem, a planner branch on application vocabulary, or capability treated as authorization. Passing this step is the evidence gate the stewardship corpus requires before freezing package or declaration schemas.
+Authorization status: only the bounded read-only truth slice and portable lifecycle contract in `W05` and `W06` are authorized. Completing this step requires real dependency-security domain and product design followed by explicit reauthorization.
 
-The dedicated pre-requirements mapping is recorded in the [CVE Freshness Step 5 Discovery Ground Map](cve_freshness_step_5_discovery_ground_map.md). It identifies the current docs-shaped image boundary, assignment-scope and subject-instance gap, observation bridge, planner projection boundary, and cross-task effect arbitration as the design questions that must settle before implementation initiation. The candidate package boundary and its deliberately unresolved runtime-isolation posture are captured in the [External Domain Theory Attachment Proposition Brief](external_domain_theory_attachment_proposition_brief.md).
+The full step would implement dependency security as the second stewardship expression. CVE freshness remains its original use-case name and falsification surface, while dependency security is the owning domain because inventory, non-CVE advisories, source coverage, remediation, and verification are broader than one advisory identity system. It is the designed inverse of docs freshness: settlement by acquisition of external advisories rather than by evaluation of produced bytes, scoped negative obligations rather than positive thresholds, durable external wake conditions, and candidate scoping over a shared manifest artifact. Its required semantics are recorded in the [CVE Freshness Use Case](../../use_cases/cve_freshness.md) as a falsification list. The expression is rejected as a generality proof if it needs a root match arm, an application-named belief subsystem, a planner branch on application vocabulary, or capability treated as authorization. Passing the full step remains an evidence gate before package or declaration schemas may freeze, but the full step is not authorized.
 
-### Step 6 — Settled replay and strategy promotion
+The dedicated pre-requirements mapping is recorded in the [CVE Freshness Step 5 Discovery Ground Map](cve_freshness_step_5_discovery_ground_map.md). It identifies the current docs-shaped image boundary, assignment-scope and subject-instance gap, observation bridge, planner projection boundary, and cross-task effect arbitration as the design questions that must settle before implementation initiation. The candidate package boundary and its deliberately unresolved runtime-isolation posture are captured in the [External Domain Theory Attachment Proposition Brief](external_domain_theory_attachment_proposition_brief.md). Current sequencing treats generic attachment and docs parity as prerequisites to the dependency-security truth path rather than implementing a second expression against the fixed image.
 
-With durable theory registries and the settled-replay contract, promote validated strategy candidates into durable records the world model can collect, connect, and reuse: after settlement, replay reuses the exact judgment without regenerating candidates. This step turns per-Goal construction into an accumulating strategy asset and is the program endpoint.
+### Step 6 — Design-gated Strategy audit
+
+Authorization status: not authorized for implementation. The proposed Strategy changes require a full design audit that first demonstrates a correctness need or measured operational need and rules out simpler use of existing historical records.
+
+The earlier hypothesis proposed promoting validated Strategy candidates into reusable durable records after settlement. That direction is not canonical. Exact owner revisions, package lineage, Agent authorization, realized Composition, and historical resolution may already provide the required behavior without a new replay path.
 
 ## Exit Criteria
 
 - Two dissimilar stewardship expressions run through identical root assembly with no expression-named branches.
 - Every theory identity executed by either expression resolves through a durable registry revision.
 - A standing maintained condition, not a compiled goal template, causes each transient Goal.
-- One settled Goal replays through its recorded authorization without candidate regeneration.
+- Any Strategy continuation has passed a full audit and explicit reauthorization, or the program records that existing historical resolution is sufficient.
 - The bounded convergence behavior of the docs flywheel is preserved under the elevated theory path.
 
 ## Residual Register
@@ -112,6 +119,9 @@ Residuals tracked in their home documents, not gated by this program:
 
 ## Read With
 
+- [PDS Authorized Design Delivery Program](pds_authorized_design_delivery_program.md)
+- [PDS Authorized Implementation Workstreams](pds_implementation_workstreams.md)
+- [PDS Design-Gated Continuations](pds_design_gated_continuations.md)
 - [Strategy Ground Map](../world_model/strategy/ground_map.md)
 - [Minimal Slice Requirements](../world_model/strategy/minimal_slice_requirements.md)
 - [PDS Theory Runtime Layer](pds_theory_runtime_layer.md)

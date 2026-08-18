@@ -1,6 +1,6 @@
 # Cognitive Architecture
 
-Date: 2026-04-22
+Date: 2026-08-18
 Status: active
 Scope: canonical declarative design intent for meld across sensory, world model, execution, and shared temporal coordination
 
@@ -56,7 +56,7 @@ This area does own:
 
 This area does not own implementation schedule, migration execution, or historical completion records. Those belong under `design/plan` and `design/completed`.
 
-The declarative application layer is [Persistent Domain Stewardship](persistent_domain_stewardship.md): its settled layer — operational domain theory against the runtime — is canonical there, and its unsettled upper layers remain proposals in [Persistent Domain Stewardship Proposals](../persistent_domain_stewardship/README.md). Cognitive architecture defines how the runtime operates; stewardship declarations state what bounded domain, mandate, evidence, actions, outcomes, and authority are loaded into it.
+The declarative application layer is [Persistent Domain Stewardship](persistent_domain_stewardship.md): its semantic boundary against the runtime is canonical there, and its unsettled authoring, profile, and lifecycle representations remain proposals in [Persistent Domain Stewardship Proposals](../persistent_domain_stewardship/README.md). Cognitive architecture defines how the runtime operates. Stewardship declarations supply stable domain vocabulary, evidence meaning, norms, action classes, outcomes, and governance semantics without precomputing cognition.
 
 ## Crate Routing
 
@@ -101,6 +101,8 @@ The declarative application layer is [Persistent Domain Stewardship](persistent_
   translation from maintained intent and trusted scope into concrete belief questions
 - [Persistent Domain Stewardship](persistent_domain_stewardship.md)
   the canonical settled layer of PDS — operational domain theory against the runtime — and the layering discipline for the rest
+- [Runtime Lifecycle And Quiescence](runtime_lifecycle_and_quiescence.md)
+  cross-domain lifecycle, justified waiting, interruption, recovery, and wake semantics
 - [World Model Strategy](world_model/strategy/README.md)
   bounded reusable and novel candidate construction before Goal admission
 - [Belief Microarchitecture](world_model/belief/microarchitecture.md)
@@ -140,21 +142,23 @@ The declarative application layer is [Persistent Domain Stewardship](persistent_
 12. [World Model Agent](world_model/agent/README.md)
 13. [Directive Grounding](world_model/agent/directive_grounding.md)
 14. [Persistent Domain Stewardship](persistent_domain_stewardship.md)
-15. [World Model Strategy](world_model/strategy/README.md)
-16. [Belief Microarchitecture](world_model/belief/microarchitecture.md)
-17. [Fact To Belief](world_model/belief/fact_to_belief.md)
-18. [Comparator Model](world_model/belief/comparator_model.md)
-19. [Belief Substrate](world_model/belief/substrate.md)
-20. [Curation In Belief](world_model/belief/curation.md)
-21. [Lang Domain](meld-lang/README.md)
-22. [Execution Domain](execution/README.md)
-23. [Execution Planning](execution/planning/README.md)
-24. [Events Design](events/README.md)
-25. [Further Research Prompts](../completed/world_state/further_research_prompts.md)
+15. [Runtime Lifecycle And Quiescence](runtime_lifecycle_and_quiescence.md)
+16. [World Model Strategy](world_model/strategy/README.md)
+17. [Belief Microarchitecture](world_model/belief/microarchitecture.md)
+18. [Fact To Belief](world_model/belief/fact_to_belief.md)
+19. [Comparator Model](world_model/belief/comparator_model.md)
+20. [Belief Substrate](world_model/belief/substrate.md)
+21. [Curation In Belief](world_model/belief/curation.md)
+22. [Lang Domain](meld-lang/README.md)
+23. [Execution Domain](execution/README.md)
+24. [Execution Planning](execution/planning/README.md)
+25. [Events Design](events/README.md)
+26. [Further Research Prompts](../completed/world_state/further_research_prompts.md)
 
 ## Read With
 
 - [Persistent Domain Stewardship](../persistent_domain_stewardship/README.md)
+- [Runtime Lifecycle And Quiescence](runtime_lifecycle_and_quiescence.md)
 - [Execution Planning](execution/planning/README.md)
 - [Events Design](events/README.md)
 - [Multi-Domain Event Ledger](events/multi_domain_spine.md)

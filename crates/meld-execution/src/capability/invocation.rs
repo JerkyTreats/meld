@@ -122,6 +122,28 @@ impl<E, A: ?Sized> CapabilityExecutorRegistry<E, A> {
         Ok(())
     }
 
+    /// Registers an already type-erased domain invoker.
+    pub fn register_arc(
+        &mut self,
+        catalog: &mut CapabilityCatalog,
+        invoker: Arc<dyn CapabilityInvoker<Error = E, ExecutionApi = A>>,
+    ) -> Result<(), ExecutionInvariantError> {
+        let contract = invoker.contract();
+        let key = (
+            contract.capability_type_id.clone(),
+            contract.capability_version,
+        );
+        if self.invokers.contains_key(&key) {
+            return Err(ExecutionInvariantError::ConfigError(format!(
+                "Capability executor registry already contains '{}' version '{}'",
+                key.0, key.1
+            )));
+        }
+        catalog.register(contract)?;
+        self.invokers.insert(key, invoker);
+        Ok(())
+    }
+
     /// Returns one registered invoker by type id and version.
     pub fn get(
         &self,

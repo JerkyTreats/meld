@@ -4,6 +4,8 @@ Date: 2026-08-08
 Status: illustrative  
 Scope: a Persistent Domain Stewardship expression for extracting and maintaining durable definitions of people, places, things, events, concepts, and relationships from an evolving body of user-authored material
 
+> This long-form source case predates the canonical cognition split. Use the normalized [use case](lore_and_canon/README.md), [router specification](lore_and_canon/router_spec.md), and [Canonical Persistent Domain Stewardship](../../cognitive_architecture/persistent_domain_stewardship.md) when ownership language conflicts.
+
 ## Purpose
 
 This example tests whether PDS can support a persistent lore or knowledge transcriber without reducing the problem to entity extraction or retrieval.

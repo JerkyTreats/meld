@@ -56,12 +56,19 @@ use meld_world_model::world_state::graph::store::TraversalStore;
 use meld_world_model::PerspectiveKey;
 use serde::{Deserialize, Serialize};
 
+use crate::capability::{
+    ExactCapabilityActivationRequest, OwnerBindingView, ProductCapabilityInventory,
+};
 use crate::config::MerkleConfig;
 use crate::config::PhysicalBinding;
 use crate::runtime::contracts::{
     WorkBudget, WorkerCheckpoint, WorkerScope, WorkerTickIssue, WorkerTickReport,
 };
 use crate::runtime::error::{RuntimeAssemblyError, RuntimeRegistryError};
+use crate::runtime::lifecycle::{
+    ActivationLifecycleService, ActivationLifecycleStore, LifecycleStepOutcome,
+    STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID,
+};
 use crate::runtime::ports::{
     CurationGoalExecutionPort, ExactKeyPlanningProjectionPort, ExecutionAgentGoalQueryPort,
     ExecutionGoalCommandPort, ExecutionGoalMutationPort, ProductEventAppendPort,
@@ -212,6 +219,8 @@ pub enum RuntimeResource {
     Workspace,
     /// World model belief, agent, registry, and traversal stores.
     WorldModel,
+    /// PDS package, assignment, activation, and lifecycle storage.
+    Theory,
 }
 
 /// Store scope one resource requirement pulls into a composition.
@@ -223,6 +232,10 @@ fn resource_store_scope(resource: &RuntimeResource) -> StoreScope {
         },
         RuntimeResource::WorldModel | RuntimeResource::PlannerProjection => StoreScope {
             world_model: true,
+            ..StoreScope::none()
+        },
+        RuntimeResource::Theory => StoreScope {
+            theory: true,
             ..StoreScope::none()
         },
         RuntimeResource::GoalCommand | RuntimeResource::GoalMutation => StoreScope {
@@ -618,11 +631,13 @@ fn hydrate_stewardship_theory(
         });
         return;
     }
-    let provider = match crate::provider::ProviderExecutionBinding::new(
-        binding.provider_id.clone(),
-        crate::provider::ProviderRuntimeOverrides::default(),
-    ) {
-        Ok(provider) => provider,
+    let contracts = resolved
+        .executable_contracts
+        .iter()
+        .map(|revision| revision.contract.clone())
+        .collect::<Vec<_>>();
+    let capability_runtime = match activate_exact_capabilities(binding, &resolved, &contracts) {
+        Ok(runtime) => runtime,
         Err(error) => {
             diagnostics.push(AssemblyDiagnostic {
                 code: "theory_image_inconsistent".to_string(),
@@ -631,22 +646,6 @@ fn hydrate_stewardship_theory(
             return;
         }
     };
-    let contracts = resolved
-        .executable_contracts
-        .iter()
-        .map(|revision| revision.contract.clone())
-        .collect::<Vec<_>>();
-    let capability_runtime =
-        match activate_exact_capabilities(binding, &resolved, provider, &contracts) {
-            Ok(runtime) => runtime,
-            Err(error) => {
-                diagnostics.push(AssemblyDiagnostic {
-                    code: "theory_image_inconsistent".to_string(),
-                    message: error.to_string(),
-                });
-                return;
-            }
-        };
     let mut strategy = match meld_world_model::AgentStrategyRuntimeConfig::activate_installed(
         resolved.strategy_theory.package.clone(),
         subject,
@@ -701,25 +700,51 @@ fn hydrate_stewardship_theory(
 fn activate_exact_capabilities(
     binding: &PhysicalBinding,
     resolved: &ResolvedStewardshipTheory,
-    provider: crate::provider::ProviderExecutionBinding,
     contracts: &[crate::capability::CapabilityTypeContract],
 ) -> Result<ProductCapabilityRuntime, crate::error::ApiError> {
-    let mut catalog = CapabilityCatalog::new();
-    let mut registry = crate::capability::CapabilityExecutorRegistry::new();
-    crate::docs::capability::register_exact_contracts(
-        crate::docs::capability::DocsCapabilityConfig {
-            target_root: binding.workspace_root.clone(),
-            subject_id: binding.subject.clone(),
-            agent_id: binding.agent_id.clone(),
-            provider,
-        },
-        resolved.claim_policy.policy.clone(),
-        contracts,
-        &mut catalog,
-        &mut registry,
-    )?;
+    let inventory: ProductCapabilityInventory =
+        crate::capability::product_capability_inventory()
+            .map_err(|error| crate::error::ApiError::ConfigError(error.to_string()))?;
+    let selected_contracts = resolved
+        .executable_contracts
+        .iter()
+        .map(|revision| revision.revision_ref())
+        .collect::<Vec<_>>();
+    let selected_implementations = selected_contracts
+        .iter()
+        .map(|contract_ref| {
+            inventory
+                .unique_implementation_ref(contract_ref)
+                .map(|implementation_ref| (contract_ref.clone(), implementation_ref))
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()
+        .map_err(|error| crate::error::ApiError::ConfigError(error.to_string()))?;
+    let prepared = inventory
+        .prepare(
+            ExactCapabilityActivationRequest {
+                assignment_id: format!("legacy::{}::{}", binding.agent_id, binding.subject),
+                activation_id: format!(
+                    "legacy::{}::{}",
+                    binding.workspace_root.display(),
+                    binding.provider_id
+                ),
+                selected_contracts,
+                selected_implementations,
+            },
+            &OwnerBindingView::new(BTreeMap::from([
+                (
+                    "workspace".to_string(),
+                    binding.workspace_root.display().to_string(),
+                ),
+                ("subject".to_string(), binding.subject.clone()),
+                ("agent".to_string(), binding.agent_id.clone()),
+                ("provider".to_string(), binding.provider_id.clone()),
+            ])),
+        )
+        .map_err(|error| crate::error::ApiError::ConfigError(error.to_string()))?;
     for contract in contracts {
-        if registry
+        if prepared
+            .invokers
             .get(&contract.capability_type_id, contract.capability_version)
             .is_none()
         {
@@ -729,7 +754,10 @@ fn activate_exact_capabilities(
             )));
         }
     }
-    Ok(ProductCapabilityRuntime { catalog, registry })
+    Ok(ProductCapabilityRuntime {
+        catalog: prepared.contracts,
+        registry: prepared.invokers,
+    })
 }
 
 /// In-process package-route plan handoffs between planning and dispatch.
@@ -952,6 +980,7 @@ struct PublicationFactory {
 #[derive(Clone)]
 enum RuntimeSemanticHandleFactory {
     None,
+    ActivationLifecycle { service: ActivationLifecycleService },
     GraphReplay { graph_runtime: Arc<GraphRuntime> },
     EventAppend { port: ProductEventAppendPort },
     BeliefAssessment(Box<BeliefAssessmentFactory>),
@@ -964,6 +993,7 @@ enum RuntimeSemanticHandleFactory {
 
 enum RuntimeSemanticHandle {
     None,
+    ActivationLifecycle(ActivationLifecycleHandle),
     GraphReplay(GraphReplayRuntimeHandle),
     EventAppend(EventAppendRuntimeHandle),
     BeliefAssessment(Box<BeliefAssessmentHandle>),
@@ -977,6 +1007,11 @@ enum RuntimeSemanticHandle {
 #[derive(Clone)]
 struct GraphReplayRuntimeHandle {
     graph_runtime: Arc<GraphRuntime>,
+}
+
+struct ActivationLifecycleHandle {
+    service: ActivationLifecycleService,
+    transition_sequence: u64,
 }
 
 /// Diagnostics-only handle publishing ledger ingress health through the
@@ -1693,6 +1728,7 @@ impl RuntimeFactoryRegistry {
                 "execution.publication",
                 vec![TaskNetworkFactory, TaskArtifactFactory, EventAppend],
             )?,
+            RuntimeFactoryDescriptor::new(STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID, vec![Theory])?,
         ])
     }
 
@@ -1928,6 +1964,21 @@ impl RuntimeSemanticHandleFactory {
             Ok(RuntimeSemanticHandleFactory::None)
         }
         match runtime_id {
+            STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID => {
+                let Some(theory_db) = stores.theory_db.opened() else {
+                    return unresolved(
+                        diagnostics,
+                        "pds_activation_lifecycle_store_unresolved",
+                        "PDS activation lifecycle requires the theory store scope".to_string(),
+                    );
+                };
+                let store = ActivationLifecycleStore::new(theory_db.clone()).map_err(|error| {
+                    RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
+                })?;
+                Ok(Self::ActivationLifecycle {
+                    service: ActivationLifecycleService::new(store),
+                })
+            }
             "world_model.graph_replay" => match graph_runtime {
                 Some(graph_runtime) => Ok(Self::GraphReplay {
                     graph_runtime: Arc::clone(graph_runtime),
@@ -2236,6 +2287,12 @@ impl RuntimeSemanticHandleFactory {
     fn build_handle(&self) -> RuntimeSemanticHandle {
         match self {
             Self::None => RuntimeSemanticHandle::None,
+            Self::ActivationLifecycle { service } => {
+                RuntimeSemanticHandle::ActivationLifecycle(ActivationLifecycleHandle {
+                    service: service.clone(),
+                    transition_sequence: 0,
+                })
+            }
             Self::GraphReplay { graph_runtime } => {
                 RuntimeSemanticHandle::GraphReplay(GraphReplayRuntimeHandle {
                     graph_runtime: Arc::clone(graph_runtime),
@@ -2488,6 +2545,7 @@ impl RuntimeSemanticHandle {
     fn tick(&mut self, budget: WorkBudget) -> Option<WorkerTickReport> {
         match self {
             Self::None => None,
+            Self::ActivationLifecycle(handle) => Some(handle.tick()),
             Self::GraphReplay(handle) => Some(handle.tick(budget)),
             Self::EventAppend(handle) => Some(handle.tick()),
             Self::BeliefAssessment(handle) => Some(handle.tick(budget)),
@@ -2500,6 +2558,61 @@ impl RuntimeSemanticHandle {
     }
 
     fn request_stop(&mut self) {}
+}
+
+impl ActivationLifecycleHandle {
+    fn tick(&mut self) -> WorkerTickReport {
+        let input = self.transition_sequence;
+        match self.service.bounded_step() {
+            Ok(LifecycleStepOutcome::Advanced { .. }) => {
+                self.transition_sequence = self.transition_sequence.saturating_add(1);
+                WorkerTickReport {
+                    actor_id: STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID.to_string(),
+                    scope: worker_scope("runtime", Some("pds_activation_lifecycle"), None, None),
+                    input_checkpoint: WorkerCheckpoint {
+                        name: "pds_lifecycle_transition_sequence".to_string(),
+                        value: input,
+                    },
+                    output_checkpoint: WorkerCheckpoint {
+                        name: "pds_lifecycle_transition_sequence".to_string(),
+                        value: self.transition_sequence,
+                    },
+                    items_attempted: 1,
+                    items_committed: 1,
+                    retryable_errors: Vec::new(),
+                    fatal_errors: Vec::new(),
+                    budget_exhausted: false,
+                    waiting_on: Vec::new(),
+                }
+            }
+            Ok(LifecycleStepOutcome::NoWork) => WorkerTickReport {
+                actor_id: STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID.to_string(),
+                scope: worker_scope("runtime", Some("pds_activation_lifecycle"), None, None),
+                input_checkpoint: WorkerCheckpoint {
+                    name: "pds_lifecycle_transition_sequence".to_string(),
+                    value: input,
+                },
+                output_checkpoint: WorkerCheckpoint {
+                    name: "pds_lifecycle_transition_sequence".to_string(),
+                    value: input,
+                },
+                items_attempted: 0,
+                items_committed: 0,
+                retryable_errors: Vec::new(),
+                fatal_errors: Vec::new(),
+                budget_exhausted: false,
+                waiting_on: Vec::new(),
+            },
+            Err(error) => WorkerTickReport::fatal(
+                STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID,
+                "runtime",
+                Some("pds_activation_lifecycle"),
+                "pds_lifecycle_transition_sequence",
+                "pds_lifecycle_step_failed",
+                error.to_string(),
+            ),
+        }
+    }
 }
 
 impl EventAppendRuntimeHandle {
@@ -3314,7 +3427,7 @@ mod tests {
             assembly.supervisor_store().path(),
             temp.path().join("supervisor.sled")
         );
-        assert_eq!(assembly.registry().len(), 12);
+        assert_eq!(assembly.registry().len(), 13);
         assert!(assembly
             .registry()
             .contains("world_model.agent_goal_curation"));
@@ -3348,7 +3461,7 @@ mod tests {
             description.supervisor_store_path,
             expected_root.join("supervisor.sled")
         );
-        assert_eq!(description.desired_runtime_state.len(), 12);
+        assert_eq!(description.desired_runtime_state.len(), 13);
         assert!(!description.product_root.exists());
         assert!(!description.supervisor_store_path.exists());
     }
@@ -3365,7 +3478,7 @@ mod tests {
 
         assert_eq!(second.product_root(), temp.path());
         assert!(second.registry().contains("execution.publication"));
-        assert_eq!(second.desired_runtime_state().len(), 12);
+        assert_eq!(second.desired_runtime_state().len(), 13);
     }
 
     #[test]
@@ -3390,7 +3503,7 @@ mod tests {
                 .iter()
                 .filter(|state| state.enabled)
                 .count(),
-            10
+            11
         );
     }
 
@@ -3696,7 +3809,7 @@ mod tests {
         let package = assembly.supervisor_startup_package();
 
         assert_eq!(package.product_root, temp.path());
-        assert_eq!(package.handle_factories.len(), 12);
+        assert_eq!(package.handle_factories.len(), 13);
         assert_eq!(package.default_work_budget.max_items, 64);
         assert_eq!(package.lifecycle_config.heartbeat_interval_ms, 1_000);
         assert_eq!(package.lifecycle_config.lease_duration_ms, 15 * 60 * 1_000);
@@ -4060,6 +4173,51 @@ mod tests {
         assert_eq!(second.items_committed, 0);
     }
 
+    #[test]
+    fn stable_activation_lifecycle_role_runs_beneath_supervisor() {
+        use crate::runtime::lifecycle::{ActivationLifecycleIntentV1, LifecycleAction};
+
+        let temp = tempfile::tempdir().unwrap();
+        let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
+        let store =
+            ActivationLifecycleStore::new(assembly.stores().theory_db.opened().unwrap().clone())
+                .unwrap();
+        store
+            .submit_intent(
+                ActivationLifecycleIntentV1::new(
+                    "supervised-request".to_string(),
+                    "assignment-a".to_string(),
+                    "activation-a".to_string(),
+                    None,
+                    LifecycleAction::Activate,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let mut supervisor = RuntimeSupervisor::start(
+            assembly.supervisor_startup_package(),
+            SupervisorStartCommand::new("lifecycle-supervisor", 100),
+        )
+        .unwrap();
+        let tick = supervisor.tick(1_100).unwrap();
+        let action = tick
+            .actions
+            .iter()
+            .find(|action| action.runtime_id == STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID)
+            .unwrap();
+
+        assert_eq!(action.metrics.attempted, 1);
+        assert_eq!(action.metrics.committed, 1);
+        assert_eq!(
+            lifecycle_of(
+                &supervisor.status_snapshot(1_100).unwrap(),
+                STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID,
+            ),
+            Some(RegistrationLifecycle::ActiveWorking)
+        );
+    }
+
     // ---- Stewardship composition fixtures ----
 
     use crate::config::{DocsFreshnessSelection, StewardshipConfig, TheorySelection};
@@ -4323,7 +4481,7 @@ mod tests {
 
         let set = derive_stewardship_registrations(&harness.binding).unwrap();
 
-        assert_eq!(set.registrations.len(), 12);
+        assert_eq!(set.registrations.len(), 13);
         for passive in STEWARDSHIP_PASSIVE_SERVICE_IDS {
             assert_eq!(
                 set.kind_of(passive),
@@ -4340,6 +4498,7 @@ mod tests {
             "execution.planning",
             "execution.task_dispatch",
             "execution.publication",
+            STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID,
         ] {
             assert_eq!(
                 set.kind_of(active),
@@ -4392,7 +4551,11 @@ mod tests {
             assert_eq!(lifecycle_of(&status, passive), None);
         }
         // The quiescent bound actors reach truthful active idle.
-        for idle in ["world_model.graph_replay", "execution.publication"] {
+        for idle in [
+            "world_model.graph_replay",
+            "execution.publication",
+            STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID,
+        ] {
             assert_eq!(
                 lifecycle_of(&status, idle),
                 Some(RegistrationLifecycle::ActiveIdle),
@@ -4408,7 +4571,11 @@ mod tests {
         ticked.sort_unstable();
         assert_eq!(
             ticked,
-            vec!["execution.publication", "world_model.graph_replay"]
+            vec![
+                "execution.publication",
+                STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID,
+                "world_model.graph_replay",
+            ]
         );
 
         // Boot and tick created no semantic state anywhere.
@@ -4460,6 +4627,7 @@ mod tests {
             "world_model.agent_goal_curation",
             "world_model.satisfaction_curation",
             "execution.publication",
+            STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID,
         ];
         for runtime_id in bound {
             let lifecycle = lifecycle_of(&status, runtime_id);

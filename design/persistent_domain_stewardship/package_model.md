@@ -1,10 +1,12 @@
 # Stewardship Package Model
 
-Date: 2026-07-16  
-Status: proposed option  
+Date: 2026-08-18
+Status: aligned design exploration
 Scope: one candidate declarative source representation, compilation, loading, and lifecycle model for persistent domain stewardship packages
 
 > This document explores a central package-schema option. It is not an accepted implementation contract. The competing federated-facet model is described in [PDS Meta-Domain](meta_domain.md) and [Stewardship Facet Protocol](facet_protocol.md). Read [Proposal Status And Decision Semantics](proposal_status.md) before interpreting normative language below.
+
+> The canonical cognition boundary is fixed in [Persistent Domain Stewardship](../cognitive_architecture/persistent_domain_stewardship.md). The central schema below describes PDS semantics only. Exact capabilities, Methods, construction policy, search controls, projection requests, and effective authority remain independent runtime inputs.
 
 ## Thesis
 
@@ -17,7 +19,7 @@ what exists
 what can be observed
 what can be believed
 what should be maintained
-what can be done
+what action and outcome classes mean
 how results are verified
 what authority constrains action
 ```
@@ -45,7 +47,7 @@ The proposal also considers:
 - **Option B: federated domain-owned facets**, where each domain owns its facet schema, compiler, validation, activation, and inspection;
 - **Option C: root product composition**, where an initial implementation directly coordinates existing domain APIs without a durable PDS meta-domain.
 
-The current recommendation is to test the federated-facet option while permitting a root-composed first proof.
+The current recommendation is to test routed domain-owned components through the proposed package router. The root-composed docs expression is now the compatibility antecedent and parity oracle, not the next package model.
 
 The source structures below should therefore be read as:
 
@@ -81,7 +83,7 @@ Candidate contents:
 - validated observation and evidence routes;
 - compiled belief-family registrations;
 - steward templates and objective templates;
-- lowered `meld-lang` propositions, operators, effects, and methods;
+- lowered `meld-lang` propositions and stable action, effect, constraint, and outcome semantics;
 - outcome-verification routes;
 - authority requirements and governance constraints;
 - package provenance and conformance-test results.
@@ -90,7 +92,7 @@ The current recommendation is that only validated, versioned package semantics a
 
 ### Stewardship assignment and activation
 
-An assignment binds profile semantics to a principal, scope, and authority grant.
+An assignment binds profile semantics to a principal, scope, requested authority, and principal grant lineage.
 
 An activation binds the assignment to physical sensors, connectors, credentials, providers, capability implementations, runtime placement, and quotas.
 
@@ -126,7 +128,7 @@ StewardshipBundle
 ├── belief modules
 ├── steward charters
 ├── context projections
-├── action modules
+├── Strategy semantic modules
 ├── outcome modules
 ├── governance modules
 └── scenario modules
@@ -144,7 +146,7 @@ struct StewardshipBundleSpec {
     beliefs: Vec<BeliefModuleSpec>,
     charters: Vec<StewardCharterSpec>,
     context_projections: Vec<ContextProjectionSpec>,
-    actions: Vec<ActionModuleSpec>,
+    strategy_semantics: Vec<StrategySemanticModuleSpec>,
     outcomes: Vec<OutcomeModuleSpec>,
     governance: Vec<GovernanceModuleSpec>,
     scenarios: Vec<ScenarioModuleSpec>,
@@ -177,7 +179,7 @@ imports:
     version: "^1.2"
   - package: software.git-observations
     version: "1.0.3"
-  - package: software.task-capabilities
+  - package: software.maintenance-semantics
     version: "^2"
 ```
 
@@ -386,7 +388,7 @@ struct StewardCharterSpec {
     scope: ScopeTemplateSpec,
     concerns: Vec<StewardConcernBindingSpec>,
     lifecycle: StewardLifecyclePolicySpec,
-    authority_requirements: AuthorityRequirementSpec,
+    governance_profile: GovernanceProfileRef,
     escalation: EscalationPolicySpec,
 }
 ```
@@ -425,7 +427,7 @@ struct StewardshipObjectiveSpec {
 
 `desired`, `breach`, and `restore` may lower to `meld-lang::Proposition`.
 
-Objective declaration may belong to the package/PDS control plane while runtime evaluation belongs to Agent. Final ownership remains open.
+Objective semantics belong to the PDS package. Runtime concern evaluation, Goal creation, and satisfaction judgment belong to Agent.
 
 ### Directive handling
 
@@ -457,7 +459,8 @@ struct StewardshipAssignment {
     charter_id: CharterId,
     principal: PrincipalRef,
     scope: ScopeBinding,
-    effective_authority: EffectiveAuthorityRef,
+    requested_authority: AuthorityRequestRef,
+    principal_grant: PrincipalGrantRef,
     lifecycle: AssignmentLifecycle,
 }
 ```
@@ -528,28 +531,23 @@ struct ContextProjectionSpec {
 }
 ```
 
-Ownership remains open among PDS, the world model, context, and capability input binding.
+PDS owns stable projection vocabulary and evidence obligations. Strategy derives a concrete projection request for the current Goal. Context and world-model owners execute that bounded request. Capability input binding consumes the resulting artifact without making it package state.
 
-## Action Module
+## Strategy Semantic Module
 
-Action declarations define the operational vocabulary available to planning.
+Strategy semantic declarations define stable action classes, effect meaning, constraints, and outcome obligations. They do not enumerate currently executable actions or prescribe how Strategy constructs a plan.
 
 ```rust
-struct ActionModuleSpec {
+struct StrategySemanticModuleSpec {
     module_id: ModuleId,
-    operators: Vec<OperatorSpec>,
-    methods: Vec<MethodSpec>,
-    capability_requirements: Vec<CapabilityRequirementSpec>,
-    resource_claims: Vec<ResourceClaimSpec>,
-    compensation: Vec<CompensationSpec>,
+    action_classes: Vec<ActionClassSpec>,
+    effect_semantics: Vec<EffectSemanticSpec>,
+    constraints: Vec<StrategyConstraintSpec>,
+    outcome_contracts: Vec<OutcomeContractSpec>,
 }
 ```
 
-Operators and methods lower to existing `meld-lang` and execution contracts.
-
-Current workflows may be imported as compatibility methods.
-
-Capability availability remains separate from authority.
+Exact capability offers come from activation. Reusable Methods are separately admitted Strategy knowledge. Construction policy, search bounds, projection requests, and effective authority are supplied when the Strategy problem is assembled. Current package-carried operators, Methods, and capability requirements are compatibility inputs to be split at that boundary.
 
 ## Outcome Module
 
@@ -592,8 +590,7 @@ struct GovernanceModuleSpec {
 Effective authority is proposed as:
 
 ```text
-package support/request
-∩ profile request
+assignment request
 ∩ principal grant
 ∩ organization/runtime policy
 ∩ current restrictions
@@ -649,7 +646,7 @@ parse package/profile
 → hash compiled image
 ```
 
-Candidate static failures include unresolved symbols, incompatible versions, missing evidence paths, unavailable capability requirements, absent authority requests, or outcome declarations without verification.
+Candidate static failures include unresolved symbols, incompatible versions, missing evidence paths, incoherent action semantics, or outcome declarations without verification. Unavailable capabilities and denied authority are activation or Strategy-problem failures rather than PDS compilation failures.
 
 The final failure set belongs to the selected architecture and owning domains.
 
@@ -667,8 +664,14 @@ graph and evidence facets
 charter and concern facets
     → Agent
 
-methods and capability requirements
-    → execution
+Strategy semantics
+    → world-model Strategy
+
+exact capabilities
+    → activation contribution and execution
+
+Methods and construction policy
+    → Strategy problem assembly
 
 outcome routes
     → events/world model/Agent

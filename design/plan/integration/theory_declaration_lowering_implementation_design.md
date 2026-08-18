@@ -7,6 +7,8 @@ Domain assessment: [Theory Declaration Lowering Assessment By Domain](theory_dec
 Completion evidence: [Theory Declaration Lowering Completion Evidence](theory_declaration_lowering_completion_evidence.md)
 Scope: Theory Elevation Step 2
 
+> Historical compatibility design. The declaration and `StrategyTheoryPackage` shape below describe the implemented antecedent. [Canonical Persistent Domain Stewardship](../../cognitive_architecture/persistent_domain_stewardship.md) supersedes any claim that exact capabilities, Strategy policy, bounds, or projection dimensions are PDS semantic theory.
+
 ## Objective
 
 Lower named stewardship declarations into the exact receipt-backed runtime path without selecting semantics by expression name. Preserve docs freshness behavior while retiring the hand-composed production PDS image and its dead Method-era source artifacts.

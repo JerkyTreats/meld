@@ -1277,8 +1277,8 @@ mod tests {
         assert_eq!(status.instance_id, "instance-a");
         assert_eq!(status.product_root, temp.path());
         assert_eq!(status.instance_status, RuntimeInstanceStatus::Running);
-        assert_eq!(status.runtimes.len(), 12);
-        // Truthfulness fix: only the two roles with concrete semantic
+        assert_eq!(status.runtimes.len(), 13);
+        // Truthfulness fix: only the three roles with concrete semantic
         // bodies start; the remaining enabled roles stay unresolved instead
         // of leasing as healthy no-op placeholders.
         assert_eq!(
@@ -1287,7 +1287,7 @@ mod tests {
                 .iter()
                 .filter(|runtime| runtime.desired_enabled && runtime.handle_started)
                 .count(),
-            2
+            3
         );
         let event_append = runtime_status(&status, "event.append");
         assert!(event_append.desired_enabled);

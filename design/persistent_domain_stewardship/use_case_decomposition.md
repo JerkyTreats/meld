@@ -1,8 +1,10 @@
 # Use-Case Decomposition
 
-Date: 2026-07-14  
-Status: proposed  
+Date: 2026-08-18
+Status: aligned decomposition method
 Scope: adversarial qualification and decomposition of candidate Persistent Domain Stewardship applications
+
+> This method follows the canonical boundary in [Persistent Domain Stewardship](../cognitive_architecture/persistent_domain_stewardship.md). It separates stable PDS semantics from activation capabilities, Strategy Methods and policy, Agent state, and execution state.
 
 ## Purpose
 
@@ -238,18 +240,23 @@ StewardshipObjectiveSpec
 
 ## 6. Operational Model
 
-For every observation and intervention action, declare:
+For every observation and intervention class, declare the stable PDS semantics:
 
 - action class
-- operator preconditions
-- expected effects
+- semantic preconditions and constraints
+- effect and outcome meaning
 - required and produced artifacts
-- capability requirements
-- known methods and compositions
-- cost model
-- resource claims and conflicts
-- compensation or rollback
-- idempotency semantics
+- proof and verification obligations
+
+Then declare the independently owned runtime inputs:
+
+- activation capability offers and truthful bounds
+- separately admitted Methods and compositions
+- construction and evaluation policy
+- search bounds
+- authority context
+- observed cost and resource economics
+- compensation, rollback, and idempotency properties of exact capabilities
 
 Questions:
 
@@ -261,9 +268,10 @@ Questions:
 Output:
 
 ```text
-ActionModuleSpec
-meld-lang operators and methods
-CapabilityRequirementSpec
+StrategySemanticModuleSpec
+ActivationCapabilitySnapshot
+StrategyMethodSnapshot
+StrategyConstructionPolicy
 ```
 
 ## 7. Outcome Model
@@ -297,7 +305,8 @@ OutcomeContractSpec
 
 Declare:
 
-- requested authority class per action
+- governance vocabulary and constraints per action class
+- assignment-requested authority
 - principal grant
 - approval policy
 - financial, compute, time, and intervention budgets
@@ -337,12 +346,51 @@ Define scenarios that cover:
 - external restoration
 - concurrent environmental change
 - replay and package upgrade
+- several assignments over one subject with distinct package receipts, principals, perspectives, and grants
+- partial activation failure, retry, rebinding, deactivation, and an unaffected neighboring assignment
+- prepared activation whose process or transport never becomes ready
+- shared external runtime with assignment-scoped bindings and result correlation
+- stale activation generation or participant incarnation and late result delivery
+- ambiguous external effect followed by idempotent retry or reconciliation
+- source revision and subject-scope change occurring concurrently
 
 Output:
 
 ```text
 ScenarioModuleSpec
 ```
+
+## 10. Isolation And Placement Model
+
+Declare:
+
+- which runtime placements are supported
+- which adapters may share a process, service, cache, queue, or source database
+- required semantic, authority, binding, state, failure, resource, effect, admission, and replay isolation
+- activation-generation, participant-incarnation, stable operation, attempt, and passive-delivery lineage
+- result admission and late-result policy
+- idempotency or reconciliation behavior after ambiguous effects
+- which guarantees come from product policy, owner adapters, execution, or external infrastructure
+
+Questions:
+
+- Can the same package activate through two physical placements without changing domain meaning?
+- What is shared when two assignments use one adapter?
+- What prevents a result from one assignment entering another assignment's evidence?
+- What happens to in-flight work after credential rotation, activation replacement, or package upgrade?
+- What evidence proves that every required runtime object is ready before admission opens?
+- Does a dedicated process still share credentials or external source state?
+- Can a shared service preserve distinct grants, perspectives, bindings, and current state?
+
+Output:
+
+```text
+RuntimeIsolationSpec
+ActivationPlacementSpec
+ResultAdmissionSpec
+```
+
+See [PDS Isolation And Runtime Portability](isolation_and_runtime_portability.md).
 
 ## Classification Of Decomposed Elements
 
@@ -351,7 +399,8 @@ Every field discovered during decomposition must be classified as exactly one of
 | Class | Meaning |
 |---|---|
 | Kernel mechanism | Generic runtime behavior shared by domains |
-| Package declaration | Declarative, versioned domain semantics |
+| Package declaration | Declarative, versioned domain semantics without precomputed cognition |
+| Strategy assembly input | Capability snapshot, Method snapshot, policy, authority context, projection request, or search control |
 | Executable plugin | Sensor, comparator, capability, evaluator, or adapter code |
 | Runtime state | Observations, beliefs, episodes, goals, tasks, and outcomes |
 | External authoritative state | Data retained in source systems of record |
@@ -361,6 +410,26 @@ This classification prevents package configuration from absorbing executable run
 ## Cross-Domain Extraction Corpus
 
 The package model should be tested against deliberately dissimilar use cases.
+
+## Router And Isolation Pressure Matrix
+
+The first package pair must test more than source-schema variety. It should vary cardinality, lifecycle, authority, external state, and placement.
+
+| Scenario | Pressure | Design failure exposed |
+| --- | --- | --- |
+| exact imported base advances after dependent install | several packages and stable historical meaning | current package head reinterprets an exact import |
+| two assignments share one subject under distinct principals and policy revisions | overlapping observation with separate grants | beliefs, catalogs, bindings, or authority bleed across assignments |
+| one assignment derives several subjects and later retracts one | expanding and contracting scope | supersession erases history or changes another assignment |
+| one owner activation fails after another prepares | partial multi-owner activation | partially active capabilities become discoverable |
+| process spawn succeeds but owner readiness fails | prepared versus live activation | constructor success becomes runtime authority |
+| package revision advances while a Goal or task cites the prior receipt | old and new work coexist | in-flight work silently changes meaning |
+| authority is revoked after planning and before dispatch | current policy changes mid-episode | implementation availability bypasses dispatch authority |
+| a shared runtime returns another assignment's result | response correlation and tenant separation | mismatched scope or lineage reaches canonical append |
+| advisory source and workspace inventory advance concurrently | independent source revisions | a mixed snapshot produces an unsupported clean posture |
+| credentials rotate without package change | new physical realization of stable meaning | package identity is misused as an activation-generation fence |
+| a retired activation returns a late remote callback | stale but authentic external output | old output silently enters the current projection |
+
+Docs freshness and dependency security cover useful opposite ends of the placement range, but both remain software-workspace stewards. Service reliability is the preferred design-only third fixture because it adds many remote subjects, high-rate observation, risky actuation, and external control systems. Roleplay remains the stronger fixture for perspective and disclosure isolation.
 
 ## Codebase Quality Steward
 

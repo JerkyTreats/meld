@@ -5,6 +5,10 @@ Status: analysis
 Evidence base: `runtime-completion` as inspected on 2026-08-08  
 Scope: how Persistent Domain Stewardship is actually represented by the current Meld codebase, with explicit separation between enforced runtime contracts, compatibility wiring, reusable substrate, and design-only concepts
 
+> Evidence status: historical pre-elevation snapshot. Use [PDS Theory Runtime Layer Map](../plan/integration/pds_theory_runtime_layer.md), the [fresh review through Theory Elevation Step 4](../plan/integration/theory_elevation_steps_1_through_4_fresh_review.md), and [PDS Authorized Implementation Workstreams](../plan/integration/pds_implementation_workstreams.md) for current implementation ground through `W06`.
+
+> Canonical boundary status: [Persistent Domain Stewardship](../cognitive_architecture/persistent_domain_stewardship.md) supersedes the earlier interpretation that Methods, exact available actions, realizations, and task-package selections are PDS operational theory. This file preserves the historical code map.
+
 ## Purpose
 
 Before extending PDS with additional applications, establish what PDS means in code today.
@@ -223,7 +227,7 @@ The roleplay and lore examples therefore do **not** justify replacing the existi
 |---|---|---|---|---|---|
 | Capability side-effect declaration | `EffectSpec`, `EffectKind`, `CapabilityTypeContract` | typed | generic | `substrate` | Describes what an executable capability may do, not whether this steward is authorized to do it. |
 | Policy reference binding | `BindingValueKind::PolicyRef` | typed enum variant | generic hook | `substrate` | A place to reference policy is not an implemented PDS authority model. |
-| Principal grant | none | none | none | `design` | No durable grant intersects package request, principal authority, and runtime policy. |
+| Principal grant | none | none | none | `design` | No durable grant intersects assignment request, principal authority, and runtime policy. |
 | Approval requirement | none as generic PDS contract | none | none | `design` | Domain workflows may contain gates, but that is not PDS governance. |
 | Budget / rate / intervention limits | scattered execution/config controls | no unified PDS authority semantics | none | `design` | PDS-governed limits remain proposal-tier. |
 | Prohibition | none as stewardship grant semantics | none | none | `design` | Capability presence still must not be treated as permission. |

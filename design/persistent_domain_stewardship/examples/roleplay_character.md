@@ -4,6 +4,8 @@ Date: 2026-08-08
 Status: illustrative  
 Scope: a Persistent Domain Stewardship expression for maintaining character and narrative continuity across interactive roleplay
 
+> This long-form source case predates the canonical cognition split. Use the normalized [use case](roleplay_character_continuity/README.md), [router specification](roleplay_character_continuity/router_spec.md), and [Canonical Persistent Domain Stewardship](../../cognitive_architecture/persistent_domain_stewardship.md) when ownership language conflicts.
+
 ## Purpose
 
 This example tests PDS against an interactive conversational domain rather than an operational software domain.

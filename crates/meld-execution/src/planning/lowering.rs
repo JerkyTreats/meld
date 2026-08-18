@@ -55,6 +55,7 @@
 //!         errors: vec![],
 //!         warnings: vec![],
 //!     },
+//!     authority_decision: None,
 //!     diagnostics: vec![],
 //! };
 //! let lowerer = Lowerer::new(TaskCompiler::new(), CapabilityCatalog::new());

@@ -1,8 +1,10 @@
 # Steward Profile Abstraction
 
-Date: 2026-07-16  
-Status: proposed  
+Date: 2026-08-18
+Status: aligned design exploration
 Scope: customer-facing interaction layer above full stewardship-package and runtime configuration
+
+> The canonical cognition boundary is fixed in [Persistent Domain Stewardship](../cognitive_architecture/persistent_domain_stewardship.md). Profiles select intent over stable PDS semantics. They do not cause exact capabilities, Methods, construction policy, search controls, or effective authority to become package-owned cognition.
 
 ## Problem
 
@@ -13,7 +15,7 @@ A complete stewardship package may need to represent:
 - belief families
 - perspective and curation policy
 - standing objectives
-- methods and capabilities
+- action-class and outcome semantics
 - outcome verification
 - governance and authority requirements
 - package scenarios
@@ -34,20 +36,20 @@ Steward profile
     customer-authored intent and policy
         ↓ binds to
 Stewardship assignment
-    principal, scope, and effective authority
+    principal, scope, requested authority, and grant lineage
         ↓ deploys through
 Stewardship activation
     connectors, credentials, providers, runtime placement, quotas
         ↓ compiles to
-Compiled stewardship image
-    full internal representation consumed by Meld domains
+Strategy problem and runtime assembly
+    combines the semantic image with separately owned live inputs
 ```
 
 ## Layer Definitions
 
 ### Domain package
 
-Defines the complete semantic and operational possibilities for one steward family.
+Defines the stable vocabulary, evidence meaning, norms, action classes, outcomes, and governance constraints for one steward family.
 
 Typical authors:
 
@@ -56,7 +58,7 @@ Typical authors:
 - domain experts
 - advanced customer platform teams
 
-The package may include low-level evidence, comparator, method, capability, outcome, and governance declarations.
+The package may include low-level evidence, comparator, action-class, outcome, and governance declarations. Exact capability offers come from activation and reusable Methods come from separately admitted Strategy knowledge.
 
 ### Steward profile
 
@@ -79,7 +81,7 @@ Binds a profile to:
 
 - a principal
 - a concrete scope
-- an effective authority grant
+- requested authority and principal grant lineage
 - lifecycle state
 - package and profile revisions
 
@@ -270,7 +272,7 @@ struct ProfileSurfaceSpec {
 
 The profile surface acts as the package's public API.
 
-The package may contain many internal belief families, methods, and capability bindings while exposing only a small number of meaningful choices.
+The package may contain many internal belief families, action classes, outcomes, and governance constraints while exposing only a small number of meaningful choices.
 
 ## Expression Options
 
@@ -529,8 +531,8 @@ Authority, scope, and budget changes should be separated from ordinary tuning ch
 1. Select a package and steward template.
 2. Bind a subject scope.
 3. Select objectives, sensitivity, autonomy, budget, escalation, and verification.
-4. Validate against package capabilities and organization policy.
-5. Preview effective observations, actions, authority, and expected cost.
+4. Validate against package semantics, activation capabilities, and organization policy.
+5. Preview effective observations, candidate actions, authority, and expected cost from the assembled runtime inputs.
 6. Simulate against historical scenarios where possible.
 7. Approve and activate.
 8. Refine through structured edits, forms, or conversational proposals.

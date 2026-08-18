@@ -48,7 +48,7 @@ pub struct SlotConstraint {
 }
 
 /// Exact capability reference for resolution.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct CapabilityRef {
     /// Capability type identity.
     pub capability_type_id: String,

@@ -114,10 +114,12 @@ The theory snapshot supplies the semantic bridge from Goal to action. It contain
 - which action outcomes can contribute to those obligations
 - which world-state preconditions govern each action
 - which evidence routes can support later reconciliation
-- which authority and constraint declarations apply
+- which governance classifications and domain constraints apply
 - which outcome meanings distinguish success, partial success, failure, and harm
 
 PDS authors these declarations. Strategy interprets them for the current problem. Search cannot invent missing action, causal, evidence, or authority meaning.
+
+The theory snapshot does not contain the exact capability snapshot, Method snapshot, evaluation policy, requested projection dimensions, search bounds, or effective authority. Those are independently owned inputs to problem assembly or the search request.
 
 ### Capability contract snapshot
 
@@ -134,6 +136,8 @@ The Capability snapshot is the complete atomic action vocabulary available to se
 
 Strategy may select and wire exact Capability contracts from this snapshot. It does not invoke implementations or inspect providers. Execution later revalidates the selected contracts and compiles the authorized graph without substituting different semantic work.
 
+The snapshot is activation-local. The same PDS theory revision may be combined with different capability snapshots without changing domain meaning.
+
 ### Method library snapshot
 
 The Method snapshot contains reusable Strategy solution templates. A Method is a candidate generator, not a search result and not a compiled Task.
@@ -141,6 +145,8 @@ The Method snapshot contains reusable Strategy solution templates. A Method is a
 Methods may guide expansion and provide known action shapes. Search must remain capable of constructing candidates directly from Capability contracts when no Method applies.
 
 Search never mutates the Method snapshot. Any reusable Method proposal derived from a successful episode is separate from the pure search result and requires its own authorial admission.
+
+Methods are Strategy-owned reusable cognition. They are not installed as PDS stewardship mandates.
 
 ### Evaluation policy
 

@@ -5,6 +5,8 @@ Status: reviewed and reconciled
 Review base: `0aa4dfad`
 Scope: delivered Theory Elevation Steps 1 through 4
 
+> Historical review of the delivered compatibility aggregate. Its package capability and authority-request findings remain evidence, but [Canonical Persistent Domain Stewardship](../../cognitive_architecture/persistent_domain_stewardship.md) now owns the target split.
+
 ## Review Method
 
 This pass treated the committed code, persistence shapes, call paths, and tests as primary evidence. Prior design conclusions were checked rather than assumed. The review followed each semantic product from authored source through installation, exact resolution, Agent judgment, execution admission, planning, task lineage, dispatch, and compatibility decoding.

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "responses": [
+    {
+      "capability": "docs.draft_patch_set@1",
+      "result": "non-empty deterministic patch set"
+    },
+    {
+      "capability": "docs.validate_patch_set@1",
+      "result": "accepted"
+    }
+  ]
+}

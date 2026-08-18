@@ -41,18 +41,37 @@ Goal
 + exact planner snapshot
 + declared domain action and outcome meaning
 + versioned Capability contract snapshot
-+ explicit construction policy and budget
++ separately admitted Method snapshot
++ explicit construction policy and authority context
 → eligible candidate approaches
 + typed rejection grounds
 ```
 
-Strategy begins with the obligations implied by the Goal and its prospective evidence route. It searches backward from required results to Capability contracts that can produce them. It then walks each required Capability input until every input is supplied by current context, an existing admissible artifact, or the output of another selected Capability.
+Strategy begins with the obligations implied by the Goal and its prospective evidence route. It may instantiate an admitted Method or search backward from required results to Capability contracts that can produce them. It then walks each required Capability input until every input is supplied by current context, an existing admissible artifact, or the output of another selected Capability.
 
-PDS supplies the semantic starting vocabulary: maintained conditions, action affordances, outcome meaning, evidence requirements, authority needs, and constraints. Capability contracts supply the atomic executable vocabulary. Strategy joins these declarations for one Goal and one exact world-model context without transferring ownership from either source.
+PDS supplies the semantic starting vocabulary: maintained conditions, settlement obligations, abstract action and outcome meaning, evidence requirements, governance classifications, and constraints. Capability contracts independently supply the activation-local atomic executable vocabulary. Strategy joins these declarations for one Goal and one exact world-model context without transferring ownership from either source.
 
 The walk is not only artifact matching. At every step Strategy evaluates semantic preconditions against the exact planner projection. A structurally connectable Capability graph is not eligible when its world-state conditions are unsupported, its action meaning does not advance the Goal, or its outcome lacks a valid evidence route.
 
 The result is a ground candidate approach with enough action structure and lineage for Execution to revalidate and compile. Construction is referentially transparent over the supplied snapshots and policy. Internal search indexes, queues, arenas, and memoization do not change that external purity.
+
+## Input ownership
+
+`StrategyProblem` combines canonically separate inputs:
+
+| Input | Owner | Source |
+| --- | --- | --- |
+| Goal | Agent | current curated commitment |
+| planner snapshot | world-model planner | current perspective and branch projection |
+| Strategy semantic theory | routed domain owner | exact PDS semantic revision |
+| capability snapshot | capability and activation | exact contracts active for one assignment generation |
+| Method snapshot | Strategy | separately admitted reusable Strategy knowledge |
+| evaluation policy | Agent | construction policy selected for the Goal class |
+| authority context | Agent and execution | assignment request, grant lineage, and restrictions |
+
+Search engine identity, traversal bounds, and deterministic seed belong to `StrategySearchRequest` rather than PDS theory.
+
+The implemented `StrategyTheoryPackage` predates this split. It is a compatibility aggregate and not the canonical public PDS contract.
 
 ## Capability, Task, and Method
 
@@ -87,7 +106,9 @@ A Method therefore contains more meaning than a Task:
 
 Instantiating a Method against one ground Goal and one exact planner snapshot produces a candidate. The candidate, not the reusable Method alone, is what the Agent judges.
 
-A successful Strategy construction may be promoted into a cached Method. The Method retains a reusable Task construction template, Capability contract requirements, semantic applicability, and evidence meaning. A ground Method instance records the exact Capability contract identities and bindings selected for one candidate. Execution may separately cache compiled Task records by that exact Method instance and contract identity.
+A successful Strategy construction may be promoted into a cached Method through separate Strategy admission. The Method retains a reusable Task construction template, Capability contract requirements, semantic applicability, and evidence meaning. A ground Method instance records the exact Capability contract identities and bindings selected for one candidate. Execution may separately cache compiled Task records by that exact Method instance and contract identity.
+
+A PDS package may define the stable semantic vocabulary against which a Method is checked. It does not install a Method topology as stewardship meaning.
 
 A compiled Task alone is not a Method because it does not carry Goal applicability or evidence meaning. A Method is not invalidated merely because one compiled realization is unavailable. Strategy may construct another eligible realization from compatible Capability contracts, while the Agent retains authorization authority over the resulting candidate.
 

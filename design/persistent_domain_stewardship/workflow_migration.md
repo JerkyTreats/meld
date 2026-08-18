@@ -1,8 +1,10 @@
 # Workflow Migration
 
-Date: 2026-07-14  
-Status: proposed  
+Date: 2026-08-18
+Status: aligned migration exploration
 Scope: migration from workflow-authored domain behavior to stewardship packages executed through existing and future Meld runtime mechanisms
+
+> The canonical boundary is fixed in [Canonical Persistent Domain Stewardship](../cognitive_architecture/persistent_domain_stewardship.md). Workflow topologies may survive as separately admitted Strategy Methods. They are not PDS package semantics.
 
 ## Thesis
 
@@ -16,7 +18,7 @@ before:
 
 after:
     stewardship package is the application
-    known methods provide reusable decomposition
+    separately admitted Methods provide reusable decomposition
     cognitive runtime chooses and repairs plans
     execution runtime persists and dispatches work
 ```
@@ -79,7 +81,8 @@ Every workflow responsibility should move to exactly one of five destinations.
 
 | Destination | Responsibility |
 |---|---|
-| Stewardship package | domain vocabulary, mandate, objective, known method, authority, and outcome semantics |
+| PDS semantic package | domain vocabulary, mandate, objective meaning, action classes, governance constraints, and outcome semantics |
+| Strategy Method snapshot | separately admitted reusable decomposition with exact provenance |
 | `meld-lang` value | proposition, goal, operator, effect, composition, and method structure |
 | Capability | executable preparation, provider call, normalization, and domain transform |
 | Execution runtime | generic scheduling, continuation, retry, artifact, dispatch, and lifecycle mechanics |
@@ -202,11 +205,11 @@ The migration proceeds by semantic elevation rather than replacement.
 ```text
 working workflow
     ↓ classify responsibilities
-compatibility method
+separately admitted compatibility Method
     ↓ add standing objective and assignment
-stewardship package using workflow-backed method
+PDS semantic package plus workflow-backed Method
     ↓ lower workflow stages into ordinary task composition
-native method and task-network execution
+native Method and task-network execution
     ↓ remove obsolete workflow-only facade
 ```
 
@@ -542,7 +545,7 @@ The example does not freeze the package schema.
 | event emission | retain and enrich | events/execution |
 | retry and failure | split mechanical retry from repair | runtime and planning |
 | normalization | retain | capability |
-| workflow package schema | replace as application truth | stewardship package plus methods |
+| workflow package schema | replace as application truth | PDS semantics plus Strategy-owned Method snapshots |
 
 ## Coherence Rule
 
@@ -613,11 +616,11 @@ Workflow-only code is removable when:
 
 ### Recreating workflows in YAML
 
-The largest risk is moving turn control flow into a more elaborate package file. Package review should reject procedural declarations that are not reusable methods.
+The largest risk is moving turn control flow into a more elaborate package file. Package review should reject procedural declarations. Reusable procedural knowledge belongs in the Strategy Method admission path.
 
 ### Premature planner dependence
 
-The first package should use known methods and existing execution. It should not wait for a complete general planner.
+The first package may combine known separately admitted Methods with existing execution. It should not wait for a complete general planner.
 
 ### Semantic drift
 

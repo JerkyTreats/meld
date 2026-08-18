@@ -1,7 +1,7 @@
 # Candidate PDS Implementation Requirements
 
-Date: 2026-07-16  
-Status: proposed  
+Date: 2026-08-18
+Status: aligned candidate requirements
 Scope: candidate implementation requirements derived from the PDS proposal and cognitive-runtime anchor mapping
 
 ## Interpretation
@@ -17,6 +17,33 @@ Each requirement identifies:
 - acceptance evidence
 
 The requirements should be promoted only after the relevant open decisions are resolved.
+
+## Current Grounding
+
+This register predates Theory Elevation Steps 1 through 4 and the routed package design. The requirement statements remain useful, but their original phase order is no longer current.
+
+| Requirement | Current ground | Forward posture |
+| --- | --- | --- |
+| `PDS-C01` deterministic package identity | exact owner theory revisions and one fixed complete receipt are delivered | extend to one generic routed package identity and receipt |
+| `PDS-C02` customer profile representation | proposal only | wait for the two-expression declaration target |
+| `PDS-C03` assignment and activation model | one typed docs physical binding exists | generalize after package attachment |
+| `PDS-C04` federated domain facets | owner registries exist, but generic route publication does not | implement as owner-routed components |
+| `PDS-C05` domain symbol and type linking | owner-local validation exists | add structural linking first and semantic linking through owner public contracts |
+| `PDS-C06` facet activation receipts | fixed theory receipt exists; generic preparation and activation closure do not | split package receipt, prepared closure, and live generation evidence |
+| `PDS-C07` standing objectives | Agent-owned maintained-condition revisions and evaluation are delivered | preserve ownership and add upper-layer declaration lineage later |
+| `PDS-C08` stewardship episodes | domain records exist without unified projection | begin with a derived projection after two-expression runtime proof |
+| `PDS-C09` stewardship lineage | exact theory, authority, Goal, task, and outcome lineage is partial | add package, assignment, activation, generation, and operation refs at public boundaries |
+| `PDS-C10` pluggable curation policy | exact owner curation revisions exist with current bounded policy shape | widen only when a second consumer requires new semantics |
+| `PDS-C11` declarative projection routes | exact outcome mappings exist; graph and source routes remain specialized | route proven owner theory and defer generic graph projection |
+| `PDS-C12` context projection | declaration-selected belief context exists for docs | defer generic projection ownership until another consumer requires it |
+| `PDS-C13` separately owned Strategy inputs | current `StrategyTheoryPackage` combines semantic theory, exact capabilities, policy, bounds, projection dimensions, and authority requests | split semantic theory from activation capability snapshots, Strategy Methods, Agent policy, derived projection, request controls, and authority context |
+| `PDS-C14` independent governance enforcement | delivered at current maturity across Agent judgment, admission, planning, and dispatch | extend later for approvals, budgets, delegation, and revocation evidence |
+| `PDS-C15` outcome verification | delivered for docs through exact outcome mapping and belief settlement | prove domain-owned security admission and later verification |
+| `PDS-C16` generic runtime activation | generic actors run one fixed startup composition | add assignment-local activation closure and lifecycle |
+| `PDS-C17` semantic diff and inspection | proposal only | begin after canonical declaration identity exists |
+| `PDS-C18` conformance scenarios | strong docs tests exist | unify only after docs and dependency-security suites reveal the common envelope |
+
+See [PDS Authorized Implementation Workstreams](../plan/integration/pds_implementation_workstreams.md) for current owners, dependencies, tasks, and delivery gates through `W06`.
 
 ## PDS-C01: Deterministic Package Identity
 
@@ -38,7 +65,7 @@ Represent a compiled stewardship package with:
 
 ### Existing anchor
 
-Belief revisions and methods already retain configuration or source provenance in narrower forms.
+Every live theory kind resolves through an exact owner revision and the current fixed installation receipt closes the one delivered expression. The missing anchor is one generic cross-owner package identity and receipt.
 
 ### Candidate owner
 
@@ -100,12 +127,12 @@ Normative responsibility and physical deployment change for different reasons.
 
 Represent:
 
-- `StewardshipAssignment`: profile, principal, scope, authority grant, lifecycle
+- `StewardshipAssignment`: profile, principal, scope, requested authority, principal grant lineage, lifecycle
 - `StewardshipActivation`: source adapters, credentials, providers, capabilities, runtime placement, quotas
 
 ### Existing anchor
 
-The docs-freshness proof contains a single physical configuration that combines these dimensions.
+The docs-freshness runtime has a typed physical binding and named declaration, but the current selection still combines assignment and activation dimensions around one expression.
 
 ### Candidate owner
 
@@ -212,7 +239,7 @@ Persist prepare and active receipts per facet, including:
 
 ### Existing anchor
 
-Domains already expose durable registrations and stores, but no common PDS receipt exists.
+Domains expose durable exact registrations and the current expression has one complete fixed theory receipt. No generic package receipt, prepared activation closure, or live generation receipt exists.
 
 ### Candidate owner
 
@@ -251,7 +278,7 @@ Agent curation can create and satisfy transient goals from belief state.
 
 ### Candidate owner
 
-Open: Agent domain, PDS domain, or split declaration/projection model.
+Agent owns installed maintained-condition meaning and evaluation. PDS may own upper-layer declaration lineage and projection.
 
 ### Alternatives
 
@@ -432,22 +459,22 @@ Open: world-model facet, context domain, capability input binding, or separate P
 
 Two packages can request different context projections without changing the generic generation runtime.
 
-## PDS-C13: Package-Scoped Methods
+## PDS-C13: Separately Admitted Strategy Methods
 
 ### Motivation
 
-Method visibility and provenance must be linked to active package semantics.
+Method visibility and provenance must be explicit without making an action topology part of PDS semantic authority.
 
 ### Candidate requirement
 
-Extend method registration or source metadata with:
+Define a Strategy-owned Method snapshot and admission record with:
 
-- package and facet hash
+- Method identity and content hash
+- admission source and revision
 - namespace and version
-- supported steward templates
-- context-projection reference
-- authority class
-- outcome-contract reference
+- compatible PDS semantic vocabulary refs
+- required projection and capability predicates
+- authority and outcome obligations
 
 ### Existing anchor
 
@@ -455,11 +482,12 @@ Execution method library and serialized `meld-lang::Method`.
 
 ### Candidate owner
 
-Execution domain, with PDS package lineage.
+Strategy owns Method admission and visibility. `meld-lang` owns the shared pure representation. Execution realizes only the selected candidate.
 
 ### Alternatives
 
-- one global method library with naming convention only
+- one global Method library with naming convention only
+- package-scoped Method installation
 
 ### Acceptance evidence
 
@@ -475,8 +503,7 @@ A capability match is not authorization.
 
 Calculate effective authority as the intersection of:
 
-- package request
-- profile selection
+- assignment request derived from principal declaration and profile selection
 - principal grant
 - organization/runtime policy
 - current restrictions
@@ -489,7 +516,7 @@ Check authority during:
 
 ### Existing anchor
 
-Capability contracts and execution dispatch; no complete PDS authority model.
+The delivered minimal authority model uses a compatibility package request. The canonical model derives the request through the assignment, intersects it with principal grant, runtime policy, and current restrictions, then revalidates at admission, planning, and dispatch.
 
 ### Candidate owner
 
@@ -522,7 +549,7 @@ Link actions to domain-owned outcome contracts defining:
 
 ### Existing anchor
 
-Task publication, evidence ingestion, belief revision, and Agent satisfaction curation.
+Documentation freshness already separates task publication, exact outcome interpretation, promoted evidence, belief revision, and Agent satisfaction. The remaining proof is a dissimilar domain-owned admission and verification path.
 
 ### Candidate owner
 
@@ -558,7 +585,7 @@ Activation produces owner-scoped work registrations for generic actors:
 
 ### Existing anchor
 
-Runtime supervisor and first concrete actor handles.
+The runtime supervisor and generic bounded actors run one fixed startup composition. Assignment-local generation fanout, hot activation, and portable participant lifecycle remain proposed.
 
 ### Candidate owner
 
@@ -636,7 +663,9 @@ Open: PDS scenario runner coordinating domain harnesses, or domain-owned suites 
 
 The docs, performance, and one non-software package run through the same scenario envelope without changing PDS core semantics.
 
-## Recommended Phasing
+## Historical Phasing
+
+The phase order below records the original proposal sequence. It is superseded for authorized delivery through `W06` by [PDS Authorized Implementation Workstreams](../plan/integration/pds_implementation_workstreams.md).
 
 ### Phase A: Proposal validation
 

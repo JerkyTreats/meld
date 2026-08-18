@@ -1,9 +1,11 @@
 # Runtime Anchor Map
 
-Date: 2026-07-16  
-Status: proposed analysis  
+Date: 2026-08-18
+Status: aligned implementation map
 Runtime evidence branch: `runtime-operator-visibility`  
 Scope: mapping PDS concepts to the implemented cognitive-runtime surfaces
+
+> Evidence status: historical conceptual anchor map. Use [PDS Theory Runtime Layer Map](../plan/integration/pds_theory_runtime_layer.md) for the current exact theory seam and [PDS Authorized Implementation Workstreams](../plan/integration/pds_implementation_workstreams.md) for current delivery status through `W06`.
 
 ## Purpose
 
@@ -80,11 +82,11 @@ belief revision and satisfaction curation
 | Agent identity and subscription | `crates/meld-world-model/src/agent/contracts.rs`, `registration.rs`, `subscription.rs` | first-slice subject- and belief-bound records | assignments may materialize one or more existing Agent records |
 | Agent curation | `crates/meld-world-model/src/agent/curation.rs` and `runtime.rs` | threshold-based first policy | candidate pluggable curation-policy facet; threshold remains first implementation |
 | Execution goal | `crates/meld-execution/src/goals/*` | durable execution-owned commitment | retain; add stewardship lineage in wrapper metadata rather than changing goal semantics immediately |
-| Method library | `crates/meld-execution/src/planning/method_library.rs` | loadable methods with source provenance | package-scoped method namespace and hash are candidate additions |
-| Planning runtime | `crates/meld-execution/src/planning/runtime.rs` | bounded planner actor | reuse; PDS activates and scopes method inventory rather than owning planning |
+| Method library | `crates/meld-execution/src/planning/method_library.rs` | loadable methods with source provenance | migrate toward a separately admitted Strategy Method snapshot with exact lineage |
+| Planning runtime | `crates/meld-execution/src/planning/runtime.rs` | bounded planner actor | reuse through Strategy problem assembly without PDS ownership of Method inventory |
 | Composition lowering | `crates/meld-execution/src/planning/lowering.rs` | maps methods to task-network mutations | package compiler must validate the currently executable `meld-lang` subset |
 | Task network | `crates/meld-execution/src/task_network/*` | durable task graph, claims, outcomes, publications | reuse; propagate stewardship lineage and projection status |
-| Capability contract | `crates/meld-execution/src/capability/contracts.rs` | typed bindings, artifacts, side effects, execution classes | action facets should import capability requirements rather than embed implementations |
+| Capability contract | `crates/meld-execution/src/capability/contracts.rs` | typed bindings, artifacts, side effects, execution classes | activation contributes exact contracts independently of PDS action-class semantics |
 | Task outcome publication | `crates/meld-execution/src/task_network/publication.rs` | generic execution event publication | outcome verification should consume events through domain-owned evidence mappings |
 | Workflow compatibility | `crates/meld-execution/src/workflow/*` and task package support | mature production orchestration | candidate workflows-as-methods migration path; not yet a decided endpoint |
 | Runtime supervisor | root runtime and integration design under `design/plan/integration/*` | generic lifecycle with incomplete semantic actor assembly | activation should instantiate generic runtime actors, not profile-specific kinds |

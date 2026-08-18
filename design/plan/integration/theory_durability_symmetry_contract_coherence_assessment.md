@@ -5,6 +5,8 @@ Status: reconciled for phased implementation
 Evidence basis: `implementation/theory-durability-symmetry` at `28542ac4` plus the uncommitted implementation design
 Scope: Theory Elevation Step 1 contract reuse and cross-domain coherence
 
+> Historical assessment of the Step 1 compatibility aggregate. Its recommendation to preserve the complete `StrategyTheoryPackage` is superseded by [Canonical Persistent Domain Stewardship](../../cognitive_architecture/persistent_domain_stewardship.md).
+
 ## Concern And Scope
 
 The behavior under assessment is durable installation, exact runtime activation, and historical resolution of the semantic bodies used by docs freshness. This review asks whether the implementation design introduces contracts only where ownership or durability requires a new product, and whether existing public contracts can be extended without duplicating truth or moving authority into root adapters.

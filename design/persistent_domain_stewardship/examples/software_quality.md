@@ -4,6 +4,8 @@ Date: 2026-07-14
 Status: illustrative  
 Scope: worked decomposition of a multi-perspective codebase stewardship package
 
+> This long-form source case predates the canonical cognition split. Use the normalized [use case](codebase_quality/README.md), [router specification](codebase_quality/router_spec.md), and [Canonical Persistent Domain Stewardship](../../cognitive_architecture/persistent_domain_stewardship.md) when ownership language conflicts.
+
 ## Purpose
 
 This example tests whether Persistent Domain Stewardship can express a codebase curator without collapsing into one large workflow.
@@ -582,7 +584,7 @@ The standing performance objective remains active after closure.
 
 ## Known Methods
 
-The package may import known methods rather than require unrestricted planning.
+Strategy may admit known Methods separately rather than require unrestricted search.
 
 ## `software.run_targeted_validation`
 
@@ -672,7 +674,7 @@ Illustrative grants:
 | deploy to production | outside package scope |
 | delete persisted data | Prohibited |
 
-Effective authority remains the intersection of package request, principal grant, runtime policy, and current restrictions.
+Effective authority remains the intersection of assignment request, principal grant, runtime policy, and current restrictions.
 
 ## Outcome Contracts
 

@@ -2,6 +2,8 @@
 
 Status: delivered, closed 2026-08-12
 
+> Historical delivery record. Any statement below that assigns Methods, exact capabilities, policy, bounds, projection dimensions, or requested authority to a stewardship package is superseded by [Canonical Persistent Domain Stewardship](../../cognitive_architecture/persistent_domain_stewardship.md).
+
 Closure note 2026-08-12: every wave including Workstream Eight closed by 2026-07-25 per the wave dispositions below, the ignition slices closed 2026-07-30 and 2026-07-31, and the product convergence proof landed on `implementation/docs-freshness-strategy-runtime` in commit 4894b73 with the quiescence settlement test in `tests/integration/runtime_cli.rs`. Statements below that the convergence proof stays open are superseded by that landing. Findings carried to later lanes remain open and are tracked by the [Theory Elevation Program](theory_elevation_program.md) residual register and their home documents.
 
 Evidence date: 2026-07-16

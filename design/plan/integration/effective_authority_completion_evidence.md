@@ -6,6 +6,8 @@ Scope: Theory Elevation Step 4
 Design: [Effective Authority Implementation Design](effective_authority_implementation_design.md)
 Fresh review: [Theory Elevation Steps 1 Through 4 Fresh Review](theory_elevation_steps_1_through_4_fresh_review.md)
 
+> Historical completion evidence for the compatibility authority shape. [Canonical Persistent Domain Stewardship](../../cognitive_architecture/persistent_domain_stewardship.md) moves the request from Strategy theory into the principal declaration and assignment while retaining the independent enforcement proven here.
+
 ## Delivered Contract
 
 Effective authority is now a deterministic intersection over the verified candidate, package request, principal grant, runtime allowance, explicit restrictions, and exact subject scope. Action identities use existing capability type identities at the current product maturity.

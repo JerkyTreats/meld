@@ -4,6 +4,8 @@ Date: 2026-07-16
 Status: illustrative  
 Scope: customer-facing profile over the full software-quality package decomposition
 
+> This long-form profile predates the canonical cognition split. Use the normalized [codebase quality use case](codebase_quality/README.md) and [Canonical Persistent Domain Stewardship](../../cognitive_architecture/persistent_domain_stewardship.md) when ownership language conflicts.
+
 ## Purpose
 
 `software_quality.md` demonstrates the expert package and operational-domain-theory view.

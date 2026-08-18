@@ -1,10 +1,12 @@
 # Persistent Domain Stewardship
 
-Date: 2026-07-16  
-Status: proposed, non-authoritative  
+Date: 2026-08-18
+Status: active proposal corpus under canonical PDS architecture
 Scope: design options for a declarative application layer configuring persistent, evidence-grounded stewardship over bounded domains
 
 > This directory is a proposal corpus rather than an accepted implementation contract. Read [Proposal Status And Decision Semantics](proposal_status.md) and [Proposal Index](proposal_index.md) before interpreting concrete schemas or requirements as final.
+
+> The semantic boundary between PDS and Meld cognition is canonical in [Persistent Domain Stewardship](../cognitive_architecture/persistent_domain_stewardship.md). Proposals in this directory may explore upper-layer syntax and mechanics but may not broaden that boundary.
 
 ## Thesis
 
@@ -25,11 +27,11 @@ Meld cognitive runtime
 
 The cognitive runtime defines **how** observation, temporal integration, belief revision, goal curation, planning, execution, and outcome publication operate.
 
-A stewardship package defines the full operational domain theory available to a steward family.
+A stewardship package links the stable operational domain semantics available to a steward family. It does not contain every runtime input used to realize that meaning.
 
 A steward profile exposes a smaller customer-facing surface for intent, scope, sensitivity, autonomy, budget, escalation, and verification.
 
-An assignment binds a profile to a principal, scope, and authority grant.
+An assignment binds a profile to a principal, scope, requested authority, and grant lineage.
 
 An activation binds the assignment to sensors, connectors, credentials, providers, capabilities, runtime placement, and quotas.
 
@@ -51,9 +53,11 @@ flowchart TD
 
 [`meld-lang`](../cognitive_architecture/meld-lang/README.md) remains the shared runtime intermediate representation for propositions, goals, operators, effects, methods, and world state.
 
-[World Model Strategy](../cognitive_architecture/world_model/strategy/README.md) is the authoritative runtime boundary for turning activated operational domain theory and current world-model projections into Agent-authorized candidate Compositions. PDS supplies state-free semantics, action affordances, outcome theory, authority, and governance. It does not own episode-specific Strategy decisions, generated Compositions, or task-network state.
+[World Model Strategy](../cognitive_architecture/world_model/strategy/README.md) is the authoritative runtime boundary for turning activated operational domain theory and current world-model projections into Agent-authorized candidate Compositions. PDS supplies state-free settlement, proof, action-class, outcome, constraint, and governance meaning. Activation independently supplies exact capability affordances. Agent supplies construction policy and judgment. Strategy supplies construction and separately admitted Methods. PDS does not own episode-specific Strategy decisions, generated Compositions, or task-network state.
 
 [Directive Grounding](../cognitive_architecture/world_model/agent/directive_grounding.md) is the authoritative runtime boundary that applies maintained PDS belief-family declarations to trusted graph scope. PDS declares which questions can exist. Meld grounds those declarations into concrete belief keys and reconciles their answers.
+
+[Runtime Lifecycle And Quiescence](../cognitive_architecture/runtime_lifecycle_and_quiescence.md) is the authoritative lifetime boundary for active idle, quiescence, fencing, participant incarnation, recovery, and shutdown. PDS activation supplies an exact participant plan and coordinates owner ports without moving domain safe-point or wake meaning into the router.
 
 Sensors and capabilities remain executable adapters at domain boundaries.
 
@@ -77,7 +81,8 @@ The current recommendations are:
 - preserve a small customer-facing profile above the full package model;
 - reuse existing cognitive-runtime authorities;
 - use workflows as compatibility methods where appropriate;
-- prove the model with documentation freshness, software performance, and one non-software steward.
+- preserve documentation freshness as the parity consumer, prove the common attachment path with dependency security, then test one non-software steward;
+- preserve portable domain contracts across linked, subprocess, sidecar, remote-service, and persistent-controller activation placements.
 
 See [Proposal Status](proposal_status.md), [Meta-Domain](meta_domain.md), and [Open Decisions](open_decisions.md).
 
@@ -156,7 +161,7 @@ episode closes
 standing mandate remains active
 ```
 
-Whether objective and episode state are PDS-owned, Agent-owned, or projected remains open.
+Installed maintained-condition meaning and evaluation are Agent-owned. Whether a principal-facing stewardship objective needs only declaration lineage and projection or also needs separate PDS coordination remains open. Episode ownership also remains open.
 
 ## Qualification
 
@@ -208,7 +213,7 @@ See [Profile Abstraction](profile_abstraction.md).
 
 ## Stewardship assignment
 
-Normative binding of profile, principal, concrete scope, effective authority, and lifecycle.
+Normative binding of profile, principal, concrete scope, requested authority, grant lineage, and lifecycle.
 
 ## Stewardship activation
 
@@ -216,7 +221,7 @@ Physical binding of sensors, connectors, credentials, providers, capability impl
 
 ## Compiled stewardship image
 
-Content-addressed linked representation containing resolved package semantics, profile selections, domain facets, activation requirements, and lineage.
+Content-addressed linked representation containing resolved package semantics, profile selections, domain facets, activation requirements, and lineage. It does not freeze an activation-local capability catalog, Strategy Method snapshot, construction policy, projection request, search controls, or current authority decision.
 
 ## Stewardship projection
 
@@ -231,7 +236,7 @@ The proposal compares:
 3. root `meld` product composition without an independent PDS domain;
 4. a rejected PDS runtime-orchestrator model.
 
-The current recommendation is federated facets with a root-composed first proof if needed.
+The current recommendation is routed domain-owned fragments with one small structural package envelope. Documentation freshness is the existing parity consumer. The bounded dependency-security slice is the authorized next proof, while full second-expression completion remains design-gated.
 
 See [Meta-Domain](meta_domain.md), [Facet Protocol](facet_protocol.md), and [Assessment By Domain](assessment_by_domain.md).
 
@@ -241,7 +246,7 @@ PDS does not create new event, world-model, Agent, execution, or capability auth
 
 | PDS concern | Candidate runtime owner |
 |---|---|
-| package, profile, assignment, activation, linking | PDS control plane or root first slice |
+| package, profile, assignment, activation, linking | proposed PDS control plane with root adapters |
 | promoted observation semantics | source/sensory domain |
 | canonical event append and replay | `meld-events` |
 | graph projection and state | world-model graph |
@@ -282,10 +287,10 @@ Those remain domain-owned runtime state.
 The following are current proposal constraints or recommendations.
 
 1. **Packages declare responsibility, not procedural control flow.**  
-   Known methods may be imported, but the customer profile is not a workflow program.
+   Known Methods may be admitted separately by Strategy, but the customer profile is not a workflow program.
 
 2. **Standing objectives are distinct from transient goals.**  
-   The final ownership of objective state remains open.
+   Agent owns installed maintained-condition evaluation. Upper-layer declaration, projection, and any proven coordination state remain separate questions.
 
 3. **Belief is distinct from preference.**  
    Belief families are epistemic; concern bindings are normative.
@@ -294,7 +299,7 @@ The following are current proposal constraints or recommendations.
    Task success need not restore a stewardship objective.
 
 5. **Authority is distinct from capability.**  
-   A package requests authority; it does not grant it.
+   An assignment requests authority; it does not grant it.
 
 6. **Adapters remain executable code.**  
    Package or facet declarations reference sensors, comparators, capabilities, and evaluators through typed contracts.
@@ -313,9 +318,15 @@ The following are current proposal constraints or recommendations.
 12. **Domain integration is optional.**  
     A truthful result may be no PDS integration.
 
-## First Slice
+13. **Runtime placement is not semantic authority.**
+    Package meaning remains stable across supported placements, while activation states the required binding, sharing, failure, resource, effect, and admission isolation.
 
-The current recommended first proof remains documentation freshness.
+14. **External results remain untrusted until owner admission.**
+    Transport success, process success, and service callbacks require assignment, activation-generation, operation or delivery, source, and domain validation before they become canonical products.
+
+## Implemented Runtime Antecedent And Next Proof
+
+Documentation freshness is the implemented runtime antecedent and the parity consumer for the proposed router migration.
 
 ```text
 package:
@@ -340,28 +351,31 @@ activation:
 belief:
     content_freshness
 
-known method:
-    existing docs-writer behavior
+strategy:
+    installed docs strategy theory
+
+capabilities:
+    five exact docs capability contracts
 
 outcome:
     verification evidence updates belief
     Agent evaluates restoration
 ```
 
-The proof should lower into existing cognitive-runtime contracts without creating a PDS planner or executor.
+The delivered expression already runs through existing cognitive-runtime contracts without a PDS planner or executor. The authorized next proof is the bounded dependency-security truth and lifecycle slice, whose external source, bounded negative evidence, provider-free behavior, and result-admission needs are deliberately dissimilar from documentation freshness.
 
-The same abstraction must then be tested with software performance and one non-software steward.
+Full dependency-security completion requires new design. Canonical declaration and customer profile work remains design-gated even after the bounded slice. See [PDS Authorized Design Delivery Program](../plan/integration/pds_authorized_design_delivery_program.md), [PDS Authorized Implementation Workstreams](../plan/integration/pds_implementation_workstreams.md), and [PDS Design-Gated Continuations](../plan/integration/pds_design_gated_continuations.md).
 
-## Proposal Success Criteria
+## Upper-Layer Promotion Criteria
 
-The proposal is ready to generate an authoritative implementation plan when:
+The declaration and profile proposal is ready to become authoritative when:
 
-- one package/profile lowers into existing runtime contracts;
-- one dissimilar package does not require PDS kernel changes;
+- documentation freshness migrates through the generic package and activation path with parity;
+- dependency security does not require PDS kernel changes;
 - customer profiles prove materially simpler than full package source;
-- objective and episode ownership is resolved;
+- principal-facing objective and episode projection needs are resolved;
 - domain ownership remains explicit;
-- authority enforcement is demonstrated;
+- current authority enforcement remains intact and any upper-layer approval needs are demonstrated;
 - package upgrade and exact-hash replay are demonstrated;
 - workflow migration value is measured rather than assumed.
 
@@ -381,7 +395,7 @@ This proposal does not currently define:
 - a general-purpose workflow language;
 - autonomous authority expansion;
 - a requirement that every application be a steward;
-- a final answer for objective, episode, context-projection, or governance ownership.
+- a final answer for principal-facing objective projection, episode coordination, context-projection, or advanced governance ownership.
 
 ## Documents
 
@@ -389,7 +403,11 @@ Start with [Proposal Index](proposal_index.md).
 
 - [Proposal Status And Decision Semantics](proposal_status.md)
 - [PDS Meta-Domain](meta_domain.md)
-- [Assessment By Domain](assessment_by_domain.md)
+- [Historical Proposal Assessment By Domain](assessment_by_domain.md)
+- [Persistent Domain Stewardship Architectural Invariants](architectural_invariants.md)
+- [PDS Isolation And Runtime Portability](isolation_and_runtime_portability.md)
+- [PDS Example Router Corpus](examples/README.md)
+- [Theory Router Synthesis Across PDS Examples](examples/theory_router_synthesis.md)
 - [Steward Profile Abstraction](profile_abstraction.md)
 - [Stewardship Facet Protocol](facet_protocol.md)
 - [Stewardship Package Model](package_model.md)
@@ -399,6 +417,9 @@ Start with [Proposal Index](proposal_index.md).
 - [Workflow Migration](workflow_migration.md)
 - [Open Decisions](open_decisions.md)
 - [Evaluation Plan](evaluation_plan.md)
+- [PDS Authorized Design Delivery Program](../plan/integration/pds_authorized_design_delivery_program.md)
+- [PDS Authorized Implementation Workstreams](../plan/integration/pds_implementation_workstreams.md)
+- [PDS Design-Gated Continuations](../plan/integration/pds_design_gated_continuations.md)
 - [Software Quality Example](examples/software_quality.md)
 - [Software Quality Profile Example](examples/software_quality_profile.md)
 

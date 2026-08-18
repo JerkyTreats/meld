@@ -5,6 +5,8 @@ Status: implementation input
 Parent program: [Theory Elevation Program](theory_elevation_program.md)
 Scope: Theory Elevation Step 4
 
+> Historical assessment of the implemented authority path. The current architecture moves requested authority out of Strategy theory and into the principal declaration and assignment. See [Canonical Persistent Domain Stewardship](../../cognitive_architecture/persistent_domain_stewardship.md).
+
 ## Concern
 
 Represent permission to execute a Strategy candidate independently from capability availability. The product must derive effective authority from the package request, principal grant, runtime policy, and current restrictions, preserve exact lineage through Agent judgment and execution, and fail closed before planning or dispatch can realize an unauthorized capability.

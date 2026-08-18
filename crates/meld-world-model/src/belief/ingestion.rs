@@ -95,6 +95,7 @@
 //!     reference_time: None,
 //!     transaction_seq: 2,
 //!     content_hash: None,
+//!     outcome_mapping_revision: None,
 //!     fields,
 //! };
 //!

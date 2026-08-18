@@ -1,7 +1,7 @@
 # Proposal Status And Decision Semantics
 
-Date: 2026-07-16  
-Status: proposed  
+Date: 2026-08-18
+Status: proposed
 Scope: interpretation rules for Persistent Domain Stewardship design documents
 
 ## Purpose
@@ -9,6 +9,10 @@ Scope: interpretation rules for Persistent Domain Stewardship design documents
 Persistent Domain Stewardship is a design proposal, developed by continuous abstraction: layers canonicalize from the runtime upward, and this corpus holds only the layers that remain unsettled.
 
 The theory-to-runtime layer is no longer proposal-tier: [Persistent Domain Stewardship](../cognitive_architecture/persistent_domain_stewardship.md) canonicalizes operational domain theory, its kinds, and its authority boundaries, and [PDS Theory Runtime Layer Map](../plan/integration/pds_theory_runtime_layer.md) maps it onto the written runtime. Documents here defer to that layer where they touch it.
+
+The canonical boundary distinguishes PDS semantic theory from runtime assembly inputs. Exact capability snapshots, Methods, Strategy construction policy, derived projection requests, search controls, and effective authority do not become PDS theory merely because a compiler or adapter resolves them.
+
+The delivered runtime through Theory Elevation Step 4 now grounds exact owner revisions, named declaration selection, Agent-owned maintained conditions, and effective authority enforcement. [PDS Authorized Design Delivery Program](../plan/integration/pds_authorized_design_delivery_program.md) has delivered the accepted design set for [PDS Authorized Implementation Workstreams](../plan/integration/pds_implementation_workstreams.md), which starts from that delivered base at `W00` and ends at `W06`.
 
 Everything above that layer — package schema, source language, profile abstraction, facets, activation, migration commitments — is not an authoritative implementation contract, crate boundary, package schema, source language, migration commitment, or accepted runtime architecture.
 
@@ -56,9 +60,12 @@ The proposal currently treats these as established constraints:
 2. PDS must not create a second event ledger, belief engine, planner, task executor, or capability runtime.
 3. Capability availability does not imply authority to invoke it.
 4. Planner effects are predictions rather than verified environmental outcomes.
-5. Source systems remain authoritative where Meld is not the system of record.
-6. Runtime vocabulary may remain open-ended while package authoring may add static validation.
-7. A simpler controller, workflow, rule engine, or optimizer remains the mandatory baseline for each proposed steward.
+5. PDS supplies stable meaning and norms but does not precompute situated evidence, beliefs, Goals, Strategy candidates, authorizations, tasks, or restoration.
+6. Exact active capability catalogs come from activation rather than PDS semantic packages.
+7. Strategy Methods and construction policy retain independent owner identity.
+8. Source systems remain authoritative where Meld is not the system of record.
+9. Runtime vocabulary may remain open-ended while package authoring may add static validation.
+10. A simpler controller, workflow, rule engine, or optimizer remains the mandatory baseline for each proposed steward.
 
 ## Current Hypotheses
 
@@ -75,7 +82,7 @@ The proposal is testing these hypotheses:
 
 The current recommendations are not final decisions:
 
-- Treat PDS as a control-plane meta-domain rather than the cognitive data plane.
+- Treat PDS as a semantic application layer with a structural package control plane rather than the cognitive data plane.
 - Explore federated domain-owned facets rather than one PDS-owned universal package schema.
 - Separate package semantics, user profile, assignment, and physical activation.
 - Use a small structured profile language with generated visual and conversational editing surfaces.
@@ -90,14 +97,16 @@ The following remain open:
 - central package schema versus federated facets
 - YAML, HCL, custom profile DSL, or another source representation
 - authoritative versus projected ownership of stewardship episodes
-- Agent-owned versus PDS-owned standing-objective state
-- assignment and activation as separate or initially unified records
-- location of context-projection declarations
+- principal-facing objective declaration and projection above Agent-owned maintained-condition evaluation
+- physical persistence and lifecycle representation for assignment and activation while their identities remain distinct
+- concrete context-projection execution contracts beyond Goal-derived request ownership
 - package scenario execution ownership
 - workflow migration endpoint
 - package upgrade and rollback semantics
 
 See [Open Decisions](open_decisions.md).
+
+Installed maintained-condition ownership and current effective-authority enforcement are not open at the lower layer. Only their principal-facing declaration, projection, approval, budget, delegation, and upgrade extensions remain proposal questions.
 
 ## Reading Rule
 

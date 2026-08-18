@@ -1,6 +1,6 @@
 # Cognitive Architecture Implementation Plan
 
-Date: 2026-08-12
+Date: 2026-08-18
 Status: active
 Scope: declarative implementation readiness and dependency order for the cognitive architecture
 
@@ -16,24 +16,29 @@ When this plan conflicts with `design/cognitive_architecture`, treat the archite
 
 ## Current Authority
 
-The active forward objective is the [Theory Elevation Program](integration/theory_elevation_program.md): elevate the hand-lowered docs stewardship image into durable installed theory, remove root expression dispatch, and prove runtime agnosticism through a second dissimilar expression.
+The [Canonical PDS Architecture](../cognitive_architecture/persistent_domain_stewardship.md) and [PDS Cognition Boundary Assessment](integration/pds_cognition_boundary_domain_assessment.md) now fix the semantic ownership split. Current runtime workstreams preserve compatibility where required, but they must converge by splitting the existing `StrategyTheoryPackage` aggregate into independently owned Strategy inputs.
+
+The active [PDS Boundary Program](integration/pds_boundary_program.md) defines the transition from the current compatibility checkpoint into that canonical split. Its [domain assessment](integration/pds_boundary_program_domain_assessment.md) freezes the delivery owners and non-integration decisions. Phase `PB00` closed the predecessor honestly and established the clean checkpoint. Phase `PB01` awaits an explicit advancement decision.
+
+The [PDS Authorized Design Delivery Program](integration/pds_authorized_design_delivery_program.md) is complete. Its successor [PDS Authorized Implementation Workstreams](integration/pds_implementation_workstreams.md) is closed as superseded at a compatibility checkpoint, with exact disposition in the [implementation closeout](integration/pds_authorized_implementation_closeout.md). The next possible forward action is `PB01` in the PDS Boundary Program, pending explicit approval. Later dependency-security production completion, Strategy replay, upper-layer schemas, projection, and upgrade remain outside active authorization.
 
 The runtime completion program it succeeds is delivered. The [Runtime Completion Ground Map](integration/runtime_completion_ground_map.md) and [Runtime Completion Implementation Workstreams](integration/runtime_completion_implementation_workstreams.md) closed with every wave and the flywheel-ignition lane complete, and the Strategy first slice landed the dynamic loop: bounded candidate search, Agent authorization, authorized realization with no Method or workflow route, claim-validated publication, and evidence-driven settlement to quiescence.
 
 The observation substrate delivered under the [Runtime Harness Plan](integration/runtime_harness_plan.md) serves the frozen [Agent-Native Debugger Requirements](integration/agent_native_debugger_requirements.md); its phase four consumer contract remains open. The standing storage posture behind that substrate is the [Storage Substrate Decision Record](integration/storage_substrate_decision_record.md).
 
-## Current Delivery Order
+## Historical Predecessor Delivery Order
 
-The order below is the active program sequence as of 2026-08-12, grounded in the strategy landing. The prior sequence — instrument first, ignition through the instrument, Strategy inside the harness — completed: harness phases one through three closed with the three-altitude gate passed, the ignition lane closed, and the Strategy first slice landed the dynamic loop with a bounded convergence to quiescence and claim-validated true publication. What orders the work now is a single fact: the runtime kernel is domain-agnostic but the docs theory package is hand-lowered Rust composed from root, so widening to any second domain is blocked on theory elevation, not on machinery.
+Theory Elevation Steps 1 through 4 are delivered and independently reconciled. The closed predecessor prescribed this sequence:
 
-1. Theory elevation steps one and two under the [Theory Elevation Program](integration/theory_elevation_program.md): durable theory registries following the belief-family pattern, then declaration lowering that removes the root expression dispatch. These convert the docs stewardship image from compiled constants into installed theory.
-2. Parity reassessment: the [Flywheel Parity Workstream](integration/flywheel_parity_workstream.md) resumes from its Strategy pause, re-measuring comparator calibration and the satisfaction threshold against the rewritten docs theory data, and recording the live provider runs its slice seven still lacks.
-3. Standing maintained condition and authority contracts, elevation steps three and four, landing the runtime seams the stewardship corpus requires before any declaration layer may depend on them.
-4. The second expression proof: CVE freshness as the designed inverse domain, rejected as a generality proof if it needs any expression-named root branch. This is the evidence gate before stewardship schemas freeze.
-5. Settled replay and strategy promotion, closing the elevation program. The [Multiplier Harness Program](integration/multiplier_harness_program.md) proceeds in parallel once its Ollama validation joins; its other dependencies are delivered. Harness phase four, the published consumer contract, proceeds in parallel as capacity allows.
-6. Observation widens: the sensory promotion contract replaces the genesis substitute at the first coupling, claim re-entry closes the outer knowledge loop, and the measurement-gated deferred programs — spine compaction, causation, regime — activate on metrics the harness user projection is the instrument for.
+1. Characterize the fixed docs path as the compatibility and parity oracle.
+2. Add inert generic package attachment through domain-owned theory routes and exact generic receipts.
+3. Move docs capability publication and attachment through the routed owner pattern without deleting historical reads.
+4. Separate generic assignment from startup activation and prove assignment-local catalogs, bindings, grants, and state.
+5. Add dependency security first as a truthful read-only domain path, then add portable external lifecycle and result admission.
+6. Add portable lifecycle and result-admission mechanics, exercised through the bounded dependency-security contract proof.
+7. Stop after `W06` and present completion evidence before considering any continuation.
 
-Why this order: registries precede declaration lowering because lowering needs somewhere durable to land; seams precede the second expression because the CVE semantics require maintained conditions and authority the docs slice never exercised; and the second expression precedes schema freezing because the stewardship corpus requires dissimilar-expression evidence before its package model hardens.
+The historical owners, tasks, code regions, evidence gates, and deferrals remain in [PDS Authorized Implementation Workstreams](integration/pds_implementation_workstreams.md). Their actual completion state is in the [implementation closeout](integration/pds_authorized_implementation_closeout.md). Current delivery authority is the PDS Boundary Program.
 
 Flywheel docs freshness now composes its five-capability chain dynamically from the stewardship catalog with no Method or workflow route; the docs writer package path and its earlier one-turn, synthetic-patch, activation-heavy, and production-closure plans are retained only as historical characterization.
 
@@ -167,7 +172,10 @@ event authority and observability hardening
 22. composition-path parity — Workstream Eight closed 2026-07-25
 23. world-model Strategy first slice — implemented, scope in [Strategy Minimal Slice Requirements](world_model/strategy/minimal_slice_requirements.md), cross-domain ownership in [Strategy Assessment By Domain](world_model/strategy/assessment_by_domain.md), and delivery evidence in [Strategy Ground Map](world_model/strategy/ground_map.md)
 24. agent-native debugger — register frozen, exit conjuncts discharged with harness phase three and the Strategy landing, phase four consumer contract open
-25. theory elevation — current forward authority in [Theory Elevation Program](integration/theory_elevation_program.md)
+25. theory elevation steps one through four — delivered and reconciled
+26. PDS authorized design delivery — complete in [PDS Authorized Design Delivery Program](integration/pds_authorized_design_delivery_program.md)
+27. PDS routed package through bounded lifecycle proof — closed as superseded at a compatibility checkpoint in [PDS Authorized Implementation Closeout](integration/pds_authorized_implementation_closeout.md)
+28. PDS cognition boundary correction — active at `PB00` in [PDS Boundary Program](integration/pds_boundary_program.md)
 
 ## Implementation Plans
 
@@ -181,7 +189,22 @@ Implementation plans decompose assessed areas into phased, dependency-ordered wo
 - [execution/task_network/PLAN.md](execution/task_network/PLAN.md) — first slice implemented
 - [execution/task_network/PHASE8.md](execution/task_network/PHASE8.md) — implemented
 - [events/event_foundation_closeout_program.md](events/event_foundation_closeout_program.md) - closed event foundation closeout
-- [integration/theory_elevation_program.md](integration/theory_elevation_program.md) - current forward authority: theory registries, declaration lowering, maintained conditions, authority, second expression proof, settled replay
+- [integration/theory_elevation_program.md](integration/theory_elevation_program.md) - architectural objective with steps one through four delivered and later steps subject to explicit implementation authorization
+- [integration/pds_authorized_design_delivery_program.md](integration/pds_authorized_design_delivery_program.md) - completed design delivery program for accepted packets `D00` through `D06`
+- [integration/pds_w00_docs_characterization_protocol.md](integration/pds_w00_docs_characterization_protocol.md) - accepted executable docs characterization and parity protocol
+- [integration/pds_w01_router_substrate_design.md](integration/pds_w01_router_substrate_design.md) - accepted inert package router and exact receipt design
+- [integration/pds_w02_owner_routes_and_contributors_design.md](integration/pds_w02_owner_routes_and_contributors_design.md) - accepted owner handler and capability contribution design
+- [integration/pds_w03_docs_routed_migration_design.md](integration/pds_w03_docs_routed_migration_design.md) - accepted docs cutover, parity, and historical compatibility design
+- [integration/pds_w04_assignment_startup_activation_design.md](integration/pds_w04_assignment_startup_activation_design.md) - accepted assignment and isolated startup activation design
+- [integration/pds_w05_dependency_security_truth_slice_design.md](integration/pds_w05_dependency_security_truth_slice_design.md) - accepted bounded Cargo fixture security truth design
+- [integration/pds_w06_portable_lifecycle_admission_design.md](integration/pds_w06_portable_lifecycle_admission_design.md) - accepted lifecycle, external operation, passive delivery, and result admission design
+- [integration/pds_implementation_workstreams.md](integration/pds_implementation_workstreams.md) - closed predecessor workstream plan from `W00` through `W06`
+- [integration/pds_authorized_implementation_closeout.md](integration/pds_authorized_implementation_closeout.md) - authoritative reconciliation of predecessor tasks, exits, findings, retained substrate, and incomplete product paths
+- [integration/pds_boundary_program.md](integration/pds_boundary_program.md) - active maturity-calibrated delivery ledger for predecessor closeout, clean checkpoint, Strategy boundary separation, proof-bearing docs evidence, dependency-security falsification, and compatibility retirement
+- [integration/pds_boundary_program_domain_assessment.md](integration/pds_boundary_program_domain_assessment.md) - delivery-specific two-pass domain assessment for the PDS cognition-boundary correction
+- [integration/pds_authorized_implementation_findings.md](integration/pds_authorized_implementation_findings.md) - active findings register from routed docs live verification, including runtime lifecycle, Strategy cost, capability-boundary, and evidence-retention failures
+- [integration/runtime_supervisor_invariant_domain_assessment.md](integration/runtime_supervisor_invariant_domain_assessment.md) - frozen supervisor goal and invariants with a two-pass domain assessment of confirmed runtime violations
+- [integration/pds_design_gated_continuations.md](integration/pds_design_gated_continuations.md) - non-authorized continuation register for dependency-security completion, Strategy replay, upper-layer schemas, projection, and upgrade
 - [integration/theory_durability_symmetry_workstream.md](integration/theory_durability_symmetry_workstream.md) - Step 1 workstream ready for phased implementation with frozen theory inventory, acceptance criteria, rejection criteria, and verification gates
 - [integration/theory_durability_symmetry_domain_assessment.md](integration/theory_durability_symmetry_domain_assessment.md) - initial Step 1 domain sweep retained as assessment history
 - [integration/theory_durability_symmetry_contract_coherence_assessment.md](integration/theory_durability_symmetry_contract_coherence_assessment.md) - focused contract-reuse audit and refreshed cross-domain coherence assessment

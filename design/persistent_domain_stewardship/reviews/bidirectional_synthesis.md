@@ -6,6 +6,8 @@ Inputs:
 - [Top-Down Review](top_down_intent_review.md)
 - [Bottom-Up Review](bottom_up_runtime_review.md)
 
+> This synthesis remains authoritative for the separation between principal declaration and compiled semantic image. [Canonical Persistent Domain Stewardship](../../cognitive_architecture/persistent_domain_stewardship.md) supersedes its broader claim that Methods, exact available actions, realizations, and task-package references belong inside that image.
+
 ## Question
 
 Do the current docs-freshness, CVE, and expanded PDS examples represent the eventual user-facing PDS expression, or are they better understood as material below that layer?

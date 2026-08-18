@@ -7,5 +7,7 @@
 //! loading, validation, and resolution perform no writes and open no
 //! stores. Internal runtime actor topology is not expressed here.
 
+pub mod activation;
+pub mod assignment;
 pub mod binding;
 pub mod selection;

@@ -5,6 +5,8 @@ Status: implementation input
 Parent program: [Theory Elevation Program](theory_elevation_program.md)
 Scope: Theory Elevation Step 2
 
+> Historical assessment of the implemented compatibility path. Use [PDS Cognition Boundary Assessment](pds_cognition_boundary_domain_assessment.md) and [Canonical Persistent Domain Stewardship](../../cognitive_architecture/persistent_domain_stewardship.md) for current ownership.
+
 ## Concern
 
 Replace the expression-shaped docs freshness configuration and direct docs runtime composition with one declaration-shaped selection and a data-driven lowering path. Root config, initialization, CLI, and runtime assembly may select, route, and bind domain products, but they must not choose semantic behavior by expression name. The change must preserve the complete receipt and exact lineage delivered by Step 1.

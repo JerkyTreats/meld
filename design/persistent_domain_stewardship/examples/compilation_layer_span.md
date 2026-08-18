@@ -1,16 +1,18 @@
 # PDS Examples Across Compilation Layers
 
-Date: 2026-08-08  
-Status: illustrative architecture analysis  
-Scope: reinterpret the PDS example corpus through the distinction between user intent, canonical declaration, compiled semantic IR, and runtime-owned state
+Date: 2026-08-18
+Status: illustrative architecture analysis aligned to canonical PDS
+Scope: reinterpret the PDS example corpus through the distinction between user intent, canonical declaration, compiled semantic IR, runtime assembly inputs, and runtime-owned state
 
 ## Purpose
 
-The current PDS examples were intentionally developed from the runtime upward. They describe belief families, evidence routes, maintained conditions, methods, actions, outcome contracts, provenance, and authority because those are the semantic forms the Meld runtime must ultimately consume.
+The current PDS examples were intentionally developed from the runtime upward. They mix stable belief and settlement semantics with Methods, exact affordances, runtime policy, actions, outcome contracts, provenance, and authority because those are all inputs the Meld runtime ultimately consumes.
 
 That makes the examples useful as a **compiler-target corpus**, but it also creates a presentation hazard: the detailed examples can be mistaken for candidate end-user syntax.
 
 This document makes the layering explicit across the example set.
+
+The normalized use-case and route-oriented counterparts are indexed in [PDS Example Router Corpus](README.md).
 
 The architectural refinement is:
 
@@ -20,8 +22,10 @@ user intent surface
 canonical PDS declaration
     ↓ compile and link
 compiled stewardship image / semantic IR
-    ↓ lower into domain-owned runtime contracts
+    ↓ install stable meaning through domain-owned runtime contracts
 operational domain theory
+    ↓ combine with activation and cognitive inputs
+runtime assembly snapshots
     ↓ execute against
 runtime-owned state
 ```
@@ -70,7 +74,7 @@ package/profile revision constraints
 
 This is the primary approval boundary. A principal should be able to understand what this declaration authorizes without reading belief-engine or task-network internals.
 
-### Layer C — Compiled stewardship image / semantic IR
+### Layer C — Compiled PDS semantic image
 
 The normalized, linked, content-addressed representation emitted by a compiler or facet linker.
 
@@ -83,19 +87,35 @@ belief-family registrations
 evidence mapping registrations
 curation-rule bindings
 maintained-condition lowering
-meld-lang propositions, goals, methods, operators, and effects
-available-action bindings
-method-to-action realizations
-task-package references
+domain propositions and abstract action, outcome, and constraint references
 outcome contracts
-governance requirements
+abstract action-class, constraint, and governance meaning
 activation requirements
 content hashes and lineage
 ```
 
-Most of the detailed material in the current PDS examples belongs at this layer or in the expert-authored package/facet sources that compile into it.
+Goals, Methods, exact operators, exact capability contracts, action graphs, and task-package references are not compiled PDS semantics. Stable propositions and action-class meaning may use shared language forms, but situated or reusable cognitive procedure retains its own owner and identity.
 
-### Layer D — Domain-owned runtime state
+### Layer D — Runtime assembly inputs
+
+Independently owned inputs combined only for a current assignment, Goal, and Strategy problem.
+
+Typical content:
+
+```text
+current planner snapshot
+activation capability snapshot
+separately admitted Method snapshot
+Agent-selected construction policy
+derived projection request
+authority request, grant, and restrictions
+search engine and traversal controls
+physical implementation bindings
+```
+
+These inputs do not become PDS theory merely because a compiler or runtime adapter resolves their exact identities.
+
+### Layer E — Domain-owned runtime state
 
 State created while the steward operates.
 
@@ -123,26 +143,29 @@ This state is never part of the PDS declaration or operational theory body.
 The existing examples should now be interpreted as follows:
 
 - `mandate`, `scope`, high-level desired conditions, autonomy, escalation, and verification posture are evidence for **Layers A and B**;
-- domain vocabulary, observation models, belief families, curation semantics, methods, action meanings, outcome routes, and governance requirements are primarily **package/facet semantics and Layer C compiler targets**;
-- example episodes, evidence revisions, current relationships, current exposures, current mastery, current service health, and current goal/task state are **Layer D runtime examples**;
+- domain vocabulary, observation models, belief questions, proof semantics, curation semantics, maintained conditions, settlement meaning, abstract action and outcome meaning, and governance classifications are primarily **package/facet semantics and Layer C compiler targets**;
+- exact capabilities, Methods, construction policy, projection requests, search controls, and current authority context are **Layer D runtime assembly inputs**;
+- example episodes, evidence revisions, current relationships, current exposures, current mastery, current service health, and current goal/task state are **Layer E runtime examples**;
 - YAML-like objective fragments and explicit theory IDs are illustrative lowering forms unless explicitly promoted to the canonical declaration contract.
 
 A future user interface should not be judged by how closely it resembles the current detailed examples. A compiler should be judged by whether it can lower a user-approved declaration into the semantics those examples require.
 
+Per-example Layer D details are summarized in the cross-example matrix. The longer cards focus on principal intent, semantic compilation, and resulting runtime state.
+
 ## Cross-Example Matrix
 
-| Example | User intent should express | Canonical declaration should select/bind | Compiler must emit or link | Runtime owns |
+| Example | User intent should express | Canonical declaration should select or bind | PDS semantic image must emit or link | Runtime assembly and state own |
 |---|---|---|---|---|
-| Documentation freshness | keep selected documentation current | repository/subtree, freshness policy, autonomy, verification | content-freshness family, evidence routes, curation, docs action, package route, outcome verification | source changes, freshness revisions, goals, docs runs, generated artifacts, verification outcomes |
-| CVE exposure | keep assigned systems within vulnerability-risk policy | software/infrastructure scope, severity/risk policy, exception posture, remediation authority | applicability/exposure families, advisory/SBOM mappings, remediation methods/actions, exception semantics, verification routes | advisories observed, dependency state, exposure beliefs, active exceptions, remediation goals/tasks/outcomes |
-| Roleplay continuity | keep this character/world coherent across sessions | character/world scope, canon source policy, continuity sensitivity, reveal/autonomy rules | canon/knowledge/relationship/commitment families, perspective bindings, context-hydration actions, response and correction methods | current character knowledge, relationships, commitments, threads, accepted turns, responses |
-| Lore/canon stewardship | maintain coherent people/places/things and source-backed definitions | corpus scope, entity classes/presets, source-authority policy, merge/split authority | identity/claim/freshness/conflict families, extraction mappings, reconciliation actions/methods, definition verification | entity candidates, claims, conflicts, merges/splits, current definitions, provenance history |
-| Codebase quality | maintain selected quality conditions | repository scope, selected concern profiles, action authority, protected floors | reliability/performance/etc. families, validation and patch methods, cross-concern action contracts, verification | test/benchmark evidence, concern beliefs, goals, patches, reviews, outcomes |
-| Game faction strategy | maintain faction viability and strategic objectives | faction scope, strategic priorities, risk posture, delegated authority | threat/intent/trust/resource families, scouting and strategic actions, methods, outcome semantics | sightings, beliefs, commitments, plans, operations, territory/resource outcomes |
-| Service reliability | keep service within SLO/recovery policy | service scope, SLO preset, incident sensitivity, remediation authority | SLO/fault/capacity/recovery families, diagnostic mappings, remediation methods/actions, verification | metrics/traces/incidents, hypotheses, active goals, remediation tasks, SLO outcomes |
-| Learner mastery | maintain mastery and prerequisite readiness | learner/course scope, mastery policy, instructional autonomy, escalation | mastery/misconception/retention families, diagnostic and teaching actions, progression methods, outcome semantics | answers, assessed mastery, active misconceptions, instructional goals, activities, retention outcomes |
-| Portfolio thesis/risk | maintain thesis evidence and mandate/risk bounds | portfolio/thesis scope, mandate, research policy, execution separation | thesis/risk/freshness families, research mappings, recommendation actions, governance gates | source evidence, thesis revisions, exposure state, recommendations, approvals, later outcomes |
-| Physical maintenance | maintain assigned assets within condition/reliability policy | asset scope, inspection/maintenance policy, downtime/authority limits | condition/degradation/failure-risk families, sensor/inspection mappings, service actions/methods, verification | telemetry, inspections, condition beliefs, work orders, service outcomes, failures |
+| Documentation freshness | keep selected documentation current | repository scope, freshness policy, autonomy, verification | claim proof, freshness question, curation, maintained condition, settlement and outcome meaning | exact docs catalog, Methods, policy, source changes, beliefs, Goals, artifacts, verification outcomes |
+| CVE exposure | keep assigned systems within vulnerability-risk policy | system scope, risk policy, exception posture, remediation authority | applicability, coverage, negative proof, curation, maintained condition, settlement and outcome meaning | exact security catalog, Methods, advisories, inventory, beliefs, exceptions, Goals, outcomes |
+| Roleplay continuity | keep this character and world coherent across sessions | character scope, canon policy, continuity sensitivity, reveal rules | canon, knowledge, relationship, commitment, disclosure, settlement, and outcome meaning | context capabilities, response Methods, current knowledge, commitments, turns, and responses |
+| Lore and canon stewardship | maintain coherent identities and source-backed definitions | corpus scope, identity policy, source authority, merge authority | identity, claim, conflict, provenance, settlement, and verification meaning | extraction catalog, reconciliation Methods, claims, merges, definitions, and projections |
+| Codebase quality | maintain selected quality conditions | repository scope, concern profiles, action authority, protected floors | concern questions, protected conditions, settlement, conflict, and verification meaning | validation catalog, repair Methods, evidence, beliefs, Goals, patches, and outcomes |
+| Game faction strategy | maintain faction viability and strategic objectives | faction scope, priorities, risk posture, delegated authority | testimony, trust, resource, treaty, settlement, and strategic outcome meaning | simulation catalog, strategic Methods, current reports, beliefs, plans, and operations |
+| Service reliability | keep service within SLO and recovery policy | service scope, SLO preset, sensitivity, remediation authority | SLO, fault, capacity, recovery, settlement, and verification meaning | telemetry and control catalog, remediation Methods, incidents, hypotheses, Goals, and outcomes |
+| Learner mastery | maintain mastery and prerequisite readiness | learner scope, mastery policy, autonomy, escalation | mastery, prerequisite, misconception, progression, settlement, and verification meaning | assessment and teaching catalog, instructional Methods, mastery beliefs, Goals, and outcomes |
+| Portfolio thesis and risk | maintain thesis evidence and risk bounds | portfolio scope, mandate, research policy, execution separation | thesis, counterevidence, risk, liquidity, settlement, and governance meaning | research catalog, recommendation Methods, source evidence, beliefs, approvals, and outcomes |
+| Physical maintenance | maintain assets within condition and reliability policy | asset scope, maintenance policy, downtime and authority limits | condition, degradation, failure, safety, service, settlement, and verification meaning | inspection and service catalog, maintenance Methods, telemetry, beliefs, work orders, and outcomes |
 
 ## 1. Documentation Freshness
 
@@ -188,16 +211,15 @@ content-freshness belief-family revision
 source and package-outcome evidence mappings
 curation rule revision
 maintained-condition proposition(s)
-planning methods
-available action: documentation refresh
-method realization -> docs_writer package/workflow route
+settlement and prospective evidence meaning
+documentation action-class and outcome meaning
 outcome contract and verification mapping
-required capability/provider/activation bindings
+capability and activation requirements
 ```
 
-This is close to what the current hand-authored docs-freshness package represents today.
+The current hand-authored docs-freshness package also contains exact capabilities, policy, bounds, projection dimensions, and an action chain. Those are compatibility inputs for Layer D rather than canonical Layer C output.
 
-### Layer D — runtime
+### Layer E — runtime
 
 The runtime owns source observations, graph anchors, evidence items, belief revisions, curation decisions, goals, planning results, package runs, generated files, and verification outcomes.
 
@@ -243,15 +265,14 @@ SBOM/dependency -> evidence mappings
 runtime reachability -> evidence mappings
 accepted-exception semantics
 breach/restore propositions
-observation methods for dependency/reachability evidence
-remediation action affordances
+observation and remediation action-class meaning
 verification outcome mappings
 governance requirement for deployment/exception approval
 ```
 
-Those are compiler-facing semantics, even if today's example describes them directly.
+Exact scanners, observation Methods, remediation Methods, construction policy, and authority decisions remain Layer D inputs even if today's example describes them beside the semantic image.
 
-### Layer D — runtime
+### Layer E — runtime
 
 The runtime owns currently observed advisories, component versions, applicability beliefs, active exposure, exceptions, remediation goals, package/task state, and post-remediation evidence.
 
@@ -284,7 +305,7 @@ response authority: draft/interactive
 
 ### Layer C — compiled semantic IR
 
-The package compiler or narrative facets may lower that declaration into:
+The package compiler or narrative facets may lower that declaration into stable semantic theory:
 
 ```text
 narrative.canon_support family
@@ -294,17 +315,14 @@ character.commitment_state family
 narrative.thread_state family
 perspective identities for world and character
 source-authority evidence routes
-context-hydration observation actions
-respond-with-continuity method
-continuity-conflict method
-response action and state-transition action as separate affordances
+context-hydration, response, correction, and state-transition action-class meaning
 retcon/reveal governance constraints
 verification routes for accepted/corrected turns
 ```
 
-The detailed roleplay example is therefore primarily a specification of what the narrative package/facets and compiler must be able to produce.
+Exact context capabilities, response Methods, and model bindings remain Layer D inputs. The detailed roleplay example spans both layers and must not be read as one PDS body.
 
-### Layer D — runtime
+### Layer E — runtime
 
 Current relationships, promises, knowledge, secrets learned, open threads, scene state, accepted responses, corrections, and generated response artifacts remain runtime state.
 
@@ -343,15 +361,14 @@ lore.definition_completeness family
 lore.definition_freshness family
 lore.conflict_state family
 source-to-claim evidence routes
-identity candidate / alias / merge / split action affordances
-reconciliation and refresh methods
+identity candidate, alias, merge, split, reconciliation, and refresh action-class meaning
 merge/split governance requirements
 definition outcome verification
 ```
 
 The current lore example's ontology-like vocabulary is package/facet vocabulary. It should not become a universal PDS language merely because it is detailed.
 
-### Layer D — runtime
+### Layer E — runtime
 
 Entity records, candidate matches, accepted aliases, claims, contradictions, merge/split decisions, definition artifacts, and current projections are runtime/domain state.
 
@@ -372,9 +389,9 @@ Selects package-defined concern profiles, protected floors, repository scope, ob
 
 ### Layer C — compiled semantic IR
 
-Links the multiple quality belief families, evidence routes, curation rules, methods, action affordances, protected-condition propositions, and verification contracts described by the existing software-quality example.
+Links the multiple quality belief questions, proof routes, curation rules, protected-condition propositions, abstract action and outcome meaning, and verification contracts described by the existing software-quality example. Exact validation and repair capabilities, Methods, and construction policy remain Layer D inputs.
 
-### Layer D — runtime
+### Layer E — runtime
 
 Tests, benchmarks, incidents, belief revisions, conflicting goals, patches, task networks, reviews, and measured outcomes remain runtime state.
 
@@ -395,9 +412,9 @@ Binds the faction scope, strategic objective presets, risk posture, treaty const
 
 ### Layer C — compiled semantic IR
 
-Links threat/intent/trust/resource belief families, testimony and scouting evidence routes, scouting and negotiation actions, strategic methods, protected-condition propositions, and outcome semantics.
+Links threat, intent, trust, and resource questions with testimony and scouting proof semantics, strategic action-class meaning, protected-condition propositions, and outcome semantics. Exact simulation capabilities and strategic Methods remain Layer D inputs.
 
-### Layer D — runtime
+### Layer E — runtime
 
 Current sightings, beliefs, treaties, resource state, plans, operations, and territorial outcomes remain simulation/world runtime state.
 
@@ -418,9 +435,9 @@ Binds service scope, SLO/recovery presets, sensitivity, remediation autonomy, bl
 
 ### Layer C — compiled semantic IR
 
-Links SLO/fault/capacity/recovery belief families, metrics/traces/outcome evidence routes, diagnostic actions, remediation methods, action costs, verification routes, and governance boundaries.
+Links SLO, fault, capacity, and recovery questions with telemetry proof semantics, diagnostic and remediation action-class meaning, verification routes, and governance boundaries. Exact telemetry, control, and remediation capabilities and Methods remain Layer D inputs.
 
-### Layer D — runtime
+### Layer E — runtime
 
 Metrics, traces, current hypotheses, incidents, goals, remediation tasks, and later SLO/recurrence outcomes remain runtime state.
 
@@ -441,9 +458,9 @@ Binds learner/course scope, mastery and progression presets, diagnostic sensitiv
 
 ### Layer C — compiled semantic IR
 
-Links mastery/prerequisite/misconception/retention families, assessment evidence routes, diagnostic and instructional actions, progression methods, maintained-condition propositions, and delayed verification contracts.
+Links mastery, prerequisite, misconception, and retention questions with assessment proof semantics, diagnostic and instructional action-class meaning, maintained-condition propositions, and delayed verification contracts. Exact assessment and teaching capabilities and Methods remain Layer D inputs.
 
-### Layer D — runtime
+### Layer E — runtime
 
 Answers, artifacts, mastery revisions, current misconception hypotheses, active learning goals, activities, and later retention/transfer evidence remain runtime state.
 
@@ -464,9 +481,9 @@ Binds portfolio/thesis scope, mandate constraints, research freshness policy, re
 
 ### Layer C — compiled semantic IR
 
-Links thesis-support/invalidation/exposure/liquidity/freshness families, primary-evidence routes, research actions, recommendation methods, mandate propositions, outcome history semantics, and governance gates.
+Links thesis support, invalidation, exposure, liquidity, and freshness questions with primary-evidence semantics, research and recommendation action-class meaning, mandate propositions, outcome history semantics, and governance gates. Exact research capabilities and recommendation Methods remain Layer D inputs.
 
-### Layer D — runtime
+### Layer E — runtime
 
 Observed sources, thesis revisions, current portfolio/exposure state from external systems, recommendations, approvals, and later outcomes remain runtime state.
 
@@ -487,9 +504,9 @@ Binds asset scope, condition/risk profiles, inspection sensitivity, maintenance-
 
 ### Layer C — compiled semantic IR
 
-Links condition/degradation/failure-risk families, telemetry and inspection evidence routes, inspection/service actions, maintenance methods, maintained-condition propositions, verification routes, and shutdown governance.
+Links condition, degradation, and failure-risk questions with telemetry and inspection proof semantics, inspection and service action-class meaning, maintained-condition propositions, verification routes, and shutdown governance. Exact inspection and service capabilities and maintenance Methods remain Layer D inputs.
 
-### Layer D — runtime
+### Layer E — runtime
 
 Telemetry, inspections, belief revisions, work orders, maintenance execution, downtime, and subsequent condition/failure evidence remain runtime/external state.
 
@@ -567,7 +584,7 @@ The compiler/linker may need to:
 - lower desired conditions into propositions;
 - link observation schemas to installed evidence mappings;
 - select or instantiate belief-family configurations;
-- resolve methods against available actions and capabilities;
+- emit compatibility requirements for separately owned Methods and activation capabilities;
 - validate outcome-contract compatibility;
 - intersect requested authority with assignment and activation constraints;
 - emit content-hash revisions and lineage;
@@ -587,12 +604,14 @@ canonical PDS declaration
 PDS linker / compiler coordinator
     ├── world-model facet compiler -> belief/evidence registrations
     ├── Agent facet compiler -> curation/authority bindings
-    ├── meld-lang lowering -> propositions/methods/operators
-    ├── execution facet compiler -> actions/packages/outcomes
-    └── activation linker -> providers/capabilities/connectors
+    ├── meld-lang lowering -> stable propositions and semantic references
+    ├── execution facet compiler -> outcome and governance meaning
+    └── activation requirement linker -> required action classes and connectors
     ↓
 compiled stewardship image
 ```
+
+After semantic compilation, activation resolves exact capabilities and physical bindings. Strategy separately resolves Method and policy snapshots before constructing a current problem.
 
 The image can be a content-addressed manifest over domain-owned compiled fragments rather than a monolithic PDS AST.
 

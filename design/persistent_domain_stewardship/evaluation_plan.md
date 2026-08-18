@@ -1,8 +1,18 @@
 # PDS Evaluation Plan
 
-Date: 2026-07-16  
-Status: proposed  
+Date: 2026-08-18
+Status: active validation plan
 Scope: experiments required to validate or falsify the PDS abstractions before implementation commitments
+
+## Current Evidence Status
+
+The delivered documentation-freshness runtime now supplies strong evidence for runtime lowering, maintained conditions, minimal authority separation, and exact owner-theory lineage. It does not yet validate the generic routed package, several assignments, portable activation, customer profile, package upgrade, episode projection, or cross-expression conformance hypotheses.
+
+Dependency security is the next dissimilar consumer. Its package attachment, bounded negative evidence, external result admission, and provider-free path now carry the generality experiment that the original plan assigned more broadly to software performance and a non-software example.
+
+The active dependency order through `W06` is [PDS Authorized Implementation Workstreams](../plan/integration/pds_implementation_workstreams.md). This document remains the broader falsification register and does not authorize later implementation.
+
+The experiments validate representations against the fixed boundary in [Canonical Persistent Domain Stewardship](../cognitive_architecture/persistent_domain_stewardship.md). They may refine package, profile, and lifecycle mechanics, but they may not move exact capabilities, Methods, policy, search controls, or situated conclusions into PDS theory.
 
 ## Purpose
 
@@ -88,7 +98,7 @@ Documentation freshness steward.
 
 ### Central-schema implementation
 
-One PDS schema defines observation, belief, Agent, method, outcome, and governance sections.
+One PDS schema defines observation meaning, belief questions, Agent norms, Strategy semantics, outcomes, and governance sections.
 
 ### Facet implementation
 
@@ -283,7 +293,7 @@ Determine whether stewardship should become application truth above existing wor
 - current docs-writer workflow as application
 - workflow wrapped as a PDS compatibility method
 - workflow stage chain lowered into task composition
-- native PDS package using planner-selected methods
+- native PDS semantic package combined with planner-selected Methods
 
 ### Measures
 

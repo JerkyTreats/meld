@@ -6,6 +6,8 @@
 
 pub mod capability;
 pub mod claim_validation;
+pub mod contribution;
 /// Regression fixture for the retired hand-composed docs image.
 #[cfg(test)]
 pub mod pds;
+pub mod theory;
