@@ -36,13 +36,13 @@ The search mandate contains five inseparable responsibilities:
 
 Search does not decide whether the Goal should exist or whether its recommended candidate may run.
 
-## Architecture and delivery conformance
+## Architecture conformance
 
 This document defines the semantic conformance boundary and the maximal valid design space for Strategy Search. It does not require every conforming engine to implement every search, comparison, proof, or optimization facility described here.
 
-An active implementation plan selects a bounded subset of this space. A minimal engine is conforming when it preserves the canonical problem, successor, candidate, eligibility, boundedness, verification, and authority semantics required by that plan. It may use a simple traversal and comparison policy while leaving richer algorithms and result claims unimplemented.
+A bounded engine is conforming when it preserves the canonical problem, successor, candidate, eligibility, boundedness, verification, and authority semantics. It may use a simple traversal and comparison policy while omitting richer algorithms and result claims.
 
-Features described here become delivery requirements only when an active plan selects them. In particular, Pareto-frontier retention, global optimality, exhaustive search certificates, stochastic exploration, alternate engines, transposition storage, learned policy, parallel search, and durable search state are optional extensions rather than baseline requirements.
+Pareto-frontier retention, global optimality, exhaustive search certificates, stochastic exploration, alternate engines, transposition storage, learned policy, parallel search, and durable search state are optional extensions rather than baseline requirements.
 
 ## Pure function boundary
 
@@ -83,14 +83,13 @@ pub struct StrategyProblem {
     pub problem_id: StrategyProblemId,
     pub goal: Goal,
     pub planner_snapshot: PlannerSnapshot,
-    pub theory_snapshot: StrategyTheorySnapshot,
     pub capability_snapshot: CapabilityContractSnapshot,
     pub method_snapshot: MethodLibrarySnapshot,
     pub evaluation_policy: StrategyEvaluationPolicy,
 }
 ```
 
-The problem identity is derived from the canonical content identities of every field. A revised Goal, world-model projection, theory declaration, Capability contract, Method, or evaluation policy creates a different problem.
+The problem identity is derived from the canonical content identities of every field. A revised Goal, world-model projection, Capability contract, Method, or evaluation policy creates a different problem.
 
 ### Goal
 
@@ -106,24 +105,9 @@ Strategy evaluates this snapshot. It does not reconstruct belief, infer absence 
 
 Counterfactual effects create search-local projected states. They never modify the planner snapshot and never become observed truth.
 
-### Theory snapshot
-
-The theory snapshot supplies the semantic bridge from Goal to action. It contains the activated PDS declarations needed to determine:
-
-- which settlement obligations follow from the Goal
-- which action outcomes can contribute to those obligations
-- which world-state preconditions govern each action
-- which evidence routes can support later reconciliation
-- which governance classifications and domain constraints apply
-- which outcome meanings distinguish success, partial success, failure, and harm
-
-PDS authors these declarations. Strategy interprets them for the current problem. Search cannot invent missing action, causal, evidence, or authority meaning.
-
-The theory snapshot does not contain the exact capability snapshot, Method snapshot, evaluation policy, requested projection dimensions, search bounds, or effective authority. Those are independently owned inputs to problem assembly or the search request.
-
 ### Capability contract snapshot
 
-The Capability snapshot is the complete atomic action vocabulary available to search. Every entry has exact identity and version and declares the contract fields needed for construction:
+The Capability snapshot is the complete active runtime catalog available to search. Every entry has exact identity and version and declares the contract fields needed for construction:
 
 - required artifact inputs
 - produced artifact outputs
@@ -132,11 +116,10 @@ The Capability snapshot is the complete atomic action vocabulary available to se
 - operational effect declarations
 - execution behavior relevant to eligibility
 - declared cost and resource meaning
-- semantic action and outcome references supplied by theory
 
-Strategy may select and wire exact Capability contracts from this snapshot. It does not invoke implementations or inspect providers. Execution later revalidates the selected contracts and compiles the authorized graph without substituting different semantic work.
+Strategy may select and wire exact Capability contracts from this snapshot. It may derive an episode-local Operator for one selected use, but that Operator cannot become a second Capability contract or override contract fields. Strategy does not invoke implementations or inspect providers. Execution later revalidates the selected contracts and compiles the exact authorized Composition without substituting different semantic work.
 
-The snapshot is activation-local. The same PDS theory revision may be combined with different capability snapshots without changing domain meaning.
+The snapshot is activation-local and complete for the assignment generation. PDS does not select, filter, or wrap its entries. The same installed domain semantics may be combined with different capability snapshots without changing domain meaning.
 
 ### Method library snapshot
 
@@ -605,4 +588,4 @@ Strategy Search does not own:
 - [Compositions](../../meld-lang/compositions.md)
 - [World State and Evaluation](../../meld-lang/world_state.md)
 - [Execution Planning](../../execution/planning/README.md)
-- [Persistent Domain Stewardship](../../../persistent_domain_stewardship/README.md)
+- [Persistent Domain Stewardship](../../persistent_domain_stewardship.md)

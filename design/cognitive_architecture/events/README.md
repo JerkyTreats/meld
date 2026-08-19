@@ -8,9 +8,7 @@ Scope: declarative design for the shared event ledger
 
 `events` is the canonical ledger for promoted semantic facts.
 
-The design goal is one durable temporal ledger across `workspace_fs`, `context`, `execution`, `world_state`, and later `sensory`.
-
-Implementation history lives in [Completed Events](../../completed/events/README.md).
+The design goal is one durable temporal ledger across `workspace_fs`, `context`, `execution`, `world_state`, and `sensory`.
 
 ## Ledger Authority Invariant
 
@@ -108,11 +106,6 @@ Raw sensory pulses, raw file watcher noise, transient worker chatter, and presen
   cross-domain ledger model and reference contract
 - [Events Crate](CRATE.md)
   `meld-events` crate boundary, owned modules, extraction path, and forbidden dependencies
-
-## Completed History
-
-- [Completed Events](../../completed/events/README.md)
-  extraction plan, refactor plan, and research history
 
 ## Read With
 

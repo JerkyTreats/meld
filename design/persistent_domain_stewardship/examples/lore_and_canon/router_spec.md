@@ -170,7 +170,7 @@ These meanings remain lore or external narrative products. They are not core PDS
 - [Freeform Narrative Database Constraint Case](../freeform_narrative_database.md)
 - [Expression Catalog](../pds_expression_catalog.md)
 - [Compilation Layer Span](../compilation_layer_span.md)
-- [PDS Router Detailed Design](../../../plan/integration/pds_router_design_spec.md)
+- [PDS Router Detailed Design](../../../completed/integration/pds_router_design_spec.md)
 - [PDS Isolation And Runtime Portability](../../isolation_and_runtime_portability.md)
 - [Stewardship Package Model](../../package_model.md)
 - [Stewardship Facet Protocol](../../facet_protocol.md)

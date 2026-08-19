@@ -105,8 +105,6 @@ meld (core)
 
 ## Documents
 
-- [Completed Implementation Plan](../../completed/meld_lang/PLAN.md)
-  phased implementation order, gates, and verification for the `meld-lang` crate
 - [Crate Boundary](CRATE.md)
   crate identity, ownership, dependency rule, forbidden directions
 - [Requirements](requirements.md)
@@ -132,4 +130,4 @@ meld (core)
 - [World Model Planner](../world_model/planner/README.md)
 - [World Model Agent](../world_model/agent/README.md)
 - [Events Domain](../events/README.md)
-- [Execution Gap Ledger](../../plan/execution/gaps.md)
+- [Native Capability And Task Substrate](../../plan/architecture_overhauls/native_capability_task_substrate.md)

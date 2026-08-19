@@ -20,12 +20,12 @@ belief divergence
 
 ## Problem input ownership
 
-The immutable Strategy problem is assembled from separately authoritative inputs. PDS supplies only the stable Strategy semantic theory. Capability and activation supply exact current affordances. Strategy supplies separately admitted Methods. Agent supplies the Goal and construction policy. Planner supplies current world state. Agent and execution supply the authority context.
+The immutable Strategy problem is assembled from separately authoritative inputs. Capability and activation supply the complete exact current runtime catalog. Strategy supplies separately admitted Methods. Agent supplies the Goal and construction policy. Planner supplies frozen graph-addressed current world state shaped by installed semantic owners. Agent and execution supply the authority context.
 
 The boundary requires source independence:
 
 ```text
-same PDS theory plus different capability snapshot
+same installed domain semantics plus different Capability snapshot
 → potentially different candidates
 
 same Goal plus different construction policy
@@ -34,8 +34,6 @@ same Goal plus different construction policy
 same candidate plus different authority context
 → potentially different admission
 ```
-
-The implemented `StrategyTheoryPackage` combines several of these sources. It is a compatibility form and not the canonical PDS semantic contract.
 
 ## Candidate contract
 
@@ -46,14 +44,14 @@ A candidate is eligible only when all of the following meaning is established:
 - the proposed Goal and its target are ground
 - the planner context has exact identity and matches the Goal scope
 - the candidate construction basis is either an applicable admitted Method or a novel derivation from exact capability contracts
-- every semantic and capability precondition is satisfied
+- every situated and Capability precondition is satisfied
 - every binding is ground
-- every selected exact capability belongs to the immutable activation snapshot
+- every selected exact Capability belongs to the complete immutable activation snapshot
 - the resulting action graph and Composition are structurally closed and valid
-- the action outcome meaning is governed by a valid outcome contract
-- an observational Goal has a valid prospective evidence route for its subject and dimension
+- projected Capability effects have an explicit contribution path to the Goal
+- an observational Goal includes work that can produce owner-admissible evidence for its subject and dimension
 
-Strategy must use the authoritative world-model, belief, theory, and shared-language semantics for these judgments. It must not create alternate evidence admission, comparison, causal, or satisfaction semantics.
+Strategy must use the authoritative world-model, belief, Capability, and shared-language products for these judgments. It must not create alternate evidence admission, comparison, causal, or satisfaction semantics.
 
 If any required meaning is missing, indeterminate, stale, invalid, unavailable, ambiguous, or unauthorized, Strategy produces no eligible candidate.
 
@@ -61,7 +59,7 @@ If any required meaning is missing, indeterminate, stale, invalid, unavailable, 
 
 The Agent alone authorizes a Strategy candidate. Successful construction, retention, admission, or realization does not confer Agent authority.
 
-Authorization binds one Agent judgment to the exact Goal target, planner context, construction basis, capability graph, ground bindings, concrete Composition, action outcome meaning, prospective evidence route, and judgment policy used for the choice. When the construction basis uses a Method, its exact identity and content are retained. This binding preserves what the Agent chose and the grounds on which it chose.
+Authorization binds one Agent judgment to the exact Goal target, planner context, construction basis, Capability graph, ground bindings, concrete Composition, expected contribution path, prospective observation work, and judgment policy used for the choice. When the construction basis uses a Method, its exact identity and content are retained. This binding preserves what the Agent chose and the grounds on which it chose.
 
 Authorization does not include an inferred outcome, a claim of Goal satisfaction, an execution schedule, a task identity, a provider choice, learned preference, or reusable catalog knowledge. Those meanings either belong to other domains or require evidence not established by the choice.
 
@@ -77,7 +75,7 @@ Operational work derived from a settled authorization must be reproducible and i
 
 An Agent-curated Goal may enter Execution only with a nonempty Agent authorization for an eligible candidate.
 
-Admission must establish that the authorization belongs to the Agent judgment and matches the Goal, target, planner context, construction basis, capability graph, bindings, Composition, action, outcome meaning, and prospective evidence route being admitted. Missing, empty, mismatched, or content-invalid authorization is rejected.
+Admission must establish that the authorization belongs to the Agent judgment and matches the Goal, target, planner context, construction basis, Capability graph, bindings, Composition, predicted contribution path, and prospective observation work being admitted. Missing, empty, mismatched, or content-invalid authorization is rejected.
 
 A repeated admission of the same settled authorization must preserve the same accepted Goal and authorized meaning.
 
@@ -85,13 +83,13 @@ A repeated admission of the same settled authorization must preserve the same ac
 
 Execution owns revalidation and realization of authorized meaning. Before mutating the task network, it must establish that the authorized construction basis, exact capability contracts, ground bindings, Composition, action availability, realization, and Goal lifecycle remain valid.
 
-Execution must realize the admitted candidate exactly. It must not select a different Method or capability graph, add semantic work, change the claimed outcome meaning, or substitute a different Composition or action. If current conditions no longer support exact realization, Execution fails without task-network mutation.
+Execution must realize the admitted candidate exactly. It must not select a different Method or Capability graph, add semantic work, or substitute a different Composition or action. If current conditions no longer support exact realization, Execution fails without Task Network mutation.
 
 Authorization permits realization. It does not permit Execution to satisfy the Goal.
 
 ## Observational evidence contract
 
-For an observational Goal, the candidate must identify a prospective route from the chosen action graph through governed outcome meaning to admissible evidence for the Goal subject and dimension.
+For an observational Goal, the candidate must identify prospective observation work whose artifacts can enter the owning evidence path for the Goal subject and dimension.
 
 The route is a prediction that realization can produce relevant evidence. It is not evidence, a belief update, an assertion that the Goal condition became true, or a guarantee that the Goal threshold will be crossed.
 

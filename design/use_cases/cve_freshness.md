@@ -36,4 +36,4 @@ For this use case to be usable on paper, the following must hold. Standing is gi
 
 - [Use Case Catalog](README.md)
 - [CVE Freshness Strategy](../cognitive_architecture/world_model/strategy/cve_freshness.md)
-- [Strategy Ground Map](../plan/world_model/strategy/ground_map.md)
+- [Strategy Ground Map](../completed/world_model/strategy/ground_map.md)

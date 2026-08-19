@@ -251,7 +251,7 @@ This exercise does not approve route schemas, provider selection, process topolo
 ## Source Grounding
 
 - [Use-Case Definition](README.md)
-- [Dependency Security Consumer Design](../../../plan/integration/dependency_security_pds_consumer_design_spec.md)
-- [PDS Router Design](../../../plan/integration/pds_router_design_spec.md)
+- [Dependency Security Consumer Design](../../../completed/integration/dependency_security_pds_consumer_design_spec.md)
+- [PDS Router Design](../../../completed/integration/pds_router_design_spec.md)
 - [Isolation And Runtime Portability](../../isolation_and_runtime_portability.md)
-- [Activation Lifecycle Fanout](../../../plan/integration/pds_activation_lifecycle_fanout_exercise.md)
+- [Activation Lifecycle Fanout](../../../completed/integration/pds_activation_lifecycle_fanout_exercise.md)

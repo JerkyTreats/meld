@@ -397,12 +397,12 @@ The shared graph substrate and perspective-scoped beliefs provide the foundation
 
 Refinement of the agent's normative framework from goal outcomes connects to the belief layer's calibration mechanisms and is outside this document's scope.
 
-Open design work for these areas is tracked in the [Execution Gap Ledger](../../../plan/execution/gaps.md).
+Open design work for these areas is tracked in [Agent, Strategy, And Merge Control Loop](../../../plan/architecture_overhauls/agent_strategy_merge_control_loop.md).
 
 ## Read With
 
 - [Execution Domain](../README.md)
-- [Execution Gap Ledger](../../../plan/execution/gaps.md)
+- [Agent, Strategy, And Merge Control Loop](../../../plan/architecture_overhauls/agent_strategy_merge_control_loop.md)
 - [Planning Pipeline](../planning/planning_pipeline.md)
 - [Task Network](../task_network.md)
 - [Lang Domain](../../meld-lang/README.md)

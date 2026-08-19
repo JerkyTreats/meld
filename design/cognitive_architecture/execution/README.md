@@ -80,6 +80,8 @@ flowchart TD
 
 ### Core
 
+- [Capability And Task Substrate](capabilities.md)
+  universal atomic Capability contracts and shared Composition to Task lowering
 - [Goals](goals/README.md)
   normative layer — desired belief states, lifecycle, curation API, satisfaction checking
 - [Agent Genesis And Activation](../world_model/agent/genesis_and_activation.md)
@@ -101,10 +103,6 @@ flowchart TD
   runtime capability growth through explicitly authorized Strategy work
 - [Execution Crate](CRATE.md)
   `meld-execution` crate boundary, owned modules, workflow runtime, task/capability authority
-
-### Status
-
-Implementation status for this domain is tracked in the [Execution Gap Ledger](../../plan/execution/gaps.md).
 
 ### Examples
 

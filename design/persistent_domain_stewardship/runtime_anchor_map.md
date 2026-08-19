@@ -5,7 +5,7 @@ Status: aligned implementation map
 Runtime evidence branch: `runtime-operator-visibility`  
 Scope: mapping PDS concepts to the implemented cognitive-runtime surfaces
 
-> Evidence status: historical conceptual anchor map. Use [PDS Theory Runtime Layer Map](../plan/integration/pds_theory_runtime_layer.md) for the current exact theory seam and [PDS Authorized Implementation Workstreams](../plan/integration/pds_implementation_workstreams.md) for current delivery status through `W06`.
+> Evidence status: historical conceptual anchor map. Use the [Current Architecture Overhauls](../plan/README.md) for the unresolved native Meld seams. This map provides evidence only and carries no current delivery authority.
 
 ## Purpose
 
@@ -89,8 +89,8 @@ belief revision and satisfaction curation
 | Capability contract | `crates/meld-execution/src/capability/contracts.rs` | typed bindings, artifacts, side effects, execution classes | activation contributes exact contracts independently of PDS action-class semantics |
 | Task outcome publication | `crates/meld-execution/src/task_network/publication.rs` | generic execution event publication | outcome verification should consume events through domain-owned evidence mappings |
 | Workflow compatibility | `crates/meld-execution/src/workflow/*` and task package support | mature production orchestration | candidate workflows-as-methods migration path; not yet a decided endpoint |
-| Runtime supervisor | root runtime and integration design under `design/plan/integration/*` | generic lifecycle with incomplete semantic actor assembly | activation should instantiate generic runtime actors, not profile-specific kinds |
-| Full docs-freshness proof | `design/plan/integration/docs_freshness_*` and integration tests | implicit package assembled in code and fixtures | first migration target for PDS package/profile compilation |
+| Runtime supervisor | historical runtime and integration records under `design/completed/integration/*` | generic lifecycle with incomplete semantic actor assembly | activation should instantiate generic runtime actors, not profile-specific kinds |
+| Full docs-freshness proof | historical docs-freshness records under `design/completed/integration/*` and integration tests | implicit package assembled in code and fixtures | former migration target for PDS package and profile compilation |
 
 ## Implicit Documentation Steward Package
 

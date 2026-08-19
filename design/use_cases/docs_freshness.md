@@ -18,7 +18,7 @@ The original vertical slice threaded the thinnest possible path through every la
 
 Before the sense-model-act runtime existed, the use case ran as an authored workflow: the docs writer package selected bottom-up traversal, fixed stages, ordered turns, and child artifact wiring explicitly in YAML. That workflow is the prior architecture, retained as a characterized compatibility Method while composition-path parity is proven under the runtime completion authority. The Strategy design work of 2026-07 exists to show the same behavior can be derived from declared meaning instead of authored procedure.
 
-The consequence for readers: `docs_freshness` appearing throughout tests and runtime code is evidence of its role as the ladder every layer climbed, not evidence that the runtime is docs-specific. The structural audit of what is genuinely generic versus docs-bound lives in [Strategy Ground Map](../plan/world_model/strategy/ground_map.md).
+The consequence for readers: `docs_freshness` appearing throughout tests and runtime code is evidence of its role as the ladder every layer climbed, not evidence that the runtime is docs-specific. The historical structural audit of what is genuinely generic versus docs-bound lives in [Strategy Ground Map](../completed/world_model/strategy/ground_map.md).
 
 ## Meld semantics conversion
 
@@ -45,4 +45,4 @@ For this use case to be usable on paper, the following must hold. Standing is gi
 
 - [Use Case Catalog](README.md)
 - [Docs Freshness Strategy](../cognitive_architecture/world_model/strategy/docs_freshness.md)
-- [Strategy Ground Map](../plan/world_model/strategy/ground_map.md)
+- [Strategy Ground Map](../completed/world_model/strategy/ground_map.md)

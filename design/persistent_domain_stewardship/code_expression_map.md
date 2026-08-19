@@ -5,7 +5,7 @@ Status: analysis
 Evidence base: `runtime-completion` as inspected on 2026-08-08  
 Scope: how Persistent Domain Stewardship is actually represented by the current Meld codebase, with explicit separation between enforced runtime contracts, compatibility wiring, reusable substrate, and design-only concepts
 
-> Evidence status: historical pre-elevation snapshot. Use [PDS Theory Runtime Layer Map](../plan/integration/pds_theory_runtime_layer.md), the [fresh review through Theory Elevation Step 4](../plan/integration/theory_elevation_steps_1_through_4_fresh_review.md), and [PDS Authorized Implementation Workstreams](../plan/integration/pds_implementation_workstreams.md) for current implementation ground through `W06`.
+> Evidence status: historical pre-elevation snapshot. Read with the [fresh review through Theory Elevation Step 4](../completed/integration/theory_elevation_steps_1_through_4_fresh_review.md) and the [Current Architecture Overhauls](../plan/README.md). This map provides evidence only and carries no current delivery authority.
 
 > Canonical boundary status: [Persistent Domain Stewardship](../cognitive_architecture/persistent_domain_stewardship.md) supersedes the earlier interpretation that Methods, exact available actions, realizations, and task-package selections are PDS operational theory. This file preserves the historical code map.
 

@@ -183,7 +183,7 @@ These products remain owned by the external narrative integration and graph doma
 - [Use Case Readme](README.md)
 - [Original Constraint Case](../freeform_narrative_database.md)
 - [Original Lore Example](../lore_transcriber.md)
-- [PDS Router Detailed Design](../../../plan/integration/pds_router_design_spec.md)
+- [PDS Router Detailed Design](../../../completed/integration/pds_router_design_spec.md)
 - [PDS Isolation And Runtime Portability](../../isolation_and_runtime_portability.md)
 - [Stewardship Package Model](../../package_model.md)
 - [Stewardship Facet Protocol](../../facet_protocol.md)

@@ -8,7 +8,7 @@ Scope: canonical declarative design intent for meld across sensory, world model,
 
 This directory is the canonical declarative design intent for meld.
 
-It states what the system is meant to become, the durable domain boundaries, and the contracts that implementation plans and code should converge toward. Other design areas may hold implementation sequencing, completed historical specs, experiments, or compatibility notes, but they should defer to this directory when they conflict with current architecture intent.
+It states what the system is meant to become, the durable domain boundaries, and the contracts that current discovery and code should converge toward. Other design areas may hold unresolved questions and experiments, but they defer to this directory when they conflict with current architecture intent.
 
 Use this directory to answer these questions:
 
@@ -18,7 +18,7 @@ Use this directory to answer these questions:
 - what runtime loop the product is intended to express
 - which crate owns each durable concern
 
-Use [Implementation Plan](../plan/README.md) for readiness, dependency order, and active build sequencing.
+Use [Current Architecture Overhauls](../plan/README.md) for unresolved architectural work. Completed implementation history remains available through Git.
 
 ## Thesis
 
@@ -54,9 +54,9 @@ This area does own:
 - the world-model requirement that action be grounded in current belief
 - the event requirements needed for genuine multi-process coordination
 
-This area does not own implementation schedule, migration execution, or historical completion records. Those belong under `design/plan` and `design/completed`.
+This area does not own implementation schedule, migration execution, readiness verdicts, or historical completion records. Current unresolved architecture lives under `design/plan`. Completed history lives in Git.
 
-The declarative application layer is [Persistent Domain Stewardship](persistent_domain_stewardship.md): its semantic boundary against the runtime is canonical there, and its unsettled authoring, profile, and lifecycle representations remain proposals in [Persistent Domain Stewardship Proposals](../persistent_domain_stewardship/README.md). Cognitive architecture defines how the runtime operates. Stewardship declarations supply stable domain vocabulary, evidence meaning, norms, action classes, outcomes, and governance semantics without precomputing cognition.
+The declarative application layer is [Persistent Domain Stewardship](persistent_domain_stewardship.md). Cognitive architecture defines how the runtime operates. Stewardship declarations supply stable domain vocabulary, evidence meaning, norms, outcome interpretation, and governance semantics without precomputing cognition or defining a Capability action vocabulary.
 
 ## Crate Routing
 
@@ -75,12 +75,10 @@ The declarative application layer is [Persistent Domain Stewardship](persistent_
 
 ## Durable Structure
 
-- [Implementation Plan](../plan/README.md)
-  readiness, phased implementation order, gates, and dependency closure for the cognitive architecture
+- [Current Architecture Overhauls](../plan/README.md)
+  unresolved architecture that is not yet implementation authority
 - [Observe Merge Push](observe_merge_push.md)
   founding prompt and response index
-- [Microarchitecture Assessment By Domain](../completed/world_state/microarchitecture_assessment_by_domain.md)
-  domain impact review for separating events, world model, and execution responsibilities
 - [Sensory Domain](sensory/README.md)
   continuous observation and diff publication
 - [Sensory Substrate](sensory/substrate.md)
@@ -117,47 +115,45 @@ The declarative application layer is [Persistent Domain Stewardship](persistent_
   merge activity and natural runtime inside `world_model/belief`
 - [Execution Domain](execution/README.md)
   world-model-aware action aligned with current execution design
+- [Capability And Task Substrate](execution/capabilities.md)
+  universal runtime primitives and the shared Composition to Task lowering invariant
 - [Execution Planning](execution/planning/README.md)
   HTN, planning, repair, and synthesis inside `execution`
 - [Lang Domain](meld-lang/README.md)
   shared typed substrate for propositions, goals, operators, and compositions consumed by both world model and execution
 - [Events Design](events/README.md)
   shared event architecture, replay, sequencing, and telemetry refactor path
-- [Further Research Prompts](../completed/world_state/further_research_prompts.md)
-  research queue for unresolved questions
 
 ## Read Order
 
 1. [Observe Merge Push](observe_merge_push.md)
-2. [Microarchitecture Assessment By Domain](../completed/world_state/microarchitecture_assessment_by_domain.md)
-3. [Implementation Plan](../plan/README.md)
-4. [Sensory Domain](sensory/README.md)
-5. [Sensory Substrate](sensory/substrate.md)
-6. [World Model Domain](world_model/README.md)
-7. [World Model Graph](world_model/graph/README.md)
-8. [World Model Belief](world_model/belief/README.md)
-9. [Causal Layer](world_model/causation/README.md)
-10. [Regime Layer](world_model/regime/README.md)
-11. [World Model Planner](world_model/planner/README.md)
-12. [World Model Agent](world_model/agent/README.md)
-13. [Directive Grounding](world_model/agent/directive_grounding.md)
-14. [Persistent Domain Stewardship](persistent_domain_stewardship.md)
-15. [Runtime Lifecycle And Quiescence](runtime_lifecycle_and_quiescence.md)
-16. [World Model Strategy](world_model/strategy/README.md)
-17. [Belief Microarchitecture](world_model/belief/microarchitecture.md)
-18. [Fact To Belief](world_model/belief/fact_to_belief.md)
-19. [Comparator Model](world_model/belief/comparator_model.md)
-20. [Belief Substrate](world_model/belief/substrate.md)
-21. [Curation In Belief](world_model/belief/curation.md)
-22. [Lang Domain](meld-lang/README.md)
-23. [Execution Domain](execution/README.md)
+2. [Current Architecture Overhauls](../plan/README.md)
+3. [Sensory Domain](sensory/README.md)
+4. [Sensory Substrate](sensory/substrate.md)
+5. [World Model Domain](world_model/README.md)
+6. [World Model Graph](world_model/graph/README.md)
+7. [World Model Belief](world_model/belief/README.md)
+8. [Causal Layer](world_model/causation/README.md)
+9. [Regime Layer](world_model/regime/README.md)
+10. [World Model Planner](world_model/planner/README.md)
+11. [World Model Agent](world_model/agent/README.md)
+12. [Directive Grounding](world_model/agent/directive_grounding.md)
+13. [Persistent Domain Stewardship](persistent_domain_stewardship.md)
+14. [Runtime Lifecycle And Quiescence](runtime_lifecycle_and_quiescence.md)
+15. [World Model Strategy](world_model/strategy/README.md)
+16. [Belief Microarchitecture](world_model/belief/microarchitecture.md)
+17. [Fact To Belief](world_model/belief/fact_to_belief.md)
+18. [Comparator Model](world_model/belief/comparator_model.md)
+19. [Belief Substrate](world_model/belief/substrate.md)
+20. [Curation In Belief](world_model/belief/curation.md)
+21. [Lang Domain](meld-lang/README.md)
+22. [Execution Domain](execution/README.md)
+23. [Capability And Task Substrate](execution/capabilities.md)
 24. [Execution Planning](execution/planning/README.md)
 25. [Events Design](events/README.md)
-26. [Further Research Prompts](../completed/world_state/further_research_prompts.md)
 
 ## Read With
 
-- [Persistent Domain Stewardship](../persistent_domain_stewardship/README.md)
 - [Runtime Lifecycle And Quiescence](runtime_lifecycle_and_quiescence.md)
 - [Execution Planning](execution/planning/README.md)
 - [Events Design](events/README.md)

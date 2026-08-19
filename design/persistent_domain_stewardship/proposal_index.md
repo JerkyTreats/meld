@@ -62,31 +62,25 @@ The upper authoring, profile, lifecycle, and projection representations remain s
 7. [PDS Examples Across Compilation Layers](examples/compilation_layer_span.md)
    Reinterprets the example corpus as a compiler pipeline from user intent through an approvable canonical declaration into compiled semantic IR and domain-owned runtime state.
 
-8. [PDS Cognition Boundary Assessment](../plan/integration/pds_cognition_boundary_domain_assessment.md)
-   Records the breadth-first domain assessment and frozen ownership map behind the canonical decision.
+8. [Current Architecture Overhauls](../plan/README.md)
+   Records the three unresolved native Meld fractures that now bound further PDS discovery.
 
 9. [PDS Meta-Domain](meta_domain.md)
    Compares central schema, federated facets, root-only composition, and rejected runtime-orchestrator models.
 
-10. [PDS Authorized Design Delivery Program](../plan/integration/pds_authorized_design_delivery_program.md)
+10. [PDS Authorized Design Delivery Program](../completed/integration/pds_authorized_design_delivery_program.md)
    Records the completed accepted design packets, delivery stages, review contract, and implementation handoff for `W00` through `W06`.
 
-11. [PDS Authorized Implementation Workstreams](../plan/integration/pds_implementation_workstreams.md)
-   Defines the authorized delivery workstreams through `W06`, with owners, dependencies, tasks, gates, code regions, and verification strategy.
-
-12. [PDS Design-Gated Continuations](../plan/integration/pds_design_gated_continuations.md)
-   Isolates the non-authorized dependency-security completion, Strategy replay, upper-layer schema, projection, and upgrade concepts.
-
-13. [Steward Profile Abstraction](profile_abstraction.md)
+11. [Steward Profile Abstraction](profile_abstraction.md)
    Separates expert package mechanics from customer intent and evaluates YAML, DSL, SDK, GUI, and conversational interfaces.
 
-14. [Stewardship Facet Protocol](facet_protocol.md)
+12. [Stewardship Facet Protocol](facet_protocol.md)
    Proposes one connector model for domain-owned package facets and multi-domain activation.
 
-15. [Stewardship Package Model](package_model.md)
+13. [Stewardship Package Model](package_model.md)
    Explores the complete operational-domain-theory representation. Read its central schema as one option rather than a settled architecture.
 
-16. [Runtime Anchor Map](runtime_anchor_map.md)
+14. [Runtime Anchor Map](runtime_anchor_map.md)
     Maps PDS concepts to the implemented cognitive-runtime surfaces on `runtime-operator-visibility`.
 
 17. [Candidate Implementation Requirements](candidate_implementation_requirements.md)
@@ -199,6 +193,6 @@ The proposal can promote its upper declaration and profile layers only after:
 - authority and package upgrade paths are proven;
 - workflow migration value is measured.
 
-The current authorized dependency order and evidence gates through `W06` are recorded in [PDS Authorized Implementation Workstreams](../plan/integration/pds_implementation_workstreams.md). Later work remains subject to the design and reauthorization rules in [PDS Design-Gated Continuations](../plan/integration/pds_design_gated_continuations.md).
+No PDS delivery sequence is currently authorized. Further work must first resolve the [Current Architecture Overhauls](../plan/README.md).
 
 Until those gates close, this directory records upper-layer design options and evidence under the canonical semantic boundary.

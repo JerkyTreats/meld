@@ -1,7 +1,7 @@
 # Candidate PDS Implementation Requirements
 
 Date: 2026-08-18
-Status: aligned candidate requirements
+Status: historical candidate requirements, implementation not authorized
 Scope: candidate implementation requirements derived from the PDS proposal and cognitive-runtime anchor mapping
 
 ## Interpretation
@@ -43,7 +43,7 @@ This register predates Theory Elevation Steps 1 through 4 and the routed package
 | `PDS-C17` semantic diff and inspection | proposal only | begin after canonical declaration identity exists |
 | `PDS-C18` conformance scenarios | strong docs tests exist | unify only after docs and dependency-security suites reveal the common envelope |
 
-See [PDS Authorized Implementation Workstreams](../plan/integration/pds_implementation_workstreams.md) for current owners, dependencies, tasks, and delivery gates through `W06`.
+These candidate requirements predate the [Current Architecture Overhauls](../plan/README.md) and carry no current delivery sequence or implementation authority.
 
 ## PDS-C01: Deterministic Package Identity
 
@@ -665,7 +665,7 @@ The docs, performance, and one non-software package run through the same scenari
 
 ## Historical Phasing
 
-The phase order below records the original proposal sequence. It is superseded for authorized delivery through `W06` by [PDS Authorized Implementation Workstreams](../plan/integration/pds_implementation_workstreams.md).
+The phase order below records the original proposal sequence. It is historical and does not authorize delivery.
 
 ### Phase A: Proposal validation
 

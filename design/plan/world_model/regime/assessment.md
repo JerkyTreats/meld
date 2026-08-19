@@ -1,7 +1,7 @@
 # Regime Readiness Assessment
 
 Status: deferred
-Depends on: `design/plan/world_model/graph/assessment.md`, `design/plan/world_model/belief/assessment.md`, `design/plan/world_model/causation/assessment.md`
+Depends on: historical graph and belief assessments under `design/completed`, plus the current causation assessment
 Design source: `design/cognitive_architecture/world_model/regime/README.md`, `design/cognitive_architecture/world_model/regime/spec.md`, `design/cognitive_architecture/world_model/regime/requirements.md`
 Evidence date: 2026-05-27
 

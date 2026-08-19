@@ -1,6 +1,6 @@
 # Persistent Domain Stewardship
 
-Date: 2026-08-18
+Date: 2026-08-19
 Status: active canonical architecture
 Scope: the semantic boundary from principal declaration through operational domain theory into the Meld cognitive runtime
 
@@ -40,7 +40,7 @@ PDS may supply stable domain meaning in these forms:
 - support, contradiction, coverage, currency, and proof semantics
 - maintained conditions and normative domain policy
 - settlement obligations and prospective evidence requirements
-- abstract action-class, constraint, and outcome meaning
+- semantic constraints and outcome interpretation
 - governance classifications and activation requirements
 
 PDS may reference owner-defined policies by exact revision. The owning domain remains authoritative for their schemas and validation.
@@ -52,6 +52,7 @@ PDS does not supply:
 - current confidence or target-shaped conclusion values
 - Goal instances or Agent decisions
 - an exact active capability catalog
+- capability action classes or capability-to-theory mappings
 - a selected Method or action topology
 - Strategy evaluation policy or search bounds
 - a static projection request for every future Goal
@@ -70,7 +71,7 @@ State-free theory is necessary but insufficient. A state-free body still violate
 | maintained-condition evaluation and Goal creation | Agent |
 | planner projection | world-model planner |
 | Strategy problem construction, search, verification, and candidates | Strategy |
-| exact current capability contracts and implementations | capability and activation |
+| exact current capability contracts, implementations, and active catalog | capability and activation |
 | construction policy and candidate judgment | Agent |
 | effective authority and dispatch enforcement | Agent plus execution |
 | tasks, operations, effects, and realization | execution |
@@ -86,8 +87,7 @@ The canonical Strategy input is assembled from independently owned parts.
 ```text
 ground Goal
 + exact planner snapshot
-+ PDS Strategy semantic theory revision
-+ activation capability snapshot
++ complete active runtime capability snapshot
 + separately admitted Method snapshot
 + Agent-selected construction policy
 + explicit authority context
@@ -100,13 +100,13 @@ StrategyProblem
 → StrategySearchRequest
 ```
 
-### PDS Strategy semantic theory
-
-This theory supplies the stable semantic bridge from Goal meaning to defensible action. It may define settlement obligations, prospective evidence requirements, domain constraints, and abstract action and outcome semantics. It does not contain exact executable contracts, reusable action graphs, candidate comparison policy, traversal controls, requested projection dimensions, or effective authority.
-
 ### Capability snapshot
 
-Capability providers publish exact executable contracts independently of PDS. Activation selects and binds the complete catalog visible to one assignment generation. Strategy receives an immutable snapshot of that catalog. The same PDS semantic theory remains meaningful when capability implementations appear, disappear, or change physical placement.
+Capability providers publish exact executable contracts independently of PDS. Activation binds the complete catalog available to one assignment generation. Strategy receives one immutable snapshot of that catalog. Search may reject irrelevant capabilities, but no PDS package supplies a shortlist or a parallel action vocabulary.
+
+Capabilities are universal, PDS-theory-free runtime primitives. PDS-theory-free means that a Capability does not carry PDS settlement, belief, or maintained-condition meaning. Its own contract still truthfully declares typed inputs, outputs, bindings, scope, operational effects, and execution behavior.
+
+A PDS distribution may co-ship a normal capability contributor or an external implementation binding. Co-shipping does not make that Capability part of the PDS semantic body. Availability still enters through the ordinary runtime contribution and activation path.
 
 ### Method snapshot
 
@@ -118,9 +118,9 @@ The Agent selects the construction policy that defines eligibility, comparison, 
 
 ### Projection and authority
 
-Projection needs are derived from the Goal, settlement obligations, Method requirements, and candidate capability preconditions. They are not a static package list.
+Projection needs are derived from the Goal, current epistemic structure, Method requirements, and candidate capability preconditions. They are not a static package list.
 
-PDS may define governance meaning and action classes that can be requested. Assignment records the principal request and grant lineage. A candidate derives its exact authority requirements from selected actions. Agent judgment and execution independently establish and enforce effective authority.
+PDS may define governance meaning. Assignment records the principal request and grant lineage. A candidate derives its exact authority requirements from selected actions. Agent judgment and execution independently establish and enforce effective authority.
 
 ## Evidence Boundary
 
@@ -186,43 +186,13 @@ The PDS router owns structural composition only:
 
 The router does not decode domain bodies, select capabilities, assemble Strategy problems, interpret evidence, grant authority, activate providers, or construct runtime artifacts.
 
-Capability contribution is a separate publication path. A package may declare abstract action classes and activation requirements. The exact active contracts and implementation offers remain activation products rather than semantic package components.
+Capability contribution is a separate publication path. A PDS package may declare physical activation requirements such as a required provider class or executable binding. It may not declare a Capability catalog, Capability shortlist, parallel operator catalog, or Capability-to-theory mapping. Exact active contracts and implementation offers are activation products rather than semantic package components.
 
-## Documentation Freshness And Dependency Security
+## Native Meld Resolution
 
-Documentation freshness is the compatibility and migration consumer. Its current five-capability Strategy body, target-shaped `stale_probability`, and hidden drafting and validation procedure are characterized antecedents, not canonical PDS semantics.
+PDS meaning enters Meld through its owning semantic domains. Those owners lower declarations and current evidence into graph-addressed epistemic products, belief views, maintained-condition divergence, and Goals.
 
-Dependency security is the dissimilar validation consumer. It proves that domain belief questions, evidence classes, applicability, coverage, currency, and bounded negative-proof semantics must remain publicly declarable. It must not embed current coverage or clean-posture conclusions, an exact scanner toolbox, or a remediation chain in PDS theory.
-
-The same boundary must survive both consumers before the runtime refactor is considered architecturally complete.
-
-## Compatibility
-
-The implemented `StrategyTheoryPackage` is a compatibility aggregate that combines several canonically separate inputs. It must not define the future public theory contract.
-
-Its concerns distill as follows:
-
-| Compatibility concern | Canonical destination | Identity and lifetime |
-| --- | --- | --- |
-| settlement snapshot | `StrategySemanticTheoryRevision` | exact installed PDS semantic revision |
-| exact capabilities | `ActivationCapabilitySnapshot` | one assignment activation generation |
-| reusable action topology | `StrategyMethodSnapshot` | separately admitted Strategy revision set |
-| evaluation and comparison policy | `StrategyConstructionPolicyRevision` | Agent-selected exact policy revision |
-| requested dimensions | derived `PlannerProjectionRequest` | one Goal and construction attempt |
-| requested authority | assignment request plus candidate-derived requirements | assignment and candidate lineage |
-| search bounds and seed | `StrategySearchRequest` | one search invocation |
-
-`StrategyProblem` is the immutable join across the stable snapshots required for one construction attempt. It is a runtime product, not an installable PDS body. `StrategySearchRequest` adds engine controls without changing problem meaning.
-
-Migration may preserve existing bodies through wrappers while characterization and parity tests remain authoritative. New code must not deepen the aggregate or treat its exact capabilities, policy, bounds, projection dimensions, or authority requests as PDS semantic authority.
-
-The canonical replacement is a narrow Strategy semantic theory revision combined with independently resolved runtime snapshots when constructing `StrategyProblem`.
-
-## Supersession
-
-This document supersedes earlier PDS statements that classify exact available actions, Method topologies, task packages, Strategy evaluation policy, search bounds, static projection dimensions, or exact capability selections as PDS operational domain theory.
-
-Historical workstream and migration documents may preserve those forms to describe implemented parity. Their status does not override this boundary.
+Strategy consumes those native products together with the complete active Capability catalog. Agent authorization preserves the exact candidate Composition. Execution lowers that Composition into Tasks and the Task Network. PDS does not introduce another planning, Capability, evidence, or graph substrate between these owners.
 
 ## Read With
 
@@ -231,6 +201,4 @@ Historical workstream and migration documents may preserve those forms to descri
 - [Strategy Boundary Contracts](world_model/strategy/contracts.md)
 - [Directive Grounding](world_model/agent/directive_grounding.md)
 - [Runtime Lifecycle And Quiescence](runtime_lifecycle_and_quiescence.md)
-- [PDS Cognition Boundary Assessment](../plan/integration/pds_cognition_boundary_domain_assessment.md)
-- [PDS Semantic Interface Review](../plan/integration/pds_semantic_interface_review.md)
 - [Persistent Domain Stewardship Proposals](../persistent_domain_stewardship/README.md)

@@ -8,7 +8,7 @@ Scope: isolation semantics for PDS package installation, assignment, activation,
 
 PDS may attach domain behavior implemented as a linked library, owned subprocess, shared sidecar, remote service, or persistent external controller. Those placements have different containment properties, but they must preserve the same Meld authority boundaries and domain result contracts.
 
-This document separates the isolation guarantees that remain stable across placements from the enforcement mechanisms that remain implementation choices. It complements the [PDS Router Detailed Design Specification](../plan/integration/pds_router_design_spec.md) and the [canonical runtime lifecycle and quiescence design](../cognitive_architecture/runtime_lifecycle_and_quiescence.md) without turning `theory::router` into a plugin host or process supervisor.
+This document separates the isolation guarantees that remain stable across placements from the enforcement mechanisms that remain implementation choices. It complements the [PDS Router Detailed Design Specification](../completed/integration/pds_router_design_spec.md) and the [canonical runtime lifecycle and quiescence design](../cognitive_architecture/runtime_lifecycle_and_quiescence.md) without turning `theory::router` into a plugin host or process supervisor.
 
 ## Working Model
 

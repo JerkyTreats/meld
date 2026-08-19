@@ -125,7 +125,7 @@ It does not decide whether response evaluation is deterministic, model-assisted,
 - [Expression Catalog](../pds_expression_catalog.md)
 - [Compilation Layer Span](../compilation_layer_span.md)
 - [Lore And Canon Example](../lore_and_canon/README.md)
-- [PDS Router Detailed Design](../../../plan/integration/pds_router_design_spec.md)
+- [PDS Router Detailed Design](../../../completed/integration/pds_router_design_spec.md)
 - [PDS Isolation And Runtime Portability](../../isolation_and_runtime_portability.md)
 - [PDS Architectural Invariants](../../architectural_invariants.md)
 - [Proposal Status](../../proposal_status.md)

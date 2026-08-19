@@ -129,7 +129,7 @@ It does not assume that counterfactual simulation results are facts about the li
 - [Compilation Layer Span](../compilation_layer_span.md)
 - [Use Case Decomposition](../../use_case_decomposition.md)
 - [Roleplay Continuity Example](../roleplay_character_continuity/README.md)
-- [PDS Router Detailed Design](../../../plan/integration/pds_router_design_spec.md)
+- [PDS Router Detailed Design](../../../completed/integration/pds_router_design_spec.md)
 - [PDS Isolation And Runtime Portability](../../isolation_and_runtime_portability.md)
 - [PDS Architectural Invariants](../../architectural_invariants.md)
 - [Proposal Status](../../proposal_status.md)

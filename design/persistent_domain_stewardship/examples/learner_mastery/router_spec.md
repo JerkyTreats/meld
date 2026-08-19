@@ -151,7 +151,7 @@ The theory set does not yet settle:
 ## Source Trail
 
 - [Use-case narrative](README.md)
-- [PDS Router design](../../../plan/integration/pds_router_design_spec.md)
+- [PDS Router design](../../../completed/integration/pds_router_design_spec.md)
 - [Isolation and runtime portability](../../isolation_and_runtime_portability.md)
 - [Runtime lifecycle and quiescence](../../../cognitive_architecture/runtime_lifecycle_and_quiescence.md)
 - [Use-case decomposition](../../use_case_decomposition.md)

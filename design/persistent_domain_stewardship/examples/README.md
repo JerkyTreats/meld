@@ -58,5 +58,5 @@ Every router spec should answer the same questions:
 - [PDS Expression Catalog](pds_expression_catalog.md)
 - [PDS Examples Across Compilation Layers](compilation_layer_span.md)
 - [Use-Case Decomposition](../use_case_decomposition.md)
-- [PDS Router Detailed Design Specification](../../plan/integration/pds_router_design_spec.md)
+- [PDS Router Detailed Design Specification](../../completed/integration/pds_router_design_spec.md)
 - [PDS Isolation And Runtime Portability](../isolation_and_runtime_portability.md)

@@ -5,7 +5,7 @@ Status: historical proposal assessment
 Evidence basis: PDS proposal branch plus current cognitive-runtime design and implementation mapping
 Scope: candidate integration of PDS across Meld domains
 
-> This artifact preserves the initial proposal breadth map. It is not architecture or implementation authority. Use [Canonical Persistent Domain Stewardship](../cognitive_architecture/persistent_domain_stewardship.md) for the semantic boundary, [PDS Cognition Boundary Assessment](../plan/integration/pds_cognition_boundary_domain_assessment.md) for current ownership, and [PDS Authorized Implementation Workstreams](../plan/integration/pds_implementation_workstreams.md) for delivery sequencing through `W06`.
+> This artifact preserves the initial proposal breadth map. It is not architecture or implementation authority. Use [Canonical Persistent Domain Stewardship](../cognitive_architecture/persistent_domain_stewardship.md) for the semantic constraint and [Current Architecture Overhauls](../plan/README.md) for the unresolved ownership questions.
 
 ## Concern Definition
 

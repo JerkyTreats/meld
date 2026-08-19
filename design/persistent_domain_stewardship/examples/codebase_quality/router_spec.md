@@ -219,6 +219,6 @@ This exercise does not approve `software-quality.policy.v1`, a charter cardinali
 
 - [Use-Case Definition](README.md)
 - [Software Quality Stewardship](../software_quality.md)
-- [PDS Router Design](../../../plan/integration/pds_router_design_spec.md)
+- [PDS Router Design](../../../completed/integration/pds_router_design_spec.md)
 - [Isolation And Runtime Portability](../../isolation_and_runtime_portability.md)
-- [Activation Lifecycle Fanout](../../../plan/integration/pds_activation_lifecycle_fanout_exercise.md)
+- [Activation Lifecycle Fanout](../../../completed/integration/pds_activation_lifecycle_fanout_exercise.md)

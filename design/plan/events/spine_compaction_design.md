@@ -54,5 +54,5 @@ Session reads share the global boundary, so once it rises, a session cursor of z
 
 ## Read With
 
-- [Event Spine Overhaul PLAN](event_spine_overhaul_program.md)
-- [Event Runtime Requirements](../integration/event_runtime_requirements.md)
+- [Event Spine Overhaul History](../../completed/events/event_spine_overhaul_program.md)
+- [Event Runtime Requirements History](../../completed/integration/event_runtime_requirements.md)

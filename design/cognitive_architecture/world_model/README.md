@@ -133,7 +133,6 @@ Primary concepts:
 Existing design:
 
 - [World Model Crate](CRATE.md)
-- [World Model Crate Migration](../../completed/world_model/MIGRATION.md)
 - [World Model Graph](graph/README.md)
 
 ### 2. Belief And Generative Inference
@@ -250,10 +249,10 @@ Design:
 ### 6. Strategy
 
 Job:
-construct episode-specific semantic theories of action for Agent authorization
+construct episode-specific candidate Compositions for Agent authorization
 
 Consumes:
-Agent authority, operational domain theory, trusted scope, typed planner projections, semantic action affordances, and operational projections
+Agent authority, trusted scope, graph-shaped planner projections, the complete active Capability catalog, separately admitted Methods, and operational projections
 
 Primary concepts:
 

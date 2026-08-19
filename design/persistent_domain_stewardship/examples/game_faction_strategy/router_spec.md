@@ -170,7 +170,7 @@ These remain faction and simulation domain products. They are not universal PDS 
 - [Expression Catalog](../pds_expression_catalog.md)
 - [Compilation Layer Span](../compilation_layer_span.md)
 - [Use Case Decomposition](../../use_case_decomposition.md)
-- [PDS Router Detailed Design](../../../plan/integration/pds_router_design_spec.md)
+- [PDS Router Detailed Design](../../../completed/integration/pds_router_design_spec.md)
 - [PDS Isolation And Runtime Portability](../../isolation_and_runtime_portability.md)
 - [Stewardship Package Model](../../package_model.md)
 - [Stewardship Facet Protocol](../../facet_protocol.md)

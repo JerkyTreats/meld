@@ -56,7 +56,7 @@ Experiment runs are recorded on the event spine so results are replayable projec
 ## Dependencies
 
 - Runtime activation: the flywheel must turn unattended over the fixture workspace. This is delivered by the flywheel-ignition lane and certified by the bounded convergence proof, both executing at phase five of the [Runtime Harness Plan](runtime_harness_plan.md).
-- [Generation Read Path First Slice](generation_read_path_first_slice.md): the flywheel mode is meaningless without belief injection.
+- [Generation Read Path First Slice](../../completed/integration/generation_read_path_first_slice.md): historical evidence for belief injection behavior.
 - Ollama provider validation against one local small model.
 
 Naming note: this experiment harness is distinct from the runtime harness above — the runtime harness is the debugger substrate over live runtimes; this program is offline experiment infrastructure. The two share nothing but the word. Experiment runs recorded on the event spine are natural consumers of the runtime harness's served read substrate for replay and inspection.

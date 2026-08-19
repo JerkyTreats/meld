@@ -222,7 +222,7 @@ This exercise does not approve route names, final component schemas, provider po
 ## Source Grounding
 
 - [Use-Case Definition](README.md)
-- [Docs Freshness Router Refactor](../../../plan/integration/docs_freshness_pds_router_refactor_design_spec.md)
-- [PDS Router Design](../../../plan/integration/pds_router_design_spec.md)
+- [Current Architecture Overhauls](../../../plan/README.md)
+- [PDS Router Design](../../../completed/integration/pds_router_design_spec.md)
 - [Isolation And Runtime Portability](../../isolation_and_runtime_portability.md)
-- [Activation Lifecycle Fanout](../../../plan/integration/pds_activation_lifecycle_fanout_exercise.md)
+- [Activation Lifecycle Fanout](../../../completed/integration/pds_activation_lifecycle_fanout_exercise.md)

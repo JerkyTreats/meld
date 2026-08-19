@@ -143,9 +143,9 @@ search(request: StrategySearchRequest) -> StrategySearchResult
 verify_candidate(problem: StrategyProblem, candidate: StrategyCandidate) -> StrategyVerification
 ```
 
-The search input is a complete immutable `StrategyProblem` — Goal, planner snapshot, semantic theory snapshot, exact capability snapshot, Method snapshot, evaluation policy, and authority context — with content-derived identity. Search is a pure function: no live world-model queries, live catalogs, ambient configuration, or unseeded randomness. The result carries honest completion — a bounded result may claim only strongest-found; only an exhaustive result with no recommendation may state that no eligible candidate exists.
+The search input is a complete immutable `StrategyProblem` containing the Goal, graph-shaped planner snapshot, complete active Capability snapshot, Method snapshot, evaluation policy, and authority context, with content-derived identity. Search is a pure function: no live world-model queries, live catalogs, ambient configuration, or unseeded randomness. The result carries honest completion: a bounded result may claim only strongest-found, and only an exhaustive result with no recommendation may state that no eligible candidate exists.
 
-These inputs have separate authority. PDS supplies stable Strategy semantic theory. Activation supplies the exact capability snapshot. Strategy supplies separately admitted Methods. Agent supplies the Goal and evaluation policy. Planner supplies current world state. Search controls remain request-scoped. No installable PDS body may collapse those sources into a preassembled Strategy problem.
+These inputs have separate authority. Activation supplies the complete exact Capability snapshot without PDS filtering. Strategy supplies separately admitted Methods. Agent supplies the Goal and evaluation policy. Planner supplies current graph-addressed world state shaped by installed semantic owners. Search controls remain request-scoped. No installable PDS body may collapse those sources into a preassembled Strategy problem or action catalog.
 
 Verification is independent of the discovering algorithm and accepts no search diagnostics as proof. Strategy construction consumes planner projections through their public contracts and does not expose or import lower inference internals.
 

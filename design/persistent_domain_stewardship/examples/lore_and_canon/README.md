@@ -128,7 +128,7 @@ It does not decide whether editorial acceptance lives wholly in an external prod
 - [Freeform Narrative Database Example](../freeform_narrative_database/README.md)
 - [Expression Catalog](../pds_expression_catalog.md)
 - [Compilation Layer Span](../compilation_layer_span.md)
-- [PDS Router Detailed Design](../../../plan/integration/pds_router_design_spec.md)
+- [PDS Router Detailed Design](../../../completed/integration/pds_router_design_spec.md)
 - [PDS Isolation And Runtime Portability](../../isolation_and_runtime_portability.md)
 - [Use Case Decomposition](../../use_case_decomposition.md)
 - [Proposal Status](../../proposal_status.md)

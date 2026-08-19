@@ -8,11 +8,11 @@ Scope: interpretation rules for Persistent Domain Stewardship design documents
 
 Persistent Domain Stewardship is a design proposal, developed by continuous abstraction: layers canonicalize from the runtime upward, and this corpus holds only the layers that remain unsettled.
 
-The theory-to-runtime layer is no longer proposal-tier: [Persistent Domain Stewardship](../cognitive_architecture/persistent_domain_stewardship.md) canonicalizes operational domain theory, its kinds, and its authority boundaries, and [PDS Theory Runtime Layer Map](../plan/integration/pds_theory_runtime_layer.md) maps it onto the written runtime. Documents here defer to that layer where they touch it.
+The current semantic constraint lives in [Persistent Domain Stewardship](../cognitive_architecture/persistent_domain_stewardship.md). It remains subject to reconciliation with Meld's native Capability, epistemic graph, and Agent control-loop architecture. Documents here defer to that constraint where they touch it.
 
 The canonical boundary distinguishes PDS semantic theory from runtime assembly inputs. Exact capability snapshots, Methods, Strategy construction policy, derived projection requests, search controls, and effective authority do not become PDS theory merely because a compiler or adapter resolves them.
 
-The delivered runtime through Theory Elevation Step 4 now grounds exact owner revisions, named declaration selection, Agent-owned maintained conditions, and effective authority enforcement. [PDS Authorized Design Delivery Program](../plan/integration/pds_authorized_design_delivery_program.md) has delivered the accepted design set for [PDS Authorized Implementation Workstreams](../plan/integration/pds_implementation_workstreams.md), which starts from that delivered base at `W00` and ends at `W06`.
+The earlier [PDS Authorized Design Delivery Program](../completed/integration/pds_authorized_design_delivery_program.md) is retained as completed historical context. Its delivery scope does not authorize current work. The [Current Architecture Overhauls](../plan/README.md) now bound further discovery.
 
 Everything above that layer — package schema, source language, profile abstraction, facets, activation, migration commitments — is not an authoritative implementation contract, crate boundary, package schema, source language, migration commitment, or accepted runtime architecture.
 

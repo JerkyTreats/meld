@@ -26,7 +26,7 @@ Goal: one shared evidence record with a navigable provenance walk, derived entir
 Tasks:
 
 - Define the session manifest: store roots, ledger identity, stimuli, step schedule, and closing watermarks for one run or isolate session. Harness-level; no runtime change. The manifest is a new concept with no partial predecessor; its type names must stay clear of the `Session` family already occupied by the CLI command lifecycle records and the ledger session partition.
-- Boot every session through the staged pipeline of [Runtime Initialization](runtime_initialization.md) scoped to the registration subset, defaulting into a temporary root; pointing a session at an existing product data root requires an explicit unsafe flag. A harness that initializes differently from the product debugs a system that does not exist.
+- Boot every session through the same public owner ports and native runtime assembly used by the product, scoped to the registration subset and defaulting into a temporary root. Pointing a session at existing product data requires an explicit unsafe flag.
 - Build the causal thread walk as a reader-side index over existing references — event provenance, task lineage, belief hydration references, decision input references, epoch citations — resolving any record identity to its transitive thread across domain boundaries.
 - Reproduce the survey scenario as a recorded session so the walk has a real specimen.
 
@@ -111,7 +111,7 @@ Goal: the runtime completion endgame runs under the harness.
 
 Tasks:
 
-- Execute the flywheel-ignition lane recorded in [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md), including its 2026-07-25 assembly-survey extension: anchor-optional cold start as family-declared theory, selection-subject canonicalization into the shared identity vocabulary, planning-theory and evidence-mapping production composition, theory load-path and selection-identity alignment, anchor source-mapping and perspective-identity alignment, publisher-to-mapping event vocabulary alignment with the per-task publication path resolved, dispatch enablement surfaced to the operator, assembly diagnostics surfacing, and genesis-fact evidence mapping so belief motion from an unobserved-scope genesis fact occurs. The lane's store-lock finding lands in phase three, where the served surface requires it. Each correction is validated live through the harness before its fresh review.
+- Preserve the historical runtime-completion behavior recorded in [Runtime Completion Implementation Workstreams](../../completed/integration/runtime_completion_implementation_workstreams.md) while future harness composition follows the native Capability, graph, and Agent control-loop architecture.
 - Run the bounded convergence proof; the harness observes but never drives semantic work — the proof's forbidden behaviors remain binding.
 
 Exit criteria:
@@ -134,15 +134,14 @@ Session record and thread walk, then waiting-on declarations with the eligibilit
 ## Related documentation
 
 - [Agent-Native Debugger Requirements](agent_native_debugger_requirements.md) — the register and information model this plan implements
-- [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md) — the program this plan reintegrates in phase five
-- [Runtime Initialization](runtime_initialization.md) — isolate boots share the staged pipeline
-- [Strategy Ground Map](../world_model/strategy/ground_map.md) — Strategy construction, whose first-slice development the register names as the harness's first customer
+- [Runtime Completion Implementation Workstreams](../../completed/integration/runtime_completion_implementation_workstreams.md) — historical runtime delivery evidence
+- [Strategy Ground Map](../../completed/world_model/strategy/ground_map.md) — historical Strategy construction evidence
 - [Storage Substrate Decision Record](storage_substrate_decision_record.md) — the sled affirmation, migration triggers, and the seam inventory the served substrate extends
 
 ## Exceptions
 
 - The reference consumer may be launched resident during an interactive session and exits with it; the no-daemon posture of DBG-013 is read as constraining the debugger CLI modes, not a user-invoked consumer outside the product boundary.
-- New workspace members for the serving layer require Cargo manifest changes, which stay with the root integration owner as reserved files under the reserved-files convention recorded in [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md).
+- New workspace members for the serving layer require Cargo manifest changes owned by root integration.
 
 ## Register freeze
 

@@ -39,5 +39,5 @@ A new worked example should break the pattern of the existing ones on as many ax
 ## Read with
 
 - [World Model Strategy](../cognitive_architecture/world_model/strategy/README.md)
-- [Strategy Ground Map](../plan/world_model/strategy/ground_map.md)
+- [Strategy Ground Map](../completed/world_model/strategy/ground_map.md)
 - [Persistent Domain Stewardship](../persistent_domain_stewardship/README.md)

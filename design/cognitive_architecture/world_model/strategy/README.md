@@ -11,7 +11,7 @@ Strategy asks:
 ```text
 Given what the Agent wants,
 what the world model currently supports,
-and what actions have declared meaning,
+and what runtime capabilities are available,
 which courses of action are worth authorizing?
 ```
 
@@ -39,8 +39,7 @@ Its center is a pure, obligation-directed walk from desired settlement toward av
 ```text
 Goal
 + exact planner snapshot
-+ declared domain action and outcome meaning
-+ versioned Capability contract snapshot
++ complete active Capability catalog snapshot
 + separately admitted Method snapshot
 + explicit construction policy and authority context
 → eligible candidate approaches
@@ -49,11 +48,19 @@ Goal
 
 Strategy begins with the obligations implied by the Goal and its prospective evidence route. It may instantiate an admitted Method or search backward from required results to Capability contracts that can produce them. It then walks each required Capability input until every input is supplied by current context, an existing admissible artifact, or the output of another selected Capability.
 
-PDS supplies the semantic starting vocabulary: maintained conditions, settlement obligations, abstract action and outcome meaning, evidence requirements, governance classifications, and constraints. Capability contracts independently supply the activation-local atomic executable vocabulary. Strategy joins these declarations for one Goal and one exact world-model context without transferring ownership from either source.
+PDS supplies maintained conditions, evidence meaning, governance classifications, and domain constraints to their owning world-model domains. Those owners lower the installed meaning and current evidence into Goals and graph-shaped planner propositions. Capability contracts independently supply the complete activation-local atomic executable vocabulary. Strategy plans over those two products without a PDS-authored action catalog between them.
 
-The walk is not only artifact matching. At every step Strategy evaluates semantic preconditions against the exact planner projection. A structurally connectable Capability graph is not eligible when its world-state conditions are unsupported, its action meaning does not advance the Goal, or its outcome lacks a valid evidence route.
+The walk is not only artifact matching. At every step Strategy evaluates situated preconditions against the exact planner projection and projects declared Capability effects through the candidate graph. A structurally connectable Capability graph is not eligible when its world-state conditions are unsupported or its projected effects do not contribute to the Goal.
 
 The result is a ground candidate approach with enough action structure and lineage for Execution to revalidate and compile. Construction is referentially transparent over the supplied snapshots and policy. Internal search indexes, queues, arenas, and memoization do not change that external purity.
+
+## Epistemic substrate
+
+The graph-addressed world model is Strategy's epistemic language. Strategy receives it through one immutable, Goal-scoped planner projection rather than by querying live graph, belief, or owner stores during search.
+
+The projection may include higher-order belief views and selected lower-level objects, relations, facts, and provenance. If the current projection cannot settle a required precondition, the Agent may request a deeper bounded projection when the information already exists. When new evidence is required, Strategy may construct observation work and search again after the result passes through Events and Merge.
+
+Strategy never authors an accepted graph relation, evidence assignment, or belief revision. Deterministic integration and derivation from admitted facts belong to Merge-side owner actors. Evidence acquisition or computation uses the ordinary Capability, Task, and Task Network path.
 
 ## Input ownership
 
@@ -63,15 +70,12 @@ The result is a ground candidate approach with enough action structure and linea
 | --- | --- | --- |
 | Goal | Agent | current curated commitment |
 | planner snapshot | world-model planner | current perspective and branch projection |
-| Strategy semantic theory | routed domain owner | exact PDS semantic revision |
-| capability snapshot | capability and activation | exact contracts active for one assignment generation |
+| capability snapshot | capability and activation | complete exact catalog active for one assignment generation |
 | Method snapshot | Strategy | separately admitted reusable Strategy knowledge |
 | evaluation policy | Agent | construction policy selected for the Goal class |
 | authority context | Agent and execution | assignment request, grant lineage, and restrictions |
 
 Search engine identity, traversal bounds, and deterministic seed belong to `StrategySearchRequest` rather than PDS theory.
-
-The implemented `StrategyTheoryPackage` predates this split. It is a compatibility aggregate and not the canonical public PDS contract.
 
 ## Capability, Task, and Method
 
@@ -79,15 +83,17 @@ These concepts answer different questions.
 
 ### Capability
 
-A Capability is Meld's atomic executable contract. Its published contract declares typed inputs, typed outputs, required bindings, scope, operational effects, and execution behavior.
+A Capability is Meld's universal atomic executable contract. Its published contract declares typed inputs, typed outputs, required bindings, scope, operational effects, and execution behavior.
 
-Strategy must be aware of Capability contracts because they define the atomic construction vocabulary. This awareness arrives through a versioned semantic snapshot. Strategy does not own Capability implementations, invoke them, inspect provider internals, or treat catalog presence as authority.
+Strategy receives one exact immutable snapshot of the complete active runtime catalog because Capability contracts define its atomic construction vocabulary. Capability availability is independent of the selected PDS package. Strategy does not own Capability implementations, invoke them, inspect provider internals, or treat catalog presence as authority.
+
+A Capability is PDS-theory-free. It does not carry maintained-condition, belief, settlement, or PDS action-class meaning. This does not make the contract opaque. Its operational inputs, outputs, effects, scope, and behavior remain declared and available to planning.
 
 ### Task
 
-A Task is a graph of bound Capability instances whose required artifact inputs and bindings are closed and whose dependency structure can be compiled. A Task answers whether a unit of work is executable.
+A Task is a composite graph of bound Capability instances whose required artifact inputs and bindings are closed and whose dependency structure can be compiled. A Task answers whether a unit of work is executable.
 
-Strategy constructs the semantic shape that should become one or more Tasks. It selects exact Capability contracts and proves input, semantic binding, and dependency closure against its snapshot. Execution owns permitted runtime binding, authoritative task compilation, live feasibility checks, scheduling, and dispatch.
+Strategy constructs the candidate Task shape in the same Composition language that Execution receives. It selects exact Capability contracts and proves input, binding, and dependency closure against its snapshot. Execution owns permitted runtime binding, authoritative Task identity and compilation, live feasibility checks, scheduling, and dispatch. Execution lowers the authorized graph. It does not translate it into a different semantic plan.
 
 A candidate approach may lower to one Task, an ordered or data-dependent set of Tasks, or a task-network subgraph. Task boundaries express executable and lifecycle boundaries. They do not by themselves explain why the work advances the Goal.
 
@@ -108,7 +114,7 @@ Instantiating a Method against one ground Goal and one exact planner snapshot pr
 
 A successful Strategy construction may be promoted into a cached Method through separate Strategy admission. The Method retains a reusable Task construction template, Capability contract requirements, semantic applicability, and evidence meaning. A ground Method instance records the exact Capability contract identities and bindings selected for one candidate. Execution may separately cache compiled Task records by that exact Method instance and contract identity.
 
-A PDS package may define the stable semantic vocabulary against which a Method is checked. It does not install a Method topology as stewardship meaning.
+A PDS package may define the maintained conditions and graph meanings against which a Method is checked. It does not install a Method topology as stewardship meaning.
 
 A compiled Task alone is not a Method because it does not carry Goal applicability or evidence meaning. A Method is not invalidated merely because one compiled realization is unavailable. Strategy may construct another eligible realization from compatible Capability contracts, while the Agent retains authorization authority over the resulting candidate.
 
@@ -144,16 +150,16 @@ Compilation closure proves that selected work can be formed. World-state applica
 ## Strategy construction walk
 
 ```text
-Start with the Goal and its settlement obligations.
-Derive the required action outcome and prospective evidence route.
-Find Capability contracts whose declared outputs can contribute.
+Start with the Goal and exact graph-shaped planner projection.
+Derive the missing or misaligned state relations.
+Find Capability contracts whose declared effects and outputs can contribute.
 For each candidate Capability:
     evaluate world-state preconditions
     bind inputs already supported by current context
     recursively find producers for remaining artifact inputs
     preserve ordering, data flow, assumptions, cost, and lineage
-Reject branches with unsupported meaning, open required inputs,
-ambiguous bindings, invalid evidence routes, or exceeded bounds.
+Reject branches with unsupported preconditions, open required inputs,
+ambiguous bindings, no contribution path to the Goal, or exceeded bounds.
 Return ground candidate Task shapes for Agent judgment.
 ```
 
@@ -165,7 +171,7 @@ This search may reuse a configured Method as a previously learned branch. It mus
 flowchart LR
     BELIEF[Reconciled world-model view]
     DRAFT[Agent-curated Goal draft]
-    THEORY[Declared action meaning]
+    CATALOG[Active Capability catalog]
     STRATEGY[Strategy construction]
     CANDIDATES[Candidate theories of action]
     JUDGMENT[Agent judgment]
@@ -176,7 +182,7 @@ flowchart LR
     BELIEF --> DRAFT
     DRAFT --> STRATEGY
     BELIEF --> STRATEGY
-    THEORY --> STRATEGY
+    CATALOG --> STRATEGY
     STRATEGY --> CANDIDATES
     CANDIDATES --> JUDGMENT
     JUDGMENT --> EXECUTION
@@ -190,6 +196,8 @@ Strategy sits between Goal drafting and Goal admission. Construction does not ad
 ## Authority
 
 The Agent owns Strategy judgment.
+
+Each Agent invokes Strategy for a ground Goal under that Agent's perspective, construction policy, and authority context. Strategy is a pure per-Goal construction function, not a durable autonomous Strategy entity owned as mutable Agent state.
 
 Strategy may construct and present a candidate. It may not grant authority to itself, admit its own Goal, declare its own outcome correct, or satisfy the Goal it is pursuing.
 
@@ -238,9 +246,9 @@ This separates epistemic freedom from operational reproducibility.
 
 ## Relationship to domain theory
 
-Domain theory supplies meaning rather than procedure.
+Domain theory supplies correctness meaning rather than procedure or tools.
 
-It may describe maintained conditions, observations, evidence meaning, action affordances, outcome meaning, authority needs, and constraints. It should not need to prescribe one fixed workflow, traversal order, provider, retry policy, or task graph.
+It may describe maintained conditions, observations, evidence meaning, authority needs, and constraints. It does not prescribe Capability action classes, one fixed workflow, traversal order, provider, retry policy, or Task graph.
 
 Strategy interprets this declared meaning against current world-model views. Execution chooses operational realization within the authorized semantic boundary.
 
@@ -248,9 +256,9 @@ Strategy interprets this declared meaning against current world-model views. Exe
 
 Goals, Methods, Operators, and Compositions provide the current shared representation for desired state and action structure.
 
-An Operator records one semantic action role and the contract requirements a Capability must satisfy in that role. A Composition records the graph of roles, dependencies, and subgoals that forms a candidate Task construction shape. A Method caches a reusable Composition template together with Goal applicability and Strategy meaning.
+An Operator is one episode-local grounded use of an exact Capability inside a candidate. It may carry current bindings, situated preconditions, predicted effects, current cost, and local step identity. It must not repeat or override the authoritative Capability contract. A Composition records the graph of those grounded uses, dependencies, Task regions, and subgoals that forms a candidate Task shape. A Method caches a reusable Composition template together with Goal applicability and Strategy meaning.
 
-Strategy uses that language and its Capability contract snapshot to express a concrete candidate with exact Capability contract identities. Execution revalidates those identities, applies only permitted runtime bindings, compiles their Task graphs, and lowers them into the task network. The language does not own Strategy authority, persistence, ranking, or outcome judgment.
+Strategy uses that language and the complete active Capability snapshot to express a concrete candidate with exact Capability contract identities. Agent authorization preserves the exact Composition. Execution revalidates those identities, applies only permitted runtime bindings, compiles the declared Task regions, and lowers them into the Task Network with lineage intact. The language does not own Strategy authority, persistence, ranking, or outcome judgment.
 
 ## Non-goals
 
@@ -276,8 +284,8 @@ Strategy is not:
   observational maintenance example
 - [CVE Freshness Strategy](cve_freshness.md)
   structurally different maintenance example
-- [Strategy Implementation Plan](../../../plan/world_model/strategy/README.md)
-  delivery-specific requirements and verification
+- [Current Architecture Overhauls](../../../plan/README.md)
+  unresolved Capability, epistemic substrate, and control-loop architecture
 
 ## Read with
 
@@ -287,4 +295,4 @@ Strategy is not:
 - [World Model Planner](../planner/README.md)
 - [Execution Planning](../../execution/planning/README.md)
 - [Meld Lang](../../meld-lang/README.md)
-- [Persistent Domain Stewardship](../../../persistent_domain_stewardship/README.md)
+- [Persistent Domain Stewardship](../../persistent_domain_stewardship.md)

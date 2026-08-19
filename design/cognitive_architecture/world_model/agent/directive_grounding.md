@@ -139,4 +139,4 @@ One configured grounding rule for one PDS belief family over one bounded scope w
 - [Belief Model](../belief/README.md)
 - [World Model Strategy](../strategy/README.md)
 - [World Model Public Interface](../public_interface.md)
-- [Persistent Domain Stewardship](../../../persistent_domain_stewardship/README.md)
+- [Persistent Domain Stewardship](../../persistent_domain_stewardship.md)

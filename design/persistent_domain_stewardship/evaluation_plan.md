@@ -10,7 +10,7 @@ The delivered documentation-freshness runtime now supplies strong evidence for r
 
 Dependency security is the next dissimilar consumer. Its package attachment, bounded negative evidence, external result admission, and provider-free path now carry the generality experiment that the original plan assigned more broadly to software performance and a non-software example.
 
-The active dependency order through `W06` is [PDS Authorized Implementation Workstreams](../plan/integration/pds_implementation_workstreams.md). This document remains the broader falsification register and does not authorize later implementation.
+No PDS delivery order is currently authorized. This document remains a falsification register, while the [Current Architecture Overhauls](../plan/README.md) identify the native Meld questions that must be resolved first.
 
 The experiments validate representations against the fixed boundary in [Canonical Persistent Domain Stewardship](../cognitive_architecture/persistent_domain_stewardship.md). They may refine package, profile, and lifecycle mechanics, but they may not move exact capabilities, Methods, policy, search controls, or situated conclusions into PDS theory.
 

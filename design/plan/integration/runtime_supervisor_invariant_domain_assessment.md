@@ -30,7 +30,7 @@ Out of scope:
 - a generalized scheduler, distributed control plane, or new reliability framework
 - implementation sequencing and migration planning
 
-The current evidence basis is the retained live-run account in [PDS Authorized Implementation Findings](pds_authorized_implementation_findings.md), current code inspection, the authorized [PDS W06 Portable Lifecycle And External Admission Design](pds_w06_portable_lifecycle_admission_design.md), and the canonical [Runtime Lifecycle And Quiescence](../../cognitive_architecture/runtime_lifecycle_and_quiescence.md).
+The evidence basis is the historical live-run account in [PDS Authorized Implementation Findings](../../completed/integration/pds_authorized_implementation_findings.md), the historical [PDS W06 Portable Lifecycle And External Admission Design](../../completed/integration/pds_w06_portable_lifecycle_admission_design.md), current code inspection, and canonical [Runtime Lifecycle And Quiescence](../../cognitive_architecture/runtime_lifecycle_and_quiescence.md).
 
 Applicable repository policy requires domain-first ownership, explicit cross-domain contracts, thin adapters, and compatibility characterization before removal of an old path.
 

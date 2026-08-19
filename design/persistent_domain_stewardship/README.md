@@ -8,6 +8,8 @@ Scope: design options for a declarative application layer configuring persistent
 
 > The semantic boundary between PDS and Meld cognition is canonical in [Persistent Domain Stewardship](../cognitive_architecture/persistent_domain_stewardship.md). Proposals in this directory may explore upper-layer syntax and mechanics but may not broaden that boundary.
 
+> PDS remains an active concept, but its relationship to native Meld architecture is under renewed discovery. Package schemas that embed Capability catalogs, action classes, Strategy operators, task topology, or epistemic curation mechanics are pressure artifacts rather than implementation direction. Current reconciliation is organized by the [three architecture overhauls](../plan/README.md).
+
 ## Thesis
 
 Meld is not itself a persistent domain steward.
@@ -53,7 +55,7 @@ flowchart TD
 
 [`meld-lang`](../cognitive_architecture/meld-lang/README.md) remains the shared runtime intermediate representation for propositions, goals, operators, effects, methods, and world state.
 
-[World Model Strategy](../cognitive_architecture/world_model/strategy/README.md) is the authoritative runtime boundary for turning activated operational domain theory and current world-model projections into Agent-authorized candidate Compositions. PDS supplies state-free settlement, proof, action-class, outcome, constraint, and governance meaning. Activation independently supplies exact capability affordances. Agent supplies construction policy and judgment. Strategy supplies construction and separately admitted Methods. PDS does not own episode-specific Strategy decisions, generated Compositions, or task-network state.
+[World Model Strategy](../cognitive_architecture/world_model/strategy/README.md) is the authoritative runtime boundary for turning a Goal, current graph-shaped projection, complete active Capability catalog, separately admitted Methods, Agent policy, and authority context into candidate Compositions. PDS supplies correctness, evidence, maintained-condition, constraint, outcome-interpretation, and governance meaning to native Meld owners. PDS does not own Capability vocabulary, episode-specific Strategy decisions, generated Compositions, or Task Network state.
 
 [Directive Grounding](../cognitive_architecture/world_model/agent/directive_grounding.md) is the authoritative runtime boundary that applies maintained PDS belief-family declarations to trusted graph scope. PDS declares which questions can exist. Meld grounds those declarations into concrete belief keys and reconciles their answers.
 
@@ -364,7 +366,7 @@ outcome:
 
 The delivered expression already runs through existing cognitive-runtime contracts without a PDS planner or executor. The authorized next proof is the bounded dependency-security truth and lifecycle slice, whose external source, bounded negative evidence, provider-free behavior, and result-admission needs are deliberately dissimilar from documentation freshness.
 
-Full dependency-security completion requires new design. Canonical declaration and customer profile work remains design-gated even after the bounded slice. See [PDS Authorized Design Delivery Program](../plan/integration/pds_authorized_design_delivery_program.md), [PDS Authorized Implementation Workstreams](../plan/integration/pds_implementation_workstreams.md), and [PDS Design-Gated Continuations](../plan/integration/pds_design_gated_continuations.md).
+Further PDS delivery planning is not authorized while the proposal is reconciled with Meld's native Capability and Task substrate, graph-addressed epistemic substrate, and Agent control loop. See [Current Architecture Overhauls](../plan/README.md).
 
 ## Upper-Layer Promotion Criteria
 
@@ -417,9 +419,9 @@ Start with [Proposal Index](proposal_index.md).
 - [Workflow Migration](workflow_migration.md)
 - [Open Decisions](open_decisions.md)
 - [Evaluation Plan](evaluation_plan.md)
-- [PDS Authorized Design Delivery Program](../plan/integration/pds_authorized_design_delivery_program.md)
-- [PDS Authorized Implementation Workstreams](../plan/integration/pds_implementation_workstreams.md)
-- [PDS Design-Gated Continuations](../plan/integration/pds_design_gated_continuations.md)
+- [Native Capability And Task Substrate](../plan/architecture_overhauls/native_capability_task_substrate.md)
+- [Graph-Addressed Epistemic Substrate](../plan/architecture_overhauls/graph_addressed_epistemic_substrate.md)
+- [Agent, Strategy, And Merge Control Loop](../plan/architecture_overhauls/agent_strategy_merge_control_loop.md)
 - [Software Quality Example](examples/software_quality.md)
 - [Software Quality Profile Example](examples/software_quality_profile.md)
 

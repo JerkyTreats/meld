@@ -20,7 +20,7 @@ This is distinct from integration testing. Integration tests pre-compose inputs 
 
 ## Relationship to runtime completion
 
-The gate is per composition, not monolithic. An isolate over registration set S is implementable once the harness enablement hooks recorded in the [Runtime Completion Ground Map](runtime_completion_ground_map.md), the scoped initialization pipeline, and every actor in S have passed review. The Goal-and-Belief isolate below therefore becomes buildable at the end of the Domain Convergence Wave, before dispatch or the convergence proof. Full-composition sessions across all twelve roles wait for runtime completion, and the emission stream depends on Workstream Seven in [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md).
+The gate is per composition, not monolithic. Historical runtime completion evidence lives in the [Runtime Completion Ground Map](../../completed/integration/runtime_completion_ground_map.md) and [Runtime Completion Implementation Workstreams](../../completed/integration/runtime_completion_implementation_workstreams.md). Current isolate boot and cross-domain composition must follow the native architecture rather than reconstruct the historical PDS path.
 
 Requirements gathering itself is gated by nothing and is underway in this document.
 
@@ -155,7 +155,7 @@ Disposition: amended under the freeze principle. The substrate serves one watch 
 
 ### DBG-011 Low ceremony and safety
 
-One command boots an isolate with safe defaults into a temporary root. Pointing a session at an existing product data root requires an explicit unsafe flag. Rationale: agent workflows abandon tools with setup friction, and a debugger must not corrupt a real steward's state by accident. Ground: temp-root layout exists; the guard does not. The boot path is the staged pipeline of [Runtime Initialization](runtime_initialization.md) scoped to the isolate's registration subset — a harness that initializes differently from the product debugs a system that does not exist.
+One command boots an isolate with safe defaults into a temporary root. Pointing a session at an existing product data root requires an explicit unsafe flag. Rationale: agent workflows abandon tools with setup friction, and a debugger must not corrupt real product state by accident. Isolate boot must use the same public owner ports and native runtime assembly as the product.
 
 Disposition: accepted and scheduled: pulled into phase one of the harness plan, because phase one boots sessions. Temp-root default through the staged pipeline; explicit unsafe flag before a real data root.
 
@@ -238,8 +238,7 @@ Status against the conjunction: the freeze and the mode selection were recorded 
 
 - [Runtime Harness Plan](runtime_harness_plan.md) — the delivery vehicle for this frozen register
 - [Storage Substrate Decision Record](storage_substrate_decision_record.md) — the single-process constraint and the migration seam the served substrate extends
-- [Runtime Completion Ground Map](runtime_completion_ground_map.md)
-- [Runtime Completion Implementation Workstreams](runtime_completion_implementation_workstreams.md)
-- [Runtime Initialization](runtime_initialization.md)
-- [Strategy Ground Map](../world_model/strategy/ground_map.md)
+- [Runtime Completion Ground Map](../../completed/integration/runtime_completion_ground_map.md)
+- [Runtime Completion Implementation Workstreams](../../completed/integration/runtime_completion_implementation_workstreams.md)
+- [Strategy Ground Map](../../completed/world_model/strategy/ground_map.md)
 - [Use Case Catalog](../../use_cases/README.md)

@@ -1,7 +1,7 @@
 # Sensory Readiness Assessment
 
 Status: conditionally ready
-Depends on: `design/plan/events/assessment.md`, `design/plan/world_model/graph/assessment.md`
+Depends on: historical event and graph assessments under `design/completed`
 Design source: `design/cognitive_architecture/sensory/README.md`, `design/cognitive_architecture/sensory/substrate.md`
 Evidence date: 2026-07-10
 

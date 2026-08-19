@@ -132,6 +132,6 @@ The companion route map remains a discovery artifact over proposed contracts.
 - [Expression catalog](../pds_expression_catalog.md)
 - [Compilation layer span](../compilation_layer_span.md)
 - [Use-case decomposition](../../use_case_decomposition.md)
-- [PDS Router design](../../../plan/integration/pds_router_design_spec.md)
+- [PDS Router design](../../../completed/integration/pds_router_design_spec.md)
 - [Isolation and runtime portability](../../isolation_and_runtime_portability.md)
 - [Runtime lifecycle and quiescence](../../../cognitive_architecture/runtime_lifecycle_and_quiescence.md)

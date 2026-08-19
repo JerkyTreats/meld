@@ -178,7 +178,7 @@ These meanings belong to narrative and their consuming domain owners. They are n
 - [Original Roleplay Character Example](../roleplay_character.md)
 - [Expression Catalog](../pds_expression_catalog.md)
 - [Compilation Layer Span](../compilation_layer_span.md)
-- [PDS Router Detailed Design](../../../plan/integration/pds_router_design_spec.md)
+- [PDS Router Detailed Design](../../../completed/integration/pds_router_design_spec.md)
 - [PDS Isolation And Runtime Portability](../../isolation_and_runtime_portability.md)
 - [Stewardship Package Model](../../package_model.md)
 - [Stewardship Facet Protocol](../../facet_protocol.md)
