@@ -122,4 +122,4 @@ The synthesis capability is what makes this open-world rather than closed: when 
 - [Bayesian Evaluation Example](execution/examples/bayesian_evaluation.md)
 - [Synthesis Overview](execution/synthesis/README.md)
 - [Goals](execution/goals/README.md)
-- [HTN Turing Plan](execution/research/htn_turing.md)
+- [HTN Turing Plan](execution_planning_research/htn_turing.md)

@@ -1,163 +1,54 @@
-# Cognitive Architecture
+# Meld Cognitive Architecture
 
-Date: 2026-08-18
-Status: active
-Scope: canonical declarative design intent for meld across sensory, world model, execution, and shared temporal coordination
+This directory is the canonical design specification for Meld cognition. It states what the system shall be without reference to implementation state, delivery sequence, migration, historical decisions, or contingent code structure.
 
-## Canonical Role
+## Architectural Thesis
 
-This directory is the canonical declarative design intent for meld.
+Meld continuously reconciles an Agent directive with its admitted understanding of the world. Product theory gives an Agent its standing purpose and semantic resources. Sensory owners publish observations. The world model admits evidence, settles beliefs, traverses relevant knowledge, curates epistemic structure, and constructs causal Plans. Agent authority decides what may proceed. Execution coheres complete executable work and realizes it through one Task Network. Events preserve the durable facts that allow every participant to continue from shared history.
 
-It states what the system is meant to become, the durable domain boundaries, and the contracts that current discovery and code should converge toward. Other design areas may hold unresolved questions and experiments, but they defer to this directory when they conflict with current architecture intent.
+A Strategy Plan may contain both executable and epistemic means. A complete Task changes the external or computational world through Capabilities. A bounded Epistemic Operation changes shared knowledge through Curation. These products remain distinct because they have different authorities, effects, and consumers.
 
-Use this directory to answer these questions:
+## Sacred Seams
 
-- what domains exist
-- what each domain owns
-- what contracts cross domain boundaries
-- what runtime loop the product is intended to express
-- which crate owns each durable concern
+Semantic owners prove the meaning of products they create. Receivers validate transport shape and protect only the state, authority, effects, idempotency, concurrency, and storage they own. A receiver does not reconstruct or revalidate the private reasoning of its producer.
 
-Use [Current Architecture Overhauls](../plan/README.md) for unresolved architectural work. Completed implementation history remains available through Git.
+Strategy does not know the Task Network. Execution does not know Strategy Plans, beliefs, candidate graphs, or Epistemic Operations. Traversal reads graph knowledge but does not author it. Curation authors graph knowledge but does not settle belief or perform external work. Events carry durable records but do not impose domain grammar.
 
-## Thesis
+## Canonical Domains
 
-This area defines meld as an open-world loop rather than a task-only executor.
+[Persistent Domain Stewardship](persistent_domain_stewardship.md) productizes Meld through theory packages, assignments, activations, and Agent genesis.
+
+[Sensory](sensory/README.md) observes owner-defined external state and publishes typed facts.
+
+[Events](events/README.md) provides the neutral append and replay spine.
+
+[World Model](world_model/README.md) owns epistemic admission, belief, traversal, curation, causal context, Strategy Plan construction, and Agent reconciliation.
+
+[Execution](execution/README.md) accepts authorized Goal-attributed Tasks, coheres them across the Goal Set, and realizes them through one Task Network.
+
+[Meld Language](meld-lang/README.md) provides permissive shared nouns and verbs without enforcing another domain's grammar.
+
+[Runtime Lifecycle](runtime_lifecycle_and_quiescence.md) realizes one exact activation generation and connects durable producers to durable consumers.
+
+[Core Composition](core/CRATE.md) assembles these owners without absorbing their semantics.
+
+## Canonical Flow
 
 ```mermaid
 flowchart LR
-    O[observe] --> S[sensory]
-    S --> P[event ledger]
-    P --> W[world model]
-    W --> K[knowledge graph]
-    K --> E[execution]
-    E --> P
+    PDS[PDS theory and activation] --> AG[Agent]
+    S[Sensory owners] --> EV[Events]
+    EV --> WM[World model]
+    WM --> AG
+    AG --> ST[Strategy]
+    ST --> PL[Heterogeneous Plan]
+    PL --> AG
+    AG --> CU[Curation]
+    CU --> EV
+    AG --> GS[Execution Goal Set]
+    GS --> EP[Execution Planning]
+    EP --> TN[Task Network]
+    TN --> EV
 ```
 
-The durable positions are:
-
-- the full world model is never fully known
-- durable user intent seeds the world model agent that carries it, rather than forming a separate layer above agents
-- observation is continuous and diff-native
-- the world model integrates observations into temporal graph and belief views
-- execution acts against the current world model and republishes outcomes
-- events are the shared temporal substrate across all concerns
-
-## Boundary
-
-`design/cognitive_architecture` is not a replacement for `goals`, `control`, `task`, `capability`, or `provider`.
-
-This area does own:
-
-- the cross-domain loop definition
-- the sensory and world-model seams that do not yet have durable homes
-- the world-model requirement that action be grounded in current belief
-- the event requirements needed for genuine multi-process coordination
-
-This area does not own implementation schedule, migration execution, readiness verdicts, or historical completion records. Current unresolved architecture lives under `design/plan`. Completed history lives in Git.
-
-The declarative application layer is [Persistent Domain Stewardship](persistent_domain_stewardship.md). Cognitive architecture defines how the runtime operates. Stewardship declarations supply stable domain vocabulary, evidence meaning, norms, outcome interpretation, and governance semantics without precomputing cognition or defining a Capability action vocabulary.
-
-## Crate Routing
-
-`CRATE.md` files map design ownership to the multi-crate code direction.
-
-- [Core Crate](core/CRATE.md)
-  root `meld` orchestration, CLI, config, context and provider adapters, compatibility, and runtime wiring
-- [Events Crate](events/CRATE.md)
-  `meld-events` event ledger, append, replay, sequence, and reference contracts
-- [Lang Crate](meld-lang/CRATE.md)
-  `meld-lang` shared proposition language for goals, operators, compositions, and world state between world model and execution
-- [World Model Crate](world_model/CRATE.md)
-  `meld-world-model` graph, anchors, provenance, belief, and planner-facing views
-- [Execution Crate](execution/CRATE.md)
-  `meld-execution` planning, control, task, capability, workflow, and provider execution
-
-## Durable Structure
-
-- [Current Architecture Overhauls](../plan/README.md)
-  unresolved architecture that is not yet implementation authority
-- [Observe Merge Push](observe_merge_push.md)
-  founding prompt and response index
-- [Sensory Domain](sensory/README.md)
-  continuous observation and diff publication
-- [Sensory Substrate](sensory/substrate.md)
-  stream compilation, lowering, and promotion in `sensory`
-- [World Model Domain](world_model/README.md)
-  five-layer world model ownership across graph, belief, causality, regimes, and planner-facing reads on top of upstream events
-- [World Model Graph](world_model/graph/README.md)
-  current anchors, lineage, provenance, traversal, branch-scoped reads, and graph surface consumed by upper world model layers
-- [World Model Belief](world_model/belief/README.md)
-  confidence, revision, contradiction, and settlement over current anchors
-- [Causal Layer](world_model/causation/README.md)
-  mechanism, intervention, confounding, and counterfactual semantics above belief
-- [Regime Layer](world_model/regime/README.md)
-  changepoints, recurring modes, mixture prediction, and structural stress
-- [World Model Planner](world_model/planner/README.md)
-  planner-facing world model projection with a strict boundary to execution authority
-- [Directive Grounding](world_model/agent/directive_grounding.md)
-  translation from maintained intent and trusted scope into concrete belief questions
-- [Persistent Domain Stewardship](persistent_domain_stewardship.md)
-  the canonical settled layer of PDS — operational domain theory against the runtime — and the layering discipline for the rest
-- [Runtime Lifecycle And Quiescence](runtime_lifecycle_and_quiescence.md)
-  cross-domain lifecycle, justified waiting, interruption, recovery, and wake semantics
-- [World Model Strategy](world_model/strategy/README.md)
-  bounded reusable and novel candidate construction before Goal admission
-- [Belief Microarchitecture](world_model/belief/microarchitecture.md)
-  event, world model, and execution boundaries for belief
-- [Fact To Belief](world_model/belief/fact_to_belief.md)
-  transition from event facts and graph anchors into evidence, belief revision, and planner view
-- [Comparator Model](world_model/belief/comparator_model.md)
-  Bayesian comparators, rule comparators, semantic settlement, and missing comparator policy
-- [Belief Substrate](world_model/belief/substrate.md)
-  event-driven curation runtime, leases, recovery, staleness, and storm handling
-- [Curation In Belief](world_model/belief/curation.md)
-  merge activity and natural runtime inside `world_model/belief`
-- [Execution Domain](execution/README.md)
-  world-model-aware action aligned with current execution design
-- [Capability And Task Substrate](execution/capabilities.md)
-  universal runtime primitives and the shared Composition to Task lowering invariant
-- [Execution Planning](execution/planning/README.md)
-  HTN, planning, repair, and synthesis inside `execution`
-- [Lang Domain](meld-lang/README.md)
-  shared typed substrate for propositions, goals, operators, and compositions consumed by both world model and execution
-- [Events Design](events/README.md)
-  shared event architecture, replay, sequencing, and telemetry refactor path
-
-## Read Order
-
-1. [Observe Merge Push](observe_merge_push.md)
-2. [Current Architecture Overhauls](../plan/README.md)
-3. [Sensory Domain](sensory/README.md)
-4. [Sensory Substrate](sensory/substrate.md)
-5. [World Model Domain](world_model/README.md)
-6. [World Model Graph](world_model/graph/README.md)
-7. [World Model Belief](world_model/belief/README.md)
-8. [Causal Layer](world_model/causation/README.md)
-9. [Regime Layer](world_model/regime/README.md)
-10. [World Model Planner](world_model/planner/README.md)
-11. [World Model Agent](world_model/agent/README.md)
-12. [Directive Grounding](world_model/agent/directive_grounding.md)
-13. [Persistent Domain Stewardship](persistent_domain_stewardship.md)
-14. [Runtime Lifecycle And Quiescence](runtime_lifecycle_and_quiescence.md)
-15. [World Model Strategy](world_model/strategy/README.md)
-16. [Belief Microarchitecture](world_model/belief/microarchitecture.md)
-17. [Fact To Belief](world_model/belief/fact_to_belief.md)
-18. [Comparator Model](world_model/belief/comparator_model.md)
-19. [Belief Substrate](world_model/belief/substrate.md)
-20. [Curation In Belief](world_model/belief/curation.md)
-21. [Lang Domain](meld-lang/README.md)
-22. [Execution Domain](execution/README.md)
-23. [Capability And Task Substrate](execution/capabilities.md)
-24. [Execution Planning](execution/planning/README.md)
-25. [Events Design](events/README.md)
-
-## Read With
-
-- [Runtime Lifecycle And Quiescence](runtime_lifecycle_and_quiescence.md)
-- [Execution Planning](execution/planning/README.md)
-- [Events Design](events/README.md)
-- [Multi-Domain Event Ledger](events/multi_domain_spine.md)
-- [Bayesian Evaluation Example](execution/examples/bayesian_evaluation.md)
-- [Synthesis Overview](execution/synthesis/README.md)
-- [Goals](execution/goals/README.md)
+The flow is continuous reconciliation rather than a finite workflow. New admitted knowledge may cause Agent reassessment, Plan reconstruction, new epistemic authorship, new executable work, suspension, or satisfaction.

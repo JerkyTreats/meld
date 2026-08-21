@@ -1,7 +1,5 @@
 # Regime Layer
 
-Date: 2026-04-26
-Status: active
 Scope: changepoints, recurring operating modes, mixture prediction, and structural stress above belief and across causal hypotheses
 
 ## Thesis
@@ -128,7 +126,7 @@ A useful stress scenario perturbs several linked evidence channels together and 
 
 ## First Design Slice
 
-The first slice supports:
+The canonical baseline supports:
 
 - one active segment
 - one continuation model

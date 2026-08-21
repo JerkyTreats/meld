@@ -1,7 +1,5 @@
 # AST Change Impact Capability
 
-Date: 2026-04-08
-Status: proposed
 Scope: static analysis capability producing a structured public API impact summary for changed source files
 
 ## Intent

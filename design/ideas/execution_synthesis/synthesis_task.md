@@ -1,7 +1,5 @@
 # Capability Synthesis Task
 
-Date: 2026-04-09
-Status: proposed
 Scope: CapabilitySynthesisTask definition — the task that discovers or writes external programs, validates their output, and registers new synthesized capabilities in the runtime catalog
 
 ## Intent
@@ -164,7 +162,7 @@ can use.
 | `contract_validation` | Soft (schema mismatch) | Retry `contract_definition` with validation notes |
 | `catalog_registration` | Hard (sled write error) | Retry same step |
 
-After three failed retries of `synthesis_plan`, control should escalate to repair rather
+After three failed retries of `synthesis_plan`, control should escalate to Strategy reconciliation rather
 than continuing to retry. The goal context may be unsatisfiable with the available tools.
 
 ## Idempotency

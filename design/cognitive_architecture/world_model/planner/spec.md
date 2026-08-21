@@ -385,7 +385,7 @@ They do not substitute for typed projection fields.
 - Score concepts such as `ExpectedInformationGain` and `DecisionRelevance` are state fields, not independent types.
 - `ObservationPolicy` may exist inside projection internals, but the public planner output is `ObservationOpportunityView`.
 - `ExecutionPreconditions` should be expressed as `PreconditionAssessment`, because execution owns operational readiness.
-- `HydrationHandle` is not a root type unless implementation needs independent indexing.
+- `HydrationHandle` is not a root semantic type and exists only as an internal index when required.
 
 ## Data Model
 
@@ -1054,7 +1054,7 @@ struct PlannerAssumption {
 Replay invariant:
 same normalized context, same lens, same lower-layer source cursor set, and same projection version produce the same `WorldModelView`.
 
-Pipeline stages are deterministic projection functions. They read lower-layer input packets and planner context, then write planner-facing types and data. They do not settle belief, estimate causal effects, detect regimes, curate goals, dispatch tasks, or repair execution.
+Pipeline stages are deterministic projection functions. They read lower-layer input packets and planner context, then write planner-facing types and data. They do not settle belief, estimate causal effects, detect regimes, curate goals, dispatch Tasks, or reconcile Plans.
 
 ### Required Read Ports
 
@@ -1265,7 +1265,7 @@ Rules:
 
 Boundary:
 planner assesses world-facing conditions.
-execution assesses method readiness, resource readiness, retry rules, dispatch, and repair.
+Execution assesses Capability readiness, resource readiness, retry rules, dispatch, and operational recovery.
 
 ### Observation Opportunity Projection
 
@@ -1551,4 +1551,3 @@ These inputs are decomposed into planner-facing types through deterministic proj
 
 `agent` consumes that view as part of its perspective assembly.
 `execution` consumes the shaped result, not internal planner state.
-

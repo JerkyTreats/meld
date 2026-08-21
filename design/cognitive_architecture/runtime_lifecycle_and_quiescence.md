@@ -87,6 +87,16 @@ Each domain owns:
 - admission of external results into canonical domain products
 - reconstruction of its state from its durable records
 
+The world model owns:
+
+- graph and belief consumer progress
+- durable Agent decisions and Plan progression
+- Strategy construction requests and results
+- Curation operation intake, publication, and result progress
+- waits for exact belief, graph, Curation, execution, and Goal conditions
+
+Sensory and product domains own observation cadence, source revision, semantic admission, and publication progress for their declared products.
+
 Execution owns:
 
 - durable operations
@@ -234,7 +244,7 @@ A remote callback may still arrive after retirement. Its retired activation gene
 
 ## Recovery
 
-Recovery replays the ordinary activation protocol from durable records. It is not a second repair engine.
+Recovery replays the ordinary activation protocol from durable records. It is not a second reconciliation authority.
 
 A fresh process reconstructs:
 
@@ -263,7 +273,7 @@ PDS package attachment installs inert domain meaning and creates no runtime life
 
 A PDS assignment names one standing use of exact package meaning under a principal, scope, and authority context. Activation binds that assignment to physical resources and runtime participants.
 
-The PDS router resolves exact owner components and leaves the live path. It does not supervise participants, interpret waiting conditions, sequence Steward actions, or admit domain results.
+The PDS router resolves exact owner components and leaves the live path. It does not supervise participants, interpret waiting conditions, sequence Agent reconciliation, or admit domain results.
 
 One stable activation-lifecycle service coordinates assignment-local activation generations beneath the role-based root supervisor. The service remains a structural control plane. Domain actors, execution, and events remain the cognitive data plane.
 

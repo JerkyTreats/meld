@@ -119,4 +119,4 @@ Future docs should instead treat belief, curation, sensory promotion, richer pla
 - [Temporal Fact Graph](temporal_fact_graph.md)
 - [Workspace FS Graph Transition Status](workspace_fs_transition_requirements.md)
 - [Branch Federation Substrate](branch_federation_substrate.md)
-- [Spine Concern](../../../cognitive_architecture/spine/README.md)
+- [Events](../../../cognitive_architecture/events/README.md)

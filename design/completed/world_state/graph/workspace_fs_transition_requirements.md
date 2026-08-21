@@ -163,4 +163,4 @@ Still reject these moves in this slice:
 - [Temporal Fact Graph](temporal_fact_graph.md)
 - [Graph Implementation Status](implementation_plan.md)
 - [Multi-Domain Spine](../../../cognitive_architecture/events/multi_domain_spine.md)
-- [Spine Concern](../../../cognitive_architecture/spine/README.md)
+- [Events](../../../cognitive_architecture/events/README.md)

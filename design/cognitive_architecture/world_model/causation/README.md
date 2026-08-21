@@ -1,7 +1,5 @@
 # Causal Layer
 
-Date: 2026-04-26
-Status: active
 Scope: mechanism, intervention, confounding, and counterfactual semantics above belief and below planner-facing policy
 
 ## Thesis
@@ -119,7 +117,7 @@ The first durable causal query families are:
 
 ## First Design Slice
 
-The first slice models a narrow but explicit chain:
+The canonical mechanism chain is explicit:
 
 - intervention attempt
 - post-intervention observable state

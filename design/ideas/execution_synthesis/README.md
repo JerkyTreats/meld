@@ -1,7 +1,5 @@
 # Capability Synthesis
 
-Date: 2026-04-09
-Status: proposed
 Scope: runtime synthesis of capabilities from external processes, enabling the task network to extend its own capability set without compile-time anticipation
 
 ## The Problem
@@ -54,7 +52,7 @@ They differ in two ways:
 | Source | Rust code, build-time | Runtime synthesis task |
 | Trust | Full, statically verified | Validated at synthesis time |
 | Execution class | Inline / queued / session | ExternalProcess |
-| Failure response | Retry or repair | Retry, or re-synthesis if schema drift detected |
+| Failure response | Retry or operational recovery | Retry, or re-synthesis if schema drift is detected |
 
 Compiled capabilities are authoritative for the artifact schemas they define. When a
 synthesized capability produces a `ChangeSummary`, that capability targets the schema defined

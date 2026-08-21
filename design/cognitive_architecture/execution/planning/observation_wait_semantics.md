@@ -1,9 +1,6 @@
 # Observation Wait Semantics
 
-Date: 2026-05-08
-Status: active
 Scope: runtime semantics for observation tasks as data-flow dependencies in the task network graph
-Origin: relocated from program/await_observation_semantics.md — control graph dissolved, observation semantics preserved as data-flow dependency patterns
 
 ## Context
 
@@ -36,9 +33,9 @@ When the observation task completes and produces its expected artifact:
 
 This is the normal ready-set computation — no special observation logic needed. The graph structure handles it.
 
-## Late Arrival (Already Complete)
+## Late Arrival After Completion
 
-If the observation task completes before its downstream tasks are evaluated (because the task was fast), the artifact is already available when the ready-set computation runs. Downstream tasks enter the ready set immediately.
+If the observation task completes before its downstream tasks are evaluated, the artifact is already available when the ready-set computation runs. Downstream tasks enter the ready set immediately.
 
 This is the natural behavior of dependency-ordered graph execution. No special handling needed.
 
@@ -54,13 +51,13 @@ If the observation task fails without producing the expected artifact:
 6. Strategy may construct a replacement proposal from revised state
 7. Only the Agent may suspend or abandon the Goal
 
-This replaces the original control graph's `repair_entry` mechanism. Semantic replacement returns through Strategy and Agent authorization. Execution owns only the transition mechanics for authorized work.
+Semantic replacement returns through Strategy and Agent authorization. Execution owns only the wait and transition mechanics for authorized work.
 
 ## Timeout
 
 Timeout policy applies to observation tasks the same way it applies to any task. The task network tracks task duration. If a timeout is exceeded:
 
-1. The task network emits a timeout event (treated as task failure)
+1. The Task Network emits a timeout Event that is treated as Task failure
 2. The planning loop receives it and re-evaluates
 3. Execution may realize another still-authorized observation alternative or report typed timeout and rejection for renewed Strategy
 
@@ -91,7 +88,7 @@ See [Guard Expression Semantics](guard_expression_semantics.md) for evaluation r
 For durable execution, the task network graph state must be checkpointable. An "in-progress observation wait" is represented as:
 
 - The observation task is in the `in_flight` or `completed` set
-- Downstream tasks are in the `pending` set (dependencies not yet satisfied)
+- Downstream Tasks are in the `pending` set because dependencies are not yet satisfied
 - On resume after process restart, the ready-set computation re-evaluates and advances naturally
 
 No special observation-specific continuation record is needed. The graph state and artifact repo are sufficient to reconstruct the wait.
@@ -100,4 +97,3 @@ No special observation-specific continuation record is needed. The graph state a
 
 - [Planning Pipeline](planning_pipeline.md)
 - [Guard Expression Semantics](guard_expression_semantics.md)
-- [HTN Model](htn/README.md)

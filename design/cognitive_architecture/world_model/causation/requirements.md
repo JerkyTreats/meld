@@ -1,14 +1,12 @@
 # Causal Requirements
 
-Date: 2026-05-15
-Status: active
-Scope: expanded implementation requirements for `world_model/causation`
+Scope: canonical requirements for `world_model/causation`
 
 ## Thesis
 
-Causal implementation must prove a replayable path from graph, belief, execution, and regime records to variables, interventions, outcome links, identification assessments, effect estimates, counterfactuals, assumptions, and planner-facing causal summaries.
+Causation proves a replayable path from graph, belief, execution, and regime records to variables, interventions, outcome links, identification assessments, effect estimates, counterfactuals, assumptions, and planner-facing causal summaries.
 
-The first slice must prevent selected anchors, temporal order, or task success from becoming implicit causal proof.
+Selected anchors, temporal order, and Task success never become implicit causal proof.
 
 ## Functional Requirements
 

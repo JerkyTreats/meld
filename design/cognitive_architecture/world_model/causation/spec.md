@@ -1,7 +1,5 @@
 # Causation Spec
 
-Date: 2026-05-26
-Status: active
 Scope: domain specification for `world_model/causation`
 
 `causation` is a structured interpretation domain over graph and belief outputs. It links interventions, outcomes, selection paths, and confounders into effect estimates. It consumes settled evidence and emits mechanism-aware summaries for `planner` and perspective consumers.

@@ -1,7 +1,5 @@
 # Comparator Model
 
-Date: 2026-04-30
-Status: active
 Scope: comparator and inference families used to assess evidence, update posterior state, and settle belief revisions
 
 ## Thesis
@@ -16,7 +14,7 @@ Family-specific factors, priors, evidence bindings, thresholds, and projection r
 Bayesian comparators are preferred because they are typed, inspectable, replayable, and calibratable.
 Semantic settlement is allowed as a provisional shortcut when no stronger comparator exists.
 
-In the broader belief architecture, "comparator" is the first implementation shape for an inference method. Some beliefs will remain simple comparator updates. Others may need factor-graph messages, variational updates, predictive residuals, or hypothesis-set scoring. The public requirement is the same: deterministic replay over explicit inputs and an inspectable posterior or revision output.
+Comparator is one inference method. Some beliefs use simple comparator updates. Others use factor-graph messages, variational updates, predictive residuals, or hypothesis-set scoring. Every method provides deterministic replay over explicit inputs and an inspectable posterior or revision output.
 
 ## Inputs
 
@@ -51,7 +49,7 @@ Every comparator engine returns:
 Preferred comparator for typed evidence.
 It updates a prior with measured factors and records a posterior.
 The factor names, evidence schema bindings, weights, normalizers, and projection fields come from runtime configuration.
-The existing [Bayesian Evaluation Example](../../execution/examples/bayesian_evaluation.md) is the strongest current design seed.
+The comparator configuration declares the complete evidence model and deterministic posterior calculation.
 
 `RuleComparator`
 
@@ -103,10 +101,10 @@ A cost-benefit comparator consumes beliefs about state, cost, and value — it i
 | Input | Source |
 | --- | --- |
 | State belief | Belief comparator output for the relevant belief key |
-| Cost belief | Learned from execution outcome facts (time, tokens, success rate) |
+| Cost belief | Learned from execution outcome facts such as time, tokens, and success rate |
 | Value belief | Learned from downstream outcome correlation |
-| Inaction cost | Accumulating cost of not acting (for maintenance invariants) |
-| Regime context | Which prior set is active (from regime layer) |
+| Inaction cost | Accumulating cost of not acting for maintenance invariants |
+| Regime context | Prior set selected by the Regime domain |
 
 The cost-benefit comparator produces an act/tolerate posterior. "Tolerate" means the belief change is absorbed without goal generation — this is the frequency reduction between the belief layer and the goal layer.
 
@@ -122,22 +120,14 @@ Semantic settlement should carry:
 - trust downgrade applied by policy
 - expiry pressure
 
-## Existing Design Seeds
+## Supporting Contracts
 
-- [Bayesian Evaluation Example](../../execution/examples/bayesian_evaluation.md)
-  weighted evidence model, posterior computation, decision artifact, and calibration reducer note
-- [Git Diff Summary Example](../../execution/examples/git_diff_summary.md)
-  structured change summary artifact used as comparator evidence
-- [AST Change Impact Example](../../execution/examples/ast_change_impact.md)
-  structured public API impact artifact used as comparator evidence
 - [Observation Wait Semantics](../../execution/planning/observation_wait_semantics.md)
   data-flow dependency semantics for observation tasks
 - [Guard Expression Semantics](../../execution/planning/guard_expression_semantics.md)
   conditional dependency edge evaluation over structured artifacts
-- [Synthesis Overview](../../execution/synthesis/README.md)
-  future route for capability growth when comparator inputs cannot be produced
 - [Goal Curation](../agent/goal_curation.md)
-  cost-benefit comparator for goal generation — the action-worthiness extension of the comparator pattern
+  cost-benefit comparator for Goal generation and action-worthiness
 
 ## Bayesian Comparator Shape
 
@@ -161,7 +151,7 @@ The first practical comparator can be configured to mirror the docs writer examp
 - posterior decides whether the belief supports action
 - later execution outcome calibrates the prior
 
-The implementation must remain a generic weighted Bayesian comparator engine.
+The Bayesian comparator remains a generic weighted engine.
 It must not introduce a comparator type named after `docs_freshness` or any other runtime family.
 
 ## Semantic Settlement Policy
@@ -187,10 +177,10 @@ Do not use semantic settlement when:
 
 External capability synthesis is adjacent but deferred.
 
-When a comparator needs evidence that no current capability can produce, the belief layer should emit a planning need.
+When a comparator needs evidence that available observations cannot produce, Belief emits an observation opportunity for Agent and Strategy consideration.
 Execution may later synthesize or register a capability that gathers the missing evidence.
 
-For the research-aligned architecture, this edge is an observation opportunity. It should carry expected information gain, target belief, evidence channel, cost, delay, and expiry when those fields are known.
+This edge is an observation opportunity. It carries expected information gain, target belief, evidence channel, cost, delay, and expiry when those fields are known.
 
 For now, the belief layer should record:
 
@@ -205,6 +195,4 @@ For now, the belief layer should record:
 - [Belief Microarchitecture](microarchitecture.md)
 - [Fact To Belief](fact_to_belief.md)
 - [Belief Substrate](substrate.md)
-- [Bayesian Evaluation Example](../../execution/examples/bayesian_evaluation.md)
 - [Execution Planning](../../execution/planning/README.md)
-- [Synthesis Overview](../../execution/synthesis/README.md)

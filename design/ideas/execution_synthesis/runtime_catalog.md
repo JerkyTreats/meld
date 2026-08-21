@@ -1,7 +1,5 @@
 # Runtime Capability Catalog
 
-Date: 2026-04-09
-Status: proposed
 Scope: sled-backed catalog for synthesized capabilities, trust model, lookup semantics, and schema drift handling
 
 ## Intent
@@ -88,7 +86,7 @@ Resolution order:
 
 When both catalogs return results, the task compiler prefers `TrustLevel::Compiled`.
 If only synthesized results exist, they are used. The trust level is recorded in the compiled
-task record so repair semantics can distinguish the two cases.
+task record so recovery and re-synthesis semantics can distinguish the two cases.
 
 ## Schema Drift Detection
 

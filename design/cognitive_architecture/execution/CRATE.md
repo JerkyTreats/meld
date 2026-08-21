@@ -1,111 +1,19 @@
-# Execution Crate
+# meld-execution
 
-Date: 2026-05-02
-Status: active
-Scope: `meld-execution` crate boundary for execution-owned contracts, task and capability authority, workflow runtime, and runtime ports
+Scope: executable intake, coherence, lowering, dispatch, and durable Task Network progression
 
-## Intent
+## Ownership
 
-`meld-execution` owns the public contract boundary and runtime algorithms for deliberate action.
-It defines the provider execution request shape, task and capability contracts, workflow execution runtime, and the ports that let execution code read context, dispatch provider work, query the world model, load workflow profiles, write generated frames, and publish outcomes without depending on root `meld`.
+This crate owns Capability runtime contracts, the Goal Set of admitted executable obligations, Execution Planning, Task compilation, the unified Task Network, dispatch, retry policy, resource coordination, and execution outcomes.
 
-Root `meld` remains the product shell and adapter host for concrete runtime implementations.
+It does not own directives, beliefs, Strategy Plans, Epistemic Operations, semantic Goal satisfaction, product-domain truth, or PDS lifecycle.
 
-## Target Crate
+## Public Contracts
 
-`meld-execution`
+The crate exposes Task admission and curation, Capability registration, planning ticks, Task Network queries and mutations, dispatch ports, and outcome publication.
 
-## Owns
+A Task admission carries Goal attribution and producer authority. It does not carry a world-model projection or require the crate to query the world model.
 
-- provider execution binding contracts
-- provider runtime override validation
-- context read and write port contracts
-- prompt artifact read and write port contracts
-- node resolution port contract
-- provider validation and execution port contracts
-- event publication port contract
-- world-model query port contract
-- workflow profile load port contract
-- workflow execution request, summary, progress, and deterministic identity contracts
-- live workflow executor algorithm
-- task authority contracts, compiler, artifact repo, initialization, runtime loop, and task-package lowering
-- capability authority contracts, catalog, invocation payloads, and executor registry contracts
-- combined execution context contract
+## Safety
 
-## Does Not Own
-
-- canonical event append and replay
-- graph materialization
-- belief revision
-- workspace source truth
-- context storage truth
-- provider registry and concrete client ownership
-- root task-path capability registration for workspace, traversal, context, and provider product adapters
-- concrete provider client ownership
-- CLI formatting
-- app config loading
-
-## Current Code Areas
-
-- `crates/meld-execution/src/execution/contracts.rs`
-- `crates/meld-execution/src/execution/ports.rs`
-- `crates/meld-execution/src/capability.rs`
-- `crates/meld-execution/src/task.rs`
-- `crates/meld-execution/src/workflow/executor.rs`
-- `crates/meld-execution/src/workflow/progress.rs`
-- root adapter bindings in `src/execution/ports.rs`
-- root workflow runtime input adapter in `src/workflow/executor.rs`
-
-## Provider Posture
-
-Provider execution policy belongs with execution.
-Concrete provider registry, provider configuration, provider diagnostics, provider clients, and provider CLI management remain in root `meld`.
-
-Execution code should depend on the provider execution port, not on root `meld`.
-
-## Context And Provider Reliance
-
-`meld-execution` relies on context and provider capabilities.
-
-That reliance should be explicit.
-The extracted crate owns the ports it needs:
-
-- context read port
-- context write port for produced artifacts and frames
-- provider execution port
-- event publication port
-- world-model query port
-- workflow profile load port
-- generated frame construction supplied by root runtime input
-- task-path capability execution supplied by a root runtime bundle
-
-Root `meld` supplies adapters for those ports during runtime wiring.
-
-This keeps the dependency direction from becoming `meld-execution` to root `meld`.
-Context and provider remain root-owned concerns behind those ports.
-
-## Root Adapter Posture
-
-Root `meld` binds the associated-type port contracts to the product's concrete types.
-
-Storage, config, CLI, provider registry, provider clients, and workspace-specific capability registration are root-owned.
-Root adapters provide those concrete product concerns to `meld-execution` through explicit ports and runtime inputs.
-
-## Target Dependencies
-
-| From | To | Reason |
-| --- | --- | --- |
-| `meld-execution` | none of the root `meld` crate | contract boundary must remain root independent |
-
-## Forbidden Direction
-
-`meld-execution` must not depend on root `meld`, world-model internals, CLI, or workspace internals.
-
-Execution may request context, workspace, or provider capabilities only through explicit ports.
-
-## Public Contract Shape
-
-The port traits are associated-type contracts so `meld-execution` can define the execution boundary without importing root data types.
-Root `meld` supplies the concrete bindings for `ContextApi`, prompt artifact storage, provider execution, workflow profile loading, and world-model query access.
-
-This keeps the dependency direction stable while allowing root `meld` to remain the product composition shell.
+Execution protects only the invariants it owns. These include exact Capability availability, valid bindings, idempotent intake, resource safety, effect concurrency, durable state transitions, and legal Task Network progression.

@@ -1,7 +1,5 @@
 # Bayesian Evaluation Capability
 
-Date: 2026-04-08
-Status: proposed
 Scope: deterministic probabilistic scoring capability that combines evidence artifacts into a structured decision artifact
 
 ## Intent

@@ -1,244 +1,27 @@
-# World Model Agent
+# Agent
 
-Date: 2026-07-23
-Status: active
-Scope: perspective-scoped agent identity and world-model ownership above belief and below execution commitment
+Agent is the authority-bearing world-model entity that reconciles a directive with admitted world state. It owns Goal judgment and the durable progression of authorized Strategy Plans.
 
-## Thesis
+Agent does not perform Strategy search, author graph edges directly, or execute Tasks.
 
-The Agent is the decision-maker between belief and action. It owns one perspective, decides which belief divergence matters, drafts desired state, and authorizes Strategy.
+## Responsibilities
 
-This area exists because shared graph truth is not the same as shared belief.
-Many Agents may consume one shared event and graph substrate while producing different belief views, regime sensitivities, and action-relevant projections.
+Agent grounds directives into Goals, decides whether observed divergence matters, requests Strategy construction, judges exact Plans, authorizes individual Plan products, and reconciles progression when knowledge or outcomes change.
 
-## Boundary
+Agent routes eligible Epistemic Operations to Curation. It routes eligible complete Tasks to the Execution Goal Set. It preserves causal lineage across both paths and never exposes the full heterogeneous Plan to Execution.
 
-`world_model/agent` owns:
+## Durable Progression
 
-- agent identity as a world-model perspective anchor
-- perspective-scoped belief ownership
-- evidence policy and trust profile
-- observation scope and branch scope
-- regime sensitivity profile
-- normative framework — what belief states the agent cares about and what thresholds trigger action
-- Directive grounding — applying maintained domain theory to trusted scope so concrete belief questions exist
-- planner-facing world-model view assembly for one perspective
-- Goal draft curation — evaluating beliefs through cost-benefit comparators before requesting Execution admission
-- Strategy authority — authorizing evidence-backed candidate Compositions with the Goal they make actionable
-- active goal awareness — reading the goal set for prediction, redundancy avoidance, and normative evaluation
-- cost-benefit evaluation — deciding when belief divergence warrants action based on learned cost and value beliefs
+For each authorized Plan, Agent records product eligibility, authorization, publication, completion, invalidation, successor lineage, and Goal satisfaction state. Repeated delivery is idempotent.
 
-`world_model/agent` does not own:
+A new belief revision, Curation result, execution outcome, or product-domain fact may cause reassessment. Agent may continue the Plan, authorize newly eligible products, suspend products whose premises no longer hold, or request a successor Plan from Strategy.
 
-- the goal set itself (owned by execution)
-- goal lifecycle state machine (owned by execution)
-- task-network graphs, operational planning, or dispatch
-- continuation or runtime control state
-- provider execution
-- canonical event append
+## Authority
 
-## Relationship To Other World Model Domains
+Agent authorization proves that a Strategy product is permitted for this Agent and Goal. It does not prove that Curation has authored the requested knowledge or that Execution has produced the requested effect. Those owners publish their own results.
 
-`graph` is shared substrate.
-It does not become agent-private because one Agent distrusts or ignores part of it.
-
-`belief` produces perspective-scoped posterior state.
-`agent` defines which perspective is being served and which belief views should be assembled for it.
-
-`causation` may expose effect summaries that differ by the intervention and measurement assumptions relevant to the Agent.
-
-`regime` may expose structural uncertainty that one Agent treats as central and another treats as tolerable.
-
-`planner` remains the final projection layer that turns these concerns into action-relevant world-model reads.
-
-## Relationship To Execution
-
-The Agent is not the execution runtime. It decides what should be pursued and which theories of action are authorized. Execution decides how authorized work runs.
-
-```mermaid
-flowchart TD
-    D[Directive]
-    G[Directive grounding]
-    B[Reconciled belief revisions]
-    A[Agent judgment]
-    GD[Goal draft]
-    S[Strategy candidates]
-    AD[Goal admission]
-    E[Execution]
-
-    D --> G
-    G --> B
-    B --> A
-    A -->|Action warranted| GD
-    GD --> S
-    S --> A
-    A -->|Authorize Goal and candidates| AD
-    AD --> E
-```
-
-| Domain | Decision |
-|---|---|
-| Agent | what matters and whether action is warranted |
-| Strategy | which theories of action are viable |
-| Agent | which Goal and candidates are authorized |
-| Execution | how authorized work is realized |
-
-The shared typed language [`meld-lang`](../../meld-lang/README.md) carries Goal propositions and candidate Compositions across the boundary. See [Directive Grounding](directive_grounding.md), [Goal Curation](goal_curation.md), and [World Model Strategy](../strategy/README.md).
-
-The shared language eliminates the need for Execution to interpret belief semantics. The Agent constructs a typed proposition and Execution evaluates it mechanically. See [World State and Evaluation](../../meld-lang/world_state.md).
-
-The Agent also has read access to the active goal set. This is epistemically valuable: knowledge of active goals enables prediction (what evidence to expect), anomaly detection (goals without progress), and avoidance of redundant goal generation.
-
-See [Goals](../../execution/goals/README.md) for the full ownership split and curation API contract.
-See [Goals and Methods](../../meld-lang/goals_and_methods.md) for the concrete `Goal` type definition and construction examples.
-
-The Agent should consume the heavier pipelines of the other world model domains and assemble them into one perspective-scoped curation output, rather than re-owning their internal logic.
-
-See [Agent Spec](spec.md) for domain types, data model, and pipelines.
-See [Agent Runtime Surface](runtime_surface.md) for store, query, activation, subscription, curation, idempotency, and replay contracts.
-
-## The Agent Meta-Layer
-
-A directive is durable, user-originated intent: the persisted answer to why an agent exists. It belongs to the agent meta-layer, the layer that turns user intent into one or more agents handling related but executionally-distinct concerns.
-
-The meta-layer extends the watching and reducing pattern one level above the agent:
-
-| Layer | Watches | Produces | Decomposes | Question |
-|---|---|---|---|---|
-| meta-layer | user intent | agents | intent into an agent set | why |
-| agent | Directive, scope, and belief revisions | belief questions, Goal drafts, and Strategy authority | maintained intent into questions and belief divergence into desired state | what and why |
-| Strategy | Goal drafts and typed projections | candidate Compositions | desired state into theory of action | viable means |
-| execution | authorized candidates and live state | committed task network | theory into operational work | realization |
-
-Where Strategy constructs semantic action structure and Execution realizes it as committed work, the meta-layer decomposes intent into Agents. The Agent is the unit it produces.
-
-### Durable Contract
-
-Only the durable nouns that outlive the deferral window need to be settled now. The meta-layer's logic is runtime that persists nothing, so it can land later without migration. The settled shell is:
-
-- a directive has independent identity, separate from any agent: `Directive { id, text }`, with an optional lifecycle status
-- an agent may be attributed to a directive by reference, and not one-to-one: `AgentRecord.directive_id`, so one directive may be served by many agents
-- goal lineage cites the directive through `GoalSource::UserDirected` in [`meld-lang`](../../meld-lang/README.md)
-
-This shape stays neutral on the choices the meta-layer will make, so picking either later is additive:
-
-- cardinality of intent to agent is reserved as many and never asserted as one
-- coordination across agents that serve one directive is the deferred multi-agent goal coordination concern, anchored at the shared graph, goal set, and task network, not at a directive subsystem
-- agent-creation authority is unaffected, because attribution through `directive_id` is orthogonal to authority through `seed_provenance` and curator provenance
-
-### Deferred
-
-The meta-layer's verbs are deferred and have a reserved home in the contract above:
-
-- the translation runtime that turns intent into a chosen agent set
-- decomposition records of that agent set and re-decomposition when intent changes
-- a serialized goalset-template vocabulary that expands one directive into a goal DAG using existing `meld-lang` propositions and compositions, sibling to the method library
-- natural-language interpretation of arbitrary user intent, realized as a planning capability that emits `CreateAgent` goals
-
-The minimal shape is exactly one seed agent serving one directive, supplied as trusted seed configuration. See [Agent Genesis And Activation](genesis_and_activation.md).
-
-## Core Design Rule
-
-The Agent should be the owner of perspective, not the owner of truth.
-
-That means:
-
-- graph truth stays shared and replayable
-- belief may diverge by perspective
-- regime sensitivity may diverge by perspective
-- planner-facing world-model views may diverge by perspective
-- execution still receives one shaped view per consuming perspective
-
-## Multi-Agent Requirement
-
-This domain is where the world model satisfies the `En Masse and At Will` requirement.
-
-The architecture should support:
-
-- one shared event and graph substrate
-- many Agent entities over that substrate
-- sparse and divergent attached belief state
-- independent planner-facing projections
-- stable replay and audit across all Agents
-
-The main payoff of the agent shape is here:
-many Agents can share one identity and provenance foundation while carrying sparse, divergent, mutable world-model state without forcing one rigid record for every perspective.
-
-## Agent Lifecycle
-
-Agent creation and activation are separate.
-
-Seed agents are created from trusted init or configuration state. This is genesis authority, not goal curation, because no prior agent exists to curate the first agent creation goal.
-
-Existing agents are activated when the process starts by hydrating durable agent records into runtime watchers and subscriptions. Activation does not create a new agent and does not require a `CreateAgent` goal.
-
-After seed agents exist, new agent creation is normal goal set curation. An authorized existing agent may add a `CreateAgent` goal for a separate concern. Execution turns the curated agent responsibility into an operational agent through the same goal to plan to task network to capability pipeline that handles all execution.
-
-See [Agent Genesis And Activation](genesis_and_activation.md) for the durable state, runtime state, and authority paths.
-
-### Bootstrap
-
-```
-1. Init        Seed config or curated CreateAgent goal supplies
-                 the directive and agent responsibility
-2. Ground      Directive grounding combines activated PDS theory
-                 with a bounded trusted graph scope
-3. Register    Belief registers or reuses each concrete belief question
-4. Bind        Agent subscribes to the resulting belief keys
-5. Observe     Evidence acquisition begins for dimensions
-                 where belief keys exist but no belief revision yet
-6. Arrive      Agent processes first belief revision event through
-                 its cost-benefit comparator — creation goal satisfied
-```
-
-Every step is a capability in the task network. Observable through the spine. Cost-tracked. Retryable.
-
-The initialization workflow is run by execution. The new agent is the output of that workflow, not the actor that runs it.
-
-The satisfaction criterion for a spawned agent creation goal: the agent has bound subscriptions and has processed at least one readiness signal through its cost-benefit evaluation. The newly arrived agent may then satisfy or provide satisfaction evidence for the `CreateAgent` goal that requested it.
-
-For a seed agent, the same arrival criterion enables normal goal curation, but there is no prior `CreateAgent` goal to satisfy.
-
-### Steady state
-
-After bootstrap, graph or Directive changes may trigger bounded [Directive Grounding](directive_grounding.md). Belief revision events then arrive on subscribed keys through the watching pattern described in [Goal Curation](goal_curation.md). The cost-benefit comparator evaluates. A Goal draft proceeds to Strategy construction when action is warranted.
-
-### Re-survey
-
-When the capability catalog changes or the subject scope expands, the agent re-surveys. This is a partial re-bootstrap: new evidence channels may be discoverable, new belief dimensions may be relevant. Re-survey can be triggered by spine events indicating capability registration or subject scope changes.
-
-### Shutdown
-
-Agent shutdown is also a goal. The agent's subscriptions are unbound. Active goals curated by this agent are evaluated for transfer to another agent or abandonment. Cleanup runs through the normal task network.
-
-## Design Boundaries
-
-Strategy-gated Goal admission is a canonical contract, not a deferred item. A Goal draft reaches Execution only after bounded Strategy construction produces at least one eligible candidate and the Agent authorizes the Goal and candidate inventory together.
-
-Beyond the boundaries above, this design intentionally leaves open:
-
-- full multi-Agent synchronization strategy
-- shared planning between Agents
-- multi-agent goal coordination protocol
-
-The agent design does not require other crates to adopt world model implementation vocabulary.
-
-## Read With
-
-- [World Model Domain](../README.md)
-- [World Model Vision](../VISION.md)
-- [World Model Planner](../planner/README.md)
-- [Agent Spec](spec.md)
-- [World Model Belief](../belief/README.md)
-- [Belief Microarchitecture](../belief/microarchitecture.md)
-- [Agent Genesis And Activation](genesis_and_activation.md)
-- [Agent Runtime Surface](runtime_surface.md)
-- [Goal Curation](goal_curation.md)
 - [Directive Grounding](directive_grounding.md)
-- [World Model Strategy](../strategy/README.md)
-- [World Model Public Interface](../public_interface.md)
-- [Lang Domain](../../meld-lang/README.md)
-- [Lang Goals and Methods](../../meld-lang/goals_and_methods.md)
-- [Lang World State and Evaluation](../../meld-lang/world_state.md)
-- [Execution Domain](../../execution/README.md)
-- [Goals](../../execution/goals/README.md)
+- [Genesis And Activation](genesis_and_activation.md)
+- [Plan Progression](goal_curation.md)
+- [Runtime Surface](runtime_surface.md)
+- [Agent Contract](spec.md)

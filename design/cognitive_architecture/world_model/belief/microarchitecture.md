@@ -1,7 +1,5 @@
 # Belief Microarchitecture
 
-Date: 2026-05-27
-Status: active
 Scope: microarchitecture boundary for belief inside spine, world model, and agent responsibilities
 
 ## Thesis
@@ -39,7 +37,7 @@ It may condition priors and calibration, but it should not be hidden inside one 
 `agent`
 
 The agent owns action.
-It consumes planner-facing world model views, interprets goals, builds tasks, invokes capabilities, repairs plans, and emits outcomes back to the spine.
+Strategy consumes planner-facing world-model views and constructs Plans. Agent interprets Goals and reconciles Plan progression. Execution invokes Capabilities and emits outcomes through Events.
 
 ## Boundary Rule
 
@@ -53,7 +51,7 @@ That hydration is execution preparation, not planning state.
 
 ## Research Alignment Rule
 
-The public microarchitecture should not expose one research method as doctrine.
+The public microarchitecture does not expose one inference method as doctrine.
 
 Allowed internal inference styles include:
 
@@ -174,6 +172,5 @@ Spine public API:
 - [Fact To Belief](fact_to_belief.md)
 - [Belief Substrate](substrate.md)
 - [Comparator Model](comparator_model.md)
-- [Microarchitecture Assessment By Domain](../../../completed/world_state/microarchitecture_assessment_by_domain.md)
 - [Execution Domain](../../execution/README.md)
-- [Spine Concern](../../spine/README.md)
+- [Events](../../events/README.md)

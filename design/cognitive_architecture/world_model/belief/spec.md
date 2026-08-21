@@ -1,7 +1,5 @@
 # Belief Spec
 
-Date: 2026-05-26
-Status: active
 Scope: domain specification for `world_model/belief` as a curation-heavy inference domain
 
 `belief` is the heaviest mutable curation domain in `world_model`. It normalizes evidence, schedules assessment, updates posterior state, and projects belief views. It is more perspective-sensitive than `graph` because one shared substrate may produce many scoped belief views.
@@ -282,7 +280,7 @@ Belief family content is not a data family in Rust. Family ids, dimension ids, e
 | Assessment | leases, windows, comparator selection, epochs | scheduler and workers | recovery, comparator, commit |
 | Posterior state | prior, posterior, uncertainty, precision, freshness | comparator and inference stages | view projection, planner input, regime |
 | Conflict and hypotheses | contradiction state and latent alternatives | comparator and inference stages | observation, view projection, regime |
-| Observation | unresolved evidence need and information value | opportunity projector | planner and execution bridge |
+| Observation | unresolved evidence need and information value | opportunity projector | planner and Strategy input |
 | View | shaped consumer state | view projector | public interface and planner |
 | Calibration | outcome comparison and reliability adjustment | calibration stage | comparator selection and priors |
 | Provenance | source refs, cursors, explanation refs | every mutating stage | replay, audit, hydration |

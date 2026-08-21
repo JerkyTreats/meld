@@ -1,39 +1,31 @@
 # Fact To Belief
 
-Date: 2026-04-30
-Status: active
-Scope: transition from spine facts and graph anchors into belief revisions and planner views
+Scope: transition from Events and graph publications into belief revisions and planner views
 
 ## Thesis
 
 A fact is immutable history.
 A belief is a settled or provisional claim over that history.
 
-The planner should consume shaped belief or world-model views.
-It should not inspect raw spine facts or traversal facts during planning.
-Facts become relevant again during task construction, evidence gathering, audit, and explanation.
+Planner consumes shaped belief and world-model views.
+It does not inspect raw Events during projection.
+Source facts remain available for Strategy explanation, evidence gathering, audit, and provenance.
 
 Fact to belief is a world model concern.
 Belief view to action is an agent concern.
 
-This document describes the first bottom-up transition path. It is not the whole long-term belief architecture. Later belief work must also support top-down predictions, latent hypotheses, precision-weighted evidence, observation policy, and regime-conditioned priors.
+Belief supports bottom-up evidence, top-down predictions, latent hypotheses, precision-weighted evidence, observation policy, and regime-conditioned priors through one revision contract.
 
-## Enabling Base
+## Domain Inputs
 
-Belief builds on these layers:
+Belief consumes these canonical contracts:
 
-- [Completed Events](../../../completed/events/README.md)
-  durable spine, runtime-wide sequence, append, replay, idempotent derived facts, and graph attachment fields
-- [Completed World State Graph](../../../completed/world_state/graph/README.md)
-  current anchors, lineage, provenance, traversal indexes, and branch annotated federation
-- [Graph Implementation Status](../../../completed/world_state/graph/implementation_plan.md)
-  implemented `DomainObjectRef`, `EventRelation`, `GraphRuntime`, traversal queries, and graph-readable publishers
-- [Spine Graph Completion Review](../../../completed/world_state/graph/spine_graph_completion_plan.md)
-  explicit closeout that belief and planner-facing views are next scope
+- [Events](../../events/README.md)
+  durable append, replay, cursor, and producer authority
 - [World Model Graph](../graph/README.md)
-  source model where semantic spine facts materialize graph views and future belief facts
+  owner-issued objects, relation occurrences, scope, provenance, and traversal cuts
 - [Execution Domain](../../execution/README.md)
-  execution must read current belief and publish success, failure, uncertainty, and gathered evidence
+  execution publishes outcomes and observations without reading belief as an admission prerequisite
 
 ## Record Roles
 

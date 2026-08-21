@@ -1,9 +1,6 @@
 # Guard Expression Semantics
 
-Date: 2026-05-08
-Status: active
 Scope: evaluation rules for guard expressions on conditional dependency edges in the task network graph
-Origin: relocated from program/guard_binding_semantics.md — control graph dissolved, guard semantics preserved as conditional dependency edge evaluation
 
 ## Context
 
@@ -36,7 +33,7 @@ enum ThresholdOperator {
 
 ### Artifact Resolution
 
-The guard expression evaluates against the output artifact of the upstream task (the `from` task on the conditional dependency edge). The artifact must match the `artifact_type` declared on the edge.
+The guard expression evaluates against the output artifact of the upstream task, identified by `from` on the conditional dependency edge. The artifact must match the `artifact_type` declared on the edge.
 
 If the artifact is absent at evaluation time, the edge is not yet evaluable. The downstream task remains outside the ready set. This is not an error — it means the upstream task has not yet completed.
 
@@ -45,14 +42,14 @@ If the artifact is absent at evaluation time, the edge is not yet evaluable. The
 **BooleanField**
 
 Reads the field at `field_path` from the artifact content. Compares to `expected`.
-If the field is absent, evaluation fails (contract error).
+If the field is absent, evaluation fails with a contract error.
 
 Example: `BooleanField { field_path: "should_execute", expected: true }` evaluates to true when `artifact.content.should_execute == true`.
 
 **ThresholdField**
 
 Reads the field at `field_path` from the artifact content. Compares against `threshold` using the specified operator.
-If the field is absent, evaluation fails (contract error).
+If the field is absent, evaluation fails with a contract error.
 
 Example: `ThresholdField { field_path: "probability", threshold: 0.6, operator: GreaterThanOrEqual }` evaluates to true when `artifact.content.probability >= 0.6`.
 
@@ -104,7 +101,7 @@ The raw probability form is useful when the threshold needs to vary per context.
 
 ## Guard Failure Behavior
 
-A guard expression failure (field absent or type mismatch) is a contract error. It indicates a mismatch between the capability that produced the artifact and the guard that consumes it. This should surface as a validation error when the task network graph is assembled, not at runtime.
+A guard expression failure due to a missing field or type mismatch is a contract error. It indicates a mismatch between the Capability that produced the artifact and the guard that consumes it. This surfaces as a validation error when the Task Network graph is assembled, not at runtime.
 
 ## Validation
 
@@ -112,10 +109,9 @@ When a planning agent commits a subgraph to the task network, the commit phase s
 
 - every conditional dependency edge references an artifact type that the upstream task declares as an output
 - every guard expression references a field path that exists in the declared artifact schema
-- the conditional edge set from a given observation task covers all possible outcomes (either exhaustively or with an `AlwaysTrue` fallback)
+- the conditional edge set from a given observation task covers all possible outcomes, either exhaustively or with an `AlwaysTrue` fallback
 
 ## Read With
 
 - [Planning Pipeline](planning_pipeline.md)
 - [Observation Wait Semantics](observation_wait_semantics.md)
-- [Bayesian Evaluation Example](../examples/bayesian_evaluation.md)

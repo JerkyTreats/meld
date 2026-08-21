@@ -144,7 +144,7 @@ This gives the team structured evidence without pretending the system can yet en
 
 - `governance/assessment_by_domain_policy.md`
 - `design/cognitive_architecture/README.md`
-- `design/cognitive_architecture/observe_merge_push.md`
+- `design/ideas/observe_merge_push.md`
 - `design/cognitive_architecture/events/multi_domain_spine.md`
 - `design/cognitive_architecture/world_model/README.md`
 - `design/cognitive_architecture/execution/README.md`

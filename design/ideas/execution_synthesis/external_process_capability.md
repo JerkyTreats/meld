@@ -1,7 +1,5 @@
 # External Process Capability
 
-Date: 2026-04-09
-Status: proposed
 Scope: ExternalProcess execution class extension to the capability contract model, enabling synthesized capabilities to wrap subprocess invocations with LLM-driven output conversion
 
 ## Intent
@@ -132,7 +130,7 @@ output. This is surfaced to control as a hard failure. Control may respond by tr
 
 An `ExternalProcess` capability carries a `trust_level: Synthesized` marker in the runtime
 catalog. The task compiler accepts synthesized capabilities for slot wiring but the compiled
-task record notes that one or more capability instances are synthesized. This affects repair
+task record notes that one or more Capability instances are synthesized. This affects recovery
 semantics: a synthesized capability that fails repeatedly may warrant re-synthesis rather
 than continued retry.
 

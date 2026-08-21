@@ -1,7 +1,5 @@
 # Directive Grounding
 
-Date: 2026-07-23
-Status: active
 Scope: translation from maintained intent and domain scope into concrete belief questions
 
 ## Thesis

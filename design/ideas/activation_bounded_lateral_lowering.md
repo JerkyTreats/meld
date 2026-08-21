@@ -272,7 +272,7 @@ It does not reinterpret PDS activation as attention. It does not assign contextu
 - [Regime Layer](../cognitive_architecture/world_model/regime/README.md)
 - [Regime Requirements](../cognitive_architecture/world_model/regime/requirements.md)
 - [Persistent Domain Stewardship](../cognitive_architecture/persistent_domain_stewardship.md)
-- [Temporal Knowledge Graph Research Summary](../cognitive_architecture/research/world_model_architecture/summary/TEMPORAL_KG_GAP_SUMMARY.md)
+- [Temporal Knowledge Graph Research Summary](cognitive_architecture_research/world_model_architecture/summary/TEMPORAL_KG_GAP_SUMMARY.md)
 - [Multi-Domain Event Spine](../cognitive_architecture/events/multi_domain_spine.md)
 - [Strategy Search](../cognitive_architecture/world_model/strategy/search.md)
 - [Strategy Contracts](../../crates/meld-world-model/src/strategy/contracts.rs)

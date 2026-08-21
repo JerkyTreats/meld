@@ -1,12 +1,10 @@
 # Regime Requirements
 
-Date: 2026-05-16
-Status: active
-Scope: expanded implementation requirements for `world_model/regime`
+Scope: canonical requirements for `world_model/regime`
 
 ## Thesis
 
-Regime implementation must prove a replayable path from graph, belief, causal, execution, and calibration signals to changepoints, continuation and break explanations, posterior state, run length, segment rollover, archived priors, mixture predictions, sensitivity summaries, stress results, and planner-facing summaries.
+Regime proves a replayable path from graph, belief, causal, execution, and calibration signals to changepoints, continuation and break explanations, posterior state, run length, segment rollover, archived priors, mixture predictions, sensitivity summaries, stress results, and planner-facing summaries.
 
 Regime protects the system from silently treating structural change as ordinary local evidence.
 

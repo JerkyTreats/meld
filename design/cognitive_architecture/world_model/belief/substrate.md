@@ -1,7 +1,5 @@
 # Belief Substrate
 
-Date: 2026-04-30
-Status: active
 Scope: event-driven world-model runtime for belief creation, reconciliation, recovery, and belief view projection
 
 ## Thesis
@@ -117,7 +115,7 @@ Stale signals include:
 - regime-conditioned prior no longer matching the active regime
 
 Planner view should expose stale state directly.
-Planner can then choose observe, wait, repair, or skip.
+Strategy can then represent observation, waiting, reconciliation, or deliberate omission in a Plan.
 
 ## Belief Storms
 
@@ -226,7 +224,7 @@ Execution decides whether and how to turn that opportunity into a task.
 
 ## Relationship To Spec
 
-[Belief Spec](spec.md) is the active design source.
+[Belief Spec](spec.md) defines the detailed contract.
 The public contract remains graph-shaped and view-shaped.
 
 The durable substrate rules are:
@@ -241,6 +239,6 @@ The durable substrate rules are:
 - [Belief Microarchitecture](microarchitecture.md)
 - [Fact To Belief](fact_to_belief.md)
 - [Comparator Model](comparator_model.md)
-- [Curation In Belief](curation.md)
+- [Evidence Materialization](materialization.md)
 - [Belief Spec](spec.md)
 - [Task Network](../../execution/task_network.md)

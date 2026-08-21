@@ -1,7 +1,5 @@
 # Task Initialization
 
-Date: 2026-06-04
-Status: active
 Scope: task run seed artifacts, data flow materialization, and validation authority
 
 ## Core Position
@@ -105,7 +103,7 @@ The full validation model has layers:
 - source validation for allowed static and upstream sources
 - data flow validation for graph revision and artifact provenance
 - policy validation for scope, agent, workspace, and trust posture
-- evolution validation for deterministic schema migration
+- deterministic schema evolution validation
 
 The task network must enforce envelope and source validation before dispatch. Readiness validates each declared source's artifact type and schema version, and a blocked task narrates its per-instance reasons; semantic validators register by artifact type and schema version on the same seam.
 

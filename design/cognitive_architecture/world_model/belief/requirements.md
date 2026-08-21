@@ -1,14 +1,12 @@
 # Belief Requirements
 
-Date: 2026-05-15
-Status: active
-Scope: expanded implementation requirements for `world_model/belief`
+Scope: canonical requirements for `world_model/belief`
 
 ## Thesis
 
-Belief implementation must prove a replayable path from durable facts to normalized evidence, belief revisions, observation opportunities, calibration records, and shaped views.
+Belief proves a replayable path from durable facts to normalized evidence, belief revisions, observation opportunities, calibration records, and shaped views.
 
-The implementation must preserve the full boundary shape even when inference starts with simple comparators.
+Every inference method preserves the full boundary shape.
 
 ## Functional Requirements
 

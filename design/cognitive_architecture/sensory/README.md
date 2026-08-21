@@ -1,48 +1,9 @@
-# Sensory Domain
+# Sensory
 
-Date: 2026-04-22
-Status: active
-Scope: continuous observation, modality isolation, and diff publication into shared events
+Sensory domains observe external state and publish owner-typed observations. They answer what was observed, by which instrument, at which scope and revision, with what provenance and confidence.
 
-## Thesis
+Sensory does not settle belief, author expected graph structure, construct Plans, or execute reconciliation policy.
 
-`sensory` converts raw environmental change into typed observations.
-It is the observe side of the loop.
-
-The domain model is:
-
-- one worker family per modality
-- diff publication rather than full state replay on every cycle
-- provenance and source identity attached at emission time
-- independence from curation and execution correctness
-
-## Boundary
-
-`sensory` owns:
-
-- modality-specific observation workers
-- normalization from raw signal into typed observation artifacts
-- publication of observation facts into events
-- local backpressure policy close to the source
-
-The world model owns belief updates and conflict resolution.
-`events` owns durability, ordering, replay, and subscription.
-`execution` owns task-triggered observation use cases that already exist today.
-
-## Anchors
-
-- `workspace_scan_batch` shows the diff-first publication shape
-- [Await Observation Semantics](../execution/planning/observation_wait_semantics.md) defines the deliberate observation-and-branch pattern inside `execution`
-
-## Substrate
+Independent sensory owners may observe workspace state, source control, package registries, advisory feeds, test outcomes, documentation artifacts, or runtime services. Their observations enter Events and are admitted by the relevant semantic owners.
 
 - [Sensory Substrate](substrate.md)
-  parallel stream compilers, lowering IR, and promotion into shared events
-
-## Read With
-
-- [Observe Merge Push](../observe_merge_push.md)
-- [Sensory Substrate](substrate.md)
-- [World Model Domain](../world_model/README.md)
-- [Events Domain](../events/README.md)
-- [Await Observation Semantics](../execution/planning/observation_wait_semantics.md)

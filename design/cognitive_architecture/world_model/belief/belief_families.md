@@ -1,7 +1,5 @@
 # Belief Families
 
-Date: 2026-05-17
-Status: active
 Scope: belief family concept, grounding contract, and worked examples using the docs writer concern class
 
 ## Thesis
@@ -170,7 +168,7 @@ Posterior: `sigmoid(logit_prior + evidence_score * 3.0)`
 
 Decision threshold for goal curation: `0.6` — posterior above this means the agent's cost-benefit comparator receives a "probably stale" input.
 
-### Belief View (What the consumer sees)
+### Belief View For Consumers
 
 ```
 BeliefViewSummary {
@@ -194,7 +192,7 @@ BeliefViewConflict {
 }
 ```
 
-The posterior says "docs are probably stale." The freshness says "we assessed this recently." Those are different statements. A belief can be fresh (recently checked) while its posterior says the subject is stale (docs are outdated). The framework distinguishes these; the family gives them concrete meaning.
+The posterior says that docs are probably stale. Freshness says that assessment was recent. Those are different statements. A belief can be fresh while its posterior says the subject is stale. The framework distinguishes these meanings and the family makes them concrete.
 
 ### Goal Curation Binding
 
@@ -265,7 +263,7 @@ Dual comparator:
 | `flake_rate` | `test_flakiness.flaky_count / window_runs` | 0.30 | inverse: `1.0 - rate` |
 | `recency` | time since last test run | 0.20 | `1.0 - min(hours / 24.0, 1.0)` |
 
-The rule comparator handles the hard signal (tests failed right now). The Bayesian comparator handles the soft signal (tests have been unreliable over time). The revision records which comparator produced the posterior and whether the result is settled (rule) or provisional (Bayesian without recent data).
+The rule comparator handles a hard signal such as tests failing now. The Bayesian comparator handles a soft signal such as tests being unreliable over time. The revision records which comparator produced the posterior and whether the result is settled or provisional.
 
 ### Goal Curation Binding
 
@@ -347,10 +345,10 @@ This is not message passing or hierarchical inference. It is evidence that is re
 ### Comparator
 
 `RuleComparator` — build success is binary. The most recent build outcome sets the posterior directly:
-- `success: true, error_count: 0` → posterior: 0.95 (high but not 1.0 — next change may break it)
+- `success: true, error_count: 0` produces posterior `0.95`, high but not absolute
 - `success: false` → posterior: 0.05
 
-Freshness decay: posterior decays toward prior as time passes without a build. After the freshness policy window, the belief becomes stale and the agent may generate an observation goal ("run the build to check").
+Freshness decay moves the posterior toward its prior as time passes without a build. After the freshness policy window, the belief becomes stale and the Agent may generate an observation Goal.
 
 ### Cross-Family Dependency
 
@@ -358,7 +356,7 @@ Build validity is a precondition for test health. The agent's normative framewor
 
 ---
 
-### Family: Execution Cost (Meta-Belief)
+### Family: Execution Cost Meta-Belief
 
 ### Identity
 
@@ -403,7 +401,7 @@ Cost beliefs are not goal targets. They are inputs to the cost-benefit comparato
 
 ---
 
-### Family: Action Value (Meta-Belief)
+### Family: Action Value Meta-Belief
 
 ### Identity
 
@@ -429,7 +427,7 @@ Value beliefs require longer calibration windows than cost beliefs. The causal c
 
 ### Cold Start
 
-Default: act on strong divergences with clear value signals (user-directed, maintenance invariant violation). Defer marginal divergences until outcome data calibrates the value posterior.
+Default behavior acts on strong divergences with clear value signals such as user direction or a maintenance invariant violation. Marginal divergences wait until outcome data calibrates the value posterior.
 
 ---
 
@@ -507,17 +505,17 @@ When a regime shift is detected, the agent scopes all family priors to the new r
 
 ## What This Document Does Not Cover
 
-### Domain-specific families beyond the first slice
+### Additional Domain-Specific Families
 
-Families for dependency safety, security posture, performance regression, code complexity, and other concerns are expected but not specified. Each follows the same runtime configuration contract.
+Families for dependency safety, security posture, performance regression, code complexity, and other concerns follow the same runtime configuration contract.
 
 ### Hierarchical belief families
 
-A family where multiple subjects share a parent belief requires the inference epoch mechanism. The runtime configuration contract does not yet address aggregation.
+A family where multiple subjects share a parent belief uses the inference epoch mechanism and declares its aggregation policy in runtime configuration.
 
 ### Dynamic family creation
 
-An agent discovering a new concern class and loading a new family at runtime is architecturally supported. The creation protocol — including comparator selection, prior initialization, and evidence source binding — is not specified beyond the runtime configuration contract.
+An Agent discovering a new concern class may load a new family at runtime. The runtime configuration contract declares comparator selection, prior initialization, and evidence source binding.
 
 ## Read With
 
@@ -527,7 +525,4 @@ An agent discovering a new concern class and loading a new family at runtime is 
 - [Belief Spec](spec.md)
 - [Goal Curation](../agent/goal_curation.md)
 - [Goals](../../execution/goals/README.md)
-- [Bayesian Evaluation Example](../../execution/examples/bayesian_evaluation.md)
-- [Git Diff Summary Example](../../execution/examples/git_diff_summary.md)
-- [AST Change Impact Example](../../execution/examples/ast_change_impact.md)
 - [Regime Layer](../regime/README.md)

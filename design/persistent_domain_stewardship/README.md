@@ -419,16 +419,15 @@ Start with [Proposal Index](proposal_index.md).
 - [Workflow Migration](workflow_migration.md)
 - [Open Decisions](open_decisions.md)
 - [Evaluation Plan](evaluation_plan.md)
-- [Native Capability And Task Substrate](../plan/architecture_overhauls/native_capability_task_substrate.md)
-- [Graph-Addressed Epistemic Substrate](../plan/architecture_overhauls/graph_addressed_epistemic_substrate.md)
-- [Agent, Strategy, And Merge Control Loop](../plan/architecture_overhauls/agent_strategy_merge_control_loop.md)
+- [Canonical Cognitive Architecture](../cognitive_architecture/README.md)
+- [World Model Reconciliation](../plan/architecture_overhauls/world_model_knowledge_traversal/README.md)
 - [Software Quality Example](examples/software_quality.md)
 - [Software Quality Profile Example](examples/software_quality_profile.md)
 
 ## Read With
 
 - [Cognitive Architecture](../cognitive_architecture/README.md)
-- [Observe Merge Push](../cognitive_architecture/observe_merge_push.md)
+- [Observe Merge Push](../ideas/observe_merge_push.md)
 - [Sensory](../cognitive_architecture/sensory/README.md)
 - [Belief Families](../cognitive_architecture/world_model/belief/belief_families.md)
 - [World Model Agent](../cognitive_architecture/world_model/agent/README.md)

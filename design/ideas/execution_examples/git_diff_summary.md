@@ -1,7 +1,5 @@
 # Git Diff Summary Capability
 
-Date: 2026-04-08
-Status: proposed
 Scope: static analysis capability producing a structured summary of git-tracked changes scoped to a workspace node
 
 ## Intent

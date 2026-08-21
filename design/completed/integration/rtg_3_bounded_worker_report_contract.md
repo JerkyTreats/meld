@@ -499,7 +499,7 @@ The full vision risk is building a first slice report that cannot scale to multi
 - [Minimal Runtime Flywheel](minimal_runtime_flywheel.md)
 - [Cognitive Architecture](../../cognitive_architecture/README.md)
 - [World Model Domain](../../cognitive_architecture/world_model/README.md)
-- [World Model Vision](../../cognitive_architecture/world_model/VISION.md)
+- [World Model Vision](../../ideas/world_model_vision.md)
 - [Sensory Domain](../../cognitive_architecture/sensory/README.md)
 - [Events Domain](../../cognitive_architecture/events/README.md)
 - [Execution Domain](../../cognitive_architecture/execution/README.md)
