@@ -2,7 +2,7 @@
 
 Date: 2026-08-21
 
-Mode: design
+Mode: delivery
 
 Status: awaiting approval
 
@@ -12,7 +12,7 @@ Canonical initiative name: World Model Reconciliation
 
 User working name: World Model Refactor
 
-Implementation authorization: no active slice, completed detailed-design slice `WMR-DD-01` had zero source-code authority
+Implementation authorization: no active slice, completed detailed-design slice `WMR-DD-02` had zero source-code authority
 
 ## Objective And Product Proof
 
@@ -69,9 +69,9 @@ Maturity evidence:
 | persistence stakes | several current stages commit durable state before downstream delivery | forbid call-stack success or Event append from standing in for consumer visibility |
 | integration depth | the complete path crosses five packages and multiple independently durable owners | require cross-deliverable Gate Acceptance |
 
-User override: maturity envelope and `WMR-DD-01` design activation accepted on 2026-08-21
+User override: maturity envelope and `WMR-DD-01` design activation accepted on 2026-08-21. The user authorized continuation into `WMR-DD-02` on 2026-08-21.
 
-The envelope is accepted for `WMR-DD-01`. Later slices remain unauthorized.
+The envelope is accepted through `WMR-DD-02`. Later slices remain unauthorized.
 
 Hard limits:
 
@@ -111,7 +111,9 @@ Program authority and exception authority: user
 
 None.
 
-`WMR-DD-01`, Semantic Spine Within Owner Publication To Frozen Traversal Cut, is complete with an accepted Gate Receipt. `WMR-DD-02` remains unauthorized.
+`WMR-DD-02`, Epistemic Authorship And Settlement Loop, is complete with an accepted Gate Receipt and its delivery commit.
+
+`WMR-DD-01`, Semantic Spine Within Owner Publication To Frozen Traversal Cut, is complete with an accepted Gate Receipt and delivery commit `17c4933d`.
 
 Design owner: Codex detailed-design implementor
 
@@ -121,15 +123,66 @@ Gate Acceptance owner: Codex separate cross-deliverable acceptance lane
 
 Exact write scope:
 
-- `detailed_design/wmr_dd_01_worker_packet.md`
-- `detailed_design/semantic_transition_ledger.md`
-- `detailed_design/owner_publication_to_traversal_cut.md`
+- `detailed_design/wmr_dd_02_worker_packet.md`
+- `detailed_design/epistemic_operation_transition_ledger.md`
+- `detailed_design/epistemic_authorship_and_settlement.md`
 - `world_model_reconciliation_handoff_ledger.md`
-- `delivery_gates/wmr_dg_01_owner_publication_to_frozen_cut.md`
-- `reviews/wmr_dd_01_integrated_design_review_receipt.md`
-- `delivery_gates/wmr_dg_01_acceptance_receipt.md`
+- `delivery_gates/wmr_dg_02_epistemic_authorship_and_settlement.md`
+- `reviews/wmr_dd_02_integrated_design_review_receipt.md`
+- `delivery_gates/wmr_dg_02_acceptance_receipt.md`
 - this program ledger
 - folder `README.md`
+
+### WMR-DD-02 product increment
+
+Close the bounded epistemic authorship and settlement vertical:
+
+```text
+exact TraversalCut plus Agent specification or authorized Plan product
+-> Curation acceptance and bounded authorship
+-> durable terminal Curation result through Events
+-> independent Graph visibility
+-> configured Belief settlement position when the result has an installed evidence route
+-> exact deferred Agent and Planner acceptance positions
+```
+
+Standing Curation and Strategy-planned Curation are two invocation contexts for one Curation authority. `WMR-DD-02` closes standing intake and the Curation-owned side of planned intake. Agent Plan authorization and progression remain deferred to `WMR-DD-03`.
+
+### WMR-DD-02 deliverables
+
+- a worker packet bounded to Curation authorship and result settlement
+- an epistemic operation transition ledger that separates authority, operation, result, Event, Graph, Belief, and downstream acceptance positions
+- a detailed design for standing and planned Curation without two semantic authorities
+- exact handoff and lifecycle entries for `WMR-H05` through `WMR-H10`, `WMR-H26`, and `WMR-H29` through `WMR-H31`
+- direct proof traces for already-correct docs, missing docs, and dependency security dissimilarity
+- integrated design review over the exact candidate
+- Gate Acceptance evidence for `WMR-DG-02`
+
+### WMR-DD-02 dependencies
+
+- accepted [WMR-DG-01 receipt](delivery_gates/wmr_dg_01_acceptance_receipt.md)
+- immutable `TraversalCut`, exact owner publication identity, completeness, Event position, Graph position, and owner-correct hydration
+- canonical Curation and Belief ownership boundaries
+- planned Curation producer authority remains a declared `WMR-DD-03` dependency
+
+### WMR-DD-02 stop conditions
+
+- Curation is split into separate standing and planned semantic owners
+- Event append is treated as Graph, Belief, or Agent visibility
+- a missing graph edge is treated as proof of nonexistence
+- configured Belief settlement becomes universal Event interpretation
+- `WMR-DD-03` Agent Plan progression or complete `PlannerCut` design is pulled into this slice
+- a new store, service, protocol, runtime, schema, or source-code change is required
+- the design cannot bound replay, feedback, currentness, perspective, or terminal outcomes inside the frozen gate horizon
+
+### WMR-DD-02 closeout evidence
+
+- every active edge names independent producer and consumer positions
+- both invocation contexts share one operation and result grammar while retaining distinct initiating authority
+- unchanged, abstained, incomplete, rejected, conflicted, applied, and operationally failed outcomes are terminal and observable
+- graph visibility and optional configured Belief settlement are not conflated
+- integrated review passes over the exact design candidate
+- `WMR-DG-02` produces an accepted Gate Acceptance Receipt
 
 ### WMR-DD-01 product increment
 
@@ -198,7 +251,6 @@ No source-code path is authorized. Likely later implementation paths are evidenc
 
 | Slice | Design vertical | Dependency | Activation evidence | Authorization |
 | --- | --- | --- | --- | --- |
-| `WMR-DD-02` | Epistemic Authorship And Settlement Loop | accepted `WMR-DG-01` receipt | exact `TraversalCut` and owner-publication contracts available to Curation and Belief | not authorized |
 | `WMR-DD-03` | PlannerCut Assembly, Heterogeneous Plan Construction, And Agent Progression | `WMR-DD-01` plus constructible-operation and settlement portions of `WMR-DD-02` | Planner receives exact Graph, Belief, Causation, Regime, directive, Capability catalog, scope, authority, and projection-policy revisions; Strategy receives the resulting cut plus constructible Task and Epistemic Operation catalogs; Agent receives Plan and admitted owner-result products | not authorized |
 | `WMR-DD-04` | Executable Admission And Observation Return | accepted `WMR-DD-03` receipt | complete Task identity, cardinality, authorization, and Plan lineage settled | not authorized |
 | `WMR-DD-05` | Product Compilation And Agent Genesis | accepted native-owner contracts from `WMR-DD-02` through `WMR-DD-04` | PDS compilation targets have owner-stable meanings | not authorized |
@@ -227,7 +279,7 @@ principal declaration
 -> safe retirement
 ```
 
-The active proposed slice covers only owner observation through an immutable `TraversalCut`. Earlier product declaration and later Belief settlement, complete `PlannerCut` assembly, cognition, realization, and lifecycle remain visible dependencies rather than active design scope.
+The active slice covers exact cut intake through Curation result publication, Graph visibility, and configured Belief settlement. Complete `PlannerCut` assembly, Strategy construction, Agent Plan progression, realization, and activation-wide lifecycle remain visible dependencies rather than active design scope.
 
 ## Affected Domains
 
@@ -241,25 +293,24 @@ The frozen affected package set is:
 
 Runtime participation does not imply write scope.
 
-The active proposed slice affects these design owners:
+The active slice affects these design owners:
 
 | Domain concern | Owner | Active relationship | Design posture |
 | --- | --- | --- | --- |
-| workspace and docs observation | root product owners | publish exact addressable observations under a source cut | extend existing owner publication design |
-| dependency security observation | dependency security | pressure the publication contract with dissimilar records | reconcile current partial publication design |
-| durable carriage | Events | assign durable sequence and replay owner material neutrally | reuse unchanged |
-| graph admission and materialization | World State Graph | validate routes and preserve occurrences, provenance, scope, and owner revisions | reconcile and extend current design |
-| bounded traversal | Traversal | return exact occurrence-rich results against one cut | reconcile current code gap with canonical design |
-| graph input to reasoning cut | Planner | accept one exact `TraversalCut` without claiming a complete `PlannerCut` | defer full assembly to `WMR-DD-03` |
-| future epistemic consumer | Curation | consume a bounded cut without owning its assembly | relationship only, consumer detail deferred to `WMR-DD-02` |
-| belief settlement input | Belief | consume exact owner publications through installed mappings | settlement closure belongs to `WMR-DD-02` |
-| complete reasoning cut assembly | Planner | bind graph, belief, causal, regime, directive, Capability catalog, scope, authority, and projection policy revisions | close in `WMR-DD-03` before Strategy construction |
+| admitted source knowledge | workspace, docs, dependency security, and other semantic owners | provide exact owner-hydrated products under the accepted cut | reuse accepted `WMR-DD-01` boundary |
+| bounded traversal | Graph and Traversal | supply occurrence-rich immutable input without authoring epistemic meaning | consume accepted contract |
+| epistemic authorship | Curation | accept bounded standing or planned work and author only Curation-owned products | active detailed design |
+| initiating authority | Agent specification or exact Plan authorization | distinguish standing eligibility from planned authorization | planned producer deferred to `WMR-DD-03` |
+| durable carriage | Events | carry results and semantic publications neutrally | reuse unchanged |
+| result visibility | Graph | materialize exact Curation publications through an independent cursor | active handoff design |
+| configured settlement | Belief | admit only installed evidence routes and publish immutable revisions | active handoff design |
+| downstream acceptance | Agent and Planner | consume exact result or Belief positions later | defer to `WMR-DD-03` |
 
 ## Expansion Decisions
 
 | Candidate expansion | Current behavior unblocked | Existing approach | Current consumers | Authority | Disposition |
 | --- | --- | --- | --- | --- | --- |
-| Curation detailed contract and eventual implementation | later epistemic authorship | canonical Curation ownership is approved and runtime behavior is absent | Agent and Strategy | architecture approved, `WMR-DD-02` activation and later implementation authority required | detailed design backlog under `WMR-DD-02`, not architectural expansion |
+| Curation detailed contract and eventual implementation | active epistemic authorship design | canonical Curation ownership is approved and runtime behavior is absent | Agent, Graph, Belief, and later Strategy | detailed design authorized, implementation remains unauthorized | active `WMR-DD-02` design, not architectural expansion |
 | new graph storage authority | none proven | current graph store and federated design may support the contract | current Traversal and Planner | not authorized | reject unless `WMR-DD-01` proves necessity |
 | new Events grammar | none | owner payload and object or relation attachments already exist | all current Event consumers | outside envelope | reject |
 | new shared language Plan grammar | none | World Model can own Plan over unchanged language values | Strategy and Execution | outside envelope | reject |
@@ -277,7 +328,7 @@ Mandatory pause tripwires:
 - any proposal to move product semantics into Events, root runtime, lifecycle, harness, CLI, or telemetry
 - any proposal to change `meld-lang` for heterogeneous Plan ownership
 - any standalone D0 artifact that becomes a universal model rather than a bounded seam account
-- any active-slice requirement that depends on completing Curation, Strategy, Agent progression, Execution intake, PDS, or lifecycle design
+- any active-slice requirement that depends on completing Strategy, Agent progression, complete `PlannerCut` assembly, Execution intake, PDS, or activation-wide lifecycle design
 - any gate criterion that treats a deferred consumer as operationally ready
 - any attempt to claim a complete `PlannerCut` before Belief, Causation, Regime, directive, and Capability catalog revisions have explicit assembly contracts
 - any new crate, durable store, service, background runtime, protocol, migration system, or compatibility system
@@ -294,7 +345,7 @@ Design artifact size is governed by semantic closure and Gate Acceptance rather 
 | --- | --- | --- | --- | --- |
 | program design | approval-ready ledger, handoff tracker, and first Gate Definition | existing evidence maps | complete | [integrated program design review receipt](reviews/world_model_reconciliation_program_design_review_receipt.md) |
 | `WMR-DD-01` | semantic spine inside publication-to-TraversalCut vertical | program approval | complete | [accepted WMR-DG-01 receipt](delivery_gates/wmr_dg_01_acceptance_receipt.md) |
-| `WMR-DD-02` | Curation operation and settlement vertical | `WMR-DD-01` | backlog | provisional `WMR-DG-02` |
+| `WMR-DD-02` | Curation operation and settlement vertical | `WMR-DD-01` | complete | [accepted WMR-DG-02 receipt](delivery_gates/wmr_dg_02_acceptance_receipt.md) |
 | `WMR-DD-03` | PlannerCut assembly, Strategy Plan, and Agent progression vertical | `WMR-DD-01` and `WMR-DD-02` | backlog | provisional `WMR-DG-03` |
 | `WMR-DD-04` | Agent Task to Execution and observation return | `WMR-DD-03` | backlog | provisional `WMR-DG-04` |
 | `WMR-DD-05` | PDS compilation and Agent genesis | `WMR-DD-02` through `WMR-DD-04` | backlog | provisional `WMR-DG-05` |
@@ -305,8 +356,9 @@ Design artifact size is governed by semantic closure and Gate Acceptance rather 
 
 | Slice | Branch or worktree | Owner | Status | Commit | Notes |
 | --- | --- | --- | --- | --- | --- |
-| program design | `design/world-model-reconciliation` | program designer and integrated review owner | complete | pending delivery commit | included with the first accepted design gate |
-| `WMR-DD-01` | `design/world-model-reconciliation` | Codex detailed-design implementor | complete | pending delivery commit | Gate accepted |
+| program design | `design/world-model-reconciliation` | program designer and integrated review owner | complete | `17c4933d` | included with the first accepted design gate |
+| `WMR-DD-01` | `design/world-model-reconciliation` | Codex detailed-design implementor | complete | `17c4933d` | Gate accepted and committed |
+| `WMR-DD-02` | `design/world-model-reconciliation` | Codex detailed-design implementor | complete | this delivery commit | Gate accepted, source code excluded |
 
 The worktree already contained the user-owned README modification and untracked detailed-design framing from the preceding discovery work. This program preserves them as current evidence and does not treat them as unrelated implementation changes.
 
@@ -315,7 +367,7 @@ The worktree already contained the user-owned README modification and untracked 
 | Gate | Revision | Slice | Coherence horizon | Owner | Status |
 | --- | --- | --- | --- | --- | --- |
 | [WMR-DG-01](delivery_gates/wmr_dg_01_owner_publication_to_frozen_cut.md) | 3 frozen | `WMR-DD-01` | owner observation through immutable `TraversalCut`, plus declared deferred-consumer edges | separate Gate Acceptance owner | accepted |
-| `WMR-DG-02` | provisional | `WMR-DD-02` | Curation request through independently visible result | unassigned | backlog |
+| [WMR-DG-02](delivery_gates/wmr_dg_02_epistemic_authorship_and_settlement.md) | 1 frozen | `WMR-DD-02` | exact Curation input through independent Graph visibility and configured Belief settlement, with Agent and Planner acceptance deferred | Codex separate Gate Acceptance owner | accepted |
 | `WMR-DG-03` | provisional | `WMR-DD-03` | exact source revisions through complete `PlannerCut`, Goal, and durable Plan progression | unassigned | backlog |
 | `WMR-DG-04` | provisional | `WMR-DD-04` | eligible complete Task through returned owner observation | unassigned | backlog |
 | `WMR-DG-05` | provisional | `WMR-DD-05` | principal declaration through exact inert activation inputs | unassigned | backlog |
@@ -331,18 +383,21 @@ Later gates name only a coherence horizon and activation condition. Their criter
 | program-design structure | delivery-program ledger validation | passed | 2026-08-21 | required headings and state model present |
 | `WMR-DG-01` evidence ground | current code ground map and targeted seam inspection | available | 2026-08-21 | Event, graph, Traversal, workspace, and lifecycle anchors confirmed |
 | `WMR-DG-01` acceptance | candidate digest `41c8dbff632906f9863647a677f5e65d406196cdc1e24bb0b0ab177f6f805888` | accepted | 2026-08-21 | fourteen criteria passed with no violation |
+| `WMR-DD-02` integrated review | candidate digest `e0f23a00a22e9624c22c1d35d2765f3cd10972d8ae4c9f0417d4cc06b20835d8` | passed | 2026-08-21 | initial review had an empty frozen finding set |
+| `WMR-DG-02` acceptance | candidate digest `331d8a3196d0b9d564907e96d402b35f4101293cce31f2924551e1d445dbe2e5` | accepted | 2026-08-21 | fifteen criteria passed with no violation |
 
 ## Gate Acceptance
 
 | Gate | Candidate | Verdict | Violations | Receipt | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `WMR-DG-01` | `41c8dbff632906f9863647a677f5e65d406196cdc1e24bb0b0ab177f6f805888` | `accepted` | none | [Gate Acceptance Receipt](delivery_gates/wmr_dg_01_acceptance_receipt.md) | handoff eligible, next slice unauthorized |
+| `WMR-DG-02` | `331d8a3196d0b9d564907e96d402b35f4101293cce31f2924551e1d445dbe2e5` | `accepted` | none | [Gate Acceptance Receipt](delivery_gates/wmr_dg_02_acceptance_receipt.md) | handoff eligible, next slice unauthorized |
 
-Last accepted gate definition: `WMR-DG-01` revision 3 frozen
+Last accepted gate definition: `WMR-DG-02` revision 1 frozen
 
 Acceptance state: accepted
 
-The Gate Receipt makes `WMR-DD-01` handoff eligible. It does not authorize `WMR-DD-02`.
+The `WMR-DG-02` receipt makes `WMR-DD-02` handoff eligible. It does not authorize `WMR-DD-03`.
 
 ## Complexity Delta
 
@@ -356,7 +411,7 @@ Program-design delta:
 - design artifacts added: the workstream framing, this ledger, the handoff ledger, one proposed Gate Definition, and one integrated review receipt
 - product behavior proved: none, design evidence only
 
-Active-slice delivery delta:
+`WMR-DD-01` delivery delta:
 
 - new design artifacts: five
 - new active-slice artifact lines: 558
@@ -369,11 +424,27 @@ Active-slice delivery delta:
 - direct runtime behavior proved: none
 - direct design behavior proved: owner observation through immutable `TraversalCut`
 
+`WMR-DD-02` delivery delta:
+
+- new design artifacts: six
+- existing design artifacts updated: handoff ledger, program ledger, and folder index
+- source files changed: zero
+- dependencies or workspace members added: zero
+- public runtime contracts added: zero
+- stores or schemas added: zero
+- background runtimes added: zero
+- direct runtime behavior proved: none
+- direct design behavior proved: exact Curation intake through terminal result, Event publication, independent Graph visibility, and configured Belief settlement
+
 ## Commit Effects
 
 Program commit rule: every accepted detailed-design gate closes through one delivery commit before the next slice is activated. A rejected or not-eligible gate does not produce a delivery commit.
 
 If applied, this commit adds the approved World Model Reconciliation detailed-design program, closes `WMR-DD-01` at an immutable `TraversalCut`, records its integrated review and accepted Gate Receipt, and leaves `WMR-DD-02` through `WMR-DD-07` unauthorized.
+
+Applied as `17c4933d`.
+
+If applied, this commit closes bounded Curation authorship through independent Graph visibility and configured Belief settlement, records accepted `WMR-DG-02` evidence, and leaves `WMR-DD-03` through `WMR-DD-07` unauthorized.
 
 ## Review State
 
@@ -406,6 +477,18 @@ Frozen finding set: empty
 
 Verification: not invoked because no correction was required
 
+### WMR-DD-02 Review
+
+Review owner: Codex integrated architecture review lane
+
+Review receipt: [WMR-DD-02 integrated design review](reviews/wmr_dd_02_integrated_design_review_receipt.md)
+
+Candidate digest: `e0f23a00a22e9624c22c1d35d2765f3cd10972d8ae4c9f0417d4cc06b20835d8`
+
+Frozen finding set: empty
+
+Verification: not invoked because no correction was required
+
 ## Risks And Exceptions
 
 | Risk | Current control | Escalation condition |
@@ -424,17 +507,27 @@ Authorized exceptions: none
 
 Reassess the envelope only after a completed design vertical produces new ownership evidence, a real implementation consumer appears, an observed runtime failure changes the obligation, or the user changes scope.
 
-Before activating `WMR-DD-02`, record:
+`WMR-DD-02` activation reassessment:
 
-- accepted [WMR-DG-01 receipt](delivery_gates/wmr_dg_01_acceptance_receipt.md)
-- exact downstream preconditions established by `WMR-DD-01`: owner publication identity and completeness, Event and Graph positions, occurrence-rich traversal, deterministic cuts, owner-correct hydration, and deferred Curation and Belief acceptance positions
+- accepted [WMR-DG-01 receipt](delivery_gates/wmr_dg_01_acceptance_receipt.md): present
+- downstream preconditions: exact owner publication identity and completeness, Event and Graph positions, occurrence-rich traversal, deterministic cuts, owner-correct hydration, and deferred Curation and Belief positions
+- maturity posture: remains exploratory because no runtime product behavior or new real consumer was created by design delivery
+- obligation floor: remains operational durability because incumbent Events, Graph, Belief, and Agent records retain independent recovery positions
+- expansion decision: no new Curation store or runtime authority is authorized or required by this design slice
+- next-slice behavior: directly advances the design proof from observed knowledge to bounded epistemic authorship and visible settlement
+- explicit user authorization: supplied on 2026-08-21 by the instruction to continue
+
+Before activating `WMR-DD-03`, record:
+
+- accepted [WMR-DG-02 receipt](delivery_gates/wmr_dg_02_acceptance_receipt.md)
+- exact downstream preconditions established by `WMR-DD-02`: constructible Curation operation grammar, exact terminal results, independent Graph and configured Belief positions, and deferred Agent acceptance positions
 - whether the exploratory posture still limits solution breadth
-- whether any proposed Curation storage or runtime authority is an architectural expansion
+- whether complete `PlannerCut`, heterogeneous Plan, or durable Agent progression choices cross an expansion gate
 - explicit user authorization
 
 ## Final Reconciliation
 
-The authorized `WMR-DD-01` slice is complete and the program is awaiting authorization for any later slice.
+The authorized `WMR-DD-02` slice is complete and its required delivery commit is applied. The program awaits authorization for `WMR-DD-03`.
 
 Closeout evidence:
 
@@ -442,6 +535,7 @@ Closeout evidence:
 - the [integrated program design review receipt](reviews/world_model_reconciliation_program_design_review_receipt.md) freezes the exact candidate and records one bounded verification pass
 - readiness and unresolved decisions are recorded for user disposition
 - `WMR-DD-01` passed integrated design review and `WMR-DG-01` Gate Acceptance
-- `WMR-DD-02` through `WMR-DD-07` remain unauthorized backlog
+- `WMR-DD-02` passed integrated design review and `WMR-DG-02` Gate Acceptance
+- `WMR-DD-03` through `WMR-DD-07` remain unauthorized backlog
 
 Source implementation has not started and is not authorized by this ledger.

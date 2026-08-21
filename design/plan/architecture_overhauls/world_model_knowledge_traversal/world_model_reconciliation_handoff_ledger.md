@@ -2,9 +2,9 @@
 
 Date: 2026-08-21
 
-Status: program design artifact, active edge details proposed
+Status: active detailed-design handoff artifact
 
-Implementation authorization: none
+Implementation authorization: none, `WMR-DD-02` design only
 
 ## Purpose
 
@@ -69,9 +69,9 @@ An earlier phase may define and later implement a producer while its consumer re
 
 This registry normalizes the handoffs in the existing connectivity review and adds the Planner, PDS, activation, return-visibility, and retirement edges needed by the complete design program. Later phases may refine an edge without silently changing its producer or consumer owner.
 
-## Active Proposed Slice Edge Details
+## Accepted WMR-DD-01 Edge Details
 
-The proposed `WMR-DD-01` coherence horizon contains `WMR-H01` through `WMR-H06`. Only `WMR-H01` through `WMR-H03` must close in that slice. `WMR-H04` through `WMR-H06` are declared downstream relationships whose consumers remain deferred.
+The accepted `WMR-DD-01` coherence horizon contains `WMR-H01` through `WMR-H06`. Only `WMR-H01` through `WMR-H03` close in that slice. `WMR-H04` through `WMR-H06` are declared downstream relationships whose consumers remain deferred.
 
 ### WMR-H01 Product Observation To Events
 
@@ -171,6 +171,138 @@ The proposed `WMR-DD-01` coherence horizon contains `WMR-H01` through `WMR-H06`.
 | deferred duty | `WMR-DD-02` defines mapping, eligibility, wait, wake, and visibility closure |
 | relationship state | current partial, settlement closure deferred |
 
+## Active WMR-DD-02 Edge Details
+
+The `WMR-DD-02` coherence horizon closes standing Curation intake, terminal result publication, Graph visibility, and configured Belief settlement. It defines the Curation-owned acceptance side of planned work while leaving Agent authorization production and progression to `WMR-DD-03`.
+
+### WMR-H05 TraversalCut To Standing Curation
+
+| Obligation | Detailed-design position |
+| --- | --- |
+| producer owner | Graph and Traversal |
+| producer product | occurrence-rich `TraversalResult` under one immutable `TraversalCut`, including owner-correct hydration |
+| durable producer position | exact owner revision set, normalized query, bounds, frontier, and cut identity |
+| consumer owner | Curation |
+| consumer acceptance position | durable standing selection identity accepted under exact Agent specification, perspective, rule revision, subject, source cut, and activation fence |
+| identity and idempotency | equal authority, rule, subject, cut, and selection bound derive equal operation identity |
+| supersession | changed authority, rule, source cut, perspective, or bound creates a successor operation |
+| wait | unavailable named owner revision, incomplete required cut, uninstalled rule, or no eligible selection |
+| wake | exact rule revision, owner publication, Graph projection advancement, or declared deadline |
+| fence | Agent, perspective, branch, activation generation, rule revision, source cut, and owner authority |
+| restart | standing selection, operation acceptance, terminal result, and consumer visibility positions |
+| relationship state | proposed for Gate Acceptance in `WMR-DD-02` |
+
+### WMR-H06 Traversal Products To Configured Belief
+
+| Obligation | Detailed-design position |
+| --- | --- |
+| producer owner | Graph and Traversal plus the semantic publication owner retained in provenance |
+| producer product | exact anchor, occurrence, provenance, or owner-hydrated product under a named dependency |
+| durable producer position | Graph projection cursor and exact owner source revision |
+| consumer owner | Belief |
+| consumer acceptance position | configured evidence identity followed by immutable Belief revision under one exact key |
+| eligibility | installed route names source product, perspective, mapping or dependency revision, and target key |
+| idempotency | source publication identity plus installed route revision determines evidence identity |
+| wait | no applicable installed route, missing required projection, or key not dirty under declared dependency |
+| wake | applicable owner publication, Graph projection advancement, mapping revision, or dependency invalidation |
+| fence | belief key, perspective, source owner revision, mapping or comparator revision, and activation generation |
+| restart | Belief domain state and consumer cursor reconcile before cursor advancement |
+| relationship state | proposed configured settlement closure, never universal graph-to-Belief admission |
+
+### WMR-H07 Agent Plan Authorization To Planned Curation
+
+| Obligation | Detailed-design position |
+| --- | --- |
+| producer owner | Agent |
+| producer product | exact authorization envelope binding Agent, Goal, Plan revision, product, frozen context, authority scope, and idempotency key |
+| durable producer position | deferred to Agent Plan progression in `WMR-DD-03` |
+| consumer owner | Curation |
+| consumer acceptance position | Curation acceptance identity after authority, operation shape, source cut, perspective, and generation validation |
+| identity and idempotency | Agent authorization identity and Curation operation identity remain distinct and replay-stable |
+| wait and wake | Curation waits for an exact authorization and wakes only from that structural identity, not a generic Event |
+| fence | authorization lineage, Agent, Goal, Plan revision, product, perspective, branch, and activation generation |
+| restart | Curation can resume from acceptance or terminal state, while Agent publication recovery remains deferred |
+| relationship state | Curation consumer defined, Agent producer deferred to `WMR-DD-03` |
+
+### WMR-H08 Curation Terminal Result To Events
+
+| Obligation | Detailed-design position |
+| --- | --- |
+| producer owner | Curation |
+| producer product | one terminal result plus any finite Curation-owned semantic publications |
+| durable producer position | exact terminal result identity after domain state is durable |
+| consumer owner | Events append authority |
+| consumer acceptance position | append receipts naming ledger identity and exact sequence for every required publication |
+| identity and idempotency | deterministic result and semantic publication identities derive deterministic Event record identities |
+| supersession | owner-issued withdrawal or supersession products, never ledger order alone |
+| wait | terminal state exists but one or more required Event append receipts are absent |
+| wake | append authority availability or retry scheduling against the same publication identities |
+| fence | Curation authority, source cut, perspective, activation generation, and publication policy |
+| restart | reconcile durable terminal result with append receipts and retry idempotently |
+| relationship state | proposed for Gate Acceptance in `WMR-DD-02` |
+
+### WMR-H09 And WMR-H30 Curation Event To Configured Belief Revision
+
+| Obligation | Detailed-design position |
+| --- | --- |
+| producer owner | Curation through Events |
+| producer product | exact result Event or semantic publication eligible under one installed evidence route |
+| durable producer position | Event ledger identity and result sequence, with Curation source-cut lineage |
+| consumer owner | Belief |
+| consumer acceptance position | immutable Belief revision after evidence admission and comparator settlement |
+| identity and idempotency | Event record, installed mapping or dependency revision, belief key, and perspective determine evidence identity |
+| non-applicability | unmapped Curation Events may advance a consumer cursor but do not become evidence |
+| wait | missing installed route, missing source dependency, or no affected belief key |
+| wake | matching result Event, route revision, or declared dependency invalidation |
+| fence | source result, belief key, perspective, route, comparator, and activation generation |
+| restart | Belief state commits before the consumer position advances |
+| relationship state | proposed for Gate Acceptance in `WMR-DD-02` |
+
+### WMR-H29 Curation Result Event To Graph Visibility
+
+| Obligation | Detailed-design position |
+| --- | --- |
+| producer owner | Events carrying Curation-owned graph attachments |
+| producer product | sequenced terminal and semantic publication records with producer provenance |
+| durable producer position | greatest required Event sequence for the result publication set |
+| consumer owner | Graph projection |
+| consumer acceptance position | durable projection cursor at or beyond every required sequence after materialization writes complete |
+| identity and idempotency | Event record and relation occurrence identities preserve duplicate reduction safety |
+| currentness | Curation-owned typed products carry validity, withdrawal, and supersession meaning |
+| wait | Graph cursor remains behind a required sequence or publication is structurally inadmissible |
+| wake | Event watermark or bounded replay availability |
+| fence | ledger identity, retention boundary, producer domain, source cut, perspective, and activation lineage |
+| restart | Graph projection store and cursor replay from the last durable position |
+| relationship state | proposed for Gate Acceptance in `WMR-DD-02` |
+
+### WMR-H10 And WMR-H31 Belief Revision To Agent Acceptance
+
+| Obligation | Detailed-design position |
+| --- | --- |
+| producer owner | Belief |
+| producer product | immutable revision bound to exact Curation evidence and comparator policy |
+| durable producer position | Belief key and revision sequence |
+| consumer owner | Agent |
+| consumer acceptance position | deferred durable subscription or Plan-progress position in `WMR-DD-03` |
+| wait and wake | producer revision exists; Agent selection, delivery, and wake remain deferred |
+| fence | Agent subscription, perspective, branch, Goal or Plan lineage, and activation generation |
+| restart | Belief revision is replayable; Agent cursor recovery remains deferred |
+| relationship state | producer defined, consumer deferred |
+
+### WMR-H26 Belief Revision To PlannerCut Assembly
+
+| Obligation | Detailed-design position |
+| --- | --- |
+| producer owner | Belief |
+| producer product | immutable revision-bound view with evidence and invalidation lineage |
+| durable producer position | exact Belief key and revision identity |
+| consumer owner | Planner |
+| consumer acceptance position | deferred complete `PlannerCut` assembly in `WMR-DD-03` |
+| wait and wake | Belief source availability closes here, multi-source cut selection remains deferred |
+| fence | perspective, branch, source evidence, comparator policy, and revision identity |
+| restart | exact revision can be reselected, while full cut reconstruction remains deferred |
+| relationship state | producer defined, consumer deferred |
+
 ## Lifecycle Projection
 
 The handoff ledger and lifecycle view are two projections of the same relationship graph.
@@ -188,7 +320,7 @@ For every edge, lifecycle design must eventually name:
 - safe point and unresolved-operation summary
 - stop or retirement receipt
 
-During `WMR-DD-01`, only the lifecycle information already meaningful for `WMR-H01` through `WMR-H03` may be closed. `WMR-H04` records a reproducible producer position but defers complete Planner consumption. Later owner semantics remain deferred. A clean process tick, empty queue, Event append, or absent consumer cannot serve as readiness or quiescence evidence.
+`WMR-DD-01` closes the local lifecycle information meaningful for `WMR-H01` through `WMR-H03`. `WMR-DD-02` adds Curation-local acceptance, terminality, publication, visibility, wait, wake, fence, restart, and quiescence positions. `WMR-H04`, `WMR-H07`, `WMR-H10`, `WMR-H26`, and `WMR-H31` still defer downstream consumer closure. A clean process tick, empty queue, Event append, or absent consumer cannot serve as readiness or quiescence evidence.
 
 ## Gate Use
 

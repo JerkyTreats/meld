@@ -1,0 +1,111 @@
+# Epistemic Operation Transition Ledger
+
+Date: 2026-08-21
+
+Slice: `WMR-DD-02`
+
+Status: active detailed design
+
+Implementation authorization: none
+
+## Purpose
+
+This ledger separates the identities and durable positions crossed by bounded epistemic authorship. It is not a universal runtime record and does not prescribe storage, fields, or APIs.
+
+Equal identities in one row mean deterministic replay of the same semantic transition. A changed authority, rule, operation, source cut, perspective, bound, or output policy creates a successor identity rather than mutating the predecessor.
+
+## Identity Chain
+
+| Identity | Owner | Meaning | Stable inputs | Must remain distinct from |
+| --- | --- | --- | --- | --- |
+| standing selection identity | Curation | one eligible application of an installed rule to an exact source cut | Agent, perspective, branch, activation generation, rule revision, subject, source cut, selection bound | planned authorization |
+| planned authorization identity | Agent | permission for one exact Plan product | Agent, Goal, Plan revision, product identity, frozen context, authority scope, idempotency key | Curation acceptance and completion |
+| operation identity | Curation | one bounded request as understood by Curation | invocation context, initiating authority, operation or rule revision, roots, source cut, bounds, vocabulary, completion policy | result identity |
+| acceptance identity | Curation | durable admission or rejection of one operation identity under one fence | operation identity, accepted authority revision, Curation policy revision, activation generation | execution of the operation |
+| result identity | Curation | one terminal semantic or operational disposition | accepted operation identity, exact consumed cut, Curation rule revision, outcome class | Event record identity and Graph fact identity |
+| semantic publication identity | Curation | one Curation-owned expected entity, edge occurrence, assessment, withdrawal, or supersession | result identity, semantic unit identity, perspective, owner currentness policy | observed owner products |
+| Event record identity | Events from Curation key | neutral durable carriage of one result or semantic publication | producer identity and deterministic publication key | Curation result meaning |
+| Graph projection position | Graph | durable materialization through one Event position | ledger identity, Event sequence, projection revision | Event append receipt |
+| configured evidence identity | Belief | admitted evidence under one installed mapping and exact source result | result Event identity, mapping revision, belief key, perspective | graph reachability |
+| Belief revision identity | Belief | immutable settlement over exact admitted evidence | belief key, predecessor, evidence set, comparator and policy revisions | Curation result and Agent acceptance |
+| Agent acceptance position | Agent | durable consumption of relevant owner result or Belief revision | Agent subscription, exact source revision, Plan or Goal context | Belief commit |
+| Planner source position | Planner | exact Belief revision admitted to a later complete `PlannerCut` | Belief revision and later assembly inputs | `TraversalCut` or complete `PlannerCut` |
+
+## Invocation Contexts
+
+| Concern | Standing Curation | Strategy-planned Curation | Shared Curation rule |
+| --- | --- | --- | --- |
+| initiating authority | installed Agent specification and Curation rule | exact Agent authorization of a Plan product | initiating authority is explicit and immutable |
+| bootstrap role | may produce the mismatch from which Agent forms a Goal | performs knowledge work already justified by a Plan | neither path creates a second Curation owner |
+| exact input | subject plus accepted `TraversalCut` and rule revision | authorized operation plus accepted `TraversalCut` | no live or unbounded read may substitute |
+| acceptance | durable standing selection or abstention | durable authorization acceptance or rejection | acceptance is separate from execution and result |
+| terminal result | shared result grammar | shared result grammar | same identity, publication, replay, and currentness rules |
+| downstream use | Graph and optional configured Belief visibility | Plan dependency may later cite a declared visibility milestone | Agent progression remains `WMR-DD-03` |
+
+## Terminal Outcomes
+
+| Outcome | Meaning | Semantic publication obligation | Completion claim |
+| --- | --- | --- | --- |
+| `applied` | requested Curation-owned state changed under the exact cut | publish every new, withdrawn, or superseding semantic product and the terminal result | operation terminal only |
+| `unchanged` | requested Curation-owned state already held under the exact cut | publish a terminal result citing the existing semantic products | successful epistemic closure, not Goal satisfaction |
+| `abstained` | policy deliberately declines authorship inside the declared bound | publish terminal reason and exact bound | terminal without desired assertion |
+| `incomplete` | declared bound was exhausted without a complete answer | publish exact frontier, exclusions, failures, and cut | terminal bounded incompleteness |
+| `rejected` | authority, shape, ownership, fence, or precondition was invalid | publish acceptance rejection or terminal rejection according to when detected | no semantic effect |
+| `conflicted` | exact currentness or precondition no longer matches | publish conflicting revisions and successor eligibility | no silent retry under old identity |
+| `failed` | Curation could not complete because of an operational fault | publish durable failure only when the operation reached accepted work | no semantic completion claim |
+
+Silence, timeout, an empty graph result, and an absent Event are never terminal outcomes.
+
+## Position Sequence
+
+```text
+initiating authority position
+-> Curation acceptance position
+-> terminal Curation result position
+-> Event append position
+-> Graph projection position
+-> optional configured Belief revision position
+-> deferred Agent acceptance position
+-> deferred Planner source position
+```
+
+Each arrow is a producer-consumer relationship. No earlier position implies a later one.
+
+## Idempotency And Successors
+
+- replaying the same accepted operation against the same exact cut and rule revision returns the same result identity
+- publishing the same terminal result or semantic product reuses deterministic Event record identities
+- a changed source cut, rule revision, authorization, perspective, bound, or publication policy creates a successor operation
+- currentness is owned by Curation through explicit validity, withdrawal, or supersession meaning
+- ledger order alone does not supersede semantic products
+- configured Belief settlement creates its own successor revision and never rewrites a Curation result
+- Agent and Planner retain their own acceptance and assembly positions
+
+## Feedback Boundary
+
+Curation may consume Graph material that includes earlier Curation products. The consumed source set is frozen in the operation identity. A result cannot add its own Event or projection position to that source cut after acceptance.
+
+Self-produced material is eligible only when the installed rule explicitly names it as input. Reaching the same semantic state returns `unchanged`; it does not generate another changed publication. A successor source cut can create successor work only when a declared dependency changed. Event replay or graph catch-up alone cannot grant new authority.
+
+## Lifecycle Projection
+
+| Claim | Exact position |
+| --- | --- |
+| ready | Curation has valid initiating authority, installed rule or accepted authorization shape, and access to the exact source cut |
+| wait | no eligible standing selection, missing named source revision, unavailable exact cut, or no planned authorization |
+| wake | rule revision, source owner revision, Graph projection advancement, exact planned authorization, or declared deadline |
+| fence | Agent, perspective, branch, activation generation, rule or operation revision, source cut, and authority lineage |
+| restart | durable Curation acceptance and terminal positions plus Event, Graph, and configured Belief consumer positions |
+| local quiescence | all accepted Curation work is terminal and no eligible work exists through the observed selection positions |
+| not implied | Graph quiet, Belief quiet, Agent acceptance, activation quiescence, or safe retirement |
+
+## Deferred Fields
+
+`WMR-DD-03` must close:
+
+- production and persistence of planned authorization
+- exact Plan dependency milestone selected from result, Graph, Belief, or Agent positions
+- Agent result acceptance and product progression
+- Belief revision admission into complete `PlannerCut` assembly
+
+`WMR-DD-06` must close activation-wide readiness, supervision, aggregate quiescence, and safe retirement.

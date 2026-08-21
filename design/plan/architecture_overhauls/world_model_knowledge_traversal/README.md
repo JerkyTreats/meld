@@ -14,9 +14,11 @@ The [impact assessment](impact_assessment/README.md) maps crate, domain, and ent
 
 The [detailed design workstream framing](detailed_design_workstream_framing.md) maps the major specification verticals, confirms code-evidence readiness, and records their dependency order without authorizing implementation.
 
-The [detailed design delivery program ledger](world_model_reconciliation_delivery_program_ledger.md) defines the maturity envelope, active-slice proposal, authorization boundaries, phase inventory, and Delivery Gates. The [handoff and lifecycle ledger](world_model_reconciliation_handoff_ledger.md) preserves producer-consumer relationships across phases. The first proposed [Gate Definition](delivery_gates/wmr_dg_01_owner_publication_to_frozen_cut.md) bounds acceptance for owner publication through an immutable `TraversalCut`.
+The [detailed design delivery program ledger](world_model_reconciliation_delivery_program_ledger.md) defines the maturity envelope, active slice, authorization boundaries, phase inventory, and Delivery Gates. The [handoff and lifecycle ledger](world_model_reconciliation_handoff_ledger.md) preserves producer-consumer relationships across phases.
 
-The completed first slice consists of the [semantic transition ledger](detailed_design/semantic_transition_ledger.md) and [owner publication to TraversalCut design](detailed_design/owner_publication_to_traversal_cut.md). Its [integrated design review](reviews/wmr_dd_01_integrated_design_review_receipt.md) passed, and [WMR-DG-01 Gate Acceptance](delivery_gates/wmr_dg_01_acceptance_receipt.md) established handoff eligibility without authorizing the next slice.
+The committed first slice consists of the [semantic transition ledger](detailed_design/semantic_transition_ledger.md) and [owner publication to TraversalCut design](detailed_design/owner_publication_to_traversal_cut.md). Its [integrated design review](reviews/wmr_dd_01_integrated_design_review_receipt.md) passed, and [WMR-DG-01 Gate Acceptance](delivery_gates/wmr_dg_01_acceptance_receipt.md) established handoff eligibility.
+
+The completed second slice consists of the [epistemic operation transition ledger](detailed_design/epistemic_operation_transition_ledger.md) and [epistemic authorship and settlement design](detailed_design/epistemic_authorship_and_settlement.md). Its [integrated design review](reviews/wmr_dd_02_integrated_design_review_receipt.md) passed, and [WMR-DG-02 Gate Acceptance](delivery_gates/wmr_dg_02_acceptance_receipt.md) established handoff eligibility from exact Curation input through Graph visibility and configured Belief settlement.
 
 ## Reviews
 
