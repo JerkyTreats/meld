@@ -25,6 +25,7 @@
 - [Storage Policy](governance/storage_policy.md)
 - [Semantic Unit Preservation Policy](governance/semantic_unit_preservation_policy.md)
 - [Harness Development Policy](governance/harness_development_policy.md)
+- [Sol High Architecture Response Spec](governance/sol_high_architecture_response_spec.md)
 
 ## Commit Governance Rule
 
@@ -35,6 +36,7 @@
 - Do not overuse bullet lists in user-facing responses.
 - Prefer short paragraphs when the content is clearer in prose.
 - Use bullets only when the content is naturally list-shaped, such as distinct items, steps, or options.
+- For architecture assessments and redesign syntheses, follow the [Sol High Architecture Response Spec](governance/sol_high_architecture_response_spec.md).
 
 ## Comment Policy 
 
