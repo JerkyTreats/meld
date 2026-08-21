@@ -12,6 +12,12 @@ The [cognitive architecture alignment assessment](cognitive_architecture_alignme
 
 The [impact assessment](impact_assessment/README.md) maps crate, domain, and entity impact. The [PDS boundary assessment](pds_boundary_assessment/README.md) frames productization through theory, assignment, activation, and Agent genesis. The [runtime, initialization, and lifecycle assessment](runtime_initialization_lifecycle/README.md) maps the durable producer-consumer loop and activation-wide liveness gaps.
 
+The [detailed design workstream framing](detailed_design_workstream_framing.md) maps the major specification verticals, confirms code-evidence readiness, and records their dependency order without authorizing implementation.
+
+The [detailed design delivery program ledger](world_model_reconciliation_delivery_program_ledger.md) defines the maturity envelope, active-slice proposal, authorization boundaries, phase inventory, and Delivery Gates. The [handoff and lifecycle ledger](world_model_reconciliation_handoff_ledger.md) preserves producer-consumer relationships across phases. The first proposed [Gate Definition](delivery_gates/wmr_dg_01_owner_publication_to_frozen_cut.md) bounds acceptance for owner publication through an immutable `TraversalCut`.
+
+The completed first slice consists of the [semantic transition ledger](detailed_design/semantic_transition_ledger.md) and [owner publication to TraversalCut design](detailed_design/owner_publication_to_traversal_cut.md). Its [integrated design review](reviews/wmr_dd_01_integrated_design_review_receipt.md) passed, and [WMR-DG-01 Gate Acceptance](delivery_gates/wmr_dg_01_acceptance_receipt.md) established handoff eligibility without authorizing the next slice.
+
 ## Reviews
 
-The `reviews` folder contains focused evidentiary pressure on shared Goal language and Event-backed Epistemic Operations. Reviews inform requirements but do not override cognitive architecture.
+The `reviews` folder contains focused evidentiary pressure on shared Goal language and Event-backed Epistemic Operations. It also contains the [program design review receipt](reviews/world_model_reconciliation_program_design_review_receipt.md) for the exact detailed-design program candidate. Reviews inform requirements but do not override cognitive architecture.
