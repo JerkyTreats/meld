@@ -2,7 +2,7 @@
 
 Date: 2026-08-22
 
-Status: accepted detailed-design handoff artifact, no active slice
+Status: accepted through `WMR-DG-04`, no active slice
 
 Implementation authorization: none
 
@@ -42,13 +42,13 @@ An earlier phase may define and later implement a producer while its consumer re
 | `WMR-H10` | Belief revision to Agent | `WMR-DD-02` | `WMR-DD-03` | design accepted, current implementation partial |
 | `WMR-H11` | Agent Goal and cut to Strategy | `WMR-DD-03` | `WMR-DD-03` | design accepted, current implementation partial for executable-only candidate |
 | `WMR-H12` | Strategy Plan revision to Agent progression | `WMR-DD-03` | `WMR-DD-03` | design accepted, implementation unproved |
-| `WMR-H13` | Agent authorization to Execution admission | `WMR-DD-03` | `WMR-DD-04` | producer design accepted, consumer deferred |
-| `WMR-H14` | Execution admission to Task Network | `WMR-DD-04` | `WMR-DD-04` | current implemented with semantic seam pressure |
-| `WMR-H15` | planning route to package dispatch | `WMR-DD-04` | `WMR-DD-04` | current partial because handoff is process-local |
-| `WMR-H16` | Task Network ready work to dispatch | `WMR-DD-04` | `WMR-DD-04` | current implemented |
-| `WMR-H17` | Execution outcome to Events | `WMR-DD-04` | `WMR-DD-04` | current implemented for Task publication |
+| `WMR-H13` | Agent authorization to Execution admission | `WMR-DD-03` | `WMR-DD-04` | design accepted by `WMR-DG-04`, implementation partial |
+| `WMR-H14` | Execution admission to Task Network | `WMR-DD-04` | `WMR-DD-04` | design accepted by `WMR-DG-04`, implementation partial |
+| `WMR-H15` | planning route to package dispatch | `WMR-DD-04` | `WMR-DD-04` | design accepted by `WMR-DG-04`, current handoff process-local |
+| `WMR-H16` | Task Network ready work to dispatch | `WMR-DD-04` | `WMR-DD-04` | design accepted by `WMR-DG-04`, current local behavior strong |
+| `WMR-H17` | Execution outcome to Events | `WMR-DD-04` | `WMR-DD-04` | design accepted by `WMR-DG-04`, current Task publication implemented |
 | `WMR-H18` | integrated result lineage inspection | `WMR-DD-02` through `WMR-DD-04` | `WMR-DD-07` | proof projection only, owner-specific handoffs close earlier |
-| `WMR-H19` | admitted result to Agent reconciliation | `WMR-DD-03` | `WMR-DD-03` | Curation, Graph, and Belief design accepted, Execution return deferred |
+| `WMR-H19` | admitted result to Agent reconciliation | `WMR-DD-03` | `WMR-DD-03` | design accepted through Execution return by `WMR-DG-04`, implementation partial |
 | `WMR-H20` | PDS package to owner installation receipts | `WMR-DD-05` | `WMR-DD-05` | current implemented for executable-only theory image |
 | `WMR-H21` | installed product to Agent genesis plan | `WMR-DD-05` | `WMR-DD-05` | current partial |
 | `WMR-H22` | prepared product to activation generation | `WMR-DD-05` | `WMR-DD-06` | standalone lifecycle substrate only |
@@ -61,11 +61,11 @@ An earlier phase may define and later implement a producer while its consumer re
 | `WMR-H29` | Curation result Event to Graph visibility | `WMR-DD-02` | `WMR-DD-02` | design accepted, implementation unproved |
 | `WMR-H30` | Curation result Event to configured Belief revision | `WMR-DD-02` | `WMR-DD-02` | design accepted, implementation unproved |
 | `WMR-H31` | Curation-derived Belief revision to Agent acceptance | `WMR-DD-02` | `WMR-DD-03` | design accepted, current implementation partial |
-| `WMR-H32` | Execution outcome to semantic owner observation | `WMR-DD-04` | `WMR-DD-04` | current partial |
-| `WMR-H33` | returned owner observation to Events | `WMR-DD-04` | `WMR-DD-04` | current partial |
-| `WMR-H34` | returned owner Event to Graph visibility | `WMR-DD-04` | `WMR-DD-04` | current positions exist independently |
-| `WMR-H35` | returned owner Event to configured Belief revision | `WMR-DD-04` | `WMR-DD-04` | current partial by installed mapping |
-| `WMR-H36` | return-derived Belief revision to Agent acceptance | `WMR-DD-04` | `WMR-DD-04` | current partial for Goal satisfaction |
+| `WMR-H32` | Execution outcome to semantic owner observation | `WMR-DD-04` | `WMR-DD-04` | design accepted by `WMR-DG-04`, implementation partial |
+| `WMR-H33` | returned owner observation to Events | `WMR-DD-04` | `WMR-DD-04` | design accepted by `WMR-DG-04`, implementation partial |
+| `WMR-H34` | returned owner Event to Graph visibility | `WMR-DD-04` | `WMR-DD-04` | design accepted by `WMR-DG-04`, current positions exist independently |
+| `WMR-H35` | returned owner Event to configured Belief revision | `WMR-DD-04` | `WMR-DD-04` | design accepted by `WMR-DG-04`, implementation partial by installed mapping |
+| `WMR-H36` | return-derived Belief revision to Agent acceptance | `WMR-DD-04` | `WMR-DD-04` | design accepted by `WMR-DG-04`, implementation partial |
 
 This registry normalizes the handoffs in the existing connectivity review and adds the Planner, PDS, activation, return-visibility, and retirement edges needed by the complete design program. Later phases may refine an edge without silently changing its producer or consumer owner.
 
@@ -382,13 +382,13 @@ The `WMR-DD-03` coherence horizon closes complete `PlannerCut` assembly, Strateg
 | producer product | one authorized independently complete Task with Agent, Goal, Plan, selection reference, context, authority, generation, and idempotency lineage |
 | durable producer position | Agent product authorization committed before delivery |
 | consumer owner | Execution |
-| consumer acceptance position | deferred to `WMR-DD-04` |
+| consumer acceptance position | durable accepted, duplicate, rejected, or conflicted Execution admission decision proposed in `WMR-DD-04` |
 | cardinality | one Plan and one Goal may produce several independently authorized Tasks |
 | excluded material | heterogeneous Plan, Epistemic Operations, private Strategy search state, and world-model progression logic |
-| wait and wake | producer eligibility and authorization close here, consumer receipt and retry closure remain deferred |
+| wait and wake | producer eligibility and authorization close in `WMR-DD-03`, while accepted `WMR-DD-04` defines the exact consumer decision and retry closure |
 | fence | exact Plan revision, Task identity, context, authority, Goal lifecycle, and activation generation |
-| restart | producer authorization is durable, Execution admission recovery remains deferred |
-| relationship state | producer design accepted by `WMR-DG-03`, Execution consumer deferred to `WMR-DD-04` |
+| restart | Agent authorization and Execution admission journal reproduce the consumer decision |
+| relationship state | producer accepted by `WMR-DG-03`, consumer accepted by `WMR-DG-04`, implementation unproved |
 
 ### WMR-H10 And WMR-H31 Belief Revision To Agent Acceptance
 
@@ -405,6 +405,149 @@ The `WMR-DD-03` coherence horizon closes complete `PlannerCut` assembly, Strateg
 | fence | Agent, Goal, Plan revision, dependency, perspective, branch, and generation |
 | restart | Agent input cursor and milestone decision advance only after durable absorption |
 | relationship state | design accepted by `WMR-DG-03`, current implementation partial |
+
+## Accepted WMR-DD-04 Edge Details
+
+The `WMR-DD-04` coherence horizon begins with one complete Agent-authorized Task and closes through exact returned owner evidence plus Agent milestone absorption. Runtime implementation, PDS, and activation-wide lifecycle remain outside the slice.
+
+### WMR-H13 Agent Authorization To Execution Admission
+
+| Obligation | Detailed-design position |
+| --- | --- |
+| producer owner | Agent |
+| producer product | one product-specific authorization carrying complete Task body, Goal, Plan revision, selection reference, frozen context, authority, generation, and idempotency |
+| durable producer position | Agent authorization decision committed before handoff |
+| consumer owner | Execution |
+| consumer acceptance position | durable accepted, duplicate, rejected, or conflicted decision |
+| identity and idempotency | authorization and admission identities remain distinct and replay-stable |
+| wait and wake | Execution waits on an exact authorization or current contract revision and wakes on that structural product |
+| fence | Agent, Goal, Plan, Task, Capability contracts, authority, and generation |
+| restart | Agent authorization plus Execution admission journal |
+| relationship state | design accepted by `WMR-DG-04`, implementation partial |
+
+### WMR-H14 And WMR-H15 Admission Through Durable Dispatch Route
+
+| Obligation | Detailed-design position |
+| --- | --- |
+| producer owner | Execution admission and lowering |
+| producer product | deterministic lowering and route product for one admitted Task |
+| durable producer position | admission receipt, lowering identity, Task Network mutation, and durable route product or exact reconstruction inputs |
+| consumer owner | Task Network and dispatch |
+| consumer acceptance position | committed node lineage and eligible route visible to bounded dispatch selection |
+| identity and idempotency | Task, admission, network, binding, and routing revision derive stable mutation and route identities |
+| wait and wake | predecessor conflict, missing binding, or route absent waits on exact network or binding successor |
+| fence | Task, network revision, Capability contract, exact binding revision, exact routing-rule revision, authority, and generation |
+| restart | Task Network journal plus durable route or mandatory deterministic reconstruction from admitted Task, exact binding revision, and exact routing-rule revision |
+| relationship state | design accepted by `WMR-DG-04`, implementation partial |
+
+### WMR-H16 Ready Task To Fenced Attempt
+
+| Obligation | Detailed-design position |
+| --- | --- |
+| producer owner | Task Network |
+| producer product | exact ready Task instance and initialization inputs |
+| durable producer position | network revision and readiness state |
+| consumer owner | Execution dispatch and provider realization seam |
+| consumer acceptance position | durable claim, attempt, and external operation identity before effect reliance |
+| identity and idempotency | claim, attempt, operation, contract, exact installed binding revision, resolved Capability instance, effect target, input digest, authority, and generation remain explicit |
+| wait and wake | unresolved dependency, input, claim, or worker waits on exact state change or expiry |
+| fence | network, lifecycle epoch, worker, participant incarnation, activation generation, authority, exact binding revision, resolved Capability instance, and effect target |
+| restart | network state, claim, attempt, operation receipt, installed binding revision, effect target, and unresolved-effect account |
+| relationship state | design accepted by `WMR-DG-04`, current local behavior strong but integrated effect fencing unproved |
+
+### WMR-H17 Execution Outcome To Events
+
+| Obligation | Detailed-design position |
+| --- | --- |
+| producer owner | Execution |
+| producer product | durable succeeded, failed, cancelled, or uncertain Task outcome with artifacts and effect lineage |
+| durable producer position | exact outcome and publication outbox identity |
+| consumer owner | Events append authority |
+| consumer acceptance position | append receipt naming ledger and exact sequence |
+| identity and idempotency | outcome derives a deterministic Event publication identity |
+| wait and wake | terminal outcome with no append receipt waits on Event availability or retry |
+| fence | Task, claim, attempt, operation, outcome, ledger, and generation |
+| restart | outcome outbox plus Event append receipt reconciliation |
+| relationship state | design accepted by `WMR-DG-04`, current Task publication implemented |
+
+### WMR-H32 Execution Outcome To Semantic Owner Observation
+
+| Obligation | Detailed-design position |
+| --- | --- |
+| producer owner | Execution |
+| producer product | exact outcome, artifacts, source target, and attempt lineage |
+| durable producer position | Task outcome and Event publication positions |
+| consumer owner | workspace, docs, dependency security, or another named semantic owner |
+| consumer acceptance position | successor or unchanged owner observation plus exact completeness receipt |
+| identity and idempotency | owner source revision and observation identity remain distinct from outcome identity |
+| wait and wake | owner waits on source availability or exact observation trigger and wakes on durable source change or outcome lineage |
+| fence | outcome, source, owner revision, perspective, branch, and generation |
+| restart | owner source cursor and accepted publication operation |
+| relationship state | design accepted by `WMR-DG-04`, implementation partial |
+
+### WMR-H33 Returned Owner Evidence To Events
+
+| Obligation | Detailed-design position |
+| --- | --- |
+| producer owner | semantic owner |
+| producer product | exact owner observation batch, completeness receipt, and deterministic publication operation |
+| durable producer position | owner revision and publication outbox position |
+| consumer owner | Events append authority |
+| consumer acceptance position | append receipt naming ledger and exact sequence |
+| identity and idempotency | owner revision, publication operation, and Event publication key remain replay-stable |
+| wait and wake | owner publication without append receipt waits on Event availability or retry |
+| fence | owner revision, publication key, ledger, perspective, branch, and generation |
+| restart | owner publication outbox and Event append receipt reconciliation |
+| relationship state | design accepted by `WMR-DG-04`, implementation partial |
+
+### WMR-H34 Returned Owner Event To Graph Visibility
+
+| Obligation | Detailed-design position |
+| --- | --- |
+| producer owner | Events |
+| producer product | accepted returned owner Event at an exact ledger sequence |
+| durable producer position | Event append receipt |
+| consumer owner | Graph |
+| consumer acceptance position | Graph projection revision and cursor covering the exact Event sequence |
+| identity and idempotency | ledger, Event record, sequence, and projection revision remain explicit |
+| wait and wake | projection behind the returned Event waits on the exact sequence or projection retry |
+| fence | ledger, sequence, projection revision, perspective, branch, and generation |
+| restart | Event cursor plus Graph projection checkpoint |
+| relationship state | design accepted by `WMR-DG-04`, current positions exist independently |
+
+### WMR-H35 Returned Owner Evidence To Configured Belief
+
+| Obligation | Detailed-design position |
+| --- | --- |
+| producer owner | semantic owner through its accepted Event and evidence route |
+| producer product | exact owner evidence under one installed route revision |
+| durable producer position | owner revision and routed evidence position |
+| consumer owner | configured Belief |
+| consumer acceptance position | immutable Belief revision citing exact owner evidence and predecessor |
+| identity and idempotency | belief key, owner evidence, route revision, comparator, and predecessor determine the revision |
+| wait and wake | unrouted or unsettled evidence waits on exact route availability or predecessor revision |
+| fence | owner revision, route revision, belief key, predecessor, perspective, branch, and generation |
+| restart | owner evidence, route revision, and Belief revision chain |
+| relationship state | design accepted by `WMR-DG-04`, implementation partial by installed route |
+
+### WMR-H36 Return-Derived Belief To Agent Acceptance
+
+| Obligation | Detailed-design position |
+| --- | --- |
+| producer owner | configured Belief |
+| producer product | immutable revision satisfying the exact declared Plan dependency |
+| durable producer position | accepted Belief revision |
+| consumer owner | Agent |
+| consumer acceptance position | durable milestone absorption tied to exact Plan revision and dependency |
+| identity and idempotency | Plan dependency, Belief revision, and Agent context determine absorption identity |
+| wait and wake | missing, stale, mismatched, or invalidated Belief milestone waits on the exact required successor revision |
+| fence | Belief revision, Plan, Goal, Agent, perspective, branch, authority, and generation |
+| restart | Belief revision, Agent input cursor, and milestone decision |
+| relationship state | design accepted by `WMR-DG-04`, implementation partial |
+
+When a Plan declares direct owner observation, returned Event, or Graph visibility as its milestone, Agent absorbs that exact producer position through `WMR-H19`. It does not wait for an unused Belief branch.
+
+## Accepted WMR-DD-03 Edge Details Continued
 
 ### WMR-H19 Admitted Result To Agent Reconciliation
 
