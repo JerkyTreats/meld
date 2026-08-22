@@ -20,6 +20,8 @@ The committed first slice consists of the [semantic transition ledger](detailed_
 
 The completed second slice consists of the [epistemic operation transition ledger](detailed_design/epistemic_operation_transition_ledger.md) and [epistemic authorship and settlement design](detailed_design/epistemic_authorship_and_settlement.md). Its [integrated design review](reviews/wmr_dd_02_integrated_design_review_receipt.md) passed, and [WMR-DG-02 Gate Acceptance](delivery_gates/wmr_dg_02_acceptance_receipt.md) established handoff eligibility from exact Curation input through Graph visibility and configured Belief settlement.
 
+The completed third slice consists of the [PlannerCut and Plan transition ledger](detailed_design/planner_cut_and_plan_transition_ledger.md) and [PlannerCut, Strategy Plan, and Agent progression design](detailed_design/planner_cut_strategy_plan_and_agent_progression.md). Its [subagent review recommendation](reviews/wmr_dd_03_subagent_review_recommendation.md) produced four bounded corrections that passed verification. A distinct [Gate Acceptance recommendation](delivery_gates/wmr_dg_03_subagent_acceptance_recommendation.md) supported the official [WMR-DG-03 Gate Acceptance](delivery_gates/wmr_dg_03_acceptance_receipt.md).
+
 ## Reviews
 
 The `reviews` folder contains focused evidentiary pressure on shared Goal language and Event-backed Epistemic Operations. It also contains the [program design review receipt](reviews/world_model_reconciliation_program_design_review_receipt.md) for the exact detailed-design program candidate. Reviews inform requirements but do not override cognitive architecture.
