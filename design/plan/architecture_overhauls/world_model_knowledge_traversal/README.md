@@ -30,6 +30,8 @@ The completed sixth slice consists of the [activation generation and lifecycle t
 
 The completed seventh slice consists of the [integrated product outcome evidence matrix](detailed_design/integrated_product_outcome_evidence_matrix.md) and [integrated product proof and inspection design](detailed_design/integrated_product_proof_and_inspection.md). Its bounded [subagent review recommendation](reviews/wmr_dd_07_subagent_review_recommendation.md) passed after correction, and a distinct [Gate Acceptance recommendation](delivery_gates/wmr_dg_07_subagent_acceptance_recommendation.md) supported the official [WMR-DG-07 Gate Acceptance](delivery_gates/wmr_dg_07_acceptance_receipt.md).
 
+The separate [cross-gate expected outcomes evidence report](reviews/world_model_reconciliation_cross_gate_expected_outcomes_evidence_report.md) catalogs the accepted design outcomes, owner evidence, lifecycle positions, forbidden inferences, and future runtime matching artifacts without issuing a coherence judgment.
+
 ## Reviews
 
 The `reviews` folder contains focused evidentiary pressure on shared Goal language and Event-backed Epistemic Operations. It also contains the [program design review receipt](reviews/world_model_reconciliation_program_design_review_receipt.md) for the exact detailed-design program candidate. Reviews inform requirements but do not override cognitive architecture.

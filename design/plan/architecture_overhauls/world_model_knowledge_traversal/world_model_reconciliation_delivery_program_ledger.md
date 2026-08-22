@@ -4,15 +4,15 @@ Date: 2026-08-22
 
 Mode: delivery
 
-Status: in progress
+Status: complete
 
-Readiness: build-ready
+Readiness: closeout complete, runtime implementation remains unauthorized
 
 Canonical initiative name: World Model Reconciliation
 
 User working name: World Model Refactor
 
-Implementation authorization: none pending the `WMR-DD-07` delivery commit, zero source-code authority
+Implementation authorization: none, zero source-code authority
 
 ## Objective And Product Proof
 
@@ -109,7 +109,9 @@ Program authority and exception authority: user
 
 ## Authorized Active Slice
 
-No slice is active while accepted `WMR-DD-07` awaits its required delivery commit.
+No slice is active. All seven detailed-design gates are accepted and committed.
+
+The final [cross-gate expected outcomes evidence report](reviews/world_model_reconciliation_cross_gate_expected_outcomes_evidence_report.md) is a judgment-free matching basis for later comparison of observed runtime evidence with this design.
 
 `WMR-DD-06`, Activation Generation And Lifecycle Closure, is complete with accepted `WMR-DG-06` and delivery commit `613133eb`.
 
@@ -520,7 +522,8 @@ Design artifact size is governed by semantic closure and Gate Acceptance rather 
 | `WMR-DD-04` | `design/world-model-reconciliation` | Codex detailed-design implementor | complete | `440b64e3` | Gate accepted, source code excluded, subagent recommendations recorded at both review boundaries |
 | `WMR-DD-05` | `design/world-model-reconciliation` | Codex detailed-design implementor | complete | `7c1a407b` | Gate accepted, source code excluded, subagent recommendations recorded at both review boundaries |
 | `WMR-DD-06` | `design/world-model-reconciliation` | Codex detailed-design implementor | complete | `613133eb` | Gate accepted, source code excluded, subagent recommendations recorded at both review boundaries |
-| `WMR-DD-07` | `design/world-model-reconciliation` | Codex detailed-design implementor | complete | pending current delivery commit | Gate accepted, source code excluded, subagent recommendations recorded at both review boundaries |
+| `WMR-DD-07` | `design/world-model-reconciliation` | Codex detailed-design implementor | complete | `f54beb14` | Gate accepted, source code excluded, subagent recommendations recorded at both review boundaries |
+| cross-gate expected-outcomes evidence report | `design/world-model-reconciliation` | dedicated read-only subagent `wmr_cross_gate_outcome_evidence` | complete | pending closeout commit | evidentiary catalog only, no verdict or recommendation |
 
 The worktree already contained the user-owned README modification and untracked detailed-design framing from the preceding discovery work. This program preserves them as current evidence and does not treat them as unrelated implementation changes.
 
@@ -557,6 +560,7 @@ Later gates name only a coherence horizon and activation condition. Their criter
 | `WMR-DG-06` acceptance | candidate digest `b5cfe2428b1509c907571d060f38b5c01945ec91d48ebd80259c09ed4098e33c` | accepted | 2026-08-22 | distinct subagent recommended acceptance, nineteen criteria passed with no violation |
 | `WMR-DD-07` integrated review | initial digest `d6ef2bc3c964940d7d44c78b0b0d4fde0997b45a0c257ab40cabb6596c047ca8`, corrected digest `80f1eb38395008e6ff2a88b4dccae02ec79f8a54b913eccf7be140939685e48c` | passed after verification | 2026-08-22 | subagent recommended four bounded corrections and verified one correction-caused wording repair |
 | `WMR-DG-07` acceptance | candidate digest `399a6a87dcf5fd13c8bda107bb2289ab7ae8eb5287077d19927e32c9fb498422` | accepted | 2026-08-22 | distinct subagent recommended acceptance, seventeen criteria passed with no violation |
+| cross-gate expected-outcomes evidence report | artifact digest `53aa3060e0c28a9fb769b54aa8b1aecd7974f3e5321cd082d915ecda4579017e` | recorded | 2026-08-22 | dedicated subagent cataloged expected outcomes, owners, edges, design locations, lifecycle positions, forbidden inferences, and future runtime evidence without judgment |
 | `WMR-DD-01` retrospective integrated review | corrected digest `753046de7e4775b0a75db01c049593ec37febd897889382941bd844fbf8e0931` | passed after verification | 2026-08-22 | five frozen findings verified, no blocking correction-caused regression |
 | `WMR-DG-01` retrospective assurance | candidate digest `0d0b98504da47779c75024a074e2eb0f6dc8ff1557fca3821d6c5d920013cade` | accepted | 2026-08-22 | distinct subagent passed all fourteen criteria with no violation |
 | `WMR-DD-02` retrospective integrated review | corrected digest `7614ce172216e329d44843d552eaedea676ee300330c266a9f1fbbe63c4dbcd7` | passed after verification | 2026-08-22 | three frozen findings verified with no correction-caused regression |
@@ -678,6 +682,10 @@ If applied, this commit closes activation generation authority through truthful 
 Applied as `613133eb`.
 
 If applied, this commit closes integrated product outcome and inspection proof, records both subagent recommendations and accepted `WMR-DG-07` evidence, and leaves source implementation unauthorized plus the separate judgment-free cross-gate report pending.
+
+Applied as `f54beb14`.
+
+If applied, this closeout commit records the judgment-free cross-gate expected-outcomes evidence report, reconciles final program state, and leaves all source implementation unauthorized.
 
 ## Review State
 
@@ -858,7 +866,7 @@ Before activating `WMR-DD-05`, record:
 
 ## Final Reconciliation
 
-`WMR-DD-07` is accepted and awaits its delivery commit. The separate judgment-free cross-gate expected-outcomes report follows that commit.
+All seven detailed-design slices are accepted and committed. The separate judgment-free cross-gate expected-outcomes evidence report is recorded.
 
 Closeout evidence:
 
@@ -874,8 +882,9 @@ Closeout evidence:
 - `WMR-DD-07` passed integrated design review and `WMR-DG-07` Gate Acceptance with separate subagent recommendations
 - `WMR-DD-01` and `WMR-DD-02` passed independent retrospective integrated review and separate retrospective Gate Acceptance
 - the handoff ledger now records accepted downstream design separately from unproved or partial runtime implementation
-- `WMR-DD-04` through `WMR-DD-06` are accepted and committed, and `WMR-DD-07` is accepted and delivery-commit eligible
+- `WMR-DD-01` through `WMR-DD-07` are accepted and committed
+- the dedicated cross-gate report supplies a neutral expected-outcome and runtime-evidence matching index without an overall coherence judgment
 
 Source implementation has not started and is not authorized by this ledger.
 
-All seven design gates are accepted. Program closeout remains pending the `WMR-DD-07` delivery commit and the separate cross-gate expected-outcomes evidence report.
+The detailed-design delivery program is complete. Matching future runtime evidence against the recorded expected outcomes is a separate activity.
