@@ -2,7 +2,7 @@
 
 Date: 2026-08-22
 
-Status: accepted through `WMR-DG-04`, no active slice
+Status: accepted through `WMR-DG-05`, no active slice
 
 Implementation authorization: none
 
@@ -49,9 +49,9 @@ An earlier phase may define and later implement a producer while its consumer re
 | `WMR-H17` | Execution outcome to Events | `WMR-DD-04` | `WMR-DD-04` | design accepted by `WMR-DG-04`, current Task publication implemented |
 | `WMR-H18` | integrated result lineage inspection | `WMR-DD-02` through `WMR-DD-04` | `WMR-DD-07` | proof projection only, owner-specific handoffs close earlier |
 | `WMR-H19` | admitted result to Agent reconciliation | `WMR-DD-03` | `WMR-DD-03` | design accepted through Execution return by `WMR-DG-04`, implementation partial |
-| `WMR-H20` | PDS package to owner installation receipts | `WMR-DD-05` | `WMR-DD-05` | current implemented for executable-only theory image |
-| `WMR-H21` | installed product to Agent genesis plan | `WMR-DD-05` | `WMR-DD-05` | current partial |
-| `WMR-H22` | prepared product to activation generation | `WMR-DD-05` | `WMR-DD-06` | standalone lifecycle substrate only |
+| `WMR-H20` | PDS package to owner installation receipts | `WMR-DD-05` | `WMR-DD-05` | design accepted by `WMR-DG-05`, current package installation strong but owner set incomplete |
+| `WMR-H21` | installed product to Agent genesis plan | `WMR-DD-05` | `WMR-DD-05` | design accepted by `WMR-DG-05`, implementation partial |
+| `WMR-H22` | prepared product to activation generation | `WMR-DD-05` | `WMR-DD-06` | producer accepted by `WMR-DG-05`, consumer deferred, standalone substrate only |
 | `WMR-H23` | activation generation to participant readiness | `WMR-DD-06` | `WMR-DD-06` | current partial and disconnected |
 | `WMR-H24` | owner progress to wait and wake closure | owner phases | `WMR-DD-06` | current partial and disconnected |
 | `WMR-H25` | owner safe points to fenced retirement | owner phases | `WMR-DD-06` | design pending |
@@ -581,6 +581,55 @@ When a Plan declares direct owner observation, returned Event, or Graph visibili
 | restart | native owner stores plus exact Planner assembly request |
 | relationship state | design accepted by `WMR-DG-03`, current implementation partial |
 
+## Accepted WMR-DD-05 Edge Details
+
+The `WMR-DD-05` coherence horizon begins with one exact principal product selection and closes at an inert prepared activation closure. It does not claim lifecycle acceptance, participant readiness, current-generation publication, or runtime admission.
+
+### WMR-H20 PDS Package To Native Owner Installation Receipts
+
+| Obligation | Detailed-design position |
+| --- | --- |
+| producer owner | PDS structural package and router |
+| producer product | exact product revision and selected package set, with each semantic package carrying its import closure, route map, structural requirements, and complete native-owner validation set |
+| durable producer position | immutable package identity and validation account |
+| consumer owners | every named native semantic owner |
+| consumer acceptance position | immutable owner revisions and owner-qualified receipts, one complete receipt per selected package, then one product compilation receipt over the complete selected set |
+| identity and idempotency | product revision, selected package set, package hashes, imports, routes, owner grammar revisions, owner revisions, package receipts, and product compilation receipt are content-stable |
+| wait and wake | unresolved import, invalid component, missing owner route, partial installation, or incomplete selected package set waits on the exact successor or owner result |
+| fence | product revision, selected package set, package hashes, import closures, route maps, owner grammar revisions, predecessor receipts, and compilation policy revision |
+| restart | product declaration, package manifests, owner registries, partial install accounts, complete package receipts, and product compilation receipt if present |
+| relationship state | design accepted by `WMR-DG-05`, current local package path strong but complete product compilation unproved |
+
+### WMR-H21 Installed Product To Agent Genesis
+
+| Obligation | Detailed-design position |
+| --- | --- |
+| producer owners | PDS product and assignment owners plus native installation router |
+| producer product | exact product revision, complete product compilation receipt, situated assignment, finite declared Agent topology, and installed owner revisions per topology position |
+| durable producer position | product compilation receipt and assignment identity |
+| consumer owner | Agent through a root composition adapter |
+| consumer acceptance position | Agent record revision, Agent subscription requests, named source-owner acceptance receipts, deterministic genesis publication operation, per-position genesis receipt, and complete topology receipt |
+| identity and idempotency | assignment, topology position, Agent identity body, installed revisions, subscription requests, source contract revisions, source-owner decisions, and publication key remain stable |
+| wait and wake | absent product compilation, incomplete topology, identity conflict, missing source-owner subscription decision, or missing publication operation waits on its exact owner successor |
+| fence | product, compilation receipt, assignment, topology, Agent identity, subject, perspective, branch, installed revisions, source contracts, and grant lineage |
+| restart | assignment, Agent records, subscription requests, source-owner acceptance receipts, genesis outbox, Event receipt if present, and topology receipt |
+| relationship state | design accepted by `WMR-DG-05`, current implementation partial |
+
+### WMR-H22 Prepared Product To Activation Generation
+
+| Obligation | Detailed-design position |
+| --- | --- |
+| producer owners | activation preparation over native owner receipts |
+| producer product | inert closure binding product compilation receipt, assignment, activation inputs, complete Agent topology receipt, owner preparations, Capability preparation receipt, participant plan, binding revisions, and authority inputs |
+| durable producer position | immutable prepared activation closure with expected-prior position |
+| consumer owner | activation lifecycle in `WMR-DD-06` |
+| consumer acceptance position | explicitly deferred lifecycle accepted, conflicted, duplicate, or rejected decision |
+| identity and idempotency | equal complete input set and expected-prior position yield equal closure identity |
+| wait and wake | missing or conflicted native input or Capability selection waits on the exact receipt, binding, plan, policy, or authority successor |
+| fence | assignment, activation input, product compilation receipt, topology receipt, Capability preparation receipt, participant plan, binding revisions, authority inputs, and expected prior |
+| restart | every named native receipt, Capability preparation receipt, and the inert closure if complete |
+| relationship state | producer accepted by `WMR-DG-05`, lifecycle consumer deferred to `WMR-DD-06` |
+
 ## Lifecycle Projection
 
 The handoff ledger and lifecycle view are two projections of the same relationship graph.
@@ -598,7 +647,7 @@ For every edge, lifecycle design must eventually name:
 - safe point and unresolved-operation summary
 - stop or retirement receipt
 
-`WMR-DD-01` closes owner publication through Traversal. `WMR-DD-02` closes Curation-local authorship and visibility. `WMR-DD-03` adds complete reasoning-cut assembly, Plan judgment, product authorization, Curation handoff, milestone absorption, and Agent-local progression. `WMR-H13` still defers Execution consumer closure. A clean process tick, empty queue, Event append, or absent consumer cannot serve as readiness or quiescence evidence.
+`WMR-DD-01` closes owner publication through Traversal. `WMR-DD-02` closes Curation-local authorship and visibility. `WMR-DD-03` adds complete reasoning-cut assembly, Plan judgment, product authorization, Curation handoff, milestone absorption, and Agent-local progression. `WMR-DD-04` closes Execution admission and returned owner evidence. Active `WMR-DD-05` prepares exact inert product and Agent-genesis inputs while `WMR-H22` keeps lifecycle acceptance deferred. A clean process tick, empty queue, Event append, prepared closure, or absent consumer cannot serve as readiness or quiescence evidence.
 
 ## Gate Use
 

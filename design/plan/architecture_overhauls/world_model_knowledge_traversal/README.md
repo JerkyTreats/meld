@@ -24,6 +24,8 @@ The completed third slice consists of the [PlannerCut and Plan transition ledger
 
 The completed fourth slice consists of the [Execution admission and observation transition ledger](detailed_design/execution_admission_and_observation_transition_ledger.md) and [Execution admission and observation return design](detailed_design/execution_admission_and_observation_return.md). Its bounded [subagent review recommendation](reviews/wmr_dd_04_subagent_review_recommendation.md) passed after correction, and a distinct [Gate Acceptance recommendation](delivery_gates/wmr_dg_04_subagent_acceptance_recommendation.md) supported the official [WMR-DG-04 Gate Acceptance](delivery_gates/wmr_dg_04_acceptance_receipt.md).
 
+The completed fifth slice consists of the [product compilation and Agent genesis transition ledger](detailed_design/product_compilation_and_agent_genesis_transition_ledger.md) and [product compilation and Agent genesis design](detailed_design/product_compilation_and_agent_genesis.md). Its bounded [subagent review recommendation](reviews/wmr_dd_05_subagent_review_recommendation.md) passed after correction, and a distinct [Gate Acceptance recommendation](delivery_gates/wmr_dg_05_subagent_acceptance_recommendation.md) supported the official [WMR-DG-05 Gate Acceptance](delivery_gates/wmr_dg_05_acceptance_receipt.md).
+
 ## Reviews
 
 The `reviews` folder contains focused evidentiary pressure on shared Goal language and Event-backed Epistemic Operations. It also contains the [program design review receipt](reviews/world_model_reconciliation_program_design_review_receipt.md) for the exact detailed-design program candidate. Reviews inform requirements but do not override cognitive architecture.

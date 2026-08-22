@@ -12,7 +12,7 @@ Canonical initiative name: World Model Reconciliation
 
 User working name: World Model Refactor
 
-Implementation authorization: none pending the `WMR-DD-04` delivery commit, zero source-code authority
+Implementation authorization: none pending the `WMR-DD-05` delivery commit, zero source-code authority
 
 ## Objective And Product Proof
 
@@ -109,7 +109,9 @@ Program authority and exception authority: user
 
 ## Authorized Active Slice
 
-No slice is active while accepted `WMR-DD-04` awaits its required delivery commit.
+No slice is active while accepted `WMR-DD-05` awaits its required delivery commit.
+
+`WMR-DD-04`, Executable Admission And Observation Return, is complete with accepted `WMR-DG-04` and delivery commit `440b64e3`.
 
 `WMR-DD-03`, PlannerCut Assembly, Heterogeneous Plan Construction, And Agent Progression, is complete with an accepted Gate Receipt and its delivery commit.
 
@@ -127,14 +129,55 @@ Gate Acceptance owner: Codex separate cross-deliverable acceptance lane with a d
 
 Exact write scope:
 
-- `detailed_design/wmr_dd_04_worker_packet.md`
-- `detailed_design/execution_admission_and_observation_transition_ledger.md`
-- `detailed_design/execution_admission_and_observation_return.md`
+- `detailed_design/wmr_dd_05_worker_packet.md`
+- `detailed_design/product_compilation_and_agent_genesis_transition_ledger.md`
+- `detailed_design/product_compilation_and_agent_genesis.md`
 - `world_model_reconciliation_handoff_ledger.md`
-- `delivery_gates/wmr_dg_04_execution_admission_and_observation_return.md`
-- review and Gate Acceptance artifacts for `WMR-DD-04`
+- `delivery_gates/wmr_dg_05_product_compilation_and_agent_genesis.md`
+- review and Gate Acceptance artifacts for `WMR-DD-05`
 - this program ledger
 - folder `README.md`
+
+### WMR-DD-05 product increment
+
+Close the product compilation and Agent-genesis vertical:
+
+```text
+principal product selection
+-> exact product declaration and linked semantic package
+-> native-owner validation and installation
+-> complete package receipt and situated assignment
+-> finite declared Agent topology
+-> Agent-owned genesis products and topology receipt
+-> exact physical and structural activation inputs
+-> inert prepared activation closure
+```
+
+Direct proof uses docs freshness and dependency security to show plural native-owner compilation with dissimilar meaning and potentially different topology.
+
+Dependencies:
+
+- accepted native-owner meanings from `WMR-DG-01` through `WMR-DG-04`
+- current PDS router, owner revision, assignment, activation-input, Agent, subscription, and prepared-closure evidence
+- accepted Execution Capability and semantic-owner contracts from `WMR-DG-04`
+
+Stop conditions:
+
+- PDS interprets native semantic bodies or owns runtime cognition
+- partial owner installation becomes a selectable product
+- Agent identity conflict is silently reused
+- a participant plan becomes a semantic work schedule
+- prepared is treated as ready or current
+- lifecycle publication, replacement, or retirement enters the slice
+- a new runtime store, protocol, service, migration, schema, crate, or source change is required
+
+Closeout evidence:
+
+- `WMR-H20` and `WMR-H21` have exact producer and consumer positions
+- `WMR-H22` closes an inert producer while visibly deferring lifecycle acceptance
+- both product traces retain native owner meaning and PDS runtime independence
+- integrated review and separate Gate Acceptance each carry a dedicated subagent recommendation
+- `WMR-DG-05` produces an accepted Gate Receipt and delivery commit
 
 ### WMR-DD-04 product increment
 
@@ -350,9 +393,9 @@ No source-code path is authorized. Likely later implementation paths are evidenc
 
 | Slice | Design vertical | Dependency | Activation evidence | Authorization |
 | --- | --- | --- | --- | --- |
-| `WMR-DD-04` | Executable Admission And Observation Return | accepted `WMR-DD-03` receipt | complete Task identity, cardinality, authorization, and Plan lineage settled | complete, delivery commit pending |
-| `WMR-DD-05` | Product Compilation And Agent Genesis | accepted native-owner contracts from `WMR-DD-02` through `WMR-DD-04` | PDS compilation targets have owner-stable meanings | user authorized, activation awaits `WMR-DD-04` delivery commit |
-| `WMR-DD-06` | Activation Generation And Lifecycle Closure | accepted `WMR-DD-01` through `WMR-DD-05` receipts | exact participants, products, positions, waits, wakes, and safe points exist | user authorized, activation awaits `WMR-DG-05` |
+| `WMR-DD-04` | Executable Admission And Observation Return | accepted `WMR-DD-03` receipt | complete Task identity, cardinality, authorization, and Plan lineage settled | complete at `440b64e3` |
+| `WMR-DD-05` | Product Compilation And Agent Genesis | accepted native-owner contracts from `WMR-DD-02` through `WMR-DD-04` | PDS compilation targets have owner-stable meanings | complete, delivery commit pending |
+| `WMR-DD-06` | Activation Generation And Lifecycle Closure | accepted `WMR-DD-01` through `WMR-DD-05` receipts | exact participants, products, positions, waits, wakes, and safe points exist | user authorized, activation awaits `WMR-DD-05` delivery commit |
 | `WMR-DD-07` | Product Proof And Inspection | accepted prior receipts | complete docs freshness and dependency security specifications can be replayed through lifecycle | user authorized, activation awaits `WMR-DG-06` |
 
 ## Product Trace
@@ -377,7 +420,7 @@ principal declaration
 -> safe retirement
 ```
 
-The completed `WMR-DD-04` slice covers exact Execution admission, lowering, Task Network realization, uncertain effects, outcome publication, semantic-owner re-observation, returned visibility, and Agent milestone absorption. PDS compilation and activation-wide lifecycle remain downstream dependencies rather than accepted `WMR-DD-04` scope.
+The completed `WMR-DD-05` slice covers principal selection, plural native-owner compilation, exact linked installation, situated assignment, declared Agent topology, Agent-owned genesis, and inert activation preparation. Lifecycle acceptance, readiness, current publication, replacement, and retirement remain downstream dependencies rather than accepted `WMR-DD-05` scope.
 
 ## Affected Domains
 
@@ -391,16 +434,15 @@ The frozen affected package set is:
 
 Runtime participation does not imply write scope.
 
-The completed `WMR-DD-04` slice affected these design owners:
+The completed `WMR-DD-05` slice affected these design owners:
 
 | Domain concern | Owner | Active relationship | Design posture |
 | --- | --- | --- | --- |
-| source cuts | Graph, Traversal, Belief, Causation, Regime, directive, and Capability owners | supply exact immutable source revisions and owner hydration | consume accepted or canonical contracts |
-| reasoning cut and Plan | Planner, Strategy, and Agent | supply accepted Task body, lineage, authority, and dependency milestones | consume accepted `WMR-DD-03` contracts |
-| executable consumer | Execution | accept and realize only one complete authorized Task without re-planning | accepted detailed design |
-| Task Network and provider seam | Execution | preserve lowering, claim, attempt, operation, outcome, and uncertain-effect lineage | accepted detailed design over existing seams |
-| semantic observation | workspace, docs, dependency security, and other named owners | re-observe returned state under owner revision and completeness | accepted returned-product design |
-| returned visibility | Events, Graph, Belief, and Agent | preserve independent owner positions through milestone absorption | accepted composition design |
+| product declaration and package structure | PDS | preserve selection, imports, routes, structural requirements, and linked receipt without interpreting owner bodies | active detailed design over current package mechanics |
+| native semantic installation | docs, dependency security, Graph, Traversal, Belief, Curation, Strategy, Agent, Capability, and policy owners | validate and install immutable owner revisions | active owner-routed composition design |
+| situated assignment and activation inputs | stewardship config owners | bind principal, subject, perspective, branch, topology, grants, and separate physical selections | active detailed design |
+| Agent genesis | Agent through root initialization adapter | accept exact record, subscription, installed revision, and genesis publication positions | active detailed design over partial current behavior |
+| activation preparation | lifecycle input preparation over native receipts | form exact inert closure and structural participant plan | active producer design, lifecycle consumer deferred |
 
 ## Expansion Decisions
 
@@ -424,7 +466,7 @@ Mandatory pause tripwires:
 - any proposal to move product semantics into Events, root runtime, lifecycle, harness, CLI, or telemetry
 - any proposal to change `meld-lang` for heterogeneous Plan ownership
 - any standalone D0 artifact that becomes a universal model rather than a bounded seam account
-- any active-slice requirement that depends on completing PDS or activation-wide lifecycle design
+- any active-slice requirement that depends on activation-wide lifecycle acceptance, readiness, publication, replacement, or retirement
 - any gate criterion that treats a deferred consumer as operationally ready
 - any attempt to claim a complete `PlannerCut` before Belief, Causation, Regime, directive, and Capability catalog revisions have explicit assembly contracts
 - any new crate, durable store, service, background runtime, protocol, migration system, or compatibility system
@@ -444,7 +486,7 @@ Design artifact size is governed by semantic closure and Gate Acceptance rather 
 | `WMR-DD-02` | Curation operation and settlement vertical | `WMR-DD-01` | complete | [retrospectively assured WMR-DG-02 receipt](delivery_gates/wmr_dg_02_retrospective_assurance_receipt.md) |
 | `WMR-DD-03` | PlannerCut assembly, Strategy Plan, and Agent progression vertical | `WMR-DD-01` and `WMR-DD-02` | complete | [accepted WMR-DG-03 receipt](delivery_gates/wmr_dg_03_acceptance_receipt.md) |
 | `WMR-DD-04` | Agent Task to Execution and observation return | `WMR-DD-03` | complete | [accepted WMR-DG-04 receipt](delivery_gates/wmr_dg_04_acceptance_receipt.md) |
-| `WMR-DD-05` | PDS compilation and Agent genesis | `WMR-DD-02` through `WMR-DD-04` | backlog | provisional `WMR-DG-05` |
+| `WMR-DD-05` | PDS compilation and Agent genesis | `WMR-DD-02` through `WMR-DD-04` | complete | [accepted WMR-DG-05 receipt](delivery_gates/wmr_dg_05_acceptance_receipt.md) |
 | `WMR-DD-06` | activation generation and lifecycle closure | prior native-owner designs | backlog | provisional `WMR-DG-06` |
 | `WMR-DD-07` | integrated product proof and inspection | all prior receipts | backlog | provisional `WMR-DG-07` |
 
@@ -457,7 +499,8 @@ Design artifact size is governed by semantic closure and Gate Acceptance rather 
 | `WMR-DD-02` | `design/world-model-reconciliation` | Codex detailed-design implementor | complete | `4e511852` | Gate accepted, source code excluded |
 | `WMR-DD-03` | `design/world-model-reconciliation` | Codex detailed-design implementor | complete | `8cdfde3d` | Gate accepted, source code excluded, subagent recommendations recorded at both review boundaries |
 | retrospective assurance for `WMR-DD-01` and `WMR-DD-02` | `design/world-model-reconciliation` | Codex program owner with four independent subagent recommendations | complete | `38f38168` | Gates accepted, documentation-only corrections and durable assurance evidence |
-| `WMR-DD-04` | `design/world-model-reconciliation` | Codex detailed-design implementor | complete | pending current delivery commit | Gate accepted, source code excluded, subagent recommendations recorded at both review boundaries |
+| `WMR-DD-04` | `design/world-model-reconciliation` | Codex detailed-design implementor | complete | `440b64e3` | Gate accepted, source code excluded, subagent recommendations recorded at both review boundaries |
+| `WMR-DD-05` | `design/world-model-reconciliation` | Codex detailed-design implementor | complete | pending current delivery commit | Gate accepted, source code excluded, subagent recommendations recorded at both review boundaries |
 
 The worktree already contained the user-owned README modification and untracked detailed-design framing from the preceding discovery work. This program preserves them as current evidence and does not treat them as unrelated implementation changes.
 
@@ -469,7 +512,7 @@ The worktree already contained the user-owned README modification and untracked 
 | [WMR-DG-02](delivery_gates/wmr_dg_02_epistemic_authorship_and_settlement.md) | 1 frozen | `WMR-DD-02` | exact Curation input through independent Graph visibility and configured Belief settlement, with Agent and Planner acceptance deferred | separate Gate Acceptance owner with retrospective subagent recommendation | accepted and retrospectively assured |
 | [WMR-DG-03](delivery_gates/wmr_dg_03_planner_cut_plan_and_progression.md) | 1 frozen | `WMR-DD-03` | exact source revisions through immutable `PlannerCut`, verified Plan, Agent judgment, product authorization, and admitted milestone progression | Codex separate Gate Acceptance lane with distinct subagent recommendation | accepted |
 | [WMR-DG-04](delivery_gates/wmr_dg_04_execution_admission_and_observation_return.md) | 1 frozen | `WMR-DD-04` | complete authorized Task through returned owner evidence and Agent milestone absorption | separate Gate Acceptance lane with distinct subagent recommendation | accepted |
-| `WMR-DG-05` | provisional | `WMR-DD-05` | principal declaration through exact inert activation inputs | unassigned | backlog |
+| [WMR-DG-05](delivery_gates/wmr_dg_05_product_compilation_and_agent_genesis.md) | 1 frozen | `WMR-DD-05` | principal declaration through exact inert activation inputs | separate Gate Acceptance lane with distinct subagent recommendation | accepted |
 | `WMR-DG-06` | provisional | `WMR-DD-06` | prepared activation through current or safely retired generation | unassigned | backlog |
 | `WMR-DG-07` | provisional | `WMR-DD-07` | complete product and lifecycle proof | unassigned | backlog |
 
@@ -488,6 +531,8 @@ Later gates name only a coherence horizon and activation condition. Their criter
 | `WMR-DG-03` acceptance | candidate digest `7431cbf059ce2c033c97514e4ba02a4b4f7f44842ce3b4a6a2352d5f2a4b7972` | accepted | 2026-08-22 | distinct subagent recommended acceptance, eighteen criteria passed with no violation |
 | `WMR-DD-04` integrated review | initial digest `70094a79a0b414887311dc100f4b7833cd0bc7efae72fdcc7068251827457512`, corrected digest `ee6182b00d3d11aec199e1a94ac39e26b2de1aa315f5aa4515b0f26a31fcfd81` | passed after verification | 2026-08-22 | subagent recommended four bounded corrections and verified the one correction-caused wording regression |
 | `WMR-DG-04` acceptance | candidate digest `418c37039db7228d5fa506b7ac3c06202ce2b14ebee5ea19f97f0bb87f27856c` | accepted | 2026-08-22 | distinct subagent recommended acceptance, sixteen criteria passed with no violation |
+| `WMR-DD-05` integrated review | initial digest `4858e1810464db6beb548f1381286f907229a12ac224300a3f9b6db7998af0f2`, corrected digest `81d4e5ce9e64ebe20425d80f27ef3a561e8b6a7883cb8cd3bb0a55e5704ccec3` | passed after verification | 2026-08-22 | subagent recommended four bounded corrections and found no correction-caused regression |
+| `WMR-DG-05` acceptance | candidate digest `76e75e9c841e0c3c85850bdd90acf6d08f97cce03d4e0c6faf4247351b9e2079` | accepted | 2026-08-22 | distinct subagent recommended acceptance, eighteen criteria passed with no violation |
 | `WMR-DD-01` retrospective integrated review | corrected digest `753046de7e4775b0a75db01c049593ec37febd897889382941bd844fbf8e0931` | passed after verification | 2026-08-22 | five frozen findings verified, no blocking correction-caused regression |
 | `WMR-DG-01` retrospective assurance | candidate digest `0d0b98504da47779c75024a074e2eb0f6dc8ff1557fca3821d6c5d920013cade` | accepted | 2026-08-22 | distinct subagent passed all fourteen criteria with no violation |
 | `WMR-DD-02` retrospective integrated review | corrected digest `7614ce172216e329d44843d552eaedea676ee300330c266a9f1fbbe63c4dbcd7` | passed after verification | 2026-08-22 | three frozen findings verified with no correction-caused regression |
@@ -501,14 +546,15 @@ Later gates name only a coherence horizon and activation condition. Their criter
 | `WMR-DG-02` | `331d8a3196d0b9d564907e96d402b35f4101293cce31f2924551e1d445dbe2e5` | `accepted` | none | [Gate Acceptance Receipt](delivery_gates/wmr_dg_02_acceptance_receipt.md) | handoff eligible, next slice unauthorized |
 | `WMR-DG-03` | `7431cbf059ce2c033c97514e4ba02a4b4f7f44842ce3b4a6a2352d5f2a4b7972` | `accepted` | none | [Gate Acceptance Receipt](delivery_gates/wmr_dg_03_acceptance_receipt.md) | handoff eligible, next slice unauthorized |
 | `WMR-DG-04` | `418c37039db7228d5fa506b7ac3c06202ce2b14ebee5ea19f97f0bb87f27856c` | `accepted` | none | [Gate Acceptance Receipt](delivery_gates/wmr_dg_04_acceptance_receipt.md) | handoff eligible, delivery commit required before next activation |
+| `WMR-DG-05` | `76e75e9c841e0c3c85850bdd90acf6d08f97cce03d4e0c6faf4247351b9e2079` | `accepted` | none | [Gate Acceptance Receipt](delivery_gates/wmr_dg_05_acceptance_receipt.md) | handoff eligible, delivery commit required before next activation |
 | `WMR-DG-01` retrospective assurance | `0d0b98504da47779c75024a074e2eb0f6dc8ff1557fca3821d6c5d920013cade` | `accepted` | none | [Retrospective Assurance Receipt](delivery_gates/wmr_dg_01_retrospective_assurance_receipt.md) | historical defects corrected, runtime unproved |
 | `WMR-DG-02` retrospective assurance | `271bd0734c5bd5add6adb403183405ca54e7198c09ce3d188ed1cb869b0107bc` | `accepted` | none | [Retrospective Assurance Receipt](delivery_gates/wmr_dg_02_retrospective_assurance_receipt.md) | historical closeout reconciled, runtime unproved |
 
-Last accepted gate definition: `WMR-DG-04` revision 1 frozen
+Last accepted gate definition: `WMR-DG-05` revision 1 frozen
 
 Acceptance state: accepted
 
-The `WMR-DG-04` receipt makes `WMR-DD-04` handoff eligible. The user has authorized `WMR-DD-05`, but program order requires the `WMR-DD-04` delivery commit before activation.
+The `WMR-DG-05` receipt makes `WMR-DD-05` handoff eligible. The user has authorized `WMR-DD-06`, but program order requires the `WMR-DD-05` delivery commit before activation.
 
 The retrospective `WMR-DG-01` and `WMR-DG-02` receipts strengthen accepted upstream evidence. They do not alter phase order or substitute for `WMR-DG-04`.
 
@@ -594,6 +640,10 @@ If applied, this commit corrects and independently re-assures the accepted `WMR-
 Applied as `38f38168`.
 
 If applied, this commit closes exact Execution admission through returned semantic-owner evidence and Agent milestone absorption, records both subagent recommendations and accepted `WMR-DG-04` evidence, and leaves source implementation unauthorized plus `WMR-DD-05` awaiting post-commit activation.
+
+Applied as `440b64e3`.
+
+If applied, this commit closes complete product compilation through Agent-owned genesis and inert activation preparation, records both subagent recommendations and accepted `WMR-DG-05` evidence, and leaves source implementation unauthorized plus `WMR-DD-06` awaiting post-commit activation.
 
 ## Review State
 
@@ -754,9 +804,27 @@ Before activating `WMR-DD-04`, record:
 - explicit user authorization: supplied on 2026-08-22 by the instruction to finish the program
 - review override: dedicated subagents are required for integrated review and Gate Acceptance
 
+Before activating `WMR-DD-05`, record:
+
+- accepted [WMR-DG-04 receipt](delivery_gates/wmr_dg_04_acceptance_receipt.md) and delivery commit `440b64e3`
+- exact downstream preconditions established by `WMR-DD-04`: complete Execution admission, route recovery, realization, uncertain-effect, outcome, semantic-owner return, and independent return milestone contracts
+- whether current PDS routing and Agent genesis mechanics are sufficient to frame the product without choosing new storage or runtime topology
+- explicit user authorization
+
+`WMR-DD-05` activation reassessment:
+
+- accepted `WMR-DG-04` receipt and delivery commit: present
+- downstream preconditions: every product compilation target has an accepted native-owner meaning, position, or explicit compatibility boundary
+- maturity posture: remains exploratory because the completed gates still add no runtime product proof or new consumer
+- obligation floor: remains operational durability because current package receipts, owner revisions, assignments, Agent records, subscriptions, Events, and prepared closures are durable identities
+- expansion decision: current routed installation, assignment, Agent, subscription, and preparation concepts are sufficient for detailed design, with no new store or protocol selected
+- next-slice behavior: supplies one exact inert product and Agent-genesis closure to the later lifecycle consumer
+- explicit user authorization: supplied on 2026-08-22 by the instruction to finish the program
+- review override: dedicated subagents are required for integrated review and Gate Acceptance
+
 ## Final Reconciliation
 
-`WMR-DD-04` is accepted and awaits its delivery commit. `WMR-DD-05` through `WMR-DD-07` are user-authorized backlog and cannot activate before their predecessor Gate Receipts and delivery commits.
+`WMR-DD-05` is accepted and awaits its delivery commit. `WMR-DD-06` and `WMR-DD-07` are user-authorized backlog and cannot activate before their predecessor Gate Receipts and delivery commits.
 
 Closeout evidence:
 
@@ -767,9 +835,10 @@ Closeout evidence:
 - `WMR-DD-02` passed integrated design review and `WMR-DG-02` Gate Acceptance
 - `WMR-DD-03` passed integrated design review and `WMR-DG-03` Gate Acceptance with separate subagent recommendations
 - `WMR-DD-04` passed integrated design review and `WMR-DG-04` Gate Acceptance with separate subagent recommendations
+- `WMR-DD-05` passed integrated design review and `WMR-DG-05` Gate Acceptance with separate subagent recommendations
 - `WMR-DD-01` and `WMR-DD-02` passed independent retrospective integrated review and separate retrospective Gate Acceptance
 - the handoff ledger now records accepted downstream design separately from unproved or partial runtime implementation
-- `WMR-DD-04` is accepted and delivery-commit eligible, while `WMR-DD-05` through `WMR-DD-07` remain ordered authorized backlog
+- `WMR-DD-04` is accepted and committed, `WMR-DD-05` is accepted and delivery-commit eligible, and `WMR-DD-06` through `WMR-DD-07` remain ordered authorized backlog
 
 Source implementation has not started and is not authorized by this ledger.
 
