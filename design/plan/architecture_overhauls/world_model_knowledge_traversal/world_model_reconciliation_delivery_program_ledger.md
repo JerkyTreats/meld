@@ -523,7 +523,7 @@ Design artifact size is governed by semantic closure and Gate Acceptance rather 
 | `WMR-DD-05` | `design/world-model-reconciliation` | Codex detailed-design implementor | complete | `7c1a407b` | Gate accepted, source code excluded, subagent recommendations recorded at both review boundaries |
 | `WMR-DD-06` | `design/world-model-reconciliation` | Codex detailed-design implementor | complete | `613133eb` | Gate accepted, source code excluded, subagent recommendations recorded at both review boundaries |
 | `WMR-DD-07` | `design/world-model-reconciliation` | Codex detailed-design implementor | complete | `f54beb14` | Gate accepted, source code excluded, subagent recommendations recorded at both review boundaries |
-| cross-gate expected-outcomes evidence report | `design/world-model-reconciliation` | dedicated read-only subagent `wmr_cross_gate_outcome_evidence` | complete | pending closeout commit | evidentiary catalog only, no verdict or recommendation |
+| cross-gate expected-outcomes evidence report | `design/world-model-reconciliation` | dedicated read-only subagent `wmr_cross_gate_outcome_evidence` | complete | `9a543eb7` | evidentiary catalog only, no verdict or recommendation |
 
 The worktree already contained the user-owned README modification and untracked detailed-design framing from the preceding discovery work. This program preserves them as current evidence and does not treat them as unrelated implementation changes.
 
@@ -686,6 +686,8 @@ If applied, this commit closes integrated product outcome and inspection proof, 
 Applied as `f54beb14`.
 
 If applied, this closeout commit records the judgment-free cross-gate expected-outcomes evidence report, reconciles final program state, and leaves all source implementation unauthorized.
+
+Applied as `9a543eb7`.
 
 ## Review State
 
