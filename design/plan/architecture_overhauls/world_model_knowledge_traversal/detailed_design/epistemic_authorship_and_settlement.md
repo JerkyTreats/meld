@@ -4,7 +4,7 @@ Date: 2026-08-21
 
 Slice: `WMR-DD-02`
 
-Status: active detailed design
+Status: accepted design product with retrospective clarification
 
 Implementation authorization: none
 
@@ -67,19 +67,21 @@ Standing selection begins with an installed Agent specification and Curation rul
 
 Planned selection begins with an exact Agent authorization for a Strategy Plan product. Curation validates the authorization envelope against its own operation grammar. `WMR-DD-02` defines this consumer acceptance boundary but does not define who stores or progresses the Plan. That producer closes in `WMR-DD-03`.
 
-After acceptance, both contexts share one execution path and one terminal result grammar. A consumer can therefore interpret Curation outputs without knowing which scheduler or intake transport caused the work.
+After admission, both contexts share one execution path and one terminal result grammar. Preadmission rejection uses one shared acceptance-rejection receipt grammar. A consumer can therefore interpret Curation outputs without knowing which scheduler or intake transport caused the work.
 
 ## Acceptance And Terminality
 
-Curation first records whether an operation identity is accepted under the current authority and generation fence. Acceptance is not execution and is not semantic completion.
+Curation first records one durable acceptance decision under the current authority and generation fence. The decision either admits the operation or rejects it before admission. Admission is not execution and is not semantic completion.
 
-Every accepted operation reaches exactly one terminal result identity. The terminal classes are `applied`, `unchanged`, `abstained`, `incomplete`, `rejected`, `conflicted`, and `failed` as defined in the [transition ledger](epistemic_operation_transition_ledger.md).
+A preadmission `rejected` decision is an observable terminal intake outcome with an exact rejection receipt. It is not an accepted-operation result, does not create semantic publications, and does not enter `WMR-H08` terminal-result publication.
+
+Every admitted operation reaches exactly one terminal result identity. Its terminal classes are `applied`, `unchanged`, `abstained`, `incomplete`, `conflicted`, and `failed` as defined in the [transition ledger](epistemic_operation_transition_ledger.md).
 
 `unchanged` is first-class success when the requested Curation-owned state already holds under the exact cut. It names the existing semantic products so consumers can distinguish closure from work that never ran.
 
 `incomplete` is bounded evidence. It must name the frontier, exclusions, source failures, and exact cut. It cannot be upgraded to absence or correctness.
 
-`rejected`, `conflicted`, and `failed` are observable terminal states. They do not publish the desired semantic assertion and do not silently retry under the same operation identity.
+Preadmission `rejected`, postadmission `conflicted`, and postadmission `failed` are observable at their exact Curation positions. They do not publish the desired semantic assertion and do not silently retry under the same operation identity.
 
 No terminal class universally satisfies a Goal. Agent owns that later judgment.
 
@@ -107,6 +109,7 @@ The following barriers are independent:
 
 | Barrier | Evidence | What it does not prove |
 | --- | --- | --- |
+| Curation rejection | exact acceptance-rejection receipt is durable | operation admission, terminal result, or semantic effect |
 | Curation terminal | exact result identity and disposition are durable | Event append or downstream visibility |
 | Event durable | append receipt names ledger identity and sequence | Graph materialization or semantic admission |
 | Graph visible | projection position is at or beyond every required result sequence | Belief evidence or currentness judgment |
@@ -139,6 +142,8 @@ Curation outputs can appear in later Traversal cuts. This is a controlled feedba
 - output publication is finite under the declared bound
 
 Curation owns currentness for its own products. It uses explicit validity, withdrawal, or supersession semantics tied to rule and source revisions. Event time, Event order, endpoint equality, and Traversal `current_only` cannot replace owner policy.
+
+A failed standing operation remains terminal under its existing identity. A successor requires a named semantic trigger such as renewed authority, an explicit retry generation, or a changed declared input. A deadline may wake eligibility evaluation, but it cannot silently retry the failed identity. Runtime implementation cannot begin until the Curation contract selects and records the permitted successor trigger.
 
 ## Lifecycle Account
 

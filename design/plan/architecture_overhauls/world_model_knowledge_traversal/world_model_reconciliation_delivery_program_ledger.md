@@ -69,7 +69,7 @@ Maturity evidence:
 | persistence stakes | several current stages commit durable state before downstream delivery | forbid call-stack success or Event append from standing in for consumer visibility |
 | integration depth | the complete path crosses five packages and multiple independently durable owners | require cross-deliverable Gate Acceptance |
 
-User override: maturity envelope and `WMR-DD-01` design activation accepted on 2026-08-21. The user authorized continuation into `WMR-DD-02` on 2026-08-21 and `WMR-DD-03` on 2026-08-22.
+User override: maturity envelope and `WMR-DD-01` design activation accepted on 2026-08-21. The user authorized continuation into `WMR-DD-02` on 2026-08-21 and `WMR-DD-03` on 2026-08-22. On 2026-08-22 the user authorized independent retrospective assurance of `WMR-DD-01` and `WMR-DD-02`, with a dedicated subagent recommendation at each integrated-review and Gate Acceptance boundary.
 
 The envelope is accepted through `WMR-DD-03`. Later slices remain unauthorized.
 
@@ -116,6 +116,8 @@ None.
 `WMR-DD-02`, Epistemic Authorship And Settlement Loop, is complete with an accepted Gate Receipt and its delivery commit.
 
 `WMR-DD-01`, Semantic Spine Within Owner Publication To Frozen Traversal Cut, is complete with an accepted Gate Receipt and delivery commit `17c4933d`.
+
+Independent retrospective assurance is complete for `WMR-DD-01` and `WMR-DD-02`. Their current assurance receipts supplement rather than rewrite the historical receipts.
 
 Design owner: Codex detailed-design implementor
 
@@ -404,8 +406,8 @@ Design artifact size is governed by semantic closure and Gate Acceptance rather 
 | Phase | Product increment | Dependency | Status | Proof |
 | --- | --- | --- | --- | --- |
 | program design | approval-ready ledger, handoff tracker, and first Gate Definition | existing evidence maps | complete | [integrated program design review receipt](reviews/world_model_reconciliation_program_design_review_receipt.md) |
-| `WMR-DD-01` | semantic spine inside publication-to-TraversalCut vertical | program approval | complete | [accepted WMR-DG-01 receipt](delivery_gates/wmr_dg_01_acceptance_receipt.md) |
-| `WMR-DD-02` | Curation operation and settlement vertical | `WMR-DD-01` | complete | [accepted WMR-DG-02 receipt](delivery_gates/wmr_dg_02_acceptance_receipt.md) |
+| `WMR-DD-01` | semantic spine inside publication-to-TraversalCut vertical | program approval | complete | [retrospectively assured WMR-DG-01 receipt](delivery_gates/wmr_dg_01_retrospective_assurance_receipt.md) |
+| `WMR-DD-02` | Curation operation and settlement vertical | `WMR-DD-01` | complete | [retrospectively assured WMR-DG-02 receipt](delivery_gates/wmr_dg_02_retrospective_assurance_receipt.md) |
 | `WMR-DD-03` | PlannerCut assembly, Strategy Plan, and Agent progression vertical | `WMR-DD-01` and `WMR-DD-02` | complete | [accepted WMR-DG-03 receipt](delivery_gates/wmr_dg_03_acceptance_receipt.md) |
 | `WMR-DD-04` | Agent Task to Execution and observation return | `WMR-DD-03` | backlog | provisional `WMR-DG-04` |
 | `WMR-DD-05` | PDS compilation and Agent genesis | `WMR-DD-02` through `WMR-DD-04` | backlog | provisional `WMR-DG-05` |
@@ -418,8 +420,9 @@ Design artifact size is governed by semantic closure and Gate Acceptance rather 
 | --- | --- | --- | --- | --- | --- |
 | program design | `design/world-model-reconciliation` | program designer and integrated review owner | complete | `17c4933d` | included with the first accepted design gate |
 | `WMR-DD-01` | `design/world-model-reconciliation` | Codex detailed-design implementor | complete | `17c4933d` | Gate accepted and committed |
-| `WMR-DD-02` | `design/world-model-reconciliation` | Codex detailed-design implementor | complete | this delivery commit | Gate accepted, source code excluded |
-| `WMR-DD-03` | `design/world-model-reconciliation` | Codex detailed-design implementor | complete | this delivery commit | Gate accepted, source code excluded, subagent recommendations recorded at both review boundaries |
+| `WMR-DD-02` | `design/world-model-reconciliation` | Codex detailed-design implementor | complete | `4e511852` | Gate accepted, source code excluded |
+| `WMR-DD-03` | `design/world-model-reconciliation` | Codex detailed-design implementor | complete | `8cdfde3d` | Gate accepted, source code excluded, subagent recommendations recorded at both review boundaries |
+| retrospective assurance for `WMR-DD-01` and `WMR-DD-02` | `design/world-model-reconciliation` | Codex program owner with four independent subagent recommendations | complete | this assurance commit | Gates accepted, documentation-only corrections and durable assurance evidence |
 
 The worktree already contained the user-owned README modification and untracked detailed-design framing from the preceding discovery work. This program preserves them as current evidence and does not treat them as unrelated implementation changes.
 
@@ -427,8 +430,8 @@ The worktree already contained the user-owned README modification and untracked 
 
 | Gate | Revision | Slice | Coherence horizon | Owner | Status |
 | --- | --- | --- | --- | --- | --- |
-| [WMR-DG-01](delivery_gates/wmr_dg_01_owner_publication_to_frozen_cut.md) | 3 frozen | `WMR-DD-01` | owner observation through immutable `TraversalCut`, plus declared deferred-consumer edges | separate Gate Acceptance owner | accepted |
-| [WMR-DG-02](delivery_gates/wmr_dg_02_epistemic_authorship_and_settlement.md) | 1 frozen | `WMR-DD-02` | exact Curation input through independent Graph visibility and configured Belief settlement, with Agent and Planner acceptance deferred | Codex separate Gate Acceptance owner | accepted |
+| [WMR-DG-01](delivery_gates/wmr_dg_01_owner_publication_to_frozen_cut.md) | 3 frozen | `WMR-DD-01` | owner observation through immutable `TraversalCut`, plus declared deferred-consumer edges | separate Gate Acceptance owner with retrospective subagent recommendation | accepted and retrospectively assured |
+| [WMR-DG-02](delivery_gates/wmr_dg_02_epistemic_authorship_and_settlement.md) | 1 frozen | `WMR-DD-02` | exact Curation input through independent Graph visibility and configured Belief settlement, with Agent and Planner acceptance deferred | separate Gate Acceptance owner with retrospective subagent recommendation | accepted and retrospectively assured |
 | [WMR-DG-03](delivery_gates/wmr_dg_03_planner_cut_plan_and_progression.md) | 1 frozen | `WMR-DD-03` | exact source revisions through immutable `PlannerCut`, verified Plan, Agent judgment, product authorization, and admitted milestone progression | Codex separate Gate Acceptance lane with distinct subagent recommendation | accepted |
 | `WMR-DG-04` | provisional | `WMR-DD-04` | eligible complete Task through returned owner observation | unassigned | backlog |
 | `WMR-DG-05` | provisional | `WMR-DD-05` | principal declaration through exact inert activation inputs | unassigned | backlog |
@@ -448,6 +451,10 @@ Later gates name only a coherence horizon and activation condition. Their criter
 | `WMR-DG-02` acceptance | candidate digest `331d8a3196d0b9d564907e96d402b35f4101293cce31f2924551e1d445dbe2e5` | accepted | 2026-08-21 | fifteen criteria passed with no violation |
 | `WMR-DD-03` integrated review | initial digest `44906884283642e1d1a4de64e22180bfc86cea0f89c1c0e4c0d4fe051ffbd1c5`, corrected digest `d8844b80fec70ef77595c1c7c16fde1f5ed7cc50ce0c83648b163ff73b481446` | passed after verification | 2026-08-22 | subagent recommended four bounded corrections and verified all frozen findings |
 | `WMR-DG-03` acceptance | candidate digest `7431cbf059ce2c033c97514e4ba02a4b4f7f44842ce3b4a6a2352d5f2a4b7972` | accepted | 2026-08-22 | distinct subagent recommended acceptance, eighteen criteria passed with no violation |
+| `WMR-DD-01` retrospective integrated review | corrected digest `753046de7e4775b0a75db01c049593ec37febd897889382941bd844fbf8e0931` | passed after verification | 2026-08-22 | five frozen findings verified, no blocking correction-caused regression |
+| `WMR-DG-01` retrospective assurance | candidate digest `0d0b98504da47779c75024a074e2eb0f6dc8ff1557fca3821d6c5d920013cade` | accepted | 2026-08-22 | distinct subagent passed all fourteen criteria with no violation |
+| `WMR-DD-02` retrospective integrated review | corrected digest `7614ce172216e329d44843d552eaedea676ee300330c266a9f1fbbe63c4dbcd7` | passed after verification | 2026-08-22 | three frozen findings verified with no correction-caused regression |
+| `WMR-DG-02` retrospective assurance | candidate digest `271bd0734c5bd5add6adb403183405ca54e7198c09ce3d188ed1cb869b0107bc` | accepted | 2026-08-22 | distinct subagent passed all fifteen criteria with no violation |
 
 ## Gate Acceptance
 
@@ -456,12 +463,16 @@ Later gates name only a coherence horizon and activation condition. Their criter
 | `WMR-DG-01` | `41c8dbff632906f9863647a677f5e65d406196cdc1e24bb0b0ab177f6f805888` | `accepted` | none | [Gate Acceptance Receipt](delivery_gates/wmr_dg_01_acceptance_receipt.md) | handoff eligible, next slice unauthorized |
 | `WMR-DG-02` | `331d8a3196d0b9d564907e96d402b35f4101293cce31f2924551e1d445dbe2e5` | `accepted` | none | [Gate Acceptance Receipt](delivery_gates/wmr_dg_02_acceptance_receipt.md) | handoff eligible, next slice unauthorized |
 | `WMR-DG-03` | `7431cbf059ce2c033c97514e4ba02a4b4f7f44842ce3b4a6a2352d5f2a4b7972` | `accepted` | none | [Gate Acceptance Receipt](delivery_gates/wmr_dg_03_acceptance_receipt.md) | handoff eligible, next slice unauthorized |
+| `WMR-DG-01` retrospective assurance | `0d0b98504da47779c75024a074e2eb0f6dc8ff1557fca3821d6c5d920013cade` | `accepted` | none | [Retrospective Assurance Receipt](delivery_gates/wmr_dg_01_retrospective_assurance_receipt.md) | historical defects corrected, runtime unproved |
+| `WMR-DG-02` retrospective assurance | `271bd0734c5bd5add6adb403183405ca54e7198c09ce3d188ed1cb869b0107bc` | `accepted` | none | [Retrospective Assurance Receipt](delivery_gates/wmr_dg_02_retrospective_assurance_receipt.md) | historical closeout reconciled, runtime unproved |
 
 Last accepted gate definition: `WMR-DG-03` revision 1 frozen
 
 Acceptance state: accepted
 
 The `WMR-DG-03` receipt makes `WMR-DD-03` handoff eligible. It does not authorize `WMR-DD-04`.
+
+The retrospective `WMR-DG-01` and `WMR-DG-02` receipts strengthen accepted upstream evidence. They do not alter phase order or authorize `WMR-DD-04`.
 
 ## Complexity Delta
 
@@ -512,6 +523,18 @@ Program-design delta:
 - direct runtime behavior proved: none
 - direct design behavior proved: complete reasoning-cut assembly through Plan judgment, product authorization, Curation acceptance, exact milestone progression, and an Execution-ready Task producer envelope
 
+Retrospective assurance delta:
+
+- new assurance artifacts: six
+- existing design artifacts corrected or reconciled: nine
+- source files changed: zero
+- dependencies or workspace members added: zero
+- public runtime contracts added: zero
+- stores or schemas added: zero
+- background runtimes added: zero
+- direct runtime behavior proved: none
+- direct design behavior proved: occurrence-rich neutral carriage, completeness lineage, durable restart, exact rejection terminality, failed-work successor control, and truthful cross-phase tracker state
+
 ## Commit Effects
 
 Program commit rule: every accepted detailed-design gate closes through one delivery commit before the next slice is activated. A rejected or not-eligible gate does not produce a delivery commit.
@@ -525,6 +548,10 @@ If applied, this commit closes bounded Curation authorship through independent G
 Applied as `4e511852`.
 
 If applied, this commit closes complete `PlannerCut` assembly, heterogeneous Plan construction, Agent product authorization and milestone progression, records both subagent recommendations and accepted `WMR-DG-03` evidence, and leaves `WMR-DD-04` through `WMR-DD-07` unauthorized.
+
+Applied as `8cdfde3d`.
+
+If applied, this commit corrects and independently re-assures the accepted `WMR-DD-01` and `WMR-DD-02` design products, reconciles the cross-phase handoff tracker, records accepted retrospective Gate Receipts, and leaves source implementation plus `WMR-DD-04` through `WMR-DD-07` unauthorized.
 
 ## Review State
 
@@ -555,7 +582,21 @@ Candidate digest: `f2efca7d2269e39322cdeac0aa854875259f371995c43c92e7de7ef381315
 
 Frozen finding set: empty
 
-Verification: not invoked because no correction was required
+Historical verification: not invoked because the original review reported no finding
+
+Independent retrospective recommendation: [WMR-DD-01 retrospective assurance recommendation](reviews/wmr_dd_01_retrospective_assurance_recommendation.md)
+
+Retrospective frozen finding set:
+
+- `WMR-DD-01-RA-F01`, authoritative occurrence-rich owner publication carriage
+- `WMR-DD-01-RA-F02`, owner completeness receipt lineage into `TraversalCut`
+- `WMR-DD-01-RA-F03`, durable or exactly reconstructible publication restart
+- `WMR-DD-01-RA-F04`, direct equal-endpoint occurrence proof
+- `WMR-DD-01-RA-F05`, historical artifact-state reconciliation
+
+Program-owner dispositions: three `active-slice defect` corrections and two `evidence correction` dispositions, all accepted
+
+Retrospective verification: passed for all five findings with no blocking correction-caused regression
 
 ### WMR-DD-02 Review
 
@@ -567,7 +608,19 @@ Candidate digest: `e0f23a00a22e9624c22c1d35d2765f3cd10972d8ae4c9f0417d4cc06b2083
 
 Frozen finding set: empty
 
-Verification: not invoked because no correction was required
+Historical verification: not invoked because the original review reported no finding
+
+Independent retrospective recommendation: [WMR-DD-02 retrospective assurance recommendation](reviews/wmr_dd_02_retrospective_assurance_recommendation.md)
+
+Retrospective frozen finding set:
+
+- `WMR-DD-02-RA-F01`, historical accepted-state tracker reconciliation
+- `WMR-DD-02-RA-F02`, preadmission rejection distinct from admitted-operation terminality
+- `WMR-DD-02-RA-F03`, explicit successor requirement for failed standing work
+
+Program-owner dispositions: two `evidence correction` dispositions and one implementation activation condition, all accepted
+
+Retrospective verification: passed for all three findings with no correction-caused regression
 
 ### WMR-DD-03 Review
 
@@ -603,6 +656,7 @@ Verification: subagent verified all four findings, correction-caused regression 
 | gate becomes an unbounded review | frozen criteria, one remediation cycle, and separate program-owner disposition | acceptance owner proposes redesign or expands scope |
 | current code shapes overconstrain design | code is evidence for implemented behavior, canonical architecture owns intended boundaries | a current type is treated as the required future contract without semantic proof |
 | architecture prose outruns product proof | docs freshness and dependency security pressure every slice | a design cannot complete either declared trace |
+| historical self-review misses candidate defects | dedicated retrospective integrated-review and Gate Acceptance recommendations with exact manifests | any accepted upstream artifact lacks independent challenge or reproducible candidate identity |
 
 Authorized exceptions: none
 
@@ -659,6 +713,10 @@ Closeout evidence:
 - `WMR-DD-01` passed integrated design review and `WMR-DG-01` Gate Acceptance
 - `WMR-DD-02` passed integrated design review and `WMR-DG-02` Gate Acceptance
 - `WMR-DD-03` passed integrated design review and `WMR-DG-03` Gate Acceptance with separate subagent recommendations
+- `WMR-DD-01` and `WMR-DD-02` passed independent retrospective integrated review and separate retrospective Gate Acceptance
+- the handoff ledger now records accepted downstream design separately from unproved or partial runtime implementation
 - `WMR-DD-04` through `WMR-DD-07` remain unauthorized backlog
 
 Source implementation has not started and is not authorized by this ledger.
+
+The retrospective assurance work is complete and closes through this assurance commit.

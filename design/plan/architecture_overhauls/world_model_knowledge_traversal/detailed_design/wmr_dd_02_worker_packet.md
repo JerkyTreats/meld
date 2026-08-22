@@ -4,7 +4,7 @@ Date: 2026-08-21
 
 Slice: `WMR-DD-02`, Epistemic Authorship And Settlement Loop
 
-Status: active
+Status: historical worker packet, delivery complete
 
 Implementor: Codex detailed-design implementor
 

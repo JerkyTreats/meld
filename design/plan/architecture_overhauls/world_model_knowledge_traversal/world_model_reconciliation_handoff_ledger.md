@@ -2,9 +2,9 @@
 
 Date: 2026-08-22
 
-Status: active detailed-design handoff artifact
+Status: accepted detailed-design handoff artifact, no active slice
 
-Implementation authorization: none, `WMR-DD-03` design only
+Implementation authorization: none
 
 ## Purpose
 
@@ -33,34 +33,34 @@ An earlier phase may define and later implement a producer while its consumer re
 | `WMR-H01` | product observation to Events | `WMR-DD-01` | `WMR-DD-01` | current partial |
 | `WMR-H02` | Events to Graph materialization | `WMR-DD-01` | `WMR-DD-01` | current implemented for admitted domains |
 | `WMR-H03` | owner graph projections to bounded `TraversalCut` | `WMR-DD-01` | `WMR-DD-01` | current partial |
-| `WMR-H04` | `TraversalCut` to immutable `PlannerCut` | `WMR-DD-01` | `WMR-DD-03` | producer defined, consumer deferred |
+| `WMR-H04` | `TraversalCut` to immutable `PlannerCut` | `WMR-DD-01` | `WMR-DD-03` | design accepted, implementation unproved |
 | `WMR-H05` | `TraversalCut` to standing Curation | `WMR-DD-01` | `WMR-DD-02` | design accepted, implementation unproved |
 | `WMR-H06` | Traversal products to configured Belief | `WMR-DD-01` | `WMR-DD-02` | design accepted, current implementation partial |
-| `WMR-H07` | Agent Plan authorization to planned Curation | `WMR-DD-03` | `WMR-DD-02` and `WMR-DD-03` | Curation consumer design accepted, Agent producer active |
+| `WMR-H07` | Agent Plan authorization to planned Curation | `WMR-DD-03` | `WMR-DD-02` and `WMR-DD-03` | design accepted, implementation unproved |
 | `WMR-H08` | Curation terminal result to Events | `WMR-DD-02` | `WMR-DD-02` | design accepted, implementation unproved |
 | `WMR-H09` | Events to configured Belief | `WMR-DD-02` | `WMR-DD-02` | design accepted for configured routes, Curation implementation unproved |
-| `WMR-H10` | Belief revision to Agent | `WMR-DD-02` | `WMR-DD-03` | Belief producer design accepted, Agent consumer active |
-| `WMR-H11` | Agent Goal and cut to Strategy | `WMR-DD-03` | `WMR-DD-03` | current partial for executable-only candidate |
-| `WMR-H12` | Strategy Plan revision to Agent progression | `WMR-DD-03` | `WMR-DD-03` | design pending |
-| `WMR-H13` | Agent authorization to Execution admission | `WMR-DD-03` | `WMR-DD-04` | current implemented for one executable authorization |
+| `WMR-H10` | Belief revision to Agent | `WMR-DD-02` | `WMR-DD-03` | design accepted, current implementation partial |
+| `WMR-H11` | Agent Goal and cut to Strategy | `WMR-DD-03` | `WMR-DD-03` | design accepted, current implementation partial for executable-only candidate |
+| `WMR-H12` | Strategy Plan revision to Agent progression | `WMR-DD-03` | `WMR-DD-03` | design accepted, implementation unproved |
+| `WMR-H13` | Agent authorization to Execution admission | `WMR-DD-03` | `WMR-DD-04` | producer design accepted, consumer deferred |
 | `WMR-H14` | Execution admission to Task Network | `WMR-DD-04` | `WMR-DD-04` | current implemented with semantic seam pressure |
 | `WMR-H15` | planning route to package dispatch | `WMR-DD-04` | `WMR-DD-04` | current partial because handoff is process-local |
 | `WMR-H16` | Task Network ready work to dispatch | `WMR-DD-04` | `WMR-DD-04` | current implemented |
 | `WMR-H17` | Execution outcome to Events | `WMR-DD-04` | `WMR-DD-04` | current implemented for Task publication |
 | `WMR-H18` | integrated result lineage inspection | `WMR-DD-02` through `WMR-DD-04` | `WMR-DD-07` | proof projection only, owner-specific handoffs close earlier |
-| `WMR-H19` | admitted result to Agent reconciliation | `WMR-DD-03` | `WMR-DD-03` | current partial for Goal creation and satisfaction |
+| `WMR-H19` | admitted result to Agent reconciliation | `WMR-DD-03` | `WMR-DD-03` | Curation, Graph, and Belief design accepted, Execution return deferred |
 | `WMR-H20` | PDS package to owner installation receipts | `WMR-DD-05` | `WMR-DD-05` | current implemented for executable-only theory image |
 | `WMR-H21` | installed product to Agent genesis plan | `WMR-DD-05` | `WMR-DD-05` | current partial |
 | `WMR-H22` | prepared product to activation generation | `WMR-DD-05` | `WMR-DD-06` | standalone lifecycle substrate only |
 | `WMR-H23` | activation generation to participant readiness | `WMR-DD-06` | `WMR-DD-06` | current partial and disconnected |
 | `WMR-H24` | owner progress to wait and wake closure | owner phases | `WMR-DD-06` | current partial and disconnected |
 | `WMR-H25` | owner safe points to fenced retirement | owner phases | `WMR-DD-06` | design pending |
-| `WMR-H26` | Belief revision to `PlannerCut` assembly | `WMR-DD-02` | `WMR-DD-03` | Belief producer design accepted, Planner consumer active |
-| `WMR-H27` | Causation and Regime revisions to `PlannerCut` assembly | existing canonical owners | `WMR-DD-03` | canonical products exist, integrated cut relationship pending |
-| `WMR-H28` | directive context and Capability catalog revision to `PlannerCut` assembly | existing Agent and Capability owners | `WMR-DD-03` | current inputs exist in separate snapshots |
+| `WMR-H26` | Belief revision to `PlannerCut` assembly | `WMR-DD-02` | `WMR-DD-03` | design accepted, current implementation partial |
+| `WMR-H27` | Causation and Regime revisions to `PlannerCut` assembly | existing canonical owners | `WMR-DD-03` | design accepted, current implementation partial |
+| `WMR-H28` | directive context and Capability catalog revision to `PlannerCut` assembly | existing Agent and Capability owners | `WMR-DD-03` | design accepted, current implementation partial |
 | `WMR-H29` | Curation result Event to Graph visibility | `WMR-DD-02` | `WMR-DD-02` | design accepted, implementation unproved |
 | `WMR-H30` | Curation result Event to configured Belief revision | `WMR-DD-02` | `WMR-DD-02` | design accepted, implementation unproved |
-| `WMR-H31` | Curation-derived Belief revision to Agent acceptance | `WMR-DD-02` | `WMR-DD-03` | Belief producer design accepted, Agent consumer active |
+| `WMR-H31` | Curation-derived Belief revision to Agent acceptance | `WMR-DD-02` | `WMR-DD-03` | design accepted, current implementation partial |
 | `WMR-H32` | Execution outcome to semantic owner observation | `WMR-DD-04` | `WMR-DD-04` | current partial |
 | `WMR-H33` | returned owner observation to Events | `WMR-DD-04` | `WMR-DD-04` | current partial |
 | `WMR-H34` | returned owner Event to Graph visibility | `WMR-DD-04` | `WMR-DD-04` | current positions exist independently |
@@ -75,24 +75,24 @@ The accepted `WMR-DD-01` coherence horizon contains `WMR-H01` through `WMR-H06`.
 
 ### WMR-H01 Product Observation To Events
 
-| Obligation | Proposed design position |
+| Obligation | Accepted design position |
 | --- | --- |
 | producer owner | workspace, docs, or dependency security according to product meaning |
-| producer product | exact addressable observation set under source identity, snapshot, owner revision, and completeness boundary |
-| durable producer position | owner publication operation or exact owner receipt that survives append retry |
+| producer product | exact addressable observation set, typed publication batch, and completeness receipt under source identity, snapshot, owner revision, and completeness boundary |
+| durable producer position | durable publication operation or outbox, or authoritative durable source revision plus complete versioned enumeration rule and mandatory restart scan |
 | consumer owner | Events append authority |
 | consumer acceptance position | Event append receipt with ledger identity, stable record identity, and exact sequence |
-| identity and idempotency | owner observation identity includes source revision and observed semantic unit, while Event record identity deduplicates carriage |
+| identity and idempotency | owner observation identity includes source revision and observed semantic unit, Event record identity binds the typed publication batch, and neutral object and relation attachments remain routing hints rather than semantic authority |
 | supersession | owner policy names replacement, withdrawal, or continued coexistence across revisions |
 | wait | owner declares pending source, incomplete observation, or no eligible publication without claiming global quiescence |
 | wake | source delivery, durable deadline, or operator action named by the owner |
 | fence | source lineage and activation generation classify or reject late publication |
-| restart | owner source cursor and publication operation, followed by idempotent Event append |
+| restart | durable publication operation, or authoritative source revision plus mandatory enumeration, followed by idempotent Event append |
 | current gap | workspace builds rich envelopes but ordinary publication is best effort, while dependency security lacks complete durable publication |
 
 ### WMR-H02 Events To Graph Materialization
 
-| Obligation | Proposed design position |
+| Obligation | Accepted design position |
 | --- | --- |
 | producer owner | Events |
 | producer product | sequenced `EventRecord` carrying producer-owned objects, relation occurrences, provenance, and payload |
@@ -109,13 +109,13 @@ The accepted `WMR-DD-01` coherence horizon contains `WMR-H01` through `WMR-H06`.
 
 ### WMR-H03 Owner Graph Projections To TraversalCut
 
-| Obligation | Proposed design position |
+| Obligation | Accepted design position |
 | --- | --- |
 | producer owner | each publishing domain through its graph publication contract |
-| producer product | exact `GraphObjectPublication` and `RelationOccurrencePublication` revisions |
+| producer product | exact `GraphObjectPublication` and `RelationOccurrencePublication` revisions plus required owner completeness receipts |
 | durable producer position | one owner revision receipt and projection cursor per participating owner |
 | consumer owner | Graph and Traversal query boundary |
-| consumer acceptance position | bounded `TraversalResult` bound to one exact `TraversalCut` |
+| consumer acceptance position | bounded `TraversalResult` bound to one exact `TraversalCut` and carrying required completeness receipt references and statuses |
 | identity and idempotency | normalized query plus exact owner revision set derives result identity |
 | supersession | owner-shaped presence and currentness lifecycle, never generic endpoint replacement |
 | wait | cut reports missing owner receipts or bounded frontier without interpreting incompleteness as absence |
@@ -126,50 +126,50 @@ The accepted `WMR-DD-01` coherence horizon contains `WMR-H01` through `WMR-H06`.
 
 ### WMR-H04 TraversalCut To Later PlannerCut Assembly
 
-| Obligation | Proposed design position |
+| Obligation | Accepted design position |
 | --- | --- |
 | producer owner | Graph and Traversal |
 | producer product | occurrence-rich bounded `TraversalResult` with paths, frontier, truncation state, provenance, and exact `TraversalCut` |
 | durable producer position | exact participating owner revision set and normalized traversal query |
 | consumer owner | Planner |
-| consumer acceptance position | deferred to `WMR-DD-03`, where Planner assembles one immutable `PlannerCut` from the graph cut and every other exact source revision |
+| consumer acceptance position | complete immutable `PlannerCut` or explicit refusal naming invalid sources, as accepted by `WMR-DG-03` |
 | producer identity and idempotency | equal graph owner revisions, scope, query policy, and projection version produce equal `TraversalCut` identity |
-| consumer identity and idempotency | deferred to `WMR-DD-03` with Belief, Causation, Regime, directive, Capability catalog, scope, authority, and projection policy revisions |
+| consumer identity and idempotency | equal exact source revision set, scope, authority, and assembly policy yield equal `PlannerCut` identity |
 | supersession | a newer `TraversalCut` creates a distinct graph input and never rewrites the predecessor |
-| wait and wake | graph-input availability closes in `WMR-DD-01`, while complete reasoning-cut waits and wakes close in `WMR-DD-03` |
-| fence | temporal, branch, perspective, owner, and currentness policy belong to the producer cut, while Agent authority and directive scope are deferred to Planner assembly |
-| restart | exact graph owner revisions and query policy reproduce the producer cut, while full Planner restart closes in `WMR-DD-03` |
-| relationship state | producer defined, consumer deferred |
+| wait and wake | Planner waits on missing, stale, conflicting, unauthorized, or unacceptably truncated required sources and wakes on an exact source, policy, or authority update |
+| fence | temporal, transaction, horizon, branch, perspective, Agent, authority, and activation generation |
+| restart | native owner stores plus exact Planner assembly request reproduce the accepted consumer decision |
+| relationship state | full relationship design accepted by `WMR-DG-03`, implementation unproved |
 | current gap | current Planner keeps anchor and source fact identities but loses relation topology, while canonical docs require a complete multi-source `PlannerCut` |
 
 ### WMR-H05 TraversalCut To Standing Curation
 
-| Obligation | Proposed design position |
+| Obligation | Accepted design position |
 | --- | --- |
 | producer owner | Graph and Traversal |
 | producer product | bounded cut addressable by exact roots, owner revisions, scope, perspective, and bounds |
 | consumer owner | Curation |
-| consumer acceptance position | deferred to `WMR-DD-02`, expected to be durable accepted operation or standing-work identity |
-| identity and idempotency | producer cut identity is fixed in `WMR-DD-01`, operation identity is deferred |
-| wait and wake | consumer-owned declaration and structural wake are deferred |
-| fence | producer records the activation and perspective inputs it can supply, consumer validation is deferred |
-| restart | producer cut is reproducible, consumer restart source is deferred |
-| relationship state | producer defined, consumer deferred |
+| consumer acceptance position | durable standing selection identity accepted under exact Agent specification, perspective, rule revision, subject, source cut, and activation fence |
+| identity and idempotency | equal authority, rule, subject, cut, and selection bound derive equal operation identity |
+| wait and wake | Curation waits on an unavailable required revision, incomplete cut, uninstalled rule, or no eligible selection and wakes on the exact rule, owner publication, projection, or deadline position |
+| fence | Agent, perspective, branch, activation generation, rule revision, source cut, and owner authority |
+| restart | standing selection, operation acceptance, terminal result, and consumer visibility positions |
+| relationship state | design accepted by `WMR-DG-02`, implementation unproved |
 
-`WMR-DD-01` must not claim Curation readiness, liveness, quiescence, or completion from this entry.
+The `WMR-DD-01` receipt alone does not claim Curation readiness, liveness, quiescence, or completion. The later consumer contract is established by `WMR-DG-02`.
 
 ### WMR-H06 Traversal Products To Configured Belief
 
-| Obligation | Proposed design position |
+| Obligation | Accepted design position |
 | --- | --- |
 | producer owner | Graph and Traversal |
 | producer product | current anchor, exact provenance, or eligible owner publication under a named mapping |
 | consumer owner | Belief |
 | current consumer position | belief revision and view committed under one exact Belief key |
 | current gap | graph-only change does not generally make an already assessed Belief key eligible again |
-| active-slice duty | preserve exact producer identity and declare the later settlement dependency |
-| deferred duty | `WMR-DD-02` defines mapping, eligibility, wait, wake, and visibility closure |
-| relationship state | current partial, settlement closure deferred |
+| `WMR-DD-01` phase-local duty | preserve exact producer identity and declare the later settlement dependency |
+| downstream closure | `WMR-DD-02` defines mapping, eligibility, wait, wake, and visibility closure |
+| relationship state | configured settlement design accepted by `WMR-DG-02`, current implementation partial |
 
 ## Accepted WMR-DD-02 Edge Details
 
@@ -215,14 +215,14 @@ The `WMR-DD-02` coherence horizon closes standing Curation intake, terminal resu
 | --- | --- |
 | producer owner | Agent |
 | producer product | exact authorization envelope carrying the complete immutable Epistemic Operation and binding Agent, Goal, Plan revision, selection reference, frozen context, authority scope, and idempotency key |
-| durable producer position | deferred to Agent Plan progression in `WMR-DD-03` |
+| durable producer position | Agent authorization decision committed before handoff, as accepted in the `WMR-DD-03` detail below |
 | consumer owner | Curation |
 | consumer acceptance position | Curation acceptance identity after authority, operation shape, source cut, perspective, and generation validation |
 | identity and idempotency | Agent authorization identity and Curation operation identity remain distinct and replay-stable |
 | wait and wake | Curation waits for an exact authorization and wakes only from that structural identity, not a generic Event |
 | fence | authorization lineage, Agent, Goal, Plan revision, product, perspective, branch, and activation generation |
-| restart | Curation can resume from acceptance or terminal state, while Agent publication recovery remains deferred |
-| relationship state | Curation consumer design accepted by `WMR-DG-02`, Agent producer active in `WMR-DD-03` |
+| restart | Agent authorization and in-flight retry position plus Curation acceptance or rejection and terminal state |
+| relationship state | full relationship design accepted by `WMR-DG-03`, implementation unproved |
 
 ### WMR-H08 Curation Terminal Result To Events
 
@@ -283,11 +283,11 @@ The `WMR-DD-02` coherence horizon closes standing Curation intake, terminal resu
 | producer product | immutable revision bound to exact Curation evidence and comparator policy |
 | durable producer position | Belief key and revision sequence |
 | consumer owner | Agent |
-| consumer acceptance position | deferred durable subscription or Plan-progress position in `WMR-DD-03` |
-| wait and wake | producer revision exists; Agent selection, delivery, and wake remain deferred |
+| consumer acceptance position | durable milestone acceptance tied to one Plan dependency or Goal satisfaction review, as accepted in the `WMR-DD-03` detail below |
+| wait and wake | Agent waits when no relevant revision satisfies the declared dependency and wakes on the exact revision, invalidation, or subscription change |
 | fence | Agent subscription, perspective, branch, Goal or Plan lineage, and activation generation |
-| restart | Belief revision is replayable; Agent cursor recovery remains deferred |
-| relationship state | Belief producer design accepted by `WMR-DG-02`, Agent consumer active in `WMR-DD-03` |
+| restart | Agent input cursor and milestone decision advance only after durable absorption |
+| relationship state | full relationship design accepted by `WMR-DG-03`, current implementation partial |
 
 ### WMR-H26 Belief Revision To PlannerCut Assembly
 
@@ -297,13 +297,13 @@ The `WMR-DD-02` coherence horizon closes standing Curation intake, terminal resu
 | producer product | immutable revision-bound view with evidence and invalidation lineage |
 | durable producer position | exact Belief key and revision identity |
 | consumer owner | Planner |
-| consumer acceptance position | deferred complete `PlannerCut` assembly in `WMR-DD-03` |
-| wait and wake | Belief source availability closes here, multi-source cut selection remains deferred |
+| consumer acceptance position | complete immutable `PlannerCut` or explicit refusal naming invalid sources, as accepted in the `WMR-DD-03` detail below |
+| wait and wake | Planner waits on a missing, stale, conflicting, unauthorized, or out-of-scope required revision and wakes on the exact successor revision, policy, or authority update |
 | fence | perspective, branch, source evidence, comparator policy, and revision identity |
-| restart | exact revision can be reselected, while full cut reconstruction remains deferred |
-| relationship state | Belief producer design accepted by `WMR-DG-02`, Planner consumer active in `WMR-DD-03` |
+| restart | native owner stores plus the exact Planner assembly request reproduce the accepted consumer decision |
+| relationship state | full relationship design accepted by `WMR-DG-03`, current implementation partial |
 
-## Active WMR-DD-03 Edge Details
+## Accepted WMR-DD-03 Edge Details
 
 The `WMR-DD-03` coherence horizon closes complete `PlannerCut` assembly, Strategy Plan delivery, Agent Plan judgment, product authorization, Curation handoff, result absorption, and successor progression. It produces an exact Task authorization envelope while leaving Execution acceptance to `WMR-DD-04`.
 
@@ -322,7 +322,7 @@ The `WMR-DD-03` coherence horizon closes complete `PlannerCut` assembly, Strateg
 | wake | exact source revision, authority, scope, or policy change |
 | fence | temporal, transaction, horizon, branch, perspective, Agent, authority, and activation generation |
 | restart | reconstruct from native owner revisions and exact assembly policy |
-| relationship state | proposed for Gate Acceptance in `WMR-DD-03` |
+| relationship state | design accepted by `WMR-DG-03`, implementation unproved |
 
 ### WMR-H11 Agent Goal And Cut To Strategy
 
@@ -337,7 +337,7 @@ The `WMR-DD-03` coherence horizon closes complete `PlannerCut` assembly, Strateg
 | wait and wake | Strategy has no runtime wait; Agent waits on a named Planner assembly request and wakes on its exact complete-cut or refusal receipt |
 | fence | Agent, Goal, cut, policy, catalog, predecessor, bounds, and generation |
 | restart | reconstruct from the frozen request, not private search state |
-| relationship state | proposed for Gate Acceptance in `WMR-DD-03` |
+| relationship state | design accepted by `WMR-DG-03`, current implementation partial |
 
 ### WMR-H12 Strategy Plan Revision To Agent Progression
 
@@ -356,7 +356,7 @@ The `WMR-DD-03` coherence horizon closes complete `PlannerCut` assembly, Strateg
 | wake | exact Plan revision, completed Planner currentness check, authority decision, or owner milestone |
 | fence | Agent, Goal, Plan revision, context, directive, branch, perspective, authority, and generation |
 | restart | Agent judgment, Planner currentness checks, progression positions, and exact Plan revision |
-| relationship state | proposed for Gate Acceptance in `WMR-DD-03` |
+| relationship state | design accepted by `WMR-DG-03`, implementation unproved |
 
 ### WMR-H07 Agent Authorization To Planned Curation
 
@@ -372,7 +372,7 @@ The `WMR-DD-03` coherence horizon closes complete `PlannerCut` assembly, Strateg
 | wake | exact dependency milestone, authority update, consumer receipt, or successor decision |
 | fence | Agent, Goal, Plan revision, product, cut, perspective, authority, and generation |
 | restart | Agent authorization and in-flight retry position plus Curation acceptance or rejection and terminal state |
-| relationship state | proposed full closure in `WMR-DD-03` |
+| relationship state | design accepted by `WMR-DG-03`, implementation unproved |
 
 ### WMR-H13 Agent Authorization To Deferred Execution Admission
 
@@ -388,7 +388,7 @@ The `WMR-DD-03` coherence horizon closes complete `PlannerCut` assembly, Strateg
 | wait and wake | producer eligibility and authorization close here, consumer receipt and retry closure remain deferred |
 | fence | exact Plan revision, Task identity, context, authority, Goal lifecycle, and activation generation |
 | restart | producer authorization is durable, Execution admission recovery remains deferred |
-| relationship state | producer defined, consumer deferred |
+| relationship state | producer design accepted by `WMR-DG-03`, Execution consumer deferred to `WMR-DD-04` |
 
 ### WMR-H10 And WMR-H31 Belief Revision To Agent Acceptance
 
@@ -404,7 +404,7 @@ The `WMR-DD-03` coherence horizon closes complete `PlannerCut` assembly, Strateg
 | wake | exact relevant revision, invalidation, or subscription change |
 | fence | Agent, Goal, Plan revision, dependency, perspective, branch, and generation |
 | restart | Agent input cursor and milestone decision advance only after durable absorption |
-| relationship state | proposed for Gate Acceptance in `WMR-DD-03` |
+| relationship state | design accepted by `WMR-DG-03`, current implementation partial |
 
 ### WMR-H19 Admitted Result To Agent Reconciliation
 
@@ -420,7 +420,7 @@ The `WMR-DD-03` coherence horizon closes complete `PlannerCut` assembly, Strateg
 | wake | exact owner milestone, invalidation, authority change, or deadline |
 | fence | Plan revision, product, dependency, context, perspective, branch, authority, and generation |
 | restart | owner positions, Agent input cursors, and durable progression decisions |
-| relationship state | Curation, Graph, and Belief paths proposed for closure, Execution return remains deferred |
+| relationship state | Curation, Graph, and Belief paths accepted by `WMR-DG-03`, Execution return remains deferred |
 
 ### WMR-H26 Through WMR-H28 Native Revisions To PlannerCut
 
@@ -436,7 +436,7 @@ The `WMR-DD-03` coherence horizon closes complete `PlannerCut` assembly, Strateg
 | wake | exact owner successor revision, policy change, or authority update |
 | fence | native revision lineage, Agent perspective, branch, temporal scope, and generation |
 | restart | native owner stores plus exact Planner assembly request |
-| relationship state | proposed for Gate Acceptance in `WMR-DD-03` |
+| relationship state | design accepted by `WMR-DG-03`, current implementation partial |
 
 ## Lifecycle Projection
 

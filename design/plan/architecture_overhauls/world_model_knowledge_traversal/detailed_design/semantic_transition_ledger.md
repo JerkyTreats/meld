@@ -2,7 +2,7 @@
 
 Date: 2026-08-21
 
-Status: active-slice design product
+Status: retrospective correction candidate
 
 Scope: owner observation through immutable `TraversalCut`
 
@@ -17,8 +17,8 @@ This ledger fixes only the identities and durable positions needed by the first 
 | source identity | observation owner | a source is admitted under one owner namespace | activation generation and snapshot identity | owner source record or exact source reference |
 | source revision | observation owner | the owner establishes one exact source state | Event sequence and graph cut | owner revision or snapshot receipt |
 | observation identity | observation owner | one semantic unit is observed within a source revision | object address and Event record | owner observation product |
-| observation-set identity | observation owner | the owner closes a bounded completeness scope | individual observation and traversal result | completeness receipt under source revision |
-| publication-operation identity | observation owner | publication becomes retryable across Event append | Event record identity | durable owner operation or publication outbox |
+| observation-set identity | observation owner | the owner closes a bounded completeness scope | individual observation and traversal result | completeness receipt naming source revision, included scope, exclusions, failures, and terminal status |
+| publication-operation identity | observation owner | publication becomes retryable across Event append | Event record identity | durable owner operation or outbox, or authoritative durable source revision plus complete versioned enumeration rule and mandatory restart scan |
 | object address | semantic product owner | an object becomes cross-domain addressable | presence, truth, currentness, and publication revision | opaque `DomainObjectRef` |
 | object-publication identity | semantic product owner | one address receives an owner-qualified presence and scope statement | object address and Event record | owner revision plus scope and publication identity |
 | relation-occurrence identity | semantic product owner | one exact qualified relation is asserted | endpoint equality and relation type | owner occurrence identity plus revision and scope |
@@ -38,7 +38,8 @@ These positions are ordered by causality but remain independently owned:
 
 ```text
 owner observation durable
--> owner publication operation durable
+-> owner completeness receipt durable
+-> owner publication operation durably recoverable
 -> Event append durable at sequence N
 -> Graph projection durable through sequence N
 -> owner graph revision receipt included in cut C
@@ -72,6 +73,10 @@ No earlier position proves a later one. In particular:
 
 Owner retry uses publication-operation identity. Events deduplicates carriage through Event record identity. Graph replay deduplicates projection by ledger identity, sequence, and fact identity. Traversal result identity depends on normalized query and exact cut.
 
+The producer-owned typed publication batch is the authoritative Event payload. Neutral object and relation attachments are routing and index hints only. Equal endpoints or equal attachment values cannot replace owner publication identity, relation-occurrence identity, qualification, completeness receipt, or hydration lineage.
+
+A deterministically reconstructed publication operation is durable only by derivation from an authoritative durable source revision, a complete versioned enumeration rule, and a mandatory restart scan. Otherwise the owner must persist the publication operation or outbox directly.
+
 Supersession remains owner-shaped:
 
 - a new source revision does not erase the old source revision
@@ -91,7 +96,7 @@ Currentness always names owner policy, owner revision, temporal scope, branch sc
 
 | Edge | Wait | Wake | Fence | Restart source |
 | --- | --- | --- | --- | --- |
-| `WMR-H01` | source unavailable, observation incomplete, or publication pending | source delivery, durable deadline, or operator action | source lineage and activation generation | source cursor and publication operation |
+| `WMR-H01` | source unavailable, observation incomplete, or publication pending | source delivery, durable deadline, or operator action | source lineage and activation generation | durable publication operation, or authoritative source revision plus complete versioned enumeration rule and mandatory restart scan |
 | `WMR-H02` | ledger quiet beyond graph cursor or invalid publication blocked | Event watermark plus durable fallback | ledger identity, retention boundary, owner route, source revision | graph cursor, indexes, and derived outbox |
 | `WMR-H03` | required owner receipt absent or bounded frontier incomplete | owner revision or projection-position advancement | query scope, owner set, perspective, time, branch, currentness policy | owner projections, receipts, normalized query, exact cut |
 
