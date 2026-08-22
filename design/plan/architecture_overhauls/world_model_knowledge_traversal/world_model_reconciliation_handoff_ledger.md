@@ -2,7 +2,7 @@
 
 Date: 2026-08-22
 
-Status: accepted through `WMR-DG-05`, no active slice
+Status: accepted through `WMR-DG-06`, no active slice
 
 Implementation authorization: none
 
@@ -51,10 +51,10 @@ An earlier phase may define and later implement a producer while its consumer re
 | `WMR-H19` | admitted result to Agent reconciliation | `WMR-DD-03` | `WMR-DD-03` | design accepted through Execution return by `WMR-DG-04`, implementation partial |
 | `WMR-H20` | PDS package to owner installation receipts | `WMR-DD-05` | `WMR-DD-05` | design accepted by `WMR-DG-05`, current package installation strong but owner set incomplete |
 | `WMR-H21` | installed product to Agent genesis plan | `WMR-DD-05` | `WMR-DD-05` | design accepted by `WMR-DG-05`, implementation partial |
-| `WMR-H22` | prepared product to activation generation | `WMR-DD-05` | `WMR-DD-06` | producer accepted by `WMR-DG-05`, consumer deferred, standalone substrate only |
-| `WMR-H23` | activation generation to participant readiness | `WMR-DD-06` | `WMR-DD-06` | current partial and disconnected |
-| `WMR-H24` | owner progress to wait and wake closure | owner phases | `WMR-DD-06` | current partial and disconnected |
-| `WMR-H25` | owner safe points to fenced retirement | owner phases | `WMR-DD-06` | design pending |
+| `WMR-H22` | prepared product to activation generation | `WMR-DD-05` | `WMR-DD-06` | design accepted by `WMR-DG-06`, standalone substrate disconnected |
+| `WMR-H23` | activation generation to participant readiness | `WMR-DD-06` | `WMR-DD-06` | design accepted by `WMR-DG-06`, current partial and disconnected |
+| `WMR-H24` | owner progress to wait and wake closure | owner phases | `WMR-DD-06` | design accepted by `WMR-DG-06`, current partial and disconnected |
+| `WMR-H25` | owner safe points to fenced retirement | owner phases | `WMR-DD-06` | design accepted by `WMR-DG-06`, current implementation absent or disconnected |
 | `WMR-H26` | Belief revision to `PlannerCut` assembly | `WMR-DD-02` | `WMR-DD-03` | design accepted, current implementation partial |
 | `WMR-H27` | Causation and Regime revisions to `PlannerCut` assembly | existing canonical owners | `WMR-DD-03` | design accepted, current implementation partial |
 | `WMR-H28` | directive context and Capability catalog revision to `PlannerCut` assembly | existing Agent and Capability owners | `WMR-DD-03` | design accepted, current implementation partial |
@@ -630,6 +630,70 @@ The `WMR-DD-05` coherence horizon begins with one exact principal product select
 | restart | every named native receipt, Capability preparation receipt, and the inert closure if complete |
 | relationship state | producer accepted by `WMR-DG-05`, lifecycle consumer deferred to `WMR-DD-06` |
 
+## Accepted WMR-DD-06 Edge Details
+
+The `WMR-DD-06` coherence horizon begins with one inert prepared closure and closes a generation that is current with truthful liveness, interrupted and recoverable, replaced and draining, or safely retired. Root aggregates exact native-owner receipts without interpreting them.
+
+### WMR-H22 Prepared Closure To Lifecycle Acceptance
+
+| Obligation | Detailed-design position |
+| --- | --- |
+| producer owner | accepted activation preparation from `WMR-DG-05` |
+| producer product | exact inert prepared activation closure and expected-prior generation position |
+| durable producer position | immutable closure identity |
+| consumer owner | root activation lifecycle structure |
+| consumer acceptance position | accepted or duplicate-of-accepted resolves one deterministic preparing generation under closed admission; rejected, conflicted, or duplicates of those outcomes resolve terminal evidence with no generation |
+| identity and idempotency | assignment, closure, request key, expected prior, generation ordinal, and predecessor remain explicit |
+| wait and wake | stale, incomplete, unauthorized, or conflicted closure waits on exact successor input or head position |
+| fence | assignment, prepared closure, authority input, request key, and expected prior head |
+| restart | prepared closure, lifecycle decision journal, generation account, and assignment-head authority |
+| relationship state | design accepted by `WMR-DG-06`, current implementation disconnected |
+
+### WMR-H23 Generation To Participant Readiness
+
+| Obligation | Detailed-design position |
+| --- | --- |
+| producer owner | lifecycle and runtime composition over the accepted participant plan |
+| producer product | exact generation, participant realizations, registration parity, and participant incarnations |
+| durable producer position | preparing or realizing generation under closed admission |
+| consumer owners | every realized native participant owner, with required status preserved and unrealized optional specifications absent from registration |
+| consumer acceptance position | owner readiness receipt bound to generation, incarnation, realization, checkpoint, installed revisions, subscriptions, and readiness contract |
+| identity and idempotency | participant specification, realization, incarnation, registration, supervisor lease, and readiness remain distinct |
+| wait and wake | missing binding, incarnation, owner reconstruction, subscription, parity, or readiness for any realized participant waits on exact structural successor |
+| fence | generation, participant plan, realization, incarnation, bindings, installed revisions, and admission epoch |
+| restart | generation account, plan, realization set, registrations, owner stores, and readiness receipts |
+| relationship state | design accepted by `WMR-DG-06`, current substrate disconnected |
+
+### WMR-H24 Owner Progress To Wait And Wake Closure
+
+| Obligation | Detailed-design position |
+| --- | --- |
+| producer owners | every active native participant owner |
+| producer product | exact durable checkpoint, eligible-work account, or complete owner wait receipt |
+| durable producer position | owner-native cursor, revision, accepted work, and wait position |
+| consumer owner | structural lifecycle liveness projection and named wake owners or transports |
+| consumer acceptance position | every wake reference resolves under the generation or liveness projects stalled |
+| identity and idempotency | generation, incarnation, checkpoint, wait, wake owner, and transport revision remain explicit |
+| wait and wake | owner-defined condition names Event, revision, subscription, deadline, operation, binding, or operator successor |
+| fence | generation, incarnation, checkpoint, admission epoch, and wake-owner revision |
+| restart | owner checkpoints, waits, wake-resolution receipts, and durable producer-consumer positions |
+| relationship state | design accepted by `WMR-DG-06`, polling remains latency fallback only |
+
+### WMR-H25 Owner Safe Points To Fenced Retirement
+
+| Obligation | Detailed-design position |
+| --- | --- |
+| producer owners | native owners, passive sources, runtime composition, and supervisor within their own boundaries |
+| producer product | closed-admission drain receipts, owner safe points, unresolved-operation summaries, passive fences, reverse-order stop receipts, and lease releases |
+| durable producer position | exact non-current generation under one closed admission epoch |
+| consumer owner | root lifecycle retirement aggregation |
+| consumer acceptance position | fenced-quiescence receipt followed by immutable retirement receipt |
+| identity and idempotency | generation, incarnation set, checkpoints, unresolved operations, passive positions, stops, releases, and head proof remain explicit |
+| wait and wake | undrained work, unresolved effect, unfenced passive path, missing safe point, current head, or incomplete stop waits on its exact owner successor |
+| fence | generation, closed admission epoch, current-head proof, incarnation set, owner checkpoints, and structural dependency order |
+| restart | admission, owner stores, operations, subscriptions, safe points, head, stop, and lease records |
+| relationship state | design accepted by `WMR-DG-06`, runtime retirement unproved |
+
 ## Lifecycle Projection
 
 The handoff ledger and lifecycle view are two projections of the same relationship graph.
@@ -647,7 +711,7 @@ For every edge, lifecycle design must eventually name:
 - safe point and unresolved-operation summary
 - stop or retirement receipt
 
-`WMR-DD-01` closes owner publication through Traversal. `WMR-DD-02` closes Curation-local authorship and visibility. `WMR-DD-03` adds complete reasoning-cut assembly, Plan judgment, product authorization, Curation handoff, milestone absorption, and Agent-local progression. `WMR-DD-04` closes Execution admission and returned owner evidence. Active `WMR-DD-05` prepares exact inert product and Agent-genesis inputs while `WMR-H22` keeps lifecycle acceptance deferred. A clean process tick, empty queue, Event append, prepared closure, or absent consumer cannot serve as readiness or quiescence evidence.
+`WMR-DD-01` closes owner publication through Traversal. `WMR-DD-02` closes Curation-local authorship and visibility. `WMR-DD-03` adds complete reasoning-cut assembly, Plan judgment, product authorization, Curation handoff, milestone absorption, and Agent-local progression. `WMR-DD-04` closes Execution admission and returned owner evidence. Accepted `WMR-DD-05` supplies exact inert product and Agent-genesis preparation. Active `WMR-DD-06` defines the lifecycle consumer, realization, readiness, work-or-wait, recovery, replacement, and retirement positions. A clean process tick, empty queue, Event append, prepared closure, or absent consumer cannot serve as readiness or quiescence evidence.
 
 ## Gate Use
 
