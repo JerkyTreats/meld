@@ -2,7 +2,7 @@
 
 Date: 2026-08-22
 
-Status: accepted through `WMR-DG-06`, no active slice
+Status: accepted through `WMR-DG-07`, no active slice
 
 Implementation authorization: none
 
@@ -47,7 +47,7 @@ An earlier phase may define and later implement a producer while its consumer re
 | `WMR-H15` | planning route to package dispatch | `WMR-DD-04` | `WMR-DD-04` | design accepted by `WMR-DG-04`, current handoff process-local |
 | `WMR-H16` | Task Network ready work to dispatch | `WMR-DD-04` | `WMR-DD-04` | design accepted by `WMR-DG-04`, current local behavior strong |
 | `WMR-H17` | Execution outcome to Events | `WMR-DD-04` | `WMR-DD-04` | design accepted by `WMR-DG-04`, current Task publication implemented |
-| `WMR-H18` | integrated result lineage inspection | `WMR-DD-02` through `WMR-DD-04` | `WMR-DD-07` | proof projection only, owner-specific handoffs close earlier |
+| `WMR-H18` | integrated result lineage inspection | `WMR-DD-02` through `WMR-DD-06` | `WMR-DD-07` | proof projection accepted by `WMR-DG-07`, owner-specific handoffs accepted earlier |
 | `WMR-H19` | admitted result to Agent reconciliation | `WMR-DD-03` | `WMR-DD-03` | design accepted through Execution return by `WMR-DG-04`, implementation partial |
 | `WMR-H20` | PDS package to owner installation receipts | `WMR-DD-05` | `WMR-DD-05` | design accepted by `WMR-DG-05`, current package installation strong but owner set incomplete |
 | `WMR-H21` | installed product to Agent genesis plan | `WMR-DD-05` | `WMR-DD-05` | design accepted by `WMR-DG-05`, implementation partial |
@@ -563,7 +563,7 @@ When a Plan declares direct owner observation, returned Event, or Graph visibili
 | wake | exact owner milestone, invalidation, authority change, or deadline |
 | fence | Plan revision, product, dependency, context, perspective, branch, authority, and generation |
 | restart | owner positions, Agent input cursors, and durable progression decisions |
-| relationship state | Curation, Graph, and Belief paths accepted by `WMR-DG-03`, Execution return remains deferred |
+| relationship state | Curation, Graph, and Belief paths accepted by `WMR-DG-03`, Execution and semantic-owner return accepted through `WMR-DG-04` |
 
 ### WMR-H26 Through WMR-H28 Native Revisions To PlannerCut
 
@@ -694,6 +694,23 @@ The `WMR-DD-06` coherence horizon begins with one inert prepared closure and clo
 | restart | admission, owner stores, operations, subscriptions, safe points, head, stop, and lease records |
 | relationship state | design accepted by `WMR-DG-06`, runtime retirement unproved |
 
+## Accepted WMR-DD-07 Proof Projection
+
+### WMR-H18 Integrated Result Lineage Inspection
+
+| Obligation | Detailed-design position |
+| --- | --- |
+| producer owners | every accepted product, semantic, authority, Execution, return, and lifecycle owner from `WMR-DG-01` through `WMR-DG-06` |
+| producer product | exact native identity and durable position already defined by its owning gate |
+| durable producer position | owner-specific receipt, revision, cursor, checkpoint, decision, admission, outcome, safe point, or lifecycle aggregate |
+| consumer owner | read-only inspection projection |
+| consumer acceptance position | repeatable evidence resolution for one exact assignment, generation range, topology or Agent, subject, perspective, branch, and time fence |
+| identity and idempotency | frozen owner position set yields the same projection without changing owner state |
+| wait and wake | unavailable, incomplete, stale, conflicted, or unproved evidence remains explicit and waits only on its native owner successor |
+| fence | product revision, assignment, generation, incarnation where applicable, subject, perspective, branch, provenance, and temporal boundary |
+| restart | re-resolve exact native owner positions; inspection has no authoritative progress cursor |
+| relationship state | proof projection accepted by `WMR-DG-07`, all underlying handoffs accepted earlier |
+
 ## Lifecycle Projection
 
 The handoff ledger and lifecycle view are two projections of the same relationship graph.
@@ -711,7 +728,7 @@ For every edge, lifecycle design must eventually name:
 - safe point and unresolved-operation summary
 - stop or retirement receipt
 
-`WMR-DD-01` closes owner publication through Traversal. `WMR-DD-02` closes Curation-local authorship and visibility. `WMR-DD-03` adds complete reasoning-cut assembly, Plan judgment, product authorization, Curation handoff, milestone absorption, and Agent-local progression. `WMR-DD-04` closes Execution admission and returned owner evidence. Accepted `WMR-DD-05` supplies exact inert product and Agent-genesis preparation. Active `WMR-DD-06` defines the lifecycle consumer, realization, readiness, work-or-wait, recovery, replacement, and retirement positions. A clean process tick, empty queue, Event append, prepared closure, or absent consumer cannot serve as readiness or quiescence evidence.
+`WMR-DD-01` closes owner publication through Traversal. `WMR-DD-02` closes Curation-local authorship and visibility. `WMR-DD-03` adds complete reasoning-cut assembly, Plan judgment, product authorization, Curation handoff, milestone absorption, and Agent-local progression. `WMR-DD-04` closes Execution admission and returned owner evidence. Accepted `WMR-DD-05` supplies exact inert product and Agent-genesis preparation. Accepted `WMR-DD-06` closes lifecycle consumption, realization, readiness, work-or-wait, recovery, replacement, and retirement. Active `WMR-DD-07` composes these accepted positions without changing them. A clean process tick, empty queue, Event append, prepared closure, or absent consumer cannot serve as readiness or quiescence evidence.
 
 ## Gate Use
 

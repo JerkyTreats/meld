@@ -28,6 +28,8 @@ The completed fifth slice consists of the [product compilation and Agent genesis
 
 The completed sixth slice consists of the [activation generation and lifecycle transition ledger](detailed_design/activation_generation_and_lifecycle_transition_ledger.md) and [activation generation and lifecycle closure design](detailed_design/activation_generation_and_lifecycle_closure.md). Its bounded [subagent review recommendation](reviews/wmr_dd_06_subagent_review_recommendation.md) passed after correction, and a distinct [Gate Acceptance recommendation](delivery_gates/wmr_dg_06_subagent_acceptance_recommendation.md) supported the official [WMR-DG-06 Gate Acceptance](delivery_gates/wmr_dg_06_acceptance_receipt.md).
 
+The completed seventh slice consists of the [integrated product outcome evidence matrix](detailed_design/integrated_product_outcome_evidence_matrix.md) and [integrated product proof and inspection design](detailed_design/integrated_product_proof_and_inspection.md). Its bounded [subagent review recommendation](reviews/wmr_dd_07_subagent_review_recommendation.md) passed after correction, and a distinct [Gate Acceptance recommendation](delivery_gates/wmr_dg_07_subagent_acceptance_recommendation.md) supported the official [WMR-DG-07 Gate Acceptance](delivery_gates/wmr_dg_07_acceptance_receipt.md).
+
 ## Reviews
 
 The `reviews` folder contains focused evidentiary pressure on shared Goal language and Event-backed Epistemic Operations. It also contains the [program design review receipt](reviews/world_model_reconciliation_program_design_review_receipt.md) for the exact detailed-design program candidate. Reviews inform requirements but do not override cognitive architecture.
