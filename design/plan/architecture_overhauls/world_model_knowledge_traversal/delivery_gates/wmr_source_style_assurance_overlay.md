@@ -14,7 +14,7 @@ Source implementation authority: `WMR-SI-01` only
 
 ## Purpose
 
-Every future source-changing World Model Reconciliation slice must complete one dedicated Style Assurance pass after logical implementation review succeeds and before Delivery Gate Acceptance begins.
+Every source-changing World Model Reconciliation slice must complete one dedicated Style Assurance pass after logical implementation review succeeds and before Delivery Gate Acceptance begins.
 
 The overlay separates two different judgments. Implementation review establishes that the source behaves correctly inside the authorized slice. Style Assurance establishes that the exact reviewed candidate meets Meld commenting, structural, formatting, lint, and risk-proportionate testing expectations. Delivery Gate Acceptance then judges cross-deliverable coherence.
 
@@ -24,7 +24,7 @@ This ordering lets logical implementation stabilize before maintainability and t
 
 This is an append-only overlay over source implementation gates. It does not revise the accepted `WMR-DG-01` through `WMR-DG-07` design receipts, the accepted `WMR-DG-04` revision 2 correction, or the accepted `WMR-DG-07` revision 3 Startup amendment.
 
-The exact accepted design manifests remain frozen. This overlay is outside those manifests because it governs source delivery that has not yet been authorized or produced.
+The exact accepted design manifests remain frozen. This overlay is outside those manifests because it governs later source delivery authority and evidence rather than the accepted design candidate.
 
 The overlay applies to `WMR-SI-01` and every later source-changing World Model Reconciliation slice. A documentation-only correction may record the overlay as not applicable when it changes no source, executable test, build script, schema generator, or source-facing generated artifact.
 
@@ -96,9 +96,9 @@ New or changed fuzz targets require a successful build and bounded smoke run. Lo
 
 | Crate | Current assurance precedent | Expected `WMR-SI-01` use |
 | --- | --- | --- |
-| `meld-world-model` | `proptest` plus fuzz targets for Belief config, graph walk, Planner projection, and Agent contracts | extend or add focused coverage for Curation contracts, `TraversalCut`, `PlannerCut`, `StrategyPlan`, and Agent Plan progression according to final changed surface |
-| `meld-execution` | `proptest` plus fuzz targets for planning, runtime, Task Network contracts, commands, replay, and readiness | extend existing targets when complete Task admission or lowering changes their public or durable inputs |
-| root `meld` | property tests and extensive runtime, lifecycle, initialization, theory, harness, and integration suites | add nonce identity properties, exact Startup product integration, restart specimens, and live harness proof without creating a new fuzz crate by default |
+| `meld-world-model` | `proptest` plus fuzz targets for graph walk and world-model contracts | extend graph-walk and contract coverage for occurrence identity, `TraversalCut`, boundedness, completeness, replay, and restart according to the final changed surface |
+| `meld-execution` | `proptest` plus fuzz targets for planning, runtime, Task Network contracts, commands, replay, and readiness | no `WMR-SI-01` work because executable intake begins in `WMR-SI-04` |
+| root `meld` | property tests and extensive runtime, initialization, harness, and integration suites | prove existing owner publication through Event, Graph, and Traversal only when thin root wiring or direct integration coverage changes |
 | `meld-events` | fuzz targets for Event contracts, replay, and writer behavior | no new work when the accepted neutral Event contracts remain unchanged |
 | `meld-lang` | `proptest` over pure language behavior | no new work when Plan grammar remains owned by `meld-world-model` |
 
@@ -109,10 +109,8 @@ The exact command set follows the actual changed crates. The minimum candidate i
 ```text
 cargo fmt --all -- --check
 cargo clippy -p meld-world-model --all-targets -- -D warnings
-cargo clippy -p meld-execution --all-targets -- -D warnings
 cargo clippy -p meld --all-targets -- -D warnings
 cargo test -p meld-world-model
-cargo test -p meld-execution
 cargo test -p meld --lib
 cargo test --workspace -- --test-threads=1
 ```
@@ -121,7 +119,7 @@ Commands for unchanged crates may be omitted from the focused set, but public AP
 
 Applicable fuzz targets use the crate-local fuzz package and a bounded smoke run such as the existing `-runs=1` convention. Target selection is evidence-driven and must be listed in the receipt.
 
-Runtime corrections also require the live harness evidence mandated by the [Harness Development Policy](../../../../../governance/harness_development_policy.md). Unit tests cannot substitute for the nonce path visibly clearing through durable served projections.
+Runtime corrections also require the live harness evidence mandated by the [Harness Development Policy](../../../../../governance/harness_development_policy.md). When `WMR-SI-01` changes root runtime composition, unit tests cannot substitute for owner publication visibly clearing through durable Event, Graph, and Traversal positions.
 
 ## Criteria
 
@@ -160,6 +158,6 @@ The receipt establishes style and test-quality readiness only. It does not prove
 
 ## Current Program State
 
-This overlay is active for the authorized `WMR-SI-01` source slice. Source implementation has not started. The slice is paused at its clean design baseline until the design and documentation alignment pass is accepted. Later Docs Freshness and Dependency Security migration, the broader cross-Agent product proof, and optional dependent-PDS gating remain unauthorized.
+This overlay is active for the authorized `WMR-SI-01` owner-publication-to-`TraversalCut` source slice. Source implementation has not started. `WMR-SI-02` through `WMR-SI-06` remain dependency-ordered backlog. Startup is `WMR-SI-07`, the first integrated PDS runtime proof after those substrate slices. Docs Freshness is `WMR-SI-08` and Dependency Security is `WMR-SI-09`. Every later slice remains unauthorized until separately activated.
 
-The [source activation record](wmr_si_01_source_activation_record.md) preserves the exact authorization boundary and the [source Delivery Gate](wmr_si_01_startup_reconciliation_gate.md) defines the cross-domain acceptance claims that follow logical review and this Style Assurance pass.
+The [source activation record](wmr_si_01_source_activation_record.md) preserves the exact authorization boundary and the [source Delivery Gate](wmr_si_01_owner_publication_to_traversal_cut_gate.md) defines the cross-domain acceptance claims that follow logical review and this Style Assurance pass. The [Startup gate](wmr_si_07_startup_reconciliation_gate.md) remains provisional backlog.

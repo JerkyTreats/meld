@@ -4,55 +4,68 @@ Date: 2026-08-23
 
 Slice identifier: `WMR-SI-01`
 
-Status: authorized and ready, paused for design and documentation alignment acceptance
+Design source: `WMR-DD-01`
+
+Status: authorized and ready after the commit containing this record
 
 Authorization authority: user
 
 Implementation started: no
 
-Baseline commit: `e0f8738e`
+Pre-correction baseline commit: `b25d4c6b`
+
+Implementation baseline: the commit containing this record and the canonical source delivery ledger
+
+## Correction
+
+The first activation record incorrectly treated `meld_startup` as the first source slice. The user requirement placed Startup before Docs Freshness and Dependency Security, not before the World Model Reconciliation substrate required to run Startup.
+
+The [Startup injection baseline](../startup_pds_design_requirements/expected_injection_baseline.md) requires implementation equivalents of `WMR-DD-01` through `WMR-DD-06` before the Startup product proof. This record restores that dependency order.
 
 ## Authorized Outcome
 
-Implement the non-blocking `meld_startup` PDS as the first World Model Reconciliation runtime product proof. One fresh admission epoch must carry one deterministic nonce from standing epistemic mismatch through Agent Goal inception, Strategy Plan construction, Agent product authorization, Execution, owner-issued Event publication, Graph and Traversal visibility, planned confirmation Curation, configured Belief settlement, Agent milestone acceptance, and Goal satisfaction.
+Implement the accepted owner-publication-to-`TraversalCut` vertical. An owner observation and bounded completeness account must become a durable typed publication, pass through neutral Event carriage, become occurrence-preserving Graph material, and return through one immutable bounded `TraversalCut` with exact owner, revision, provenance, frontier, truncation, and hydration lineage.
 
-Startup is first in delivery order so later products can use its inspection account while they are implemented. Runtime activation does not block on nonce satisfaction.
+The direct proof must include an already-observed docs specimen, a missing-or-incomplete docs specimen that does not invent absence or expectedness, and an owner-dissimilar dependency-security specimen. This establishes an owner-neutral graph substrate without implementing Curation, Strategy, Agent progression, Execution changes, PDS genesis, lifecycle composition, or Startup.
 
 ## Accepted Design Basis
 
-- [WMR-DG-04 revision 2 receipt](wmr_dg_04_revision_2_acceptance_receipt.md)
-- [WMR-DG-07 revision 3 receipt](wmr_dg_07_revision_3_acceptance_receipt.md)
-- [exact accepted candidate manifest](../reviews/world_model_reconciliation_startup_integration_candidate.sha256)
-- [Startup full design](../startup_pds_design_requirements/startup_pds_design_specification.md)
-- [Startup transition ledger](../startup_pds_design_requirements/semantic_transition_ledger.md)
-- [current cognitive architecture](../../../../cognitive_architecture/README.md)
+- [WMR-DG-01 Gate Definition](wmr_dg_01_owner_publication_to_frozen_cut.md)
+- [retrospective WMR-DG-01 receipt](wmr_dg_01_retrospective_assurance_receipt.md)
+- [owner publication detailed design](../detailed_design/owner_publication_to_traversal_cut.md)
+- [semantic transition ledger](../detailed_design/semantic_transition_ledger.md)
+- [canonical Graph and Traversal design](../../../../cognitive_architecture/world_model/graph/README.md)
 - [source Style Assurance overlay](wmr_source_style_assurance_overlay.md)
-
-The accepted manifest remains the immutable design candidate. This activation record is later authority evidence and is intentionally outside that manifest.
 
 ## Active Boundary
 
-The slice may implement only behavior required to prove the accepted Startup path through existing domain ownership. Required owner behavior may be added within world-model Curation, Graph and Traversal, Belief, Planner, Strategy, Agent, PDS compilation and activation, root runtime composition, the reusable nonce owner, Execution Goal Set and lowering, native lifecycle, and read-only inspection.
+The active source surface is owner publication, typed Event attachment production, Graph admission and projection, Traversal contracts and storage, immutable cut construction, owner-correct hydration references, and the narrow root wiring needed for direct proof.
 
-`meld-events` and `meld-lang` remain unchanged unless direct implementation evidence proves the accepted contracts cannot be realized without a specific amendment. Execution remains ignorant of Strategy Plans, epistemic canonicality, and Startup meaning.
+`meld-events` remains a neutral durable carrier and should be reused unchanged unless direct source evidence proves its accepted contract cannot carry the owner publication. `meld-lang`, Curation, Belief settlement, Planner, Strategy, Agent Plan progression, Execution, PDS activation, lifecycle aggregation, Startup, Docs Freshness migration, Dependency Security migration, and legacy Workflow are outside active behavior scope.
 
-The slice may add the exact reusable nonce owner and `nonce.emit.v1` Capability authorized by the revision 3 exception. It may not add arbitrary Event emission, a second Event path, another graph authority, another Task Network, another runtime coordinator, or a Startup-specific Execution rule.
+Docs and dependency-security fixtures or current owner publications may be used to prove substrate neutrality. Their semantic workflows are not active-slice implementations.
 
-## Explicitly Unauthorized
+## Source Sequence
 
-- Docs Freshness migration
-- Dependency Security migration
-- broad cross-Agent Merkle-scan product proof beyond behavior strictly required by the Startup slice
-- fail-closed dependent-PDS activation
-- legacy Workflow integration
-- new crate, store, protocol, service, or background runtime not already authorized by accepted design
-- commit or push without the applicable repository and user authority
+| Slice | Product increment | Status |
+| --- | --- | --- |
+| `WMR-SI-01` | owner publication through immutable `TraversalCut` | authorized, awaiting corrected clean checkpoint |
+| `WMR-SI-02` | bounded Curation authorship and settlement | backlog |
+| `WMR-SI-03` | `PlannerCut`, heterogeneous Strategy Plan, and Agent progression | backlog |
+| `WMR-SI-04` | Execution admission, unified coherence, and observation return | backlog |
+| `WMR-SI-05` | PDS product compilation and Agent genesis | backlog |
+| `WMR-SI-06` | activation generation and lifecycle closure | backlog |
+| `WMR-SI-07` | non-blocking `meld_startup` integrated runtime proof and inspection | backlog |
+| `WMR-SI-08` | Docs Freshness product migration | backlog |
+| `WMR-SI-09` | Dependency Security product migration | backlog |
+
+Each slice requires its predecessor Gate Acceptance Receipt and separate activation authority. Startup remains the first integrated PDS runtime proof and is implemented before the two product migrations.
 
 ## Delivery Sequence
 
 ```text
 source implementation
--> direct fresh-epoch product proof
+-> direct owner-publication and TraversalCut proof
 -> logical implementation review
 -> bounded logical correction and verification
 -> Style Assurance
@@ -60,14 +73,16 @@ source implementation
 -> handoff eligible
 ```
 
-The [source Delivery Gate](wmr_si_01_startup_reconciliation_gate.md) is frozen before source edits. Passing it does not authorize Docs Freshness, Dependency Security, fail-closed Startup policy, commit, or push.
+The [WMR-SI-01 source Delivery Gate](wmr_si_01_owner_publication_to_traversal_cut_gate.md) is frozen before source edits. Passing it does not activate `WMR-SI-02`.
 
 ## Stop Conditions
 
-Pause before architectural expansion, movement of semantic ownership, edits to `meld-events` or `meld-lang`, a second persistence authority, any runtime gate on nonce satisfaction, or source scope that cannot be tied to a declared Startup proof position.
+Pause before a new Event store, graph authority, ontology, universal record schema, runtime coordinator, compatibility path, new crate, Curation behavior, Planner behavior, Strategy behavior, Agent progression, Execution change, or product-specific semantic rule.
 
-Pause when implementation evidence contradicts an accepted identity, authority, lifecycle, or producer-consumer boundary. Record the conflict as a design finding rather than hiding it behind a compatibility guard.
+Pause if an owner publication cannot be made durable without a new store or protocol, if Graph admission would need to interpret owner meaning, or if `TraversalCut` completeness cannot be expressed without changing an accepted owner boundary.
 
 ## Current State
 
-The accepted design baseline is committed and clean. Source implementation is authorized but has not started. This activation becomes operational only after the current design and documentation alignment pass is accepted.
+The source program starts at the existing `DomainObjectRef`, Event attachment, `GraphRuntime`, `TraversalStore`, and `TraversalQuery` seams. The first engineering task is characterization of that path against the accepted identity and durability ladder, followed by the smallest contract additions needed for durable owner publication, occurrence identity, completeness receipts, immutable cuts, and reproducible bounded results.
+
+No source implementation has started. Source edits begin only after this correction is committed and the worktree is clean. The commit containing this record becomes the implementation baseline.

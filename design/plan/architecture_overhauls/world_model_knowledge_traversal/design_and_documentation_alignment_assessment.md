@@ -2,7 +2,7 @@
 
 Date: 2026-08-23
 
-Status: alignment corrections complete, awaiting user acceptance
+Status: alignment corrections complete with source-sequencing correction
 
 Concern: determine whether canonical cognitive architecture, accepted World Model Reconciliation design, Startup requirements, source delivery controls, and implementation-facing contracts describe one realizable architecture before source work begins.
 
@@ -95,20 +95,20 @@ The corrected language names Task admission lifecycle, producer-bound Task input
 
 The frozen revision 3 candidate correctly records its own pre-acceptance state, but later receipts and user authorization made that prose stale as a current program index. Rewriting the frozen candidate would destroy exact acceptance identity.
 
-The source Style Assurance overlay now points to a separate activation record and frozen source Delivery Gate. `WMR-SI-01` is authorized and ready, source work has not started, and the slice remains paused until this alignment pass is accepted.
+The first source activation record incorrectly made Startup the active source slice. That confused first integrated product proof with first substrate implementation. The corrected overlay and activation record make owner publication through immutable `TraversalCut` the only active slice. `WMR-SI-02` through `WMR-SI-06` implement the remaining native seams in dependency order. Startup is `WMR-SI-07`, followed by Docs Freshness and Dependency Security.
 
 ## Separated Scopes
 
 The runtime path includes every domain in the frozen affected set.
 
-Behavior expected to change in `WMR-SI-01` is concentrated in PDS realization, world-model Graph and Traversal, Belief routes, Planner, Curation, Strategy, Agent, narrow Execution intake and lowering, nonce publication, root lifecycle composition, and inspection.
+Behavior expected to change across the complete source program spans PDS realization, world-model Graph and Traversal, Belief routes, Planner, Curation, Strategy, Agent, narrow Execution intake and lowering, nonce publication, root lifecycle composition, and inspection.
 
-Likely source writes are narrower still and must be established from current code before editing. `meld-events`, `meld-lang`, Sensory owner semantics, generic product domains, Docs Freshness, Dependency Security, and legacy Workflow are explicit non-integration decisions for the first slice unless direct evidence proves a specific accepted-path blocker.
+The active `WMR-SI-01` write scope is narrower. It covers owner publication, Graph admission and projection, Traversal contracts and storage, immutable cut construction, hydration references, and thin root wiring needed for proof. `meld-events`, `meld-lang`, Curation, Belief settlement, Planner, Strategy, Agent progression, Execution, PDS activation, lifecycle aggregation, Startup, Docs Freshness, Dependency Security, and legacy Workflow are explicit non-integration decisions for this slice unless direct evidence proves a specific accepted-path blocker.
 
 ## Readiness Judgment
 
 The architecture now describes one coherent product path at every normative level. The remaining work is implementation, not unresolved design.
 
-No outstanding architecture choice blocks `WMR-SI-01`. The optional fail-closed dependent-product policy remains intentionally unselected. The broad Docs Freshness, Dependency Security, and cross-Agent product migrations remain later unauthorized slices.
+No outstanding architecture choice blocks `WMR-SI-01`. Its source Delivery Gate is owner publication through one immutable occurrence-rich `TraversalCut`. The optional fail-closed dependent-product policy remains intentionally unselected. Startup and the product migrations remain later unauthorized slices.
 
 Confidence is high for owner boundaries, product cardinality, Planner and Strategy separation, Agent authority, Execution ignorance, Startup epoch identity, lifecycle ordering, and delivery authority. Confidence is intentionally lower for exact source file scope until implementation discovery regenerates the code ground map from the clean baseline.
