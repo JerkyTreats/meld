@@ -10,7 +10,7 @@ It does not own directives, beliefs, Strategy Plans, Epistemic Operations, seman
 
 ## Public Contracts
 
-The crate exposes Task admission and curation, Capability registration, planning ticks, Task Network queries and mutations, dispatch ports, and outcome publication.
+The crate exposes Task admission lifecycle, Capability registration, planning ticks, Task Network queries and mutations, dispatch ports, and outcome publication.
 
 A Task admission carries Goal attribution and producer authority. It does not carry a world-model projection or require the crate to query the world model.
 

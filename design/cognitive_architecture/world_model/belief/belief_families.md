@@ -8,7 +8,7 @@ A belief family is the grounding contract for one concern class.
 
 The belief framework defines containers: `BeliefKey`, `EvidenceItem`, `BeliefRevision`, `BeliefView`. Those containers carry runtime content slots — dimension id, predicate id, evidence schema id, evidence payload, and posterior summary — that the framework deliberately leaves opaque. Without grounding, the framework tracks claims about nothing.
 
-A belief family fills those slots for one kind of question. It defines what the belief is about, what evidence looks like, what the posterior means, which comparator engine runs assessment, and how cost and value are measured for goal curation. The family is the unit that makes a belief inspectable, calibratable, and semantically meaningful.
+A belief family fills those slots for one kind of question. It defines what the belief is about, what evidence looks like, what the posterior means, which comparator engine runs assessment, and how cost and value inform Agent Goal judgment. The family is the unit that makes a belief inspectable, calibratable, and semantically meaningful.
 
 Families are not framework internals. They are domain concerns expressed in framework vocabulary. Each family should be readable by someone who understands the concern but has not read the consolidated domain specs.
 
@@ -87,7 +87,7 @@ enum BeliefPredicate {
 }
 ```
 
-Predicates are evaluated by the world model agent during goal curation and satisfaction checking. They do not carry domain semantics — they are conditions over the shaped view. Domain meaning lives in the dimension and the posterior.
+Predicates are evaluated by the world model Agent during Goal judgment and satisfaction checking. They do not carry domain semantics — they are conditions over the shaped view. Domain meaning lives in the dimension and the posterior.
 
 ### `EvidenceValue`
 
@@ -124,13 +124,13 @@ The `Probability` variant is the common case. A belief about "are docs stale" re
 
 ## Worked Examples
 
-The families below are concrete runtime configuration examples grounded in the docs writer concern class and its adjacent concerns. Content freshness is the primary example — it is traced end-to-end from spine fact through goal satisfaction. The remaining families demonstrate how the same pattern applies to related concerns, how cross-family evidence flows, and how meta-beliefs feed goal curation.
+The families below are concrete runtime configuration examples grounded in the docs writer concern class and its adjacent concerns. Content freshness is the primary example — it is traced end-to-end from spine fact through Goal satisfaction. The remaining families demonstrate how the same pattern applies to related concerns, how cross-family evidence flows, and how meta-beliefs inform Agent Goal judgment.
 
-These are not the only belief families the system will need. They are the first families that exercise the full flywheel and establish the grounding pattern for families defined later.
+These are not the only belief families the system will need. They are the first families that exercise the complete reconciliation loop and establish the grounding pattern for families defined later.
 
 ### Family: Content Freshness
 
-The docs writer's belief. The first family that exercises the full flywheel.
+The docs writer's belief. The first family that exercises the complete reconciliation loop.
 
 ### Identity
 
@@ -166,7 +166,7 @@ Prior: `0.3` as a configured default, refined by prior store keyed on subject an
 
 Posterior: `sigmoid(logit_prior + evidence_score * 3.0)`
 
-Decision threshold for goal curation: `0.6` — posterior above this means the agent's cost-benefit comparator receives a "probably stale" input.
+Decision threshold for Agent Goal judgment: `0.6` — posterior above this means the Agent's cost-benefit comparator receives a "probably stale" input.
 
 ### Belief View For Consumers
 
@@ -194,7 +194,7 @@ BeliefViewConflict {
 
 The posterior says that docs are probably stale. Freshness says that assessment was recent. Those are different statements. A belief can be fresh while its posterior says the subject is stale. The framework distinguishes these meanings and the family makes them concrete.
 
-### Goal Curation Binding
+### Agent Goal Judgment Binding
 
 | Concern class | `content_freshness` |
 |---|---|
@@ -265,7 +265,7 @@ Dual comparator:
 
 The rule comparator handles a hard signal such as tests failing now. The Bayesian comparator handles a soft signal such as tests being unreliable over time. The revision records which comparator produced the posterior and whether the result is settled or provisional.
 
-### Goal Curation Binding
+### Agent Goal Judgment Binding
 
 | Concern class | `test_health` |
 |---|---|
@@ -395,7 +395,7 @@ Before any execution history exists:
 2. Agent initialization can set explicit cost priors → uncalibrated prior
 3. Default: wide `Distribution { mean: unknown, variance: high, sample_count: 0 }` → agent acts only on strong divergences where value clearly dominates uncertain cost
 
-### Goal Curation Binding
+### Agent Goal Judgment Binding
 
 Cost beliefs are not goal targets. They are inputs to the cost-benefit comparator that decides whether state-belief divergences warrant action. Lower cost makes more goals pass the threshold. Higher cost makes fewer goals pass. The agent does not try to reduce cost — it uses cost estimates to make better act/tolerate decisions.
 
@@ -445,9 +445,9 @@ When a new belief family is introduced, it must provide:
 | At least one evidence source with spine domain and event type | where evidence comes from |
 | Default prior | cold start value |
 | Freshness policy | when the belief becomes stale without new evidence |
-| Goal curation binding: desired state predicate, satisfaction criteria, action class | how the agent uses this belief |
+| Agent Goal judgment binding: desired state predicate, satisfaction criteria, action class | how the Agent uses this belief |
 
-A family without all of these can exist as an ungrounded framework entity — a `BeliefKey` with `MissingComparator` status. But it cannot participate in the flywheel until grounded.
+A family without all of these can exist as an ungrounded framework entity — a `BeliefKey` with `MissingComparator` status. But it cannot participate in the reconciliation loop until grounded.
 
 The framework must load this contract from runtime configuration. Adding or changing a family must not require editing Rust source that names that family.
 
@@ -483,7 +483,7 @@ content_freshness ──evidence──▶ action_value for docs_writer
 
 execution_cost ──input──▶ cost-benefit comparator
 action_value ──input──▶ cost-benefit comparator
-    "meta-beliefs feed the goal curation decision, not other families"
+    "meta-beliefs feed Agent Goal judgment, not other families"
 ```
 
 These dependencies are not hard-wired in the framework. They emerge from evidence assignment rules and the agent's normative framework. The agent learns which dependencies matter through calibration.
@@ -523,6 +523,6 @@ An Agent discovering a new concern class may load a new family at runtime. The r
 - [Fact To Belief](fact_to_belief.md)
 - [Comparator Model](comparator_model.md)
 - [Belief Spec](spec.md)
-- [Goal Curation](../agent/goal_curation.md)
+- [Agent Plan Progression](../agent/plan_progression.md)
 - [Goals](../../execution/goals/README.md)
 - [Regime Layer](../regime/README.md)

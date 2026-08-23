@@ -76,7 +76,7 @@ That formulation is an inferred extension. It is not current runtime behavior.
 
 **Active design.** The active Strategy thesis calls Strategy Meld's only canonical semantic planning workflow. It begins from a Goal, exact planner state, Capability knowledge, Method knowledge, and construction policy. It owns semantic choice and leaves operational realization to Execution. See [Strategy thesis](../../../../cognitive_architecture/world_model/strategy/README.md).
 
-**Active design.** The same thesis currently narrows successful construction to one authorizable Task. The active search design narrows the canonical product to one `StrategyCandidate` carrying an executable Capability dependency blueprint. See [Strategy search design](../../../../cognitive_architecture/world_model/strategy/search.md#strategy-candidate).
+**Historical design at review time.** The then-active search design narrowed successful construction to one authorizable `StrategyCandidate` carrying an executable Capability dependency blueprint. The accepted World Model Reconciliation design later superseded that contract with a heterogeneous immutable Plan.
 
 **Implemented fact.** Current `StrategyProblem` contains one ground Goal, one immutable `WorldState`, one planner snapshot identity, Strategy theory, executable Capability views, optional Methods, and evaluation policy. Current `StrategyCandidate` contains one `Composition` and one prospective evidence route. See [Strategy contracts](../../../../../crates/meld-world-model/src/strategy/contracts.rs).
 

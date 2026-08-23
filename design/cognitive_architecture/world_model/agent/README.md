@@ -22,6 +22,6 @@ Agent authorization proves that a Strategy product is permitted for this Agent a
 
 - [Directive Grounding](directive_grounding.md)
 - [Genesis And Activation](genesis_and_activation.md)
-- [Plan Progression](goal_curation.md)
+- [Plan Progression](plan_progression.md)
 - [Runtime Surface](runtime_surface.md)
 - [Agent Contract](spec.md)

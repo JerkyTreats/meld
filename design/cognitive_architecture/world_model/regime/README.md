@@ -87,9 +87,9 @@ This means one belief may be:
 
 The planner-facing view exposes that difference.
 
-## Relationship To Goal Curation
+## Relationship To Agent Goal Judgment
 
-Regime change directly affects goal generation. The world model agent's cost-benefit comparators use regime-scoped priors. When a regime shift is detected:
+Regime change directly affects Agent Goal judgment. The world model Agent's cost-benefit comparators use regime-scoped priors. When a regime shift is detected:
 
 - **Known regime**: archived priors from the regime library provide immediate recalibration. The agent's goal generation decisions change without relearning from scratch.
 - **Novel regime**: priors widen. The agent becomes exploratory, favoring observation goals over action goals until outcome data arrives under the new regime.
@@ -99,7 +99,7 @@ The practical effect: regime change reshapes which goals the agent generates. Du
 
 Regime change may also invalidate or re-rank a Strategy decision when its causal, efficacy, time, cost, or risk assumptions no longer apply. Strategy consumes this verdict without deciding regime identity itself.
 
-See [Goal Curation](../agent/goal_curation.md) for the full cost-benefit evaluation mechanism.
+See [Agent Plan Progression](../agent/plan_progression.md) for the authority boundary after Goal judgment.
 
 ## Queries
 
@@ -143,5 +143,5 @@ That is enough to prevent stationary priors from becoming silent hidden assumpti
 - [Belief](../belief/README.md)
 - [Causal Layer](../causation/README.md)
 - [World Model Planner](../planner/README.md)
-- [Goal Curation](../agent/goal_curation.md)
+- [Agent Plan Progression](../agent/plan_progression.md)
 - [World Model Strategy](../strategy/README.md)

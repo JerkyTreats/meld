@@ -15,7 +15,7 @@ given the objects that currently exist in its scope?
 
 It combines an activated Directive, PDS operational domain theory, and a trusted graph scope. Its output is a set of concrete questions such as whether one folder has a README or whether that README is correct.
 
-This happens before Goal curation. Goal curation reacts to answers. It does not invent the questions that make a divergence visible.
+This happens before Agent Goal judgment. Goal judgment reacts to answers. It does not invent the questions that make a divergence visible.
 
 ## Ownership
 
@@ -86,7 +86,7 @@ flowchart TD
     R[Reconcile beliefs]
     V[Publish belief revisions]
     A[Deliver watched revisions to Agent]
-    C[Run Goal curation]
+    C[Run Agent Goal judgment]
 
     D --> O
     P --> O
@@ -103,11 +103,11 @@ Independent subjects and questions may ground and reconcile independently. One p
 
 Directive grounding does not silently dispatch active observation work. Existing sensory and graph evidence may be assigned immediately. When evidence is missing, Belief records an unassessed or observation-needed state. That revision may cause the Agent to draft an observation Goal, which must pass the same Strategy and admission gate as any other Goal.
 
-## Relationship to Goal curation
+## Relationship To Agent Goal Judgment
 
 A belief question is singular and evaluable. It is not actionable by itself.
 
-Goal curation reads a reconciled belief view, the Directive posture, active Goal summary, cost and value views, and regime context. It decides whether the observed divergence warrants action.
+Agent Goal judgment reads a reconciled belief view, the Directive posture, active Goal summary, cost and value views, and regime context. It decides whether the observed divergence warrants a Goal.
 
 ```text
 belief question
@@ -116,7 +116,7 @@ belief question
 → Goal draft
 ```
 
-The Goal remains a world-model draft until bounded Strategy construction produces at least one eligible candidate and the Agent authorizes admission to Execution.
+The Goal remains Agent-owned desired state. Strategy constructs one immutable heterogeneous Plan against it. Agent judges the Plan, then routes each eligible complete Task to Execution and each eligible bounded Epistemic Operation to Curation. A Plan may close with epistemic work only or with no discharge product when admitted evidence already satisfies the Goal.
 
 ## Docs freshness grounding
 
@@ -133,7 +133,7 @@ One configured grounding rule for one PDS belief family over one bounded scope w
 ## Read with
 
 - [World Model Agent](README.md)
-- [Goal Curation](goal_curation.md)
+- [Plan Progression](plan_progression.md)
 - [Belief Model](../belief/README.md)
 - [World Model Strategy](../strategy/README.md)
 - [World Model Public Interface](../public_interface.md)

@@ -59,7 +59,7 @@ Evaluates to true unconditionally. Used for the default branch of a conditional 
 
 ## Conditional Branching Pattern
 
-When an Agent-authorized Composition contains an observation-dependent branch, Execution realizes:
+When an Agent-authorized complete Task contains an observation-dependent executable branch in its Composition, Execution realizes:
 
 1. An observation task that will produce a decision artifact
 2. Conditional dependency edges from the observation task to alternative downstream subtrees
@@ -105,7 +105,7 @@ A guard expression failure due to a missing field or type mismatch is a contract
 
 ## Validation
 
-When a planning agent commits a subgraph to the task network, the commit phase should validate:
+When Execution Planning commits a compiled region to the Task Network, the commit phase should validate:
 
 - every conditional dependency edge references an artifact type that the upstream task declares as an output
 - every guard expression references a field path that exists in the declared artifact schema

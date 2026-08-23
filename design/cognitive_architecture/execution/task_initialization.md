@@ -42,7 +42,7 @@ Capability inputs can consume seed objects through task init slot wiring. After 
 
 There is no distinct task kind for source tasks and data flow tasks. Both are task network task nodes with compiled task records and required init slots.
 
-A source task has all required init artifacts available before dispatch. Static seeds may come from lowering, workflow package triggers, goal context, target selectors, or planner supplied constants.
+A source task has all required init artifacts available before dispatch. Static seeds may come from the admitted Task body, producer-bound Goal context, target selectors, or Execution-owned lowering values. Execution Planning may preserve or materialize those exact values but cannot invent missing semantic inputs.
 
 A data flow task has at least one required init artifact whose content is produced by an upstream task. The task can be present in the graph before that content exists, but it cannot be dispatched until the upstream artifact is available and materialized into its init payload.
 

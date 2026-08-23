@@ -6,11 +6,11 @@ Overlay identifier: `WMR-SAO-01`
 
 Revision: 1
 
-Status: active policy overlay for future source delivery
+Status: active policy overlay for authorized source delivery
 
 Authority: user-approved delivery-program policy
 
-Source implementation authority: none
+Source implementation authority: `WMR-SI-01` only
 
 ## Purpose
 
@@ -22,7 +22,7 @@ This ordering lets logical implementation stabilize before maintainability and t
 
 ## Program Insertion Boundary
 
-This is an append-only overlay over future source implementation gates. It does not revise the accepted `WMR-DG-01` through `WMR-DG-07` design receipts, the accepted `WMR-DG-04` revision 2 correction, or the accepted `WMR-DG-07` revision 3 Startup amendment.
+This is an append-only overlay over source implementation gates. It does not revise the accepted `WMR-DG-01` through `WMR-DG-07` design receipts, the accepted `WMR-DG-04` revision 2 correction, or the accepted `WMR-DG-07` revision 3 Startup amendment.
 
 The exact accepted design manifests remain frozen. This overlay is outside those manifests because it governs source delivery that has not yet been authorized or produced.
 
@@ -160,4 +160,6 @@ The receipt establishes style and test-quality readiness only. It does not prove
 
 ## Current Program State
 
-This overlay is active for future source delivery. No World Model Reconciliation source implementation slice is active. `WMR-SI-01`, later Docs Freshness and Dependency Security migration, cross-Agent Execution coherence, and optional dependent-PDS gating remain unauthorized.
+This overlay is active for the authorized `WMR-SI-01` source slice. Source implementation has not started. The slice is paused at its clean design baseline until the design and documentation alignment pass is accepted. Later Docs Freshness and Dependency Security migration, the broader cross-Agent product proof, and optional dependent-PDS gating remain unauthorized.
+
+The [source activation record](wmr_si_01_source_activation_record.md) preserves the exact authorization boundary and the [source Delivery Gate](wmr_si_01_startup_reconciliation_gate.md) defines the cross-domain acceptance claims that follow logical review and this Style Assurance pass.

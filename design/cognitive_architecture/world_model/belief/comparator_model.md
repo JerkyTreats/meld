@@ -108,7 +108,7 @@ A cost-benefit comparator consumes beliefs about state, cost, and value — it i
 
 The cost-benefit comparator produces an act/tolerate posterior. "Tolerate" means the belief change is absorbed without goal generation — this is the frequency reduction between the belief layer and the goal layer.
 
-The full mechanism is defined in [Goal Curation](../agent/goal_curation.md).
+The resulting Goal and Plan authority boundary is defined in [Agent Plan Progression](../agent/plan_progression.md).
 
 Semantic settlement should carry:
 
@@ -126,8 +126,8 @@ Semantic settlement should carry:
   data-flow dependency semantics for observation tasks
 - [Guard Expression Semantics](../../execution/planning/guard_expression_semantics.md)
   conditional dependency edge evaluation over structured artifacts
-- [Goal Curation](../agent/goal_curation.md)
-  cost-benefit comparator for Goal generation and action-worthiness
+- [Agent Plan Progression](../agent/plan_progression.md)
+  authority and progression after Agent Goal judgment
 
 ## Bayesian Comparator Shape
 
@@ -177,8 +177,7 @@ Do not use semantic settlement when:
 
 External capability synthesis is adjacent but deferred.
 
-When a comparator needs evidence that available observations cannot produce, Belief emits an observation opportunity for Agent and Strategy consideration.
-Execution may later synthesize or register a capability that gathers the missing evidence.
+When a comparator needs evidence that available observations cannot produce, Belief emits an observation opportunity for Agent and Strategy consideration. Strategy may select an already admitted Capability while constructing a complete Task. Capability provisioning remains with its owning product and runtime domains. Execution never invents the missing semantic step or registers a Capability to satisfy Belief.
 
 This edge is an observation opportunity. It carries expected information gain, target belief, evidence channel, cost, delay, and expiry when those fields are known.
 
