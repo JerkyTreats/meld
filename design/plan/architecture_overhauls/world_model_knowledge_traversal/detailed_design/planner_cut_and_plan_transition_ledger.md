@@ -4,7 +4,7 @@ Date: 2026-08-22
 
 Slice: `WMR-DD-03`
 
-Status: active detailed design
+Status: accepted design product
 
 Implementation authorization: none
 

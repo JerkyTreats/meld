@@ -4,7 +4,7 @@ Date: 2026-08-22
 
 Slice: `WMR-DD-04`, Executable Admission And Observation Return
 
-Status: active
+Status: historical worker packet, delivery complete
 
 Implementor: Codex detailed-design implementor
 

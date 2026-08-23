@@ -4,7 +4,7 @@ Gate identifier: `WMR-DG-01`
 
 Revision: 3 frozen
 
-Status: active and frozen on 2026-08-21
+Status: frozen and accepted
 
 Gate type: cross-deliverable detailed-design coherence
 

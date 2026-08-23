@@ -4,7 +4,7 @@ Date: 2026-08-22
 
 Slice: `WMR-DD-03`
 
-Status: active detailed design
+Status: accepted design with corrected integrated outcome evidence
 
 Implementation authorization: none
 
@@ -166,6 +166,8 @@ A new admitted source revision, invalidated premise, changed authority, changed 
 Strategy receives a new complete `PlannerCut`, the predecessor Plan, and completed causal history. It returns a successor Plan revision. Completed facts and owner results remain immutable history. Uncommitted products may be retained, replaced, added, or removed. Authorized or published products may be invalidated for future reliance, but their decisions and outcomes remain visible.
 
 A semantically identical product may retain its semantic identity only when every condition, input, dependency, authority requirement, expected outcome, and milestone remains equal. The successor creates a new Plan selection reference, and any authorization binds that exact successor Plan revision. A successor cannot relabel an earlier outcome or change the milestone that justified an earlier authorization.
+
+This transition is the integrated observable outcome `WMR-O28`. Its proof requires both predecessor and successor cut identities, stale-eligibility invalidation, immutable Plan lineage, preserved completed history, the new Agent judgment, and any later product authorization.
 
 ## Goal Disposition
 

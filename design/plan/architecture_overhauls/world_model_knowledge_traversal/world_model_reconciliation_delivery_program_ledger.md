@@ -2,11 +2,13 @@
 
 Date: 2026-08-22
 
-Mode: delivery
+Amended: 2026-08-23 for approved Startup PDS integration
 
-Status: complete
+Mode: design
 
-Readiness: closeout complete, runtime implementation remains unauthorized
+Status: revision 3 approval candidate
+
+Readiness: exact revision 3 candidate awaiting independent review, runtime implementation remains unauthorized
 
 Canonical initiative name: World Model Reconciliation
 
@@ -24,13 +26,14 @@ The program thesis is:
 
 > Close one owner-to-owner vertical at a time, with its producer-consumer and lifecycle obligations visible, in the order needed to make the next vertical meaningful.
 
-Direct product proof: one traceable specification set in which an independent reviewer can follow both docs freshness paths and the dependency security dissimilarity path through exact owner products, visibility positions, authority changes, waits, wakes, generation fences, restart positions, and safe retirement.
+Direct product proof: one traceable specification set in which an independent reviewer can follow both docs freshness paths, the dependency security dissimilarity path, and the bounded Startup nonce round trip through exact owner products, visibility positions, authority changes, waits, wakes, generation fences, restart positions, and safe retirement.
 
 The proof must distinguish:
 
 - an already-correct README that reaches epistemic closure without a Task
 - a missing or incorrect README that produces an eligible complete Task and returns owner evidence
 - dependency security assessment that separates observation, epistemic judgment, and executable intervention
+- one `meld_startup` Agent that creates a deterministic epoch nonce Goal, emits a reusable owner-issued nonce Event through Execution, and accepts its exact epistemic return
 - Event append, graph materialization, Belief revision, Agent acceptance, and Goal satisfaction
 - a locally correct deliverable from a coherent cross-deliverable handoff
 
@@ -48,6 +51,7 @@ Applicable evidence and policy:
 - [canonical World Model architecture](../../../cognitive_architecture/world_model/README.md)
 - [Graph and Traversal specification](../../../cognitive_architecture/world_model/graph/spec.md)
 - [Planner architecture](../../../cognitive_architecture/world_model/planner/README.md)
+- [approved Startup PDS design package](startup_pds_design_requirements/README.md)
 
 ## Maturity Envelope
 
@@ -69,9 +73,9 @@ Maturity evidence:
 | persistence stakes | several current stages commit durable state before downstream delivery | forbid call-stack success or Event append from standing in for consumer visibility |
 | integration depth | the complete path crosses five packages and multiple independently durable owners | require cross-deliverable Gate Acceptance |
 
-User override: maturity envelope and `WMR-DD-01` design activation accepted on 2026-08-21. The user authorized continuation into `WMR-DD-02` on 2026-08-21 and `WMR-DD-03` on 2026-08-22. On 2026-08-22 the user authorized independent retrospective assurance of `WMR-DD-01` and `WMR-DD-02`, with a dedicated subagent recommendation at each integrated-review and Gate Acceptance boundary. The user then authorized completion of `WMR-DD-04` through `WMR-DD-07`, one gate at a time, followed by a judgment-free subagent report of cross-gate expected outcomes and evidence.
+User override: maturity envelope and `WMR-DD-01` design activation accepted on 2026-08-21. The user authorized continuation into `WMR-DD-02` on 2026-08-21 and `WMR-DD-03` on 2026-08-22. On 2026-08-22 the user authorized independent retrospective assurance of `WMR-DD-01` and `WMR-DD-02`, with a dedicated subagent recommendation at each integrated-review and Gate Acceptance boundary. The user then authorized completion of `WMR-DD-04` through `WMR-DD-07`, one gate at a time, followed by a judgment-free subagent report of cross-gate expected outcomes and evidence. The user subsequently authorized a bounded corrective assurance pass and an independent approval-focused subagent review. On 2026-08-23 the user approved the full Startup PDS design and authorized its bounded inclusion in this program.
 
-The envelope is accepted through program completion. Only one slice may be active at a time, and each later slice still requires its predecessor Gate Receipt before activation.
+The envelope now includes the core non-gating Startup PDS proof. Historical gates and the exact revision 2 review remain evidence. Proposed revision 3 requires independent recommendation and separate user Gate Acceptance.
 
 Hard limits:
 
@@ -81,8 +85,8 @@ Hard limits:
 - no change to `meld-lang` semantic ownership
 - no use of legacy Workflow as a canonical seam or compatibility target
 - no universal schema that collapses owner products into the transition ledger
-- one active detailed-design slice at a time
-- later slices remain unauthorized backlog
+- one amended design candidate at a time
+- runtime implementation remains unauthorized
 
 Investigation budget:
 
@@ -109,7 +113,7 @@ Program authority and exception authority: user
 
 ## Authorized Active Slice
 
-No slice is active. All seven detailed-design gates are accepted and committed.
+No implementation slice is active. One bounded amendment integrates the approved core Startup PDS into product proof, evidence traceability, inspection, implementation order, and approval reproducibility.
 
 The final [cross-gate expected outcomes evidence report](reviews/world_model_reconciliation_cross_gate_expected_outcomes_evidence_report.md) is a judgment-free matching basis for later comparison of observed runtime evidence with this design.
 
@@ -133,22 +137,13 @@ Integrated review owner: Codex integrated architecture review lane with a dedica
 
 Gate Acceptance owner: Codex separate cross-deliverable acceptance lane with a distinct subagent recommendation
 
-Exact write scope:
-
-- `detailed_design/wmr_dd_07_worker_packet.md`
-- `detailed_design/integrated_product_outcome_evidence_matrix.md`
-- `detailed_design/integrated_product_proof_and_inspection.md`
-- `world_model_reconciliation_handoff_ledger.md`
-- `delivery_gates/wmr_dg_07_integrated_product_proof_and_inspection.md`
-- review and Gate Acceptance artifacts for `WMR-DD-07`
-- this program ledger
-- folder `README.md`
+Exact write scope is the Startup design package, integrated evidence products, handoff and program ledgers, folder index, cross-gate report, one revision 3 Gate Definition, one exact manifest, and independent review evidence. `WMR-DD-01` through `WMR-DD-06`, revision 2 Execution semantics, cognitive architecture, source code, and historical receipts remain frozen. This amendment may not issue Gate Acceptance or select dependent PDS activation gating.
 
 ### WMR-DD-07 product increment
 
-Compose all accepted owner and lifecycle positions into complete docs freshness, dependency security, lifecycle, and inspection evidence without creating first handoff proof or centralized truth.
+Compose all accepted owner and lifecycle positions into complete docs freshness, dependency security, Startup nonce, lifecycle, and inspection evidence without creating first handoff proof or centralized truth.
 
-Closeout requires exact expected-outcome evidence, direct product traces, truthful negative evidence states, `WMR-H18` as projection only, independent integrated review and Gate Acceptance recommendations, accepted `WMR-DG-07`, and its delivery commit.
+Revision 3 closeout requires exact expected-outcome evidence, the approved Startup design and transition ledger, truthful negative evidence states, `WMR-H18` as projection only, an exact manifest, independent integrated review, separate user Gate Acceptance, and a later delivery commit.
 
 ### WMR-DD-06 product increment
 
@@ -411,12 +406,15 @@ No source-code path is authorized. Likely later implementation paths are evidenc
 
 ## Uncommitted Backlog
 
+All historical design slices are committed. The bounded Startup proof amendment is the only uncommitted program work.
+
 | Slice | Design vertical | Dependency | Activation evidence | Authorization |
 | --- | --- | --- | --- | --- |
 | `WMR-DD-04` | Executable Admission And Observation Return | accepted `WMR-DD-03` receipt | complete Task identity, cardinality, authorization, and Plan lineage settled | complete at `440b64e3` |
 | `WMR-DD-05` | Product Compilation And Agent Genesis | accepted native-owner contracts from `WMR-DD-02` through `WMR-DD-04` | PDS compilation targets have owner-stable meanings | complete at `7c1a407b` |
 | `WMR-DD-06` | Activation Generation And Lifecycle Closure | accepted `WMR-DD-01` through `WMR-DD-05` receipts | exact participants, products, positions, waits, wakes, and safe points exist | complete at `613133eb` |
-| `WMR-DD-07` | Product Proof And Inspection | accepted prior receipts | complete docs freshness and dependency security specifications can be replayed through lifecycle | complete, delivery commit pending |
+| `WMR-DD-07` | Product Proof And Inspection | accepted prior receipts | complete docs freshness and dependency security specifications can be replayed through lifecycle | revision 1 complete at `f54beb14`, revision 3 amendment active |
+| Startup proof amendment | `meld_startup` nonce reconciliation and inspection | accepted owner contracts plus revision 2 corrective candidate | approved design package and exact transition ledger | documentation inclusion authorized, implementation unauthorized |
 
 ## Product Trace
 
@@ -440,7 +438,7 @@ principal declaration
 -> safe retirement
 ```
 
-The completed `WMR-DD-05` slice covers principal selection, plural native-owner compilation, exact linked installation, situated assignment, declared Agent topology, Agent-owned genesis, and inert activation preparation. Lifecycle acceptance, readiness, current publication, replacement, and retirement remain downstream dependencies rather than accepted `WMR-DD-05` scope.
+The seven historical slices close this design trace. The revision 2 candidate strengthens two cross-slice outcomes: compatible cross-Agent Tasks share operational work without losing attribution, and changed admitted knowledge produces an explicit successor Plan rather than continued stale eligibility. The revision 3 amendment adds a first bounded product proof that traverses the complete trace with one reusable nonce Event and exact Agent satisfaction.
 
 ## Affected Domains
 
@@ -454,15 +452,18 @@ The frozen affected package set is:
 
 Runtime participation does not imply write scope.
 
-The completed `WMR-DD-05` slice affected these design owners:
+The complete program affects these design owners:
 
 | Domain concern | Owner | Active relationship | Design posture |
 | --- | --- | --- | --- |
-| product declaration and package structure | PDS | preserve selection, imports, routes, structural requirements, and linked receipt without interpreting owner bodies | active detailed design over current package mechanics |
-| native semantic installation | docs, dependency security, Graph, Traversal, Belief, Curation, Strategy, Agent, Capability, and policy owners | validate and install immutable owner revisions | active owner-routed composition design |
-| situated assignment and activation inputs | stewardship config owners | bind principal, subject, perspective, branch, topology, grants, and separate physical selections | active detailed design |
-| Agent genesis | Agent through root initialization adapter | accept exact record, subscription, installed revision, and genesis publication positions | active detailed design over partial current behavior |
-| activation preparation | lifecycle input preparation over native receipts | form exact inert closure and structural participant plan | active producer design, lifecycle consumer deferred |
+| owner publication and observation | workspace, docs, dependency security, Events, and Graph | publish owner meaning with exact completeness and positions | accepted design, runtime partial |
+| epistemic interpretation | Traversal, Belief, and Curation | form immutable cuts, configured meaning, and bounded epistemic authorship | accepted design, runtime partial or absent |
+| reasoning and authority | Planner, Strategy, and Agent | assemble complete cuts, construct immutable Plans, and authorize eligible products | accepted design, runtime partial |
+| execution coherence | Goal Set, Execution Planning, Task Network, and dispatch | admit Goal-attributed Tasks, decide operational compatibility, and realize How and When | revision 2 approval candidate, runtime partial |
+| productization | PDS and native semantic owners | compile product theory through owner installation, assignment, and Agent genesis | accepted design, runtime partial |
+| Startup product proof | `meld_startup`, Agent, and reusable nonce owner | exercise one epoch-scoped reconciliation round trip through all native seams | revision 3 candidate, runtime absent |
+| structural lifecycle | root lifecycle and native participants | realize, fence, recover, replace, and retire one activation generation | accepted design, runtime disconnected |
+| inspection | native owners with correlated projection | resolve exact lineage without creating semantic truth | revision 2 approval candidate, runtime absent |
 
 ## Expansion Decisions
 
@@ -472,7 +473,9 @@ The completed `WMR-DD-05` slice affected these design owners:
 | new graph storage authority | none proven | current graph store and federated design may support the contract | current Traversal and Planner | not authorized | reject unless `WMR-DD-01` proves necessity |
 | new Events grammar | none | owner payload and object or relation attachments already exist | all current Event consumers | outside envelope | reject |
 | new shared language Plan grammar | none | World Model can own Plan over unchanged language values | Strategy and Execution | outside envelope | reject |
-| new cross-domain lifecycle protocol | lifecycle closure may later require explicit owner receipts | current lifecycle records and owner products are partial | runtime owners | requires `WMR-DD-06` and user approval | backlog, no early design freeze |
+| activation structural lifecycle | coherent generation closure requires explicit owner receipts | current lifecycle records and owner products are partial | runtime owners | canonical structural authority accepted by `WMR-DG-06`, implementation unauthorized | accepted design, not a new semantic protocol |
+| reusable nonce owner and Capability | bounded product proof needs one deterministic neutral Event effect | ordinary owner publication and global Capability seams | Startup and future semantically compatible callers | approved for Startup design, implementation unauthorized | include as narrow owner contract, reject arbitrary Event emission |
+| dependent PDS activation gate | block feature products until Startup satisfaction | structural readiness and Startup satisfaction remain independent | PDS product control and root lifecycle | not authorized | defer as a separate architecture amendment |
 | compatibility path for legacy Workflow | no canonical behavior | explicit isolation already exists | legacy callers only | outside program | reject |
 
 ## Hard Limits And Tripwires
@@ -485,6 +488,8 @@ Mandatory pause tripwires:
 - any new top-level domain beyond the frozen affected set
 - any proposal to move product semantics into Events, root runtime, lifecycle, harness, CLI, or telemetry
 - any proposal to change `meld-lang` for heterogeneous Plan ownership
+- any proposal to place Startup meaning inside the global nonce Capability or Events
+- any proposal to block dependent PDS activation without separate user authorization
 - any standalone D0 artifact that becomes a universal model rather than a bounded seam account
 - any active-slice requirement that depends on activation-wide lifecycle acceptance, readiness, publication, replacement, or retirement
 - any gate criterion that treats a deferred consumer as operationally ready
@@ -509,6 +514,8 @@ Design artifact size is governed by semantic closure and Gate Acceptance rather 
 | `WMR-DD-05` | PDS compilation and Agent genesis | `WMR-DD-02` through `WMR-DD-04` | complete | [accepted WMR-DG-05 receipt](delivery_gates/wmr_dg_05_acceptance_receipt.md) |
 | `WMR-DD-06` | activation generation and lifecycle closure | prior native-owner designs | complete | [accepted WMR-DG-06 receipt](delivery_gates/wmr_dg_06_acceptance_receipt.md) |
 | `WMR-DD-07` | integrated product proof and inspection | all prior receipts | complete | [accepted WMR-DG-07 receipt](delivery_gates/wmr_dg_07_acceptance_receipt.md) |
+| corrective assurance | unified Execution coherence, successor Plan evidence, review map, and exact candidate | historical seven-gate design | awaiting approval | [revision 2 DG04](delivery_gates/wmr_dg_04_execution_coherence_and_observation_return_revision_2.md) and [revision 2 DG07](delivery_gates/wmr_dg_07_integrated_product_proof_and_inspection_revision_2.md) |
+| Startup proof amendment | epoch nonce reconciliation, reusable nonce owner, inspection, and first runtime proof order | revision 2 candidate and approved Startup design | approval candidate | [revision 3 DG07](delivery_gates/wmr_dg_07_integrated_product_proof_and_inspection_revision_3.md) |
 
 ## Work State
 
@@ -524,6 +531,8 @@ Design artifact size is governed by semantic closure and Gate Acceptance rather 
 | `WMR-DD-06` | `design/world-model-reconciliation` | Codex detailed-design implementor | complete | `613133eb` | Gate accepted, source code excluded, subagent recommendations recorded at both review boundaries |
 | `WMR-DD-07` | `design/world-model-reconciliation` | Codex detailed-design implementor | complete | `f54beb14` | Gate accepted, source code excluded, subagent recommendations recorded at both review boundaries |
 | cross-gate expected-outcomes evidence report | `design/world-model-reconciliation` | dedicated read-only subagent `wmr_cross_gate_outcome_evidence` | complete | `9a543eb7` | evidentiary catalog only, no verdict or recommendation |
+| revision 2 corrective approval candidate | `design/world-model-reconciliation` | Codex program owner and independent approval reviewer | review passed, Gate Acceptance outstanding | not committed | exact manifest digest `0965c4070602777fc7a9989cd1127ed1eada97c835d39ee6cbd47428f61915d4` preserved as historical candidate lineage |
+| Startup proof amendment | `design/world-model-reconciliation` | Codex program owner and independent Startup integration reviewer | approval candidate | not committed | user approved design and inclusion, independent review plus separate Gate Acceptance required |
 
 The worktree already contained the user-owned README modification and untracked detailed-design framing from the preceding discovery work. This program preserves them as current evidence and does not treat them as unrelated implementation changes.
 
@@ -538,8 +547,11 @@ The worktree already contained the user-owned README modification and untracked 
 | [WMR-DG-05](delivery_gates/wmr_dg_05_product_compilation_and_agent_genesis.md) | 1 frozen | `WMR-DD-05` | principal declaration through exact inert activation inputs | separate Gate Acceptance lane with distinct subagent recommendation | accepted |
 | [WMR-DG-06](delivery_gates/wmr_dg_06_activation_generation_and_lifecycle_closure.md) | 1 frozen | `WMR-DD-06` | prepared activation through current or safely retired generation | separate Gate Acceptance lane with distinct subagent recommendation | accepted |
 | [WMR-DG-07](delivery_gates/wmr_dg_07_integrated_product_proof_and_inspection.md) | 1 frozen | `WMR-DD-07` | complete product and lifecycle proof | separate Gate Acceptance lane with distinct subagent recommendation | accepted |
+| [WMR-DG-04 revision 2](delivery_gates/wmr_dg_04_execution_coherence_and_observation_return_revision_2.md) | 2 proposed | corrective assurance | compatible Goal-attributed admissions through one unified Task Network and independent discharge | independent review, then separate user Gate Acceptance | approval candidate |
+| [WMR-DG-07 revision 2](delivery_gates/wmr_dg_07_integrated_product_proof_and_inspection_revision_2.md) | 2 proposed | corrective assurance | complete product proof including shared Execution work, successor Plan reconstruction, review lineage, and exact manifest | independent review, then separate user Gate Acceptance | approval candidate |
+| [WMR-DG-07 revision 3](delivery_gates/wmr_dg_07_integrated_product_proof_and_inspection_revision_3.md) | 3 proposed | Startup proof amendment | revision 2 product proof plus epoch nonce reconciliation, reusable nonce publication, successor proof, inspection, and exact manifest | independent review, then separate user Gate Acceptance | approval candidate |
 
-Later gates name only a coherence horizon and activation condition. Their criteria remain provisional until their slice is activated.
+Historical Gate Acceptance remains intact as evidence for revision 1. The revision 2 review passed, but revision 2 was not separately Gate Accepted before this amendment. Revision 3 incorporates those still-blocking criteria and the approved Startup proof. It may not be treated as accepted until independent review passes and the user performs separate Gate Acceptance.
 
 ## Gate Evidence
 
@@ -565,6 +577,9 @@ Later gates name only a coherence horizon and activation condition. Their criter
 | `WMR-DG-01` retrospective assurance | candidate digest `0d0b98504da47779c75024a074e2eb0f6dc8ff1557fca3821d6c5d920013cade` | accepted | 2026-08-22 | distinct subagent passed all fourteen criteria with no violation |
 | `WMR-DD-02` retrospective integrated review | corrected digest `7614ce172216e329d44843d552eaedea676ee300330c266a9f1fbbe63c4dbcd7` | passed after verification | 2026-08-22 | three frozen findings verified with no correction-caused regression |
 | `WMR-DG-02` retrospective assurance | candidate digest `271bd0734c5bd5add6adb403183405ca54e7198c09ce3d188ed1cb869b0107bc` | accepted | 2026-08-22 | distinct subagent passed all fifteen criteria with no violation |
+| revision 2 corrective approval candidate | manifest digest `0965c4070602777fc7a9989cd1127ed1eada97c835d39ee6cbd47428f61915d4` | independent review passed after one correction cycle | 2026-08-22 | separate user Gate Acceptance remained outstanding when Startup integration was authorized |
+| Startup PDS design | full design and semantic transition ledger | user approved for bounded program inclusion | 2026-08-23 | core non-gating canary only, implementation unauthorized |
+| revision 3 Startup integration candidate | exact SHA-256 manifest | approval candidate | 2026-08-23 | independent review and separate user Gate Acceptance required |
 
 ## Gate Acceptance
 
@@ -579,12 +594,15 @@ Later gates name only a coherence horizon and activation condition. Their criter
 | `WMR-DG-07` | `399a6a87dcf5fd13c8bda107bb2289ab7ae8eb5287077d19927e32c9fb498422` | `accepted` | none | [Gate Acceptance Receipt](delivery_gates/wmr_dg_07_acceptance_receipt.md) | handoff eligible, final delivery commit required |
 | `WMR-DG-01` retrospective assurance | `0d0b98504da47779c75024a074e2eb0f6dc8ff1557fca3821d6c5d920013cade` | `accepted` | none | [Retrospective Assurance Receipt](delivery_gates/wmr_dg_01_retrospective_assurance_receipt.md) | historical defects corrected, runtime unproved |
 | `WMR-DG-02` retrospective assurance | `271bd0734c5bd5add6adb403183405ca54e7198c09ce3d188ed1cb869b0107bc` | `accepted` | none | [Retrospective Assurance Receipt](delivery_gates/wmr_dg_02_retrospective_assurance_receipt.md) | historical closeout reconciled, runtime unproved |
+| `WMR-DG-04` revision 2 | manifest digest `0965c4070602777fc7a9989cd1127ed1eada97c835d39ee6cbd47428f61915d4` | `review passed` | none | [independent recommendation](reviews/world_model_reconciliation_approval_review_recommendation.md) | incorporated into revision 3 candidate, not Gate Accepted |
+| `WMR-DG-07` revision 2 | manifest digest `0965c4070602777fc7a9989cd1127ed1eada97c835d39ee6cbd47428f61915d4` | `review passed` | none | [independent recommendation](reviews/world_model_reconciliation_approval_review_recommendation.md) | superseded as current candidate by revision 3, not Gate Accepted |
+| `WMR-DG-07` revision 3 | [exact revision 3 manifest](reviews/world_model_reconciliation_startup_integration_candidate.sha256) | `not eligible` | three frozen findings corrected, bounded verification pending | none | user Gate Acceptance required after verification |
 
 Last accepted gate definition: `WMR-DG-07` revision 1 frozen
 
-Acceptance state: accepted
+Acceptance state: historical revision 1 accepted, revision 2 independently reviewed but not Gate Accepted, revision 3 corrected candidate awaiting bounded verification
 
-The `WMR-DG-07` receipt makes `WMR-DD-07` handoff eligible. The final judgment-free cross-gate report begins only after the required `WMR-DD-07` delivery commit.
+The historical `WMR-DG-07` receipt made `WMR-DD-07` handoff eligible. Revision 2 reopened only two bounded corrective surfaces. Revision 3 now reopens integrated proof surfaces for the approved Startup addition while preserving every historical receipt and the revision 2 review as lineage.
 
 The retrospective `WMR-DG-01` and `WMR-DG-02` receipts strengthen accepted upstream evidence. They do not alter phase order or substitute for `WMR-DG-04`.
 
@@ -649,6 +667,60 @@ Retrospective assurance delta:
 - direct runtime behavior proved: none
 - direct design behavior proved: occurrence-rich neutral carriage, completeness lineage, durable restart, exact rejection terminality, failed-work successor control, and truthful cross-phase tracker state
 
+`WMR-DD-04` delivery delta:
+
+- source files changed: zero
+- new design artifacts: review and Gate Acceptance evidence around one Execution vertical
+- direct runtime behavior proved: none
+- direct design behavior proved: authorized Task admission through durable Execution outcome and returned semantic-owner evidence
+
+`WMR-DD-05` delivery delta:
+
+- source files changed: zero
+- new design artifacts: product compilation, Agent genesis, review, and Gate Acceptance evidence
+- direct runtime behavior proved: none
+- direct design behavior proved: exact package selection through inert prepared activation closure
+
+`WMR-DD-06` delivery delta:
+
+- source files changed: zero
+- new design artifacts: lifecycle closure, transition, review, and Gate Acceptance evidence
+- direct runtime behavior proved: none
+- direct design behavior proved: realization, truthful liveness, recovery, replacement, fenced quiescence, and retirement
+
+`WMR-DD-07` delivery delta:
+
+- source files changed: zero
+- new design artifacts: integrated outcome matrix, proof, inspection, review, and Gate Acceptance evidence
+- direct runtime behavior proved: none
+- direct design behavior proved: end-to-end docs freshness, dependency security, lifecycle, and native-owner inspection traces
+
+Cross-gate evidence delta:
+
+- source files changed: zero
+- new design artifact: one neutral outcome and future runtime matching report
+- exact artifact preserved at `9a543eb7`
+
+Corrective assurance delta:
+
+- source files changed: zero
+- new Gate Definitions: two revision 2 candidates
+- corrected design behavior: compatible cross-Agent Tasks share one operational node in a unified Task Network with independent discharge
+- corrected integrated behavior: changed admitted knowledge produces explicit successor Plan reconstruction and invalidates stale eligibility
+- evidence correction: full review lineage and exact approval-candidate manifest
+- runtime behavior proved: none
+
+Startup integration delta:
+
+- source files changed: zero
+- new detailed-design slice: zero
+- accepted detailed-design contracts changed: zero
+- new approved product requirements: one `meld_startup` package with one reusable nonce owner contract
+- new integrated outcomes: `WMR-O29` through `WMR-O34`
+- new Gate Definition: proposed `WMR-DG-07` revision 3
+- optional dependent PDS activation gate: excluded
+- runtime behavior proved: none
+
 ## Commit Effects
 
 Program commit rule: every accepted detailed-design gate closes through one delivery commit before the next slice is activated. A rejected or not-eligible gate does not produce a delivery commit.
@@ -688,6 +760,16 @@ Applied as `f54beb14`.
 If applied, this closeout commit records the judgment-free cross-gate expected-outcomes evidence report, reconciles final program state, and leaves all source implementation unauthorized.
 
 Applied as `9a543eb7`.
+
+A later tracker-only closeout reconciliation was applied as `55bb54da`. It changed no product design. This ledger records it transparently as a historical ledger-only commit and does not treat it as required precedent for future delivery slices.
+
+If applied, the corrective assurance commit aligns Execution with one unified Task Network, adds direct cross-Agent sharing and successor Plan outcomes, preserves complete review lineage, and freezes a reproducible approval candidate. It leaves all runtime implementation unauthorized.
+
+Not applied. User approval and commit authorization remain pending.
+
+If applied, the Startup integration commit preserves revision 2 corrections, adds the approved non-gating `meld_startup` nonce proof, freezes exact revision 3 evidence, and makes that nonce round trip the first runtime proof after separate implementation authorization.
+
+Not applied. Independent review, separate Gate Acceptance, and commit authorization remain pending.
 
 ## Review State
 
@@ -781,6 +863,34 @@ Program-owner dispositions: all four `active-slice defect`, accepted
 
 Verification: subagent verified all four findings, correction-caused regression set empty
 
+### WMR-DD-04 Through WMR-DD-07 Reviews
+
+| Slice | Independent recommendation | Frozen findings | Verification | Integrated receipt | Candidate preservation |
+| --- | --- | --- | --- | --- | --- |
+| historical `WMR-DD-04` | [recommendation](reviews/wmr_dd_04_subagent_review_recommendation.md) | four | passed | [receipt](reviews/wmr_dd_04_integrated_design_review_receipt.md) | digest recorded, individual manifest not preserved at delivery commit |
+| `WMR-DD-05` | [recommendation](reviews/wmr_dd_05_subagent_review_recommendation.md) | four | passed | [receipt](reviews/wmr_dd_05_integrated_design_review_receipt.md) | digest recorded, individual manifest not preserved at delivery commit |
+| `WMR-DD-06` | [recommendation](reviews/wmr_dd_06_subagent_review_recommendation.md) | six | passed | [receipt](reviews/wmr_dd_06_integrated_design_review_receipt.md) | digest recorded, individual manifest not preserved at delivery commit |
+| historical `WMR-DD-07` | [recommendation](reviews/wmr_dd_07_subagent_review_recommendation.md) | four | passed | [receipt](reviews/wmr_dd_07_integrated_design_review_receipt.md) | digest recorded, individual manifest not preserved at delivery commit |
+
+### Corrective Approval Review
+
+Review owner: independent approval-focused subagent
+
+Independent recommendation: [corrective approval review recommendation](reviews/world_model_reconciliation_approval_review_recommendation.md)
+
+Review candidate: exact SHA-256 manifest under `reviews`
+
+Frozen finding set:
+
+- `WMR-APP-F01`, stale active and candidate status labels contradicted completed slice state
+- `WMR-APP-F02`, review evidence omitted original DD01 and DD02 receipts plus the distinct Gate Acceptance recommendation family
+
+Program-owner disposition: both accepted as evidence corrections and applied without semantic expansion
+
+Verification: outcome belongs to the external recommendation after one pass limited to the two frozen findings and correction-caused regressions
+
+Authority: recommendation only, no Gate Acceptance and no implementation authority
+
 ## Risks And Exceptions
 
 | Risk | Current control | Escalation condition |
@@ -794,7 +904,7 @@ Verification: subagent verified all four findings, correction-caused regression 
 | architecture prose outruns product proof | docs freshness and dependency security pressure every slice | a design cannot complete either declared trace |
 | historical self-review misses candidate defects | dedicated retrospective integrated-review and Gate Acceptance recommendations with exact manifests | any accepted upstream artifact lacks independent challenge or reproducible candidate identity |
 
-Authorized exceptions: none
+Authorized exception: user-approved introduction of the exact reusable `nonce` semantic owner and `nonce.emit.v1` contract in proposed `WMR-DG-07` revision 3. The exception supersedes only the no-new-owner clauses in `WMR-DG-07-C17` and `WMR-DG-07-R2-C22`. Every other scope restriction remains binding.
 
 ## Reassessment
 
@@ -866,9 +976,41 @@ Before activating `WMR-DD-05`, record:
 - explicit user authorization: supplied on 2026-08-22 by the instruction to finish the program
 - review override: dedicated subagents are required for integrated review and Gate Acceptance
 
+`WMR-DD-06` activation reassessment:
+
+- accepted predecessor evidence was present before activation
+- structural lifecycle authority remains at root while semantic progress and safe points remain native-owner products
+- maturity remained exploratory and implementation remained unauthorized
+- no new semantic protocol, store, service, crate, or runtime was selected
+- design closed realization, readiness, current publication, recovery, replacement, waiting, fenced quiescence, and retirement
+
+`WMR-DD-07` activation reassessment:
+
+- all six predecessor Gate Receipts were present before activation
+- inspection remained a projection over native-owner evidence and did not become semantic truth
+- maturity remained exploratory and implementation remained unauthorized
+- the design composed docs freshness, dependency security, adverse ordering, recovery, replacement, late delivery, and retirement outcomes
+
+Corrective assurance reassessment:
+
+- no new runtime consumer or maturity evidence appeared
+- the approval audit found one canonical conflict in historical `WMR-DD-04` and two missing integrated outcomes
+- correction stays within accepted Execution, Strategy, Agent, and inspection ownership
+- no architecture expansion, source write, new store, protocol, service, crate, or compatibility path is required
+- the user explicitly authorized correction and independent review on 2026-08-22
+
+Startup integration reassessment:
+
+- the approved product exercises existing PDS, Agent, Curation, Strategy, Execution, Events, Graph, Traversal, Belief, lifecycle, and inspection seams without changing their ownership
+- one narrow reusable nonce owner and `nonce.emit.v1` Capability are justified by the global Capability namespace and deliberately exclude Startup meaning
+- `WMR-DD-01` through `WMR-DD-06`, cognitive architecture, and revision 2 Execution semantics remain frozen
+- the core canary runs only after structural readiness and does not gate the generation required to execute it
+- dependent PDS activation gating remains unselected because it would create a new live PDS-to-lifecycle relationship
+- the user approved the full Startup design and authorized bounded program inclusion on 2026-08-23
+
 ## Final Reconciliation
 
-All seven detailed-design slices are accepted and committed. The separate judgment-free cross-gate expected-outcomes evidence report is recorded.
+All seven historical detailed-design slices remain accepted and committed. The exact revision 2 candidate passed independent review but was not Gate Accepted. Approval now targets proposed `WMR-DG-07` revision 3, which preserves revision 2 and adds the approved Startup proof.
 
 Closeout evidence:
 
@@ -878,15 +1020,18 @@ Closeout evidence:
 - `WMR-DD-01` passed integrated design review and `WMR-DG-01` Gate Acceptance
 - `WMR-DD-02` passed integrated design review and `WMR-DG-02` Gate Acceptance
 - `WMR-DD-03` passed integrated design review and `WMR-DG-03` Gate Acceptance with separate subagent recommendations
-- `WMR-DD-04` passed integrated design review and `WMR-DG-04` Gate Acceptance with separate subagent recommendations
+- historical `WMR-DD-04` passed integrated design review and revision 1 Gate Acceptance
 - `WMR-DD-05` passed integrated design review and `WMR-DG-05` Gate Acceptance with separate subagent recommendations
 - `WMR-DD-06` passed integrated design review and `WMR-DG-06` Gate Acceptance with separate subagent recommendations
-- `WMR-DD-07` passed integrated design review and `WMR-DG-07` Gate Acceptance with separate subagent recommendations
+- historical `WMR-DD-07` passed integrated design review and revision 1 Gate Acceptance
 - `WMR-DD-01` and `WMR-DD-02` passed independent retrospective integrated review and separate retrospective Gate Acceptance
 - the handoff ledger now records accepted downstream design separately from unproved or partial runtime implementation
-- `WMR-DD-01` through `WMR-DD-07` are accepted and committed
-- the dedicated cross-gate report supplies a neutral expected-outcome and runtime-evidence matching index without an overall coherence judgment
+- `WMR-DD-01` through historical `WMR-DD-07` are accepted and committed
+- the corrected cross-gate report adds direct shared-Execution and successor-Plan outcomes plus complete review lineage
+- the revision 2 candidate passed exact-manifest independent review and remains historical lineage without Gate Acceptance
+- the Startup design package is approved as candidate input and adds no implementation authority
+- the revision 3 candidate requires exact-manifest independent review before separate user Gate Acceptance
 
 Source implementation has not started and is not authorized by this ledger.
 
-The detailed-design delivery program is complete. Matching future runtime evidence against the recorded expected outcomes is a separate activity.
+The design program is awaiting independent review of the bounded revision 3 Startup integration candidate. Matching future runtime evidence and implementing the architecture remain separate unauthorized activities.

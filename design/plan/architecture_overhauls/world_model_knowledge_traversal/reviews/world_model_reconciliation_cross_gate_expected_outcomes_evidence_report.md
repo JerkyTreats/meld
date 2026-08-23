@@ -2,11 +2,13 @@
 
 Date: 2026-08-22
 
+Amended: 2026-08-23 for Startup PDS integration
+
 Evidence mode: design evidence catalog for later runtime matching
 
 ## Evidence Boundary
 
-This report catalogs the observable outcomes defined across `WMR-DG-01` through `WMR-DG-07`. Each outcome identifies its design preconditions, originating owner positions, accepted handoff edges, lifecycle position, and the runtime evidence that a later implementation program would need to supply.
+This report catalogs the observable outcomes defined across `WMR-DG-01` through the proposed `WMR-DG-07` revision 3. Each outcome identifies its design preconditions, originating owner positions, accepted handoff edges, lifecycle position, and the runtime evidence that a later implementation program would need to supply.
 
 Gate definitions, detailed-design products, and gate receipts are design evidence. They define expected contracts and evidence shapes. They do not establish that runtime products, cursors, receipts, generations, or owner positions currently exist.
 
@@ -51,6 +53,25 @@ current product and generation lineage
 -> reconciliation with no Task
 ```
 
+### Startup Nonce Reconciliation
+
+```text
+current meld_startup product and open admission epoch
+-> deterministic Agent-owned Startup nonce
+-> complete standing Curation expectation and non-realization
+-> deterministic Agent Goal
+-> complete PlannerCut and immutable Strategy Plan
+-> separately authorized nonce Task
+-> Execution admission and unified Task Network
+-> reusable nonce.emit.v1 Capability
+-> deterministic Event kind nonce
+-> Graph visibility
+-> separately authorized confirmation operation
+-> terminal Curation result and configured realization Belief
+-> Agent milestone acceptance
+-> separate Goal satisfaction
+```
+
 ### Missing README With Curation Prerequisite And Task Return
 
 ```text
@@ -84,6 +105,30 @@ manifest and lockfile observation
 -> successor inventory observation
 -> successor assessment
 -> explicit verification
+```
+
+### Compatible Cross-Agent Execution
+
+```text
+Agent A authorizes one complete Task for Goal A
+-> Agent B independently authorizes a compatible complete Task for Goal B
+-> Goal Set records both attributed admissions
+-> Execution decides exact operational compatibility
+-> one unified Task Network retains both admissions
+-> one shared operational node is attempted once
+-> one outcome produces a separate discharge account for each admission
+-> each Agent independently absorbs its declared milestone and decides its Goal
+```
+
+### Successor Plan Reconciliation
+
+```text
+admitted knowledge advances beyond the predecessor PlannerCut
+-> Planner assembles a complete successor cut or records an explicit refusal
+-> Agent invalidates eligibility derived only from the stale cut
+-> Strategy reconstructs from the new cut, predecessor Plan, and completed history
+-> Agent records a new Plan judgment
+-> only products eligible under the successor Plan may receive new authorization
 ```
 
 ### Adverse Ordering And Restart
@@ -153,6 +198,17 @@ generation non-current
 | `WMR-O01` product selected | Principal selection resolves one complete product compilation and situated assignment | Exact product declaration, selected package set, owner routes, native validation, and every selected package receipt | `WMR-DG-05`, projected by `WMR-DG-07` | PDS product structure and stewardship assignment through `WMR-H20` and `WMR-H21` | [outcome row](../detailed_design/integrated_product_outcome_evidence_matrix.md#outcome-evidence), [product path](../detailed_design/product_compilation_and_agent_genesis.md#product-path), [identity chain](../detailed_design/product_compilation_and_agent_genesis_transition_ledger.md#identity-chain), [handoff edges](../world_model_reconciliation_handoff_ledger.md#accepted-wmr-dd-05-edge-details) | Prepared closure remains inert | Package presence, one package receipt, or local owner revisions as a live product | Product revision, selected package set, every package receipt, product compilation receipt, assignment identity |
 | `WMR-O02` generation activated | Exact product becomes the current admitted runtime generation | `WMR-O01`, inert prepared closure, lifecycle intake decision, participant parity, complete native-owner readiness set, expected prior head | `WMR-DG-05`, `WMR-DG-06`, projected by `WMR-DG-07` | Root lifecycle structure and native participant owners through `WMR-H22` and `WMR-H23` | [outcome row](../detailed_design/integrated_product_outcome_evidence_matrix.md#outcome-evidence), [activation path](../detailed_design/activation_generation_and_lifecycle_closure.md#activation-path), [current publication](../detailed_design/activation_generation_and_lifecycle_closure.md#current-publication), [lifecycle states](../detailed_design/activation_generation_and_lifecycle_transition_ledger.md#lifecycle-state-positions) | Current head and matching open admission epoch | Prepared, healthy, or ready as current | Lifecycle decision, generation identity, realization set, registration parity, readiness set, head transition, admission epoch |
 
+### Startup Nonce Outcomes
+
+| ID and scenario | Expected observable outcome | Preconditions | Producing gates | Evidence owner or accepted edge | Exact design evidence location | Lifecycle position | Forbidden inference | Future runtime evidence to match |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `WMR-O29` Startup nonce instantiated | Current Startup Agent records one deterministic nonce instance for the open epoch | Exact `meld_startup` compilation, assignment, current generation, open admission epoch, and nonce contract revision | `WMR-DG-05`, `WMR-DG-06`, projected by proposed `WMR-DG-07` revision 3 | PDS, lifecycle, and Agent through `SPDS-H01` through `SPDS-H04` | [outcome row](../detailed_design/integrated_product_outcome_evidence_matrix.md#outcome-evidence), [nonce identity](../startup_pds_design_requirements/startup_pds_design_specification.md#nonce-scope-and-identity), [transition spine](../startup_pds_design_requirements/semantic_transition_ledger.md#transition-spine) | Current generation and open admission epoch | Process start, readiness, or historical nonce as current proof | Product, assignment, Agent, generation, epoch, and nonce identities |
+| `WMR-O30` Startup mismatch incepts Goal | Complete standing evidence establishes expected Event and bounded non-realization before Agent records one deterministic Goal | `WMR-O29`, complete Event coverage, Graph projection through that coverage, admitted Startup rule and route | `WMR-DG-01` through `WMR-DG-03`, projected by proposed `WMR-DG-07` revision 3 | Curation, Events, Graph, Belief, and Agent through `SPDS-H05` through `SPDS-H08` | [outcome row](../detailed_design/integrated_product_outcome_evidence_matrix.md#outcome-evidence), [initial standing Curation](../startup_pds_design_requirements/startup_pds_design_specification.md#initial-standing-curation), [Goal inception](../startup_pds_design_requirements/startup_pds_design_specification.md#goal-inception) | Current epoch with exact owner checkpoints and waits | Missing storage as non-realization or coordinator-created Goal | Coverage receipt, cut, Curation result, publications, mismatch Belief, Agent Goal decision |
+| `WMR-O31` reusable nonce emitted and visible | One authorized Task invokes `nonce.emit.v1`, one deterministic Event kind `nonce` is appended, and Graph covers its owner publication | `WMR-O30`, complete PlannerCut, admitted Plan, Agent Task authorization, current Capability binding and epoch fence | `WMR-DG-03`, revision 2 `WMR-DG-04`, projected by proposed `WMR-DG-07` revision 3 | Agent, Execution, nonce, Events, and Graph through `SPDS-H09` through `SPDS-H17` | [outcome row](../detailed_design/integrated_product_outcome_evidence_matrix.md#outcome-evidence), [reusable Capability](../startup_pds_design_requirements/startup_pds_design_specification.md#reusable-nonce-capability), [transition spine](../startup_pds_design_requirements/semantic_transition_ledger.md#transition-spine) | Exact generation, admission epoch, binding, ledger, and projection positions | Task outcome as visibility, arbitrary Event emission, or Startup meaning in the global Capability | Plan, Task authorization, admission, node, attempt, generic nonce request, append receipt, Graph cursor |
+| `WMR-O32` Startup nonce reconciled | Confirmation Curation settles exact returned evidence and Agent records milestone acceptance plus Goal satisfaction | `WMR-O31`, eligible confirmation operation, exact Agent authorization, configured route and comparator | `WMR-DG-02`, `WMR-DG-03`, projected by proposed `WMR-DG-07` revision 3 | Agent, Curation, Events, Graph, and Belief through `SPDS-H18` through `SPDS-H21` | [outcome row](../detailed_design/integrated_product_outcome_evidence_matrix.md#outcome-evidence), [planned confirmation](../startup_pds_design_requirements/startup_pds_design_specification.md#planned-confirmation-curation), [Belief and Agent closure](../startup_pds_design_requirements/startup_pds_design_specification.md#belief-and-agent-closure), [transition spine](../startup_pds_design_requirements/semantic_transition_ledger.md#transition-spine) | Exact Goal, Plan, generation, epoch, and downstream positions | Graph visibility, Execution outcome, or process health as Goal satisfaction | Curation intake and result, publication positions, realization Belief, milestone decision, satisfaction receipt |
+| `WMR-O33` successor epoch reruns Startup proof | Recovered current generation derives a successor nonce that prior epoch evidence cannot satisfy | Current generation interruption, old epoch closure, successor incarnation readiness, successor epoch publication | `WMR-DG-06`, projected by proposed `WMR-DG-07` revision 3 | Lifecycle and Agent through `SPDS-H03`, `SPDS-H04`, and `WMR-H23` through `WMR-H25` | [outcome row](../detailed_design/integrated_product_outcome_evidence_matrix.md#outcome-evidence), [retry, recovery, and successors](../startup_pds_design_requirements/startup_pds_design_specification.md#retry-recovery-and-successors), [transition spine](../startup_pds_design_requirements/semantic_transition_ledger.md#transition-spine) | Old epoch closed and successor epoch open | Reusing prior Event evidence or treating process recovery as completed reconciliation | epoch closure, new incarnation readiness, successor epoch, predecessor and successor nonce lineages |
+| `WMR-O34` Startup account localizes incomplete progress | Repeatable inspection reports the first missing critical position and separate parallel obligations without manufacturing one health state | Any exact Startup nonce lineage and frozen native owner positions | proposed `WMR-DG-07` revision 3 | Native owners projected through `SPDS-H22`, `SPDS-H23`, and `WMR-H18` | [outcome row](../detailed_design/integrated_product_outcome_evidence_matrix.md#outcome-evidence), [inspection contract](../startup_pds_design_requirements/startup_pds_design_specification.md#inspection-contract), [failure localization](../startup_pds_design_requirements/semantic_transition_ledger.md#failure-localization) | Exact assignment, generation, epoch, nonce, and inspection fence | Inspection as truth, timeout as terminality, nonce satisfaction as global health or quiescence | owner positions, first absent or stale consumer, independent Execution effect account, waits, wakes, liveness projection |
+
 ### Already-Correct README Outcomes
 
 | ID and scenario | Expected observable outcome | Preconditions | Producing gates | Evidence owner or accepted edge | Exact design evidence location | Lifecycle position | Forbidden inference | Future runtime evidence to match |
@@ -174,6 +230,13 @@ generation non-current
 | `WMR-O11` Agent progresses Plan | Agent absorbs exactly the Plan-declared return milestone | `WMR-O10` or another exact declared return position, matching Plan dependency, owner identity, perspective, context, and generation lineage | `WMR-DG-03`, `WMR-DG-04`, projected by `WMR-DG-07` | Named milestone owner and Agent through `WMR-H19`, or Belief and Agent through `WMR-H36` | [outcome row](../detailed_design/integrated_product_outcome_evidence_matrix.md#outcome-evidence), [independent return milestones](../detailed_design/execution_admission_and_observation_return.md#independent-return-milestones), [milestone registry](../detailed_design/planner_cut_and_plan_transition_ledger.md#milestone-registry), [Agent reconciliation edge](../world_model_reconciliation_handoff_ledger.md#wmr-h19-admitted-result-to-agent-reconciliation) | Current generation or explicitly addressed predecessor lineage | Every projection branch as mandatory, or any earlier owner position as Agent absorption | Plan dependency, exact producer product and position, Agent input cursor, durable milestone decision |
 | `WMR-O12` Goal disposition reached | Agent separately records satisfied, successor-work, hold, or conflict disposition | Current accepted owner milestones, current knowledge cut, Plan state, directive and Goal semantics | `WMR-DG-03`, `WMR-DG-04`, projected by `WMR-DG-07` | Agent over exact owner milestones | [outcome row](../detailed_design/integrated_product_outcome_evidence_matrix.md#outcome-evidence), [Goal disposition](../detailed_design/planner_cut_strategy_plan_and_agent_progression.md#goal-disposition), [return milestones](../detailed_design/execution_admission_and_observation_return.md#independent-return-milestones) | Generation fence plus durable wait or successor position | Product completion, Task outcome, Event append, or milestone absorption as Goal satisfaction | Current cut, Plan history, accepted owner milestones, Agent Goal disposition identity |
 | `WMR-O13` partial or uncertain README effect | Possible filesystem change remains observable despite an unresolved or non-success operational outcome | Exact attempt and operation lineage, source target, unresolved-effect account, owner re-observation route | `WMR-DG-04`, `WMR-DG-06`, projected by `WMR-DG-07` | Execution, workspace, docs, and lifecycle through `WMR-H16`, `WMR-H32`, and `WMR-H25` | [outcome row](../detailed_design/integrated_product_outcome_evidence_matrix.md#outcome-evidence), [partial or uncertain work](../detailed_design/integrated_product_proof_and_inspection.md#partial-failed-or-uncertain-work), [Execution effect account](../detailed_design/execution_admission_and_observation_return.md#dispatch-and-uncertain-effects), [retirement requirements](../detailed_design/activation_generation_and_lifecycle_closure.md#fenced-quiescence-and-retirement) | Unresolved-operation summary blocks unsafe retirement | Operational outcome as proof that the source did not change | Attempt, operation, binding and target lineage, unresolved outcome, successor or unchanged owner observation, safe-point summary |
+
+### Cross-Agent Coherence And Successor Reconciliation Outcomes
+
+| ID and scenario | Expected observable outcome | Preconditions | Producing gates | Evidence owner or accepted edge | Exact design evidence location | Lifecycle position | Forbidden inference | Future runtime evidence to match |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `WMR-O27` compatible work shared | Two independently authorized compatible Tasks retain distinct Goal and Agent attribution while one unified Task Network realizes one operational node | Two Goal Set admissions with exact compatibility across Capability contract, inputs, source revision, effects, authority, validity, result schema, and activation fence | corrected `WMR-DG-04`, projected by corrected `WMR-DG-07` | Goal Set and Execution through `WMR-H14` through `WMR-H17` | [shared Merkle proof](../detailed_design/execution_admission_and_observation_return.md#shared-merkle-scan), [coherence outcomes](../detailed_design/execution_admission_and_observation_transition_ledger.md#coherence-outcomes), [integrated proof](../detailed_design/integrated_product_proof_and_inspection.md#cross-agent-execution-coherence) | One current admission epoch and compatible activation fence | Semantic Goal equivalence, attribution loss, or duplicate execution as required isolation | Two admissions, one compatibility decision, one operational node, one attempt and outcome, two discharge accounts, two independent Agent milestone decisions |
+| `WMR-O28` Plan reconstructed on changed knowledge | A changed complete PlannerCut invalidates stale eligibility and yields a successor Plan that preserves predecessor and completed-work history | Admitted owner revisions, complete successor cut or explicit refusal, predecessor Plan, completed products, current construction policy | `WMR-DG-03`, projected by corrected `WMR-DG-07` | Planner, Strategy, and Agent through `WMR-H11`, `WMR-H12`, `WMR-H19`, and `WMR-H26` through `WMR-H28` | [Plan reconstruction](../detailed_design/planner_cut_strategy_plan_and_agent_progression.md#reconstruction-and-successors), [successor proof](../detailed_design/integrated_product_proof_and_inspection.md#successor-plan-reconciliation), [outcome row](../detailed_design/integrated_product_outcome_evidence_matrix.md#outcome-evidence) | Current generation with predecessor lineage preserved | Continuing stale product eligibility or mutating the predecessor Plan in place | Old and new cut identities, invalidated eligibility, predecessor and successor Plan identities, completed history, Agent judgment, later product authorization |
 
 ### Dependency Security Outcomes
 
@@ -243,6 +306,7 @@ The matching operation compares each runtime artifact with the identity, owner, 
 | Evidence chain | Outcome ids | Runtime artifact families |
 | --- | --- | --- |
 | principal to current product | `WMR-O01`, `WMR-O02` | product and package revisions, owner receipts, assignment, Agent topology, prepared closure, generation, parity, readiness, head, admission epoch |
+| Startup nonce reconciliation | `WMR-O29` through `WMR-O34` | Startup product and assignment, epoch nonce, Curation expectation, Goal, Plan, authorizations, Execution positions, generic nonce publication, Graph and Belief positions, Agent milestone and satisfaction, successor epoch, inspection account |
 | already-correct README | `WMR-O03`, `WMR-O04` | observation sets, completeness receipts, Event and Graph positions, Belief revision where routed, `PlannerCut`, Agent decision, Goal disposition |
 | missing README and returned evidence | `WMR-O05`, `WMR-O06`, `WMR-O07`, `WMR-O23`, `WMR-O08`, `WMR-O09`, `WMR-O10`, `WMR-O11`, `WMR-O12`, `WMR-O13` | Curation products, Goal and Plan, product authorizations, Execution positions, owner re-observation, return milestones, unresolved-effect and safe-point evidence |
 | dependency security | `WMR-O14`, `WMR-O15`, `WMR-O16` | inventory, advisory, assessment, mitigation outcome, successor observation, verification |
@@ -250,6 +314,25 @@ The matching operation compares each runtime artifact with the identity, owner, 
 | interruption and replacement | `WMR-O19`, `WMR-O20` | epochs, incarnations, checkpoints, recovery readiness, generation heads, admission histories, drains |
 | late delivery | `WMR-O21` | old-lineage source or operation identity, destination receipt, successor lineage |
 | retirement | `WMR-O22` | closed epoch, drains, passive fences, safe points, unresolved summaries, stops, releases, retirement receipt |
+| compatible cross-Agent execution | `WMR-O27` | two Goal Set admissions, compatibility decision, unified Task Network node, one attempt and outcome, per-admission discharge, independent Agent milestones |
+| successor Plan reconciliation | `WMR-O28` | predecessor and successor cuts, invalidated eligibility, Plan lineage, completed history, new Agent judgment and product authorization |
+
+## Review Evidence Map
+
+This map distinguishes review evidence from Gate Acceptance. Historical candidate hashes remain evidence of the review performed at the time. A hash that cannot be reproduced from its named delivery commit is not treated as an immutable candidate artifact.
+
+| Review boundary | Initial recommendation | Frozen findings | Verification | Official receipt | Candidate preservation |
+| --- | --- | --- | --- | --- | --- |
+| program design | changes recommended | `WMR-PROGRAM-F01` through `WMR-PROGRAM-F04` | passed | [program review receipt](world_model_reconciliation_program_design_review_receipt.md) | aggregate digest recorded, original candidate not reconstructible from its combined delivery commit |
+| `WMR-DD-01` original and retrospective | original passed, retrospective changes recommended | retrospective five findings | passed | [original integrated review receipt](wmr_dd_01_integrated_design_review_receipt.md) and [retrospective assurance receipt](../delivery_gates/wmr_dg_01_retrospective_assurance_receipt.md) | corrected candidate reproducible at `38f38168` |
+| `WMR-DD-02` original and retrospective | original passed, retrospective changes recommended | retrospective three findings | passed | [original integrated review receipt](wmr_dd_02_integrated_design_review_receipt.md) and [retrospective assurance receipt](../delivery_gates/wmr_dg_02_retrospective_assurance_receipt.md) | corrected candidate reproducible at `38f38168` |
+| `WMR-DD-03` | [changes recommended](wmr_dd_03_subagent_review_recommendation.md) | four findings | passed | [integrated review receipt](wmr_dd_03_integrated_design_review_receipt.md) | corrected candidate reproducible at `8cdfde3d` |
+| historical `WMR-DD-04` | [changes recommended](wmr_dd_04_subagent_review_recommendation.md) | four findings | passed | [integrated review receipt](wmr_dd_04_integrated_design_review_receipt.md) | pre-tracker digest recorded, individual manifest not preserved at `440b64e3` |
+| `WMR-DD-05` | [changes recommended](wmr_dd_05_subagent_review_recommendation.md) | four findings | passed | [integrated review receipt](wmr_dd_05_integrated_design_review_receipt.md) | pre-tracker digest recorded, individual manifest not preserved at `7c1a407b` |
+| `WMR-DD-06` | [changes recommended](wmr_dd_06_subagent_review_recommendation.md) | six findings | passed | [integrated review receipt](wmr_dd_06_integrated_design_review_receipt.md) | pre-tracker digest recorded, individual manifest not preserved at `613133eb` |
+| historical `WMR-DD-07` | [changes recommended](wmr_dd_07_subagent_review_recommendation.md) | four findings | passed | [integrated review receipt](wmr_dd_07_integrated_design_review_receipt.md) | pre-tracker digest recorded, individual manifest not preserved at `f54beb14` |
+| revision 2 corrective approval candidate | [changes recommended, then approval recommended](world_model_reconciliation_approval_review_recommendation.md) | two frozen documentation findings | passed | recommendation only | exact SHA-256 manifest digest `0965c4070602777fc7a9989cd1127ed1eada97c835d39ee6cbd47428f61915d4` preserved outside the recommendation |
+| Startup PDS design exercise | user approved full design for program inclusion | none in this program amendment | not a Gate Acceptance review | [full design](../startup_pds_design_requirements/startup_pds_design_specification.md) and [insertion assessment](../startup_pds_design_requirements/program_insertion_assessment.md) | design package becomes candidate input under proposed `WMR-DG-07` revision 3 |
 
 ## Source Artifact Inventory
 
@@ -268,6 +351,12 @@ The matching operation compares each runtime artifact with the identity, owner, 
 - `design/plan/architecture_overhauls/world_model_knowledge_traversal/delivery_gates/wmr_dg_06_activation_generation_and_lifecycle_closure.md`
 
 - `design/plan/architecture_overhauls/world_model_knowledge_traversal/delivery_gates/wmr_dg_07_integrated_product_proof_and_inspection.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/delivery_gates/wmr_dg_04_execution_coherence_and_observation_return_revision_2.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/delivery_gates/wmr_dg_07_integrated_product_proof_and_inspection_revision_2.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/delivery_gates/wmr_dg_07_integrated_product_proof_and_inspection_revision_3.md`
 
 ### Gate Receipts
 
@@ -335,8 +424,72 @@ The matching operation compares each runtime artifact with the identity, owner, 
 
 - `design/plan/architecture_overhauls/world_model_knowledge_traversal/detailed_design/integrated_product_proof_and_inspection.md`
 
+### Startup PDS Design Package
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/startup_pds_design_requirements/README.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/startup_pds_design_requirements/expected_injection_baseline.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/startup_pds_design_requirements/domain_assessment.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/startup_pds_design_requirements/startup_pds_design_specification.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/startup_pds_design_requirements/semantic_transition_ledger.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/startup_pds_design_requirements/program_insertion_assessment.md`
+
 ### Shared Ledgers
 
 - `design/plan/architecture_overhauls/world_model_knowledge_traversal/world_model_reconciliation_handoff_ledger.md`
 
 - `design/plan/architecture_overhauls/world_model_knowledge_traversal/world_model_reconciliation_delivery_program_ledger.md`
+
+### Review Recommendations And Receipts
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/reviews/world_model_reconciliation_program_design_review_receipt.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/reviews/wmr_dd_01_integrated_design_review_receipt.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/reviews/wmr_dd_01_retrospective_assurance_recommendation.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/reviews/wmr_dd_02_integrated_design_review_receipt.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/reviews/wmr_dd_02_retrospective_assurance_recommendation.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/reviews/wmr_dd_03_subagent_review_recommendation.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/reviews/wmr_dd_03_integrated_design_review_receipt.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/reviews/wmr_dd_04_subagent_review_recommendation.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/reviews/wmr_dd_04_integrated_design_review_receipt.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/reviews/wmr_dd_05_subagent_review_recommendation.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/reviews/wmr_dd_05_integrated_design_review_receipt.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/reviews/wmr_dd_06_subagent_review_recommendation.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/reviews/wmr_dd_06_integrated_design_review_receipt.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/reviews/wmr_dd_07_subagent_review_recommendation.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/reviews/wmr_dd_07_integrated_design_review_receipt.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/reviews/world_model_reconciliation_approval_review_recommendation.md`
+
+### Gate Acceptance Recommendations
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/delivery_gates/wmr_dg_01_retrospective_acceptance_recommendation.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/delivery_gates/wmr_dg_02_retrospective_acceptance_recommendation.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/delivery_gates/wmr_dg_03_subagent_acceptance_recommendation.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/delivery_gates/wmr_dg_04_subagent_acceptance_recommendation.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/delivery_gates/wmr_dg_05_subagent_acceptance_recommendation.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/delivery_gates/wmr_dg_06_subagent_acceptance_recommendation.md`
+
+- `design/plan/architecture_overhauls/world_model_knowledge_traversal/delivery_gates/wmr_dg_07_subagent_acceptance_recommendation.md`

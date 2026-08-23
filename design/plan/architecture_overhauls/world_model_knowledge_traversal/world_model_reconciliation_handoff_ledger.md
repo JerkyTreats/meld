@@ -2,7 +2,7 @@
 
 Date: 2026-08-22
 
-Status: accepted through `WMR-DG-07`, no active slice
+Status: historical gates accepted, Startup integration candidate awaiting independent assurance and user Gate Acceptance
 
 Implementation authorization: none
 
@@ -43,9 +43,9 @@ An earlier phase may define and later implement a producer while its consumer re
 | `WMR-H11` | Agent Goal and cut to Strategy | `WMR-DD-03` | `WMR-DD-03` | design accepted, current implementation partial for executable-only candidate |
 | `WMR-H12` | Strategy Plan revision to Agent progression | `WMR-DD-03` | `WMR-DD-03` | design accepted, implementation unproved |
 | `WMR-H13` | Agent authorization to Execution admission | `WMR-DD-03` | `WMR-DD-04` | design accepted by `WMR-DG-04`, implementation partial |
-| `WMR-H14` | Execution admission to Task Network | `WMR-DD-04` | `WMR-DD-04` | design accepted by `WMR-DG-04`, implementation partial |
+| `WMR-H14` | Execution admission to unified Task Network | `WMR-DD-04` | `WMR-DD-04` | revision 1 accepted, coherence correction awaiting revision 2 assurance, implementation partial |
 | `WMR-H15` | planning route to package dispatch | `WMR-DD-04` | `WMR-DD-04` | design accepted by `WMR-DG-04`, current handoff process-local |
-| `WMR-H16` | Task Network ready work to dispatch | `WMR-DD-04` | `WMR-DD-04` | design accepted by `WMR-DG-04`, current local behavior strong |
+| `WMR-H16` | unified Task Network ready work to dispatch | `WMR-DD-04` | `WMR-DD-04` | revision 1 accepted, shared-attribution correction awaiting revision 2 assurance, current local behavior strong |
 | `WMR-H17` | Execution outcome to Events | `WMR-DD-04` | `WMR-DD-04` | design accepted by `WMR-DG-04`, current Task publication implemented |
 | `WMR-H18` | integrated result lineage inspection | `WMR-DD-02` through `WMR-DD-06` | `WMR-DD-07` | proof projection accepted by `WMR-DG-07`, owner-specific handoffs accepted earlier |
 | `WMR-H19` | admitted result to Agent reconciliation | `WMR-DD-03` | `WMR-DD-03` | design accepted through Execution return by `WMR-DG-04`, implementation partial |
@@ -408,7 +408,7 @@ The `WMR-DD-03` coherence horizon closes complete `PlannerCut` assembly, Strateg
 
 ## Accepted WMR-DD-04 Edge Details
 
-The `WMR-DD-04` coherence horizon begins with one complete Agent-authorized Task and closes through exact returned owner evidence plus Agent milestone absorption. Runtime implementation, PDS, and activation-wide lifecycle remain outside the slice.
+The corrected `WMR-DD-04` coherence horizon begins with one complete Agent-authorized Task, passes through Goal Set admission and the unified Task Network, and closes through exact returned owner evidence plus Agent milestone absorption. Runtime implementation, PDS, and activation-wide lifecycle remain outside the slice.
 
 ### WMR-H13 Agent Authorization To Execution Admission
 
@@ -425,35 +425,35 @@ The `WMR-DD-04` coherence horizon begins with one complete Agent-authorized Task
 | restart | Agent authorization plus Execution admission journal |
 | relationship state | design accepted by `WMR-DG-04`, implementation partial |
 
-### WMR-H14 And WMR-H15 Admission Through Durable Dispatch Route
+### WMR-H14 And WMR-H15 Admission Through Unified Coherence And Durable Dispatch Route
 
 | Obligation | Detailed-design position |
 | --- | --- |
-| producer owner | Execution admission and lowering |
-| producer product | deterministic lowering and route product for one admitted Task |
-| durable producer position | admission receipt, lowering identity, Task Network mutation, and durable route product or exact reconstruction inputs |
+| producer owner | Execution Goal Set, Planning, and lowering |
+| producer product | deterministic lowering, compatibility or separation decision, admission attribution set, and route product for one admitted Task |
+| durable producer position | Goal Set admission receipt, lowering identity, coherence decision, unified Task Network mutation, and durable route product or exact reconstruction inputs |
 | consumer owner | Task Network and dispatch |
-| consumer acceptance position | committed node lineage and eligible route visible to bounded dispatch selection |
-| identity and idempotency | Task, admission, network, binding, and routing revision derive stable mutation and route identities |
+| consumer acceptance position | committed operational node lineage with complete admission attribution and eligible route visible to bounded dispatch selection |
+| identity and idempotency | Task, admission, compatibility inputs, unified network, binding, and routing revision derive stable mutation, attribution, and route identities |
 | wait and wake | predecessor conflict, missing binding, or route absent waits on exact network or binding successor |
-| fence | Task, network revision, Capability contract, exact binding revision, exact routing-rule revision, authority, and generation |
-| restart | Task Network journal plus durable route or mandatory deterministic reconstruction from admitted Task, exact binding revision, and exact routing-rule revision |
-| relationship state | design accepted by `WMR-DG-04`, implementation partial |
+| fence | Task, complete contributing admission set, network revision, Capability contract, exact binding revision, exact routing-rule revision, authority, and generation |
+| restart | Goal Set journal, coherence decisions, unified Task Network journal, and durable route or mandatory deterministic reconstruction from admitted Task, exact binding revision, and exact routing-rule revision |
+| relationship state | revision 1 return path accepted, unified coherence correction awaiting `WMR-DG-04` revision 2 assurance |
 
 ### WMR-H16 Ready Task To Fenced Attempt
 
 | Obligation | Detailed-design position |
 | --- | --- |
 | producer owner | Task Network |
-| producer product | exact ready Task instance and initialization inputs |
+| producer product | exact ready operational node, complete contributing admission set, and initialization inputs |
 | durable producer position | network revision and readiness state |
 | consumer owner | Execution dispatch and provider realization seam |
 | consumer acceptance position | durable claim, attempt, and external operation identity before effect reliance |
-| identity and idempotency | claim, attempt, operation, contract, exact installed binding revision, resolved Capability instance, effect target, input digest, authority, and generation remain explicit |
+| identity and idempotency | operational node, every admission attribution, claim, attempt, operation, contract, exact installed binding revision, resolved Capability instance, effect target, input digest, authority, and generation remain explicit |
 | wait and wake | unresolved dependency, input, claim, or worker waits on exact state change or expiry |
 | fence | network, lifecycle epoch, worker, participant incarnation, activation generation, authority, exact binding revision, resolved Capability instance, and effect target |
-| restart | network state, claim, attempt, operation receipt, installed binding revision, effect target, and unresolved-effect account |
-| relationship state | design accepted by `WMR-DG-04`, current local behavior strong but integrated effect fencing unproved |
+| restart | unified network state, admission attributions, claim, attempt, operation receipt, installed binding revision, effect target, and unresolved-effect account |
+| relationship state | revision 1 effect path accepted, shared-attribution correction awaiting `WMR-DG-04` revision 2 assurance |
 
 ### WMR-H17 Execution Outcome To Events
 
@@ -711,6 +711,24 @@ The `WMR-DD-06` coherence horizon begins with one inert prepared closure and clo
 | restart | re-resolve exact native owner positions; inspection has no authoritative progress cursor |
 | relationship state | proof projection accepted by `WMR-DG-07`, all underlying handoffs accepted earlier |
 
+## Startup PDS Product Projection
+
+The [Startup semantic transition ledger](startup_pds_design_requirements/semantic_transition_ledger.md) projects one concrete product through the accepted handoffs. Its `SPDS-H01` through `SPDS-H23` identifiers are proof-local names, not new program handoff classes.
+
+| Startup edge family | Accepted handoff reuse | Product-specific evidence |
+| --- | --- | --- |
+| package, assignment, and preparation | `WMR-H20` through `WMR-H22` | exact `meld_startup` package compilation, assignment, topology, Capability preparation, participant plan, and inert closure |
+| readiness, epoch, and nonce derivation | `WMR-H23` | complete native readiness, current generation, open admission epoch, deterministic Agent-owned nonce instance |
+| standing expectation and mismatch | `WMR-H03`, `WMR-H05`, `WMR-H08` through `WMR-H10`, `WMR-H29` through `WMR-H31` | complete Event coverage, initial `TraversalCut`, Curation result, publications, configured mismatch Belief, Agent Goal decision |
+| construction and authorization | `WMR-H04`, `WMR-H11` through `WMR-H13`, `WMR-H19`, `WMR-H26` through `WMR-H28` | complete PlannerCut, immutable heterogeneous Plan, Agent Plan judgment, Task and confirmation-operation authorization |
+| unified execution and nonce publication | `WMR-H14` through `WMR-H17`, followed by `WMR-H01` and `WMR-H02` | one admitted Task, operational node, attempt, deterministic `nonce.emit.v1` request, owner-issued Event kind `nonce`, exact append receipt |
+| return and satisfaction | `WMR-H04`, `WMR-H07` through `WMR-H12`, `WMR-H19`, `WMR-H29` through `WMR-H31` | Graph visibility, planned confirmation, terminal result, configured realization Belief, Agent milestone, Goal satisfaction |
+| liveness, recovery, and inspection | `WMR-H18`, `WMR-H23` through `WMR-H25` | exact owner checkpoints, waits, wakes, epoch successor, safe points, and repeatable nonce account |
+
+The nonce Capability effect composes Execution dispatch with ordinary owner publication. Execution remains ignorant of Startup meaning. The nonce owner remains ignorant of Agent and PDS meaning. Events remains a neutral durability boundary. No new transport or semantic authority is introduced.
+
+Event append and Execution terminal outcome remain independent. Agent Goal satisfaction and unresolved operational-effect closure may also differ. Inspection preserves both positions and does not collapse nonce satisfaction into readiness, health, liveness, or quiescence.
+
 ## Lifecycle Projection
 
 The handoff ledger and lifecycle view are two projections of the same relationship graph.
@@ -728,7 +746,7 @@ For every edge, lifecycle design must eventually name:
 - safe point and unresolved-operation summary
 - stop or retirement receipt
 
-`WMR-DD-01` closes owner publication through Traversal. `WMR-DD-02` closes Curation-local authorship and visibility. `WMR-DD-03` adds complete reasoning-cut assembly, Plan judgment, product authorization, Curation handoff, milestone absorption, and Agent-local progression. `WMR-DD-04` closes Execution admission and returned owner evidence. Accepted `WMR-DD-05` supplies exact inert product and Agent-genesis preparation. Accepted `WMR-DD-06` closes lifecycle consumption, realization, readiness, work-or-wait, recovery, replacement, and retirement. Active `WMR-DD-07` composes these accepted positions without changing them. A clean process tick, empty queue, Event append, prepared closure, or absent consumer cannot serve as readiness or quiescence evidence.
+`WMR-DD-01` closes owner publication through Traversal. `WMR-DD-02` closes Curation-local authorship and visibility. `WMR-DD-03` adds complete reasoning-cut assembly, Plan judgment, product authorization, Curation handoff, milestone absorption, and Agent-local progression. The corrected `WMR-DD-04` preserves Goal-attributed admission through unified Execution coherence and returned owner evidence. Accepted `WMR-DD-05` supplies exact inert product and Agent-genesis preparation. Accepted `WMR-DD-06` closes lifecycle consumption, realization, readiness, work-or-wait, recovery, replacement, and retirement. Revision 3 of `WMR-DD-07` composes these positions, explicit successor-Plan reconciliation, and the Startup nonce product proof without changing native owner meaning. A clean process tick, empty queue, Event append, prepared closure, or absent consumer cannot serve as readiness or quiescence evidence.
 
 ## Gate Use
 
@@ -754,6 +772,8 @@ Primary evidence:
 - [runtime lifecycle and supervision review](runtime_initialization_lifecycle/reviews/runtime_lifecycle_and_supervision_review.md)
 - [detailed design workstream framing](detailed_design_workstream_framing.md)
 - [current code ground map](current_code_groundmap.md)
+- [Startup PDS full design](startup_pds_design_requirements/startup_pds_design_specification.md)
+- [Startup PDS semantic transition ledger](startup_pds_design_requirements/semantic_transition_ledger.md)
 - [canonical Graph and Traversal design](../../../cognitive_architecture/world_model/graph/README.md)
 - [canonical Planner design](../../../cognitive_architecture/world_model/planner/README.md)
 
