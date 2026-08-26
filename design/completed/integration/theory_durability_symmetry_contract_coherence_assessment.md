@@ -28,7 +28,7 @@ Out of scope:
 - maintained conditions, authority grants, and CVE freshness
 - a second expression, Method revival, settled replay, and hot replacement
 
-Applicable policy is [Assessment By Domain Policy](../../../governance/assessment_by_domain_policy.md). Contract choices also follow [Semantic Unit Preservation Policy](../../../governance/semantic_unit_preservation_policy.md), [Compatibility Policy](../../../governance/compatibility_policy.md), and the domain architecture rules in the repository `AGENTS.md`.
+Applicable method is the canonical assessment-by-domain skill. Contract choices also follow [Runtime Invariants](../../../governance/runtime_invariants.md) and the domain architecture rules in the repository `AGENTS.md`.
 
 ## Regenerated Domain Snapshot
 

@@ -3,7 +3,7 @@
 Date: 2026-07-08
 Status: complete
 Scope: make meld-events durable, fast, observable, and contract-stable without pre-extending past known requirements
-Workflow: complex change workflow deactivated at close per [Complex Change Workflow Governance](../../../governance/complex_change_workflow.md)
+Workflow: complex change workflow deactivated at close per canonical delivery-program skill
 
 ## Overview
 
@@ -145,7 +145,7 @@ Tasks:
 - [x] `SpineSubscription`: watermark notification plus bounded replay plus an optional cursor helper consumers embed in their own stores; the spine never persists a consumer position
 - [x] supervisor tick wakes on watermark advance with the configured interval as fallback heartbeat
 - [x] session index keys carry the sequence and values stay empty, resolved through the spine tree; a one-time open migration slims existing full-value rows
-- [x] legacy sunset: one-time open migration moves `obs_events` rows into the spine with the spine winning sequence collisions, then the merge-on-read path is deleted per [Compatibility Shim Policy](../../../governance/compatibility_shim_policy.md); characterization tests stage legacy rows before open and pin normalization semantics; removal notes mark all three surviving migration seams
+- [x] legacy sunset: one-time open migration moves `obs_events` rows into the spine with the spine winning sequence collisions, then the merge-on-read path is deleted per [Runtime Invariants](../../../governance/runtime_invariants.md); characterization tests stage legacy rows before open and pin normalization semantics; removal notes mark all three surviving migration seams
 - [x] encoding decision from bench data: JSON stays. Decode costs about 1.25 microseconds per event, so a full supervisor batch of 256 events decodes in about a third of a millisecond; at cognition-rate volumes that is immaterial and inspectability wins
 
 Exit criteria: consumers block until new events; no session read touches the legacy tree; storage-per-event bench improved or the encoding decision recorded as not worth it.
@@ -203,7 +203,7 @@ Every checkpoint commit passes the same gate ladder, in order:
 4. test gate: `cargo test -p meld-events` plus affected crates; full `cargo test --workspace` at phase exits
 5. contract gate: the four contract suites green; known-reds only under the documented ignore convention
 6. bench gate at phase exits: criterion run compared against recorded baselines; regressions block the phase close
-7. policy gate: docs style scan on changed Markdown; shim removal notes present; breaking changes called out before commit per [Compatibility Policy](../../../governance/compatibility_policy.md); changed record shapes reviewed against [Semantic Unit Preservation Policy](../../../governance/semantic_unit_preservation_policy.md)
+7. policy gate: docs style scan on changed Markdown; shim removal notes present; breaking changes and changed record shapes reviewed against [Runtime Invariants](../../../governance/runtime_invariants.md)
 8. fresh review gate: every checkpoint commit is reviewed by a fresh-context review agent that did not produce the change; the reviewer receives the staged diff and the relevant PLAN phase, and checks correctness, test honesty, commenting policy, semantic unit preservation, shim notes, and domain boundaries; confirmed findings are fixed or explicitly waived with a recorded reason before the commit lands; behavior-changing phases additionally get an adversarial multi-lens review
 
 Evidence for each gate is recorded in the phase completion notes below as work lands.
@@ -355,5 +355,5 @@ Bench comparison against the recorded baselines, criterion medians:
 - [Event Runtime Requirements](../integration/event_runtime_requirements.md)
 - [World Model Runtime Requirements](../integration/world_model_runtime_requirements.md)
 - [Flywheel Runtime Code Assessment](../integration/flywheel_runtime_code_assessment.md)
-- [Commit Policy](../../../governance/commit_policy.md)
-- [Complex Change Workflow Governance](../../../governance/complex_change_workflow.md)
+- [Contribution Policy](../../../governance/contribution_policy.md)
+- canonical delivery-program skill

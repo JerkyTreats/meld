@@ -70,7 +70,7 @@ Primary repository evidence:
 
 Applicable policy:
 
-- [Assessment By Domain Policy](../../../governance/assessment_by_domain_policy.md)
+- canonical assessment-by-domain skill
 - repository domain architecture rules in `AGENTS.md`
 
 ## External CVE Runtime Research

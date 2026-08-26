@@ -2,7 +2,7 @@
 
 Date: 2026-08-23
 
-Status: alignment corrections complete with source-sequencing correction
+Status: historical architecture alignment evidence, superseded for source sequencing
 
 Concern: determine whether canonical cognitive architecture, accepted World Model Reconciliation design, Startup requirements, source delivery controls, and implementation-facing contracts describe one realizable architecture before source work begins.
 
@@ -14,11 +14,17 @@ It does not inspect source implementation correctness, redesign accepted owner b
 
 Primary evidence is the [canonical cognitive architecture](../../../cognitive_architecture/README.md), [accepted Startup manifest](reviews/world_model_reconciliation_startup_integration_candidate.sha256), [WMR-DG-04 revision 2 receipt](delivery_gates/wmr_dg_04_revision_2_acceptance_receipt.md), [WMR-DG-07 revision 3 receipt](delivery_gates/wmr_dg_07_revision_3_acceptance_receipt.md), [Startup design](startup_pds_design_requirements/startup_pds_design_specification.md), [handoff ledger](world_model_reconciliation_handoff_ledger.md), and [source Style Assurance overlay](delivery_gates/wmr_source_style_assurance_overlay.md).
 
+## Recovery Supersession
+
+The semantic alignment findings remain evidence for the approved architecture. The former conclusion that the source sequence was implementation-ready is withdrawn.
+
+The additive implementation attempt demonstrated that locally aligned domain contracts can still create parallel runtime authorities when the real entrypoints and superseded paths are deferred. The [single-runtime recovery amendment](world_model_reconciliation_single_runtime_recovery.md) and [Runtime Invariants](../../../../governance/runtime_invariants.md) now control delivery reconstruction. No source slice is active.
+
 ## Authority Order
 
 The evergreen cognitive architecture defines what Meld shall be. Accepted WMR revisions supply implementation-level detail where they preserve those seams. Gate Receipts establish accepted candidate state. Later activation and policy overlays may change delivery authority without rewriting the accepted manifest. Historical discovery and review artifacts remain evidence, not current normative contracts.
 
-This distinction matters because the accepted manifest intentionally preserves pre-acceptance status prose. Current source authority therefore lives in the [WMR-SI-01 activation record](delivery_gates/wmr_si_01_source_activation_record.md), not in a mutation of the frozen candidate.
+This distinction matters because the accepted manifest intentionally preserves pre-acceptance status prose. Current program authority lives in the [source delivery program ledger](world_model_reconciliation_source_delivery_program_ledger.md). The former [WMR-SI-01 activation record](delivery_gates/wmr_si_01_source_activation_record.md) is withdrawn historical evidence.
 
 ## Pass One Domain Sweep
 
@@ -91,11 +97,13 @@ Execution docs used Curation as a generic intake verb, named legacy Workflow pac
 
 The corrected language names Task admission lifecycle, producer-bound Task inputs, Execution-owned lowering values, and Execution Planning. Conditional execution remains legal only inside a complete admitted Task.
 
-### Program State Drift
+### Historical Program State Drift
 
 The frozen revision 3 candidate correctly records its own pre-acceptance state, but later receipts and user authorization made that prose stale as a current program index. Rewriting the frozen candidate would destroy exact acceptance identity.
 
-The first source activation record incorrectly made Startup the active source slice. That confused first integrated product proof with first substrate implementation. The corrected overlay and activation record make owner publication through immutable `TraversalCut` the only active slice. `WMR-SI-02` through `WMR-SI-06` implement the remaining native seams in dependency order. Startup is `WMR-SI-07`, followed by Docs Freshness and Dependency Security.
+The first source activation record incorrectly made Startup the active source slice. That confused first integrated product proof with first substrate implementation. A later correction made owner publication through immutable `TraversalCut` the first horizontal slice and deferred the remaining domains.
+
+That correction was still insufficient. It allowed successor runtime surfaces to accumulate while incumbent planners, actors, Goal adapters, Execution routes, lifecycle assembly, and Workflow control remained live. The complete horizontal source sequence is now withdrawn. Startup, Docs Freshness, and Dependency Security remain required proofs, but none currently has a source-slice identifier.
 
 ## Separated Scopes
 
@@ -103,12 +111,12 @@ The runtime path includes every domain in the frozen affected set.
 
 Behavior expected to change across the complete source program spans PDS realization, world-model Graph and Traversal, Belief routes, Planner, Curation, Strategy, Agent, narrow Execution intake and lowering, nonce publication, root lifecycle composition, and inspection.
 
-The active `WMR-SI-01` write scope is narrower. It covers owner publication, Graph admission and projection, Traversal contracts and storage, immutable cut construction, hydration references, and thin root wiring needed for proof. `meld-events`, `meld-lang`, Curation, Belief settlement, Planner, Strategy, Agent progression, Execution, PDS activation, lifecycle aggregation, Startup, Docs Freshness, Dependency Security, and legacy Workflow are explicit non-integration decisions for this slice unless direct evidence proves a specific accepted-path blocker.
+There is no active write scope. The next assessment must inventory the complete live route for each affected responsibility and state whether that route remains canonical or will be replaced or moved. A replacement cut must migrate the real entrypoint and delete its superseded authority in the completed change.
 
-## Readiness Judgment
+## Current Readiness Judgment
 
-The architecture now describes one coherent product path at every normative level. The remaining work is implementation, not unresolved design.
+The architecture describes a coherent intended product path and retains approval. The prior claim that only implementation remained was too strong because it did not bind intended ownership to one live runtime route.
 
-No outstanding architecture choice blocks `WMR-SI-01`. Its source Delivery Gate is owner publication through one immutable occurrence-rich `TraversalCut`. The optional fail-closed dependent-product policy remains intentionally unselected. Startup and the product migrations remain later unauthorized slices.
+Source readiness is `assessment-only`. Confidence remains high for semantic owner boundaries, product cardinality, Planner and Strategy separation, Agent authority, Execution ignorance, Startup epoch identity, and lifecycle intent. Confidence is not yet sufficient for source slicing, canonical entrypoints, retirement scope, storage compatibility, or the exact cutover order.
 
-Confidence is high for owner boundaries, product cardinality, Planner and Strategy separation, Agent authority, Execution ignorance, Startup epoch identity, lifecycle ordering, and delivery authority. Confidence is intentionally lower for exact source file scope until implementation discovery regenerates the code ground map from the clean baseline.
+The next correct task is the read-only canonical runtime groundmap named by the source delivery ledger. A reconstructed source program becomes build-ready only after it identifies complete vertical cutovers and receives explicit user approval.

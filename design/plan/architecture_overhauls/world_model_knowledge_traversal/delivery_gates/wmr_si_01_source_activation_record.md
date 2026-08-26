@@ -6,15 +6,23 @@ Slice identifier: `WMR-SI-01`
 
 Design source: `WMR-DD-01`
 
-Status: authorized and ready after the commit containing this record
+Status: withdrawn by the single-runtime recovery
 
-Authorization authority: user
+Current source authority: none
 
 Implementation started: no
 
 Pre-correction baseline commit: `b25d4c6b`
 
-Implementation baseline: the commit containing this record and the canonical source delivery ledger
+Historical implementation baseline: the commit that originally contained this record
+
+## Recovery Disposition
+
+This record preserves the former activation decision as historical evidence. It does not activate source work and cannot be reused as authority for a reconstructed slice.
+
+The user withdrew this delivery sequence after its additive implementation left equivalent incumbent and successor runtime paths alive together. The branch source returned to checkpoint `e3382ff5`. The [single-runtime recovery amendment](../world_model_reconciliation_single_runtime_recovery.md) and [Runtime Invariants](../../../../../governance/runtime_invariants.md) now govern source-program reconstruction.
+
+Every section below describes the withdrawn boundary. A future source slice requires a new identifier, an exact current-route inventory, a same-slice superseded-surface deletion inventory, a new frozen gate, and separate user authorization.
 
 ## Correction
 
@@ -49,7 +57,7 @@ Docs and dependency-security fixtures or current owner publications may be used 
 
 | Slice | Product increment | Status |
 | --- | --- | --- |
-| `WMR-SI-01` | owner publication through immutable `TraversalCut` | authorized, awaiting corrected clean checkpoint |
+| `WMR-SI-01` | owner publication through immutable `TraversalCut` | withdrawn |
 | `WMR-SI-02` | bounded Curation authorship and settlement | backlog |
 | `WMR-SI-03` | `PlannerCut`, heterogeneous Strategy Plan, and Agent progression | backlog |
 | `WMR-SI-04` | Execution admission, unified coherence, and observation return | backlog |
@@ -83,6 +91,6 @@ Pause if an owner publication cannot be made durable without a new store or prot
 
 ## Current State
 
-The source program starts at the existing `DomainObjectRef`, Event attachment, `GraphRuntime`, `TraversalStore`, and `TraversalQuery` seams. The first engineering task is characterization of that path against the accepted identity and durability ladder, followed by the smallest contract additions needed for durable owner publication, occurrence identity, completeness receipts, immutable cuts, and reproducible bounded results.
+This activation is withdrawn. No engineering task may be selected from this record.
 
-No source implementation has started. Source edits begin only after this correction is committed and the worktree is clean. The commit containing this record becomes the implementation baseline.
+The canonical [source delivery program ledger](../world_model_reconciliation_source_delivery_program_ledger.md) selects read-only runtime groundmapping as the next task. Source implementation remains paused until a reconstructed vertical cut has been explicitly approved.

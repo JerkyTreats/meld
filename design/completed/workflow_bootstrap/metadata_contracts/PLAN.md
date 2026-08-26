@@ -28,7 +28,7 @@ Metadata contracts outcome:
 - [Metadata Contracts Code Path Findings](code_path_findings.md)
 - [Boundary Cleanup Foundation Spec](../foundation_cleanup/README.md)
 - [Metadata Contract Ready Cleanup](../foundation_cleanup/metadata_contract_ready/README.md)
-- [Complex Change Workflow Governance](../../../governance/complex_change_workflow.md)
+- canonical delivery-program skill
 
 ## CLI Path Default Exception List
 

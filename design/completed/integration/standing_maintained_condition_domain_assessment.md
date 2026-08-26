@@ -54,7 +54,7 @@ This step establishes the smallest durable standing-condition seam required by t
 - `src/runtime/theory.rs`
 - `src/runtime/assembly.rs`
 
-Applicable policy is [Assessment By Domain Policy](../../../governance/assessment_by_domain_policy.md). Compatibility work follows [Compatibility Shim Policy](../../../governance/compatibility_shim_policy.md).
+Applicable policy is canonical assessment-by-domain skill. Compatibility work follows [Runtime Invariants](../../../governance/runtime_invariants.md).
 
 ## Regenerated Domain Snapshot
 

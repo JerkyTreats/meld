@@ -1,6 +1,6 @@
 # Architecture Overhauls
 
-The active implementation program is World Model Reconciliation. A new agent must begin with the [source delivery program ledger](world_model_knowledge_traversal/world_model_reconciliation_source_delivery_program_ledger.md). That ledger is the sole authority for selecting the next source task, determining current authorization, and advancing between source slices.
+The active delivery program is World Model Reconciliation. It is in design recovery with no authorized source slice. A new agent must begin with the [source delivery program ledger](world_model_knowledge_traversal/world_model_reconciliation_source_delivery_program_ledger.md). That ledger is the sole authority for selecting the next program task and determining current authorization.
 
 The [accepted World Model Reconciliation design index](world_model_knowledge_traversal/README.md) remains the evidence and requirements basis. It does not select current source work.
 

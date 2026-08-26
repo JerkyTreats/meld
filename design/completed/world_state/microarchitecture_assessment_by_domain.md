@@ -124,7 +124,7 @@ world_model
 | `prompt_context` | none | Prompt context owns prompt and context artifacts | not needed | [prompt_context.rs](../../src/prompt_context.rs) | KG should not depend on prompt payload internals | none |
 | `provider` | own | Provider owns model provider profiles, clients, registry, and execution bindings | complete | [provider.rs](../../src/provider.rs) | none | Keep provider under agent execution and semantic comparator adapters |
 | `session` | observe | Session lifecycle is separated from durable event history | complete | [session.rs](../../src/session.rs), [Completed Events](../completed/events/README.md) | none | Preserve session as lifecycle only, not spine truth |
-| `store` | own | Store owns persistence primitives, while domain stores remain domain-owned | partial | [store.rs](../../src/store.rs), [Storage Policy](../../governance/storage_policy.md) | none | Define KG storage trees without centralizing all domain truth |
+| `store` | own | Store owns persistence primitives, while domain stores remain domain-owned | partial | [store.rs](../../src/store.rs), [Runtime Invariants](../../../governance/runtime_invariants.md) | none | Define KG storage trees without centralizing all domain truth |
 | `task` | own | Task owns compiled task structure, task artifacts, events, runtime, and package behavior | complete | [task.rs](../../src/task.rs), [Execution Domain](execution/README.md) | none | Keep task under agent execution and publish outcome evidence to spine |
 | `telemetry` | observe | Telemetry is downstream compatibility and reporting after events extraction | complete | [telemetry.rs](../../src/telemetry.rs), [Events Design](events/README.md) | none | Keep telemetry downstream of spine, KG, and agent |
 | `types` | adapter | Shared root types exist, but cross-domain identity now lives in event contracts | partial | [types.rs](../../src/types.rs), [Multi-Domain Spine](events/multi_domain_spine.md) | none | Avoid moving `DomainObjectRef` out of events unless a broader crate surface demands it |
@@ -240,7 +240,7 @@ This gives the system compiler-enforced architecture boundaries while preserving
 
 ## Read With
 
-- [Assessment By Domain Policy](../../governance/assessment_by_domain_policy.md)
+- canonical assessment-by-domain skill
 - [Core Crate](core/CRATE.md)
 - [Events Crate](events/CRATE.md)
 - [World Model Crate](world_model/CRATE.md)

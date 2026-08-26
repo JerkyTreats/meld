@@ -23,7 +23,7 @@ The decision flips when any of these becomes an observable requirement rather th
 
 ## Migration posture
 
-The served read surface chartered by the [Runtime Harness Plan](runtime_harness_plan.md) is the migration path in embryo. Every consumer moved behind a served contract shrinks the storage-coupled surface toward a small set of frozen traits: the runtime status reader and publisher, the event authority contract, and the domain store facades. A substrate change then happens behind those traits without touching consumers. The harness guarantee that live and playback surfaces are byte-consistent doubles as the storage-parity characterization test that the [Compatibility Policy](../../../governance/compatibility_policy.md) requires before an old path is removed.
+The served read surface chartered by the [Runtime Harness Plan](runtime_harness_plan.md) is the migration path in embryo. Every consumer moved behind a served contract shrinks the storage-coupled surface toward a small set of frozen traits: the runtime status reader and publisher, the event authority contract, and the domain store facades. A substrate change then happens behind those traits without touching consumers. The harness guarantee that live and playback surfaces are byte-consistent doubles as the storage-parity characterization test that the [Runtime Invariants](../../../governance/runtime_invariants.md) requires before an old path is removed.
 
 ## Maintenance rule
 
@@ -41,6 +41,5 @@ Every time the lock forces a workaround, the workaround must route through a sea
 
 ## Related documentation
 
-- [Storage Policy](../../../governance/storage_policy.md) — placement rules for runtime state; orthogonal to substrate choice
-- [Compatibility Policy](../../../governance/compatibility_policy.md) — the characterization and parity requirements a substrate migration would inherit
+- [Runtime Invariants](../../../governance/runtime_invariants.md) — runtime-state placement plus characterization and parity requirements for substrate migration
 - [Runtime Harness Plan](runtime_harness_plan.md) — the served substrate whose boundary is the migration seam

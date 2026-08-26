@@ -10,7 +10,7 @@ Capture current implementation truth for metadata contracts so decomposition and
 
 ## Governance Context
 
-Large workflow governance is defined in [Complex Change Workflow Governance](../../../governance/complex_change_workflow.md).
+Large workflow governance is defined in canonical delivery-program skill.
 
 Current governance implications:
 - complex workflow artifacts are required only after explicit user activation

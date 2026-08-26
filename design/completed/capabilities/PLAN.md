@@ -32,8 +32,8 @@ Planned outcome:
 - [Capability Refactor Completion](../completed/capability_refactor/README.md)
 - [Control Design](../control/README.md)
 - [Task Network](../control/task_network.md)
-- [Complex Change Workflow Governance](../../governance/complex_change_workflow.md)
-- [Commenting Policy](../../governance/commenting_policy.md)
+- canonical delivery-program skill
+- [Contribution Policy](../../../governance/contribution_policy.md)
 
 ## Guiding Rules
 
@@ -571,4 +571,4 @@ This plan does not expand non-default selector behavior.
 - [Task Control Boundary](task_control_boundary.md)
 - [Control Design](../control/README.md)
 - [Task Network](../control/task_network.md)
-- [Commenting Policy](../../governance/commenting_policy.md)
+- [Contribution Policy](../../../governance/contribution_policy.md)

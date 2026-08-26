@@ -142,7 +142,7 @@ This gives the team structured evidence without pretending the system can yet en
 
 ## Related Current Work
 
-- `governance/assessment_by_domain_policy.md`
+- canonical assessment-by-domain skill
 - `design/cognitive_architecture/README.md`
 - `design/ideas/observe_merge_push.md`
 - `design/cognitive_architecture/events/multi_domain_spine.md`

@@ -36,4 +36,4 @@ For this use case to be usable on paper, the following must hold. Standing is gi
 
 - [Use Case Catalog](README.md)
 - [World Model Strategy](../cognitive_architecture/world_model/strategy/README.md)
-- [Commenting Policy](../../governance/commenting_policy.md)
+- [Contribution Policy](../../governance/contribution_policy.md)

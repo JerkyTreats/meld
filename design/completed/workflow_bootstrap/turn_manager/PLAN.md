@@ -25,7 +25,7 @@ Planned outcome:
 - [Turn Manager Code Path Findings](code_path_findings.md)
 - [Turn Manager Technical Specification](technical_spec.md)
 - [Workflow Metadata Contracts Plan](../metadata_contracts/PLAN.md)
-- [Complex Change Workflow Governance](../../../governance/complex_change_workflow.md)
+- canonical delivery-program skill
 
 ## CLI Path Default Exception List
 

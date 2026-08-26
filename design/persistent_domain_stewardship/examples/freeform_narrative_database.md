@@ -427,7 +427,7 @@ This case does not require:
 - [Graph source intent](../../../crates/meld-world-model/src/world_state/graph/source_intent.rs)
 - [Served routes](../../../src/serve/routes.rs)
 - [Served listener](../../../src/serve/listener.rs)
-- [Semantic Unit Preservation Policy](../../../governance/semantic_unit_preservation_policy.md)
+- [Runtime Invariants](../../../governance/runtime_invariants.md)
 - [Lore Transcriber And Canon Steward](lore_transcriber.md)
 - [Roleplay Character Continuity Steward](roleplay_character.md)
 

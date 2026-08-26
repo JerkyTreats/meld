@@ -2,7 +2,7 @@
 
 Date: 2026-07-08
 Status: closed 2026-07-09; scope corrected 2026-07-10; foundation successor closed 2026-07-12
-Workflow: complex change workflow deactivated at close per [Complex Change Workflow Governance](../../../governance/complex_change_workflow.md)
+Workflow: complex change workflow deactivated at close per canonical delivery-program skill
 Design source: [Event Observability Design](event_observability_design.md)
 
 ## Overview
@@ -118,7 +118,7 @@ Contracts foundation lands first and freezes the seams. The four surface units b
 
 ## Exceptions
 
-- The `meld event` command family is workspace-scoped read-only diagnostics; no command takes `--path` targeting, called out per [CLI Targeting Policy](../../../governance/cli_targeting_policy.md).
+- The `meld event` command family is workspace-scoped read-only diagnostics; no command takes `--path` targeting, called out per [CLI domain contract](../../../src/cli/README.md).
 - `meld event tail` follow mode runs until interrupted or its output pipe closes; it is the one intentionally long-running command in the family. An interrupted follow leaves its command session without a session-ended record in the ledger, a recorded consequence of interruption-based exit; a closed pipe ends the command cleanly and completes the session. Follow holds the single-process database lock, so no concurrent meld command can produce events while it watches; the command says so on startup, and cross-process live following arrives with the daemon edge.
 - Observability reads may open the configured product authority directly only when no runtime process holds it. Direct configured-authority routing is complete. Access while a daemon owns the ledger waits for runtime-owned remote hosting and does not block event closure.
 
@@ -234,4 +234,4 @@ Review dispositions, fixed in-phase: registry reports are atomic through a merge
 - [Event Spine Overhaul PLAN](event_spine_overhaul_program.md)
 - [Spine Compaction Design](spine_compaction_design.md)
 - [Runtime Operator Visibility Program Ledger](../integration/runtime_operator_visibility_program_ledger.md)
-- [Commit Policy](../../../governance/commit_policy.md)
+- [Contribution Policy](../../../governance/contribution_policy.md)

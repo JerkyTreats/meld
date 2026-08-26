@@ -136,5 +136,5 @@ It does not assume that every extracted field becomes a belief. It does not coll
 - [Expression Catalog](../pds_expression_catalog.md)
 - [PDS Router Detailed Design](../../../completed/integration/pds_router_design_spec.md)
 - [PDS Isolation And Runtime Portability](../../isolation_and_runtime_portability.md)
-- [Semantic Unit Preservation Policy](../../../../governance/semantic_unit_preservation_policy.md)
+- [Runtime Invariants](../../../../governance/runtime_invariants.md)
 - [Proposal Status](../../proposal_status.md)

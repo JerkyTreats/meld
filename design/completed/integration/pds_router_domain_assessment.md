@@ -134,11 +134,8 @@ Primary evidence:
 
 Applicable policy:
 
-- [Assessment By Domain Policy](../../../governance/assessment_by_domain_policy.md)
-- [Compatibility Policy](../../../governance/compatibility_policy.md)
-- [Compatibility Shim Policy](../../../governance/compatibility_shim_policy.md)
-- [Storage Policy](../../../governance/storage_policy.md)
-- [Semantic Unit Preservation Policy](../../../governance/semantic_unit_preservation_policy.md)
+- canonical assessment-by-domain skill
+- [Runtime Invariants](../../../governance/runtime_invariants.md)
 - repository domain architecture rules in `AGENTS.md`
 
 ## Pass One Domain Sweep

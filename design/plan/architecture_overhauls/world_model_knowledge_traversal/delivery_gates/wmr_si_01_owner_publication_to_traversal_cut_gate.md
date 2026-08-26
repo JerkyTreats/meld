@@ -6,15 +6,21 @@ Gate identifier: `WMR-SI-01-DG`
 
 Revision: 1
 
-Status: frozen for the authorized source slice
+Status: withdrawn historical gate
 
-Active slice: `WMR-SI-01`
+Active slice: none
 
 Intended handoff: accepted occurrence-rich graph input to future Curation, Belief, and Planner consumers
 
 Gate owner: dedicated acceptance reviewer
 
 Exception authority: user
+
+## Recovery Disposition
+
+This gate preserves the former `WMR-SI-01` acceptance horizon as evidence only. It cannot accept source, authorize handoff, or be reactivated.
+
+The horizontal source sequence was withdrawn under the [single-runtime recovery amendment](../world_model_reconciliation_single_runtime_recovery.md). Any reconstructed gate must prove the [Runtime Invariants](../../../../../governance/runtime_invariants.md), including real-entrypoint migration and same-slice deletion of the superseded route.
 
 ## Coherence Horizon
 
@@ -68,4 +74,4 @@ Append success cannot substitute for Graph visibility. Graph visibility cannot s
 
 Gate Acceptance requires the exact source candidate, direct proof, logical implementation-review receipt, satisfied Style Assurance Receipt, criterion evidence, changed-surface account, and authorized exceptions.
 
-The final verdict is `accepted`, `rejected`, or `not eligible`. Acceptance makes `WMR-SI-01` handoff eligible only.
+This historical gate is permanently `not eligible`. Its criteria may inform a newly identified vertical cut, but only a new gate can accept that cut.

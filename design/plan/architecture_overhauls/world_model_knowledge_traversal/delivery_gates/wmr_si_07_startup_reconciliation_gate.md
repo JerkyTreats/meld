@@ -6,9 +6,15 @@ Gate identifier: `WMR-SI-07-DG`
 
 Revision: 1 provisional
 
-Status: backlog until `WMR-SI-01` through `WMR-SI-06` are accepted and Startup is separately activated
+Status: withdrawn historical gate
 
 Intended handoff: non-blocking Startup runtime proof to later product migration
+
+## Recovery Disposition
+
+The Startup product remains required, but the former `WMR-SI-07` sequence no longer exists. This provisional gate cannot be activated.
+
+The [single-runtime recovery amendment](../world_model_reconciliation_single_runtime_recovery.md) requires a reconstructed Startup cut only after the canonical epistemic, reconciliation, Execution, and initialization routes are established. A new Startup gate must prove the real runtime route after all equivalent incumbent paths are removed.
 
 ## Coherence Horizon
 
@@ -16,7 +22,7 @@ The horizon begins with one compiled and activated `meld_startup` product under 
 
 The horizon includes the exact accepted Startup path, native restart and replay positions exercised by that path, and root composition needed to run it. Docs Freshness, Dependency Security, fail-closed dependent-product activation, legacy Workflow, and unrelated runtime cleanup remain outside the horizon.
 
-## Activation Preconditions
+## Historical Activation Preconditions
 
 - accepted source receipts for `WMR-SI-01` through `WMR-SI-06`
 - source evidence that owner publication, Curation, Planner, Strategy, Agent, Execution, PDS genesis, and lifecycle contracts compose without Startup-specific shortcuts
@@ -31,4 +37,4 @@ These criteria remain provisional because later accepted source evidence may ref
 
 ## Forbidden Advancement
 
-This backlog gate does not authorize Startup source work. It cannot be activated by completion of an internal substrate test, by structural readiness alone, or by the desire to obtain the canary earlier. Startup is valuable precisely because it tests already-implemented native seams rather than creating them under one product slice.
+This withdrawn gate does not authorize Startup source work. Startup is valuable precisely because it tests already-implemented native seams rather than creating them under one product slice. A reconstructed gate must receive separate user authorization.

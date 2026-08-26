@@ -3,7 +3,7 @@
 Date: 2026-07-12
 Status: closed 2026-07-12
 Scope: close event correctness, authority, observability, compatibility, and direct product routing before runtime hosting resumes
-Workflow: complex change workflow deactivated at close per [Complex Change Workflow Governance](../../../governance/complex_change_workflow.md)
+Workflow: complex change workflow deactivated at close per canonical delivery-program skill
 Branch: `event-foundation-closeout`
 
 ## Objective
@@ -72,7 +72,7 @@ Every source checkpoint runs the formatter before build, lint, boundary, focused
 Behavior-changing phases receive two independent review lenses.
 E6 adds an independent verification agent that executes the documented acceptance commands from a clean working tree.
 
-Commits use declarative conventional subjects under [Commit Policy](../../../governance/commit_policy.md).
+Commits use declarative conventional subjects under [Contribution Policy](../../../governance/contribution_policy.md).
 Breaking changes use a `!` marker and a `BREAKING CHANGE:` footer.
 No push occurs without separate user verification.
 
@@ -258,8 +258,7 @@ Runtime owns supervisor tick cadence, status staleness, `runtime status`, consol
 
 ## Verification Policy
 
-Compatibility work follows [Compatibility Policy](../../../governance/compatibility_policy.md) and [Compatibility Shim Policy](../../../governance/compatibility_shim_policy.md).
-Migration preserves semantic units under [Semantic Unit Preservation Policy](../../../governance/semantic_unit_preservation_policy.md).
+Compatibility work and semantic-unit preservation follow [Runtime Invariants](../../../governance/runtime_invariants.md).
 Every checkpoint ran the relevant focused tests before the full workspace gate. The phase evidence above records the final integrated result.
 
 ## Read With

@@ -732,7 +732,7 @@ Gate policy:
 | Fuzz targets | `cargo-fuzz` | Each target runs for a bounded local pass with no panics. |
 | Coverage | `cargo-llvm-cov` | Planning and goals line coverage does not decrease across phases. Final slice target is at least 90 percent for new modules. |
 | Boundary scans | `rg` plus focused tests | No `mod.rs`, no task dispatch imports from planning, no capability invocation from planning. |
-| Comment consistency | policy review plus source scan | Comments follow [Commenting Policy](../../../../governance/commenting_policy.md) and do not narrate obvious code. |
+| Comment consistency | policy review plus source scan | Comments follow [Contribution Policy](../../../../governance/contribution_policy.md) and do not narrate obvious code. |
 
 Phase specific gate additions:
 

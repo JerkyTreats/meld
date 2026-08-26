@@ -5,7 +5,7 @@ Revised: 2026-07-12
 Status: complete
 Evidence date: 2026-07-12
 Evidence revision: `9350a90`
-Method: [Assessment By Domain Policy](../../../governance/assessment_by_domain_policy.md)
+Method: canonical assessment-by-domain skill
 
 ## Concern Definition
 

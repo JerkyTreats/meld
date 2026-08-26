@@ -187,5 +187,5 @@ These products remain owned by the external narrative integration and graph doma
 - [PDS Isolation And Runtime Portability](../../isolation_and_runtime_portability.md)
 - [Stewardship Package Model](../../package_model.md)
 - [Stewardship Facet Protocol](../../facet_protocol.md)
-- [Semantic Unit Preservation Policy](../../../../governance/semantic_unit_preservation_policy.md)
+- [Runtime Invariants](../../../../governance/runtime_invariants.md)
 - [Proposal Status](../../proposal_status.md)

@@ -43,7 +43,7 @@ Implementation posture:
 - [Execution Crate](execution/CRATE.md)
 - [Execution Contract Extraction](completed/execution_contract_extraction.md)
 - [Crate Boundary Assessment By Domain](microarchitecture_assessment_by_domain.md)
-- [Complex Change Workflow Governance](../../governance/complex_change_workflow.md)
+- canonical delivery-program skill
 
 ## Implementation Progress
 

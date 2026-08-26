@@ -343,5 +343,5 @@ Disposition 2026-08-12: transformed, not closed. The injection is no longer empt
 
 - [Strategy Minimal Slice Requirements](minimal_slice_requirements.md)
 - [Strategy Ground Map](ground_map.md)
-- [Assessment By Domain Policy](../../../../governance/assessment_by_domain_policy.md)
+- canonical assessment-by-domain skill
 - [World Model Strategy](../../../cognitive_architecture/world_model/strategy/README.md)

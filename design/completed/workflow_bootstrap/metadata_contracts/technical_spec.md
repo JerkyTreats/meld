@@ -14,7 +14,7 @@ This specification synthesizes:
 - [Workflow Metadata Contracts Spec](README.md)
 - [Metadata Contracts Code Path Findings](code_path_findings.md)
 - [Metadata Contracts Requirements Decomposition](decomposition.md)
-- [Complex Change Workflow Governance](../../../governance/complex_change_workflow.md)
+- canonical delivery-program skill
 - [Boundary Cleanup Foundation Spec](../foundation_cleanup/README.md)
 
 ## Governance Profile
