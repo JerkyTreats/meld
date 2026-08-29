@@ -4,9 +4,19 @@ Date: 2026-08-28
 
 Gate identifier: `WMR-VC-02-DG`
 
-Revision: proposed revision 1
+Revision: frozen revision 1
 
-Status: provisional pending source authorization and activation
+Status: accepted
+
+Source baseline: `eabc9a75`
+
+Activation record: [WMR-VC-02 Source Activation](wmr_vc_02_source_activation_record.md)
+
+Implementation review: [passed](../reviews/wmr_vc_02_implementation_review_receipt.md)
+
+Style Assurance: [satisfied](../reviews/wmr_vc_02_style_assurance_receipt.md)
+
+Gate Acceptance: [accepted](wmr_vc_02_gate_acceptance_receipt.md)
 
 Intended handoff: one standing Curation result visible through Graph and selectively settled by Belief
 
@@ -133,4 +143,4 @@ Any failed criterion blocks Gate Acceptance. The gate has no waiver authority. A
 
 One initial Gate Acceptance pass and one verification pass after one bounded remediation cycle.
 
-The gate remains provisional until the user approves `WMR-VC-02`. Activation freezes the accepted revision before source edits. Passing it would establish handoff eligibility only and would not authorize planned Curation or any later vertical.
+The user authorized implementation on 2026-08-28. Revision 1 was frozen before source edits and accepted against candidate digest `ba37bbe63575f8316373adaaaf318767514d00a103f3fe80440d0f17b3383cdb`. Acceptance establishes handoff eligibility only and does not authorize planned Curation or any later vertical.

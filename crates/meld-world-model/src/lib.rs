@@ -6,6 +6,7 @@ pub use meld_events as events;
 
 pub mod agent;
 pub mod belief;
+pub mod curation;
 pub mod planner;
 pub mod strategy;
 pub mod waiting;
@@ -36,6 +37,7 @@ pub use belief::{
     FreshnessReason, LeaseStatus, ObservationReason, PromotedEvidenceIngestionRequest,
     PromotedEvidenceIngestionResult, PromotedEvidenceRecord, RuntimeAssessmentResult,
 };
+pub use curation::*;
 pub use planner::{
     project_world_state, PlannerFieldProjectionConfig, PlannerGraphScope, PlannerHydrationRefs,
     PlannerProjectionContext, PlannerProjectionError, PlannerProjectionInput,

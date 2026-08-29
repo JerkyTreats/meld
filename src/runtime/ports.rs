@@ -46,11 +46,17 @@ use meld_world_model::belief::{
 use meld_world_model::planner::{
     PlannerProjectionError, PlannerProjectionOutput, PlannerQuery, PlannerSourceRef,
 };
+use meld_world_model::world_state::graph::contracts::{
+    BoundedTraversalRequest, TraversalCut, TraversalCutRequest, TraversalResult,
+};
 use meld_world_model::world_state::graph::store::TraversalStore;
 use meld_world_model::world_state::graph::{
     GraphConsumerCursorReporter, GraphDerivedEventSink, GraphEventReplaySource, PerspectiveKey,
 };
-use meld_world_model::{AgentGoalCommand, AgentGoalMutationCommand, BeliefQuery, BeliefStore};
+use meld_world_model::{
+    AgentGoalCommand, AgentGoalMutationCommand, BeliefQuery, BeliefStore, CurationEventPort,
+    CurationTraversalPort,
+};
 use meld_world_model::{BranchScope, TraversalQuery};
 
 use crate::context::frame::FrameStorage;
@@ -115,6 +121,12 @@ pub struct ProductEventAppendPort {
     append: EventAppendCapability,
     watermark: EventWatermarkCapability,
     observability: EventObservabilityCapability,
+}
+
+/// Exact Traversal query adapter supplied to standing Curation.
+#[derive(Clone)]
+pub struct ProductCurationTraversalPort {
+    store: Arc<TraversalStore>,
 }
 
 /// Bounded event replay source backed by an authority capability.
@@ -410,6 +422,42 @@ impl ProductEventAppendPort {
         self.observability
             .health(self.append.ledger_identity())
             .map_err(|error| RuntimePortError::EventAppend(error.to_string()))
+    }
+}
+
+impl CurationEventPort for ProductEventAppendPort {
+    fn watermark(&self) -> Result<EventWatermark, String> {
+        ProductEventAppendPort::watermark(self).map_err(|error| error.to_string())
+    }
+
+    fn append_idempotent(&self, envelope: EventEnvelope) -> Result<AppendReceipt, String> {
+        self.append
+            .append_durable(envelope, AppendMode::Idempotent)
+            .map_err(|error| error.to_string())
+    }
+}
+
+impl ProductCurationTraversalPort {
+    /// Bind standing Curation to the canonical Traversal store.
+    pub fn new(store: Arc<TraversalStore>) -> Self {
+        Self { store }
+    }
+}
+
+impl CurationTraversalPort for ProductCurationTraversalPort {
+    fn cut(
+        &self,
+        request: &TraversalCutRequest,
+    ) -> Result<TraversalCut, meld_world_model::error::StorageError> {
+        TraversalQuery::new(self.store.as_ref()).cut(request)
+    }
+
+    fn traverse(
+        &self,
+        cut: &TraversalCut,
+        request: &BoundedTraversalRequest,
+    ) -> Result<TraversalResult, meld_world_model::error::StorageError> {
+        TraversalQuery::new(self.store.as_ref()).traverse(cut, request)
     }
 }
 

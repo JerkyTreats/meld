@@ -41,8 +41,9 @@ use meld_execution::task_network::{
 };
 use meld_lang::{AuthorityPolicyBinding, Method};
 use meld_world_model::agent::{
-    AgentCurationRuleBinding, AgentGoalCurationActor, AgentMaintainedConditionBinding,
-    AgentSatisfactionCurationActor, AgentStepReport, AgentStepRequest, AgentStore,
+    AgentActivationStatus, AgentCurationRuleBinding, AgentGoalCurationActor,
+    AgentMaintainedConditionBinding, AgentSatisfactionCurationActor, AgentStatus, AgentStepReport,
+    AgentStepRequest, AgentStore,
 };
 use meld_world_model::belief::{
     BeliefAssessmentActor, BeliefAssessmentReport, BeliefAssessmentRequest, BeliefFamilyRegistry,
@@ -54,6 +55,10 @@ use meld_world_model::belief::{
 use meld_world_model::world_state::graph::runtime::{GraphCatchUpBudget, GraphRuntime};
 use meld_world_model::world_state::graph::store::TraversalStore;
 use meld_world_model::PerspectiveKey;
+use meld_world_model::{
+    CurationAuthority, CurationEventPort, CurationStepReport, CurationStore, CurationTraversalPort,
+    StandingCurationActor, StandingCurationRuleRevision,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::capability::{
@@ -71,9 +76,9 @@ use crate::runtime::lifecycle::{
 };
 use crate::runtime::ports::{
     CurationGoalExecutionPort, ExactKeyPlanningProjectionPort, ExecutionAgentGoalQueryPort,
-    ExecutionGoalCommandPort, ExecutionGoalMutationPort, ProductEventAppendPort,
-    ProductEventReplayPort, ProductRuntimePorts, ProviderPortConfig, SharedClaimedTaskInvoker,
-    SharedPackageRunPreparer, SharedPackageStepInvoker,
+    ExecutionGoalCommandPort, ExecutionGoalMutationPort, ProductCurationTraversalPort,
+    ProductEventAppendPort, ProductEventReplayPort, ProductRuntimePorts, ProviderPortConfig,
+    SharedClaimedTaskInvoker, SharedPackageRunPreparer, SharedPackageStepInvoker,
 };
 use crate::runtime::registration::{RegistrationKind, RegistrationSet, RuntimeRegistration};
 use crate::runtime::storage::{
@@ -920,6 +925,17 @@ struct EvidenceIngestionFactory {
     family_revision: Option<meld_world_model::belief::BeliefFamilyRevision>,
 }
 
+#[derive(Clone)]
+struct StandingCurationFactory {
+    runtime_id: String,
+    session_id: String,
+    authority: CurationAuthority,
+    rule: StandingCurationRuleRevision,
+    store: Arc<CurationStore>,
+    traversal: ProductCurationTraversalPort,
+    events: ProductEventAppendPort,
+}
+
 /// Which bounded agent actor an [`AgentActorFactory`] builds.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum AgentActorKind {
@@ -985,6 +1001,7 @@ enum RuntimeSemanticHandleFactory {
     EventAppend { port: ProductEventAppendPort },
     BeliefAssessment(Box<BeliefAssessmentFactory>),
     EvidenceIngestion(Box<EvidenceIngestionFactory>),
+    StandingCuration(Box<StandingCurationFactory>),
     AgentActor(Box<AgentActorFactory>),
     Planning(Box<PlanningFactory>),
     Dispatch(Box<DispatchFactory>),
@@ -998,6 +1015,7 @@ enum RuntimeSemanticHandle {
     EventAppend(EventAppendRuntimeHandle),
     BeliefAssessment(Box<BeliefAssessmentHandle>),
     EvidenceIngestion(Box<EvidenceIngestionHandle>),
+    StandingCuration(Box<StandingCurationHandle>),
     AgentActor(Box<AgentActorHandle>),
     Planning(Box<PlanningHandle>),
     Dispatch(Box<DispatchHandle>),
@@ -1039,6 +1057,10 @@ struct BeliefAssessmentHandle {
 
 struct EvidenceIngestionHandle {
     actor: EvidenceIngestionActor,
+}
+
+struct StandingCurationHandle {
+    actor: StandingCurationActor,
 }
 
 struct AgentActorHandle {
@@ -1686,6 +1708,10 @@ impl RuntimeFactoryRegistry {
                 "world_model.graph_replay",
                 vec![EventAppend, EventReplay, EventConsumerRegistry, WorldModel],
             )?,
+            RuntimeFactoryDescriptor::new(
+                "world_model.standing_curation",
+                vec![EventAppend, WorldModel],
+            )?,
             RuntimeFactoryDescriptor::new("world_model.belief_assessment", vec![WorldModel])?,
             RuntimeFactoryDescriptor::new(
                 "world_model.agent_goal_curation",
@@ -1989,6 +2015,112 @@ impl RuntimeSemanticHandleFactory {
                     "graph replay requires the world model store scope".to_string(),
                 ),
             },
+            "world_model.standing_curation" => {
+                let Some(composed) = stewardship else {
+                    return Ok(Self::None);
+                };
+                let (Some(curation_store), Some(traversal_store), Some(agent_store)) = (
+                    stores.curation_store.opened(),
+                    stores.traversal_store.opened(),
+                    stores.agent_store.opened(),
+                ) else {
+                    return Ok(Self::None);
+                };
+                let agent_id = composed.bindings.agent_id.clone();
+                let agent = match agent_store.get_agent(&agent_id) {
+                    Ok(Some(agent)) => agent,
+                    Ok(None) => {
+                        return unresolved(
+                            diagnostics,
+                            "standing_curation_agent_unresolved",
+                            format!(
+                                "Agent '{agent_id}' has no durable genesis record; standing Curation stays unresolved"
+                            ),
+                        )
+                    }
+                    Err(error) => {
+                        return unresolved(
+                            diagnostics,
+                            "standing_curation_agent_probe_failed",
+                            format!("standing Curation Agent probe failed: {error}"),
+                        )
+                    }
+                };
+                if agent.status != AgentStatus::Operational {
+                    return unresolved(
+                        diagnostics,
+                        "standing_curation_agent_inactive",
+                        format!(
+                            "Agent '{agent_id}' is not operational; standing Curation stays unresolved"
+                        ),
+                    );
+                }
+                let rule = match curation_store.active_rule(&agent_id) {
+                    Ok(Some(rule)) => rule,
+                    Ok(None) => {
+                        return unresolved(
+                            diagnostics,
+                            "standing_curation_rule_unresolved",
+                            format!("Agent '{agent_id}' has no installed standing Curation rule"),
+                        )
+                    }
+                    Err(error) => {
+                        return unresolved(
+                            diagnostics,
+                            "standing_curation_rule_probe_failed",
+                            format!("standing Curation rule probe failed: {error}"),
+                        )
+                    }
+                };
+                let activation = match agent_store.activations_for_agent(&agent_id) {
+                    Ok(activations) => activations.into_iter().next_back(),
+                    Err(error) => {
+                        return unresolved(
+                            diagnostics,
+                            "standing_curation_activation_probe_failed",
+                            format!("standing Curation activation probe failed: {error}"),
+                        )
+                    }
+                };
+                let Some(activation) = activation else {
+                    return unresolved(
+                        diagnostics,
+                        "standing_curation_activation_unresolved",
+                        format!(
+                            "Agent '{agent_id}' has no activated generation for standing Curation"
+                        ),
+                    );
+                };
+                if activation.status != AgentActivationStatus::Activated {
+                    return unresolved(
+                        diagnostics,
+                        "standing_curation_activation_inactive",
+                        format!("Agent '{agent_id}' latest activation generation is not activated"),
+                    );
+                }
+                let authority = CurationAuthority {
+                    agent_id,
+                    perspective: agent.perspective_key,
+                    branch_scope: agent.branch_scope,
+                    activation_generation: activation.activation_id,
+                    subject: agent.subject,
+                };
+                authority.validate().map_err(|error| {
+                    RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
+                })?;
+                rule.rule.validate().map_err(|error| {
+                    RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
+                })?;
+                Ok(Self::StandingCuration(Box::new(StandingCurationFactory {
+                    runtime_id: runtime_id.to_string(),
+                    session_id: composed.bindings.session_id.clone(),
+                    authority,
+                    rule,
+                    store: Arc::clone(curation_store),
+                    traversal: ProductCurationTraversalPort::new(Arc::clone(traversal_store)),
+                    events: ports.event_append().clone(),
+                })))
+            }
             "event.append" => Ok(Self::EventAppend {
                 port: ports.event_append().clone(),
             }),
@@ -2363,6 +2495,20 @@ impl RuntimeSemanticHandleFactory {
                     },
                 }))
             }
+            Self::StandingCuration(factory) => {
+                RuntimeSemanticHandle::StandingCuration(Box::new(StandingCurationHandle {
+                    actor: StandingCurationActor::new(
+                        factory.runtime_id.clone(),
+                        factory.session_id.clone(),
+                        factory.authority.clone(),
+                        factory.rule.clone(),
+                        Arc::clone(&factory.store),
+                        Arc::new(factory.traversal.clone()) as Arc<dyn CurationTraversalPort>,
+                        Arc::new(factory.events.clone()) as Arc<dyn CurationEventPort>,
+                    )
+                    .expect("standing Curation factory holds validated authority and rule"),
+                }))
+            }
             Self::AgentActor(factory) => {
                 let (curation, satisfaction) = match factory.kind {
                     AgentActorKind::GoalCuration => {
@@ -2550,6 +2696,7 @@ impl RuntimeSemanticHandle {
             Self::EventAppend(handle) => Some(handle.tick()),
             Self::BeliefAssessment(handle) => Some(handle.tick(budget)),
             Self::EvidenceIngestion(handle) => Some(handle.tick(budget)),
+            Self::StandingCuration(handle) => Some(handle.tick(budget)),
             Self::AgentActor(handle) => Some(handle.tick(budget)),
             Self::Planning(handle) => Some(handle.tick(budget)),
             Self::Dispatch(handle) => Some(handle.tick(budget)),
@@ -2725,6 +2872,12 @@ impl EvidenceIngestionHandle {
             max_events: budget.max_items,
         });
         evidence_ingestion_worker_report(report)
+    }
+}
+
+impl StandingCurationHandle {
+    fn tick(&mut self, budget: WorkBudget) -> WorkerTickReport {
+        standing_curation_worker_report(self.actor.bounded_step(budget.max_items))
     }
 }
 
@@ -3233,6 +3386,46 @@ fn evidence_ingestion_worker_report(report: EvidenceIngestionReport) -> WorkerTi
     }
 }
 
+/// Translate standing Curation persistence and publication into supervisor diagnostics.
+fn standing_curation_worker_report(report: CurationStepReport) -> WorkerTickReport {
+    WorkerTickReport {
+        actor_id: report.actor_id,
+        scope: worker_scope("world_model", Some("standing_curation"), None, None),
+        input_checkpoint: WorkerCheckpoint {
+            name: "standing_curation_event_cut".to_string(),
+            value: report.input_after_seq,
+        },
+        output_checkpoint: WorkerCheckpoint {
+            name: "standing_curation_event_cut".to_string(),
+            value: report.output_after_seq,
+        },
+        items_attempted: report.operations_attempted,
+        items_committed: report.acceptances_persisted
+            + report.results_persisted
+            + report.publications_appended,
+        retryable_errors: report
+            .retryable_errors
+            .into_iter()
+            .map(|message| WorkerTickIssue {
+                item_id: None,
+                code: "standing_curation_retryable".to_string(),
+                message,
+            })
+            .collect(),
+        fatal_errors: report
+            .fatal_errors
+            .into_iter()
+            .map(|message| WorkerTickIssue {
+                item_id: None,
+                code: "standing_curation_fatal".to_string(),
+                message,
+            })
+            .collect(),
+        budget_exhausted: false,
+        waiting_on: world_model_waiting(report.waiting_on),
+    }
+}
+
 /// Translate one bounded agent step report into the supervisor shape.
 ///
 /// Like assessment, the injected step sequence is bookkeeping: both
@@ -3427,7 +3620,7 @@ mod tests {
             assembly.supervisor_store().path(),
             temp.path().join("supervisor.sled")
         );
-        assert_eq!(assembly.registry().len(), 13);
+        assert_eq!(assembly.registry().len(), 14);
         assert!(assembly
             .registry()
             .contains("world_model.agent_goal_curation"));
@@ -3461,7 +3654,7 @@ mod tests {
             description.supervisor_store_path,
             expected_root.join("supervisor.sled")
         );
-        assert_eq!(description.desired_runtime_state.len(), 13);
+        assert_eq!(description.desired_runtime_state.len(), 14);
         assert!(!description.product_root.exists());
         assert!(!description.supervisor_store_path.exists());
     }
@@ -3478,7 +3671,7 @@ mod tests {
 
         assert_eq!(second.product_root(), temp.path());
         assert!(second.registry().contains("execution.publication"));
-        assert_eq!(second.desired_runtime_state().len(), 13);
+        assert_eq!(second.desired_runtime_state().len(), 14);
     }
 
     #[test]
@@ -3503,7 +3696,7 @@ mod tests {
                 .iter()
                 .filter(|state| state.enabled)
                 .count(),
-            11
+            12
         );
     }
 
@@ -3809,7 +4002,7 @@ mod tests {
         let package = assembly.supervisor_startup_package();
 
         assert_eq!(package.product_root, temp.path());
-        assert_eq!(package.handle_factories.len(), 13);
+        assert_eq!(package.handle_factories.len(), 14);
         assert_eq!(package.default_work_budget.max_items, 64);
         assert_eq!(package.lifecycle_config.heartbeat_interval_ms, 1_000);
         assert_eq!(package.lifecycle_config.lease_duration_ms, 15 * 60 * 1_000);
@@ -4360,6 +4553,111 @@ mod tests {
         }
     }
 
+    fn standing_curation_outcome_mapping() -> OutcomeMappingSetConfig {
+        OutcomeMappingSetConfig {
+            mapping_id: MAPPING_ID.to_string(),
+            rules: vec![OutcomeMappingConfig {
+                mapping_id: "standing-curation-applied".to_string(),
+                source_kind: "content_written".to_string(),
+                match_domain_id: meld_world_model::CURATION_OWNER_ID.to_string(),
+                match_event_type: meld_world_model::CURATION_RESULT_EVENT_TYPE.to_string(),
+                match_content: vec![OutcomeContentRule::FieldEquals {
+                    pointer: "/disposition".to_string(),
+                    equals: "applied".to_string(),
+                }],
+                subject: OutcomeSubjectBinding {
+                    from: Default::default(),
+                    object_kind: "assessment".to_string(),
+                    domain_id: Some(meld_world_model::CURATION_OWNER_ID.to_string()),
+                },
+                evidence_fields: vec![OutcomeFieldRule {
+                    field: "stale_probability".to_string(),
+                    source: OutcomeValueSource::Constant { value: 0.0 },
+                }],
+            }],
+        }
+    }
+
+    fn standing_curation_scope(
+    ) -> meld_world_model::world_state::graph::contracts::OwnerPublicationScope {
+        meld_world_model::world_state::graph::contracts::OwnerPublicationScope {
+            scope_id: "docs".to_string(),
+            branch_id: Some("main".to_string()),
+            perspective_id: Some("default".to_string()),
+            valid_at: None,
+        }
+    }
+
+    fn standing_curation_rule(subject: DomainObjectRef) -> meld_world_model::StandingCurationRule {
+        use meld_world_model::world_state::graph::contracts::{
+            TraversalBounds, TraversalDirection,
+        };
+
+        meld_world_model::StandingCurationRule {
+            rule_id: "docs-standing-curation".to_string(),
+            agent_id: STEWARD_AGENT_ID.to_string(),
+            source_owner_id: "workspace_fs".to_string(),
+            scope: standing_curation_scope(),
+            roots: vec![subject],
+            traversal_direction: TraversalDirection::Incoming,
+            bounds: TraversalBounds {
+                max_depth: 4,
+                max_objects: 32,
+                max_occurrences: 32,
+                max_paths: 32,
+            },
+            expected_object_kind: "assessment".to_string(),
+            expected_object_id: "docs::standing-assessment".to_string(),
+            relation_type: "curation_assesses".to_string(),
+            output_policy_revision: "docs-standing-output-v1".to_string(),
+        }
+    }
+
+    fn workspace_owner_publication(subject: DomainObjectRef, revision: &str) -> EventEnvelope {
+        use meld_world_model::world_state::graph::contracts::{
+            HydrationReference, OwnerCompletenessReceipt, OwnerCompletenessStatus,
+            OwnerObjectPublication, OwnerPublicationBatch, OwnerPublicationOperation,
+            OwnerPublicationState,
+        };
+        use meld_world_model::world_state::graph::events::owner_publication_envelope;
+
+        let publication_id = format!("workspace-publication::{revision}");
+        let operation = OwnerPublicationOperation::reconstruct(
+            "workspace-enumeration-v1",
+            OwnerPublicationBatch {
+                owner_id: "workspace_fs".to_string(),
+                revision_id: revision.to_string(),
+                scope: standing_curation_scope(),
+                objects: vec![OwnerObjectPublication {
+                    publication_id: publication_id.clone(),
+                    object_ref: subject,
+                    state: OwnerPublicationState::Observed,
+                    source_product_ref: revision.to_string(),
+                    hydration: HydrationReference {
+                        owner_id: "workspace_fs".to_string(),
+                        product_kind: "workspace_snapshot".to_string(),
+                        product_id: revision.to_string(),
+                        revision_id: revision.to_string(),
+                        role: "workspace_root".to_string(),
+                    },
+                    provenance_refs: Vec::new(),
+                    qualifications: BTreeMap::new(),
+                }],
+                relations: Vec::new(),
+                completeness: OwnerCompletenessReceipt {
+                    receipt_id: format!("workspace-completeness::{revision}"),
+                    scope: standing_curation_scope(),
+                    included_ids: vec![publication_id],
+                    exclusions: Vec::new(),
+                    failures: Vec::new(),
+                    status: OwnerCompletenessStatus::Complete,
+                },
+            },
+        )
+        .unwrap();
+        owner_publication_envelope("standing-curation-proof", &operation).unwrap()
+    }
+
     struct StewardshipHarness {
         _workspace: tempfile::TempDir,
         _external: tempfile::TempDir,
@@ -4481,7 +4779,7 @@ mod tests {
 
         let set = derive_stewardship_registrations(&harness.binding).unwrap();
 
-        assert_eq!(set.registrations.len(), 13);
+        assert_eq!(set.registrations.len(), 14);
         for passive in STEWARDSHIP_PASSIVE_SERVICE_IDS {
             assert_eq!(
                 set.kind_of(passive),
@@ -4493,6 +4791,7 @@ mod tests {
             "world_model.graph_replay",
             "world_model.belief_assessment",
             "world_model.evidence_ingestion",
+            "world_model.standing_curation",
             "world_model.agent_goal_curation",
             "world_model.satisfaction_curation",
             "execution.planning",
@@ -4529,6 +4828,7 @@ mod tests {
         for unresolved in [
             "world_model.belief_assessment",
             "world_model.evidence_ingestion",
+            "world_model.standing_curation",
             "world_model.agent_goal_curation",
             "world_model.satisfaction_curation",
             "execution.planning",
@@ -4657,6 +4957,331 @@ mod tests {
         expected.sort_unstable();
         assert_eq!(ticked, expected);
         supervisor.request_shutdown(2_000).unwrap();
+    }
+
+    #[test]
+    fn standing_curation_settles_through_root_graph_events_and_belief() {
+        use meld_world_model::agent::AgentActivationRecord;
+        use meld_world_model::world_state::graph::contracts::{
+            OwnerCurrentnessPolicy, TraversalCutRequest, TraversalCutStatus,
+            TraversalOwnerRequirement,
+        };
+        use meld_world_model::TraversalQuery;
+
+        let harness = StewardshipHarness::new();
+        let subject = stewardship_subject_ref(&harness.binding).unwrap();
+        let rule = standing_curation_rule(subject.clone());
+        {
+            let assembly = harness.assembly(StewardshipTheoryBindings::default());
+            harness.run_world_genesis(&assembly);
+            assembly
+                .stores()
+                .agent_store
+                .put_activation(&AgentActivationRecord {
+                    activation_id: "standing-generation-a".to_string(),
+                    agent_id: STEWARD_AGENT_ID.to_string(),
+                    started_at_seq: 5,
+                    status: AgentActivationStatus::Activated,
+                    last_error: None,
+                    lease_id: Some("standing-lease-a".to_string()),
+                })
+                .unwrap();
+            assembly
+                .stores()
+                .curation_store
+                .install_rule(rule.clone(), 6)
+                .unwrap();
+            assembly
+                .ports()
+                .event_append()
+                .append_envelope_idempotent(workspace_owner_publication(
+                    subject.clone(),
+                    "workspace-v1",
+                ))
+                .unwrap();
+            let mut graph = assembly
+                .handle_factories()
+                .get("world_model.graph_replay")
+                .unwrap()
+                .build_handle();
+            graph
+                .start_after_lease(RuntimeLeaseContext {
+                    runtime_id: "world_model.graph_replay".to_string(),
+                    lease_id: "graph-lease-a".to_string(),
+                })
+                .unwrap();
+            assert_eq!(
+                graph
+                    .tick(WorkBudget { max_items: 32 })
+                    .unwrap()
+                    .items_committed,
+                1
+            );
+            assembly.flush_product_boundary().unwrap();
+        }
+
+        let assembly = harness.assembly(StewardshipTheoryBindings {
+            outcome_mapping: Some(standing_curation_outcome_mapping()),
+            ..StewardshipTheoryBindings::default()
+        });
+        let mut curation = assembly
+            .handle_factories()
+            .get("world_model.standing_curation")
+            .unwrap()
+            .build_handle();
+        curation
+            .start_after_lease(RuntimeLeaseContext {
+                runtime_id: "world_model.standing_curation".to_string(),
+                lease_id: "curation-lease-a".to_string(),
+            })
+            .unwrap();
+
+        let applied_tick = curation.tick(WorkBudget { max_items: 1 }).unwrap();
+
+        assert_eq!(applied_tick.items_attempted, 1);
+        assert_eq!(applied_tick.items_committed, 4);
+        assert!(applied_tick.retryable_errors.is_empty());
+        assert!(applied_tick.fatal_errors.is_empty());
+        let records = assembly
+            .ports()
+            .event_replay()
+            .read_after_limit(0, 32)
+            .unwrap();
+        let applied_result = records
+            .iter()
+            .find(|record| {
+                record.envelope.event_type == meld_world_model::CURATION_RESULT_EVENT_TYPE
+            })
+            .map(|record| {
+                serde_json::from_value::<meld_world_model::CurationResult>(
+                    record.envelope.data.clone(),
+                )
+                .unwrap()
+            })
+            .unwrap();
+        assert_eq!(
+            applied_result.disposition,
+            meld_world_model::CurationTerminalDisposition::Applied
+        );
+        let operation_id = applied_result.operation_id.clone();
+        let result_id = applied_result.result_id.clone();
+
+        let before_projection = assembly.ports().event_append().watermark().unwrap();
+        let unprojected_cut = TraversalQuery::new(assembly.stores().traversal_store.as_ref())
+            .cut(&TraversalCutRequest {
+                owners: vec![TraversalOwnerRequirement {
+                    owner_id: meld_world_model::CURATION_OWNER_ID.to_string(),
+                    scope: standing_curation_scope(),
+                    required: true,
+                }],
+                scope: standing_curation_scope(),
+                currentness: OwnerCurrentnessPolicy::LatestComplete,
+                event_position: meld_events::LedgerCursor {
+                    ledger_id: before_projection.ledger_id,
+                    after_seq: before_projection.committed_seq,
+                },
+            })
+            .unwrap();
+        assert_eq!(unprojected_cut.status, TraversalCutStatus::Incomplete);
+
+        let mut graph = assembly
+            .handle_factories()
+            .get("world_model.graph_replay")
+            .unwrap()
+            .build_handle();
+        graph
+            .start_after_lease(RuntimeLeaseContext {
+                runtime_id: "world_model.graph_replay".to_string(),
+                lease_id: "graph-lease-b".to_string(),
+            })
+            .unwrap();
+        graph.tick(WorkBudget { max_items: 32 }).unwrap();
+        let watermark = assembly.ports().event_append().watermark().unwrap();
+        let cut = TraversalQuery::new(assembly.stores().traversal_store.as_ref())
+            .cut(&TraversalCutRequest {
+                owners: vec![
+                    TraversalOwnerRequirement {
+                        owner_id: "workspace_fs".to_string(),
+                        scope: standing_curation_scope(),
+                        required: true,
+                    },
+                    TraversalOwnerRequirement {
+                        owner_id: meld_world_model::CURATION_OWNER_ID.to_string(),
+                        scope: standing_curation_scope(),
+                        required: true,
+                    },
+                ],
+                scope: standing_curation_scope(),
+                currentness: OwnerCurrentnessPolicy::LatestComplete,
+                event_position: meld_events::LedgerCursor {
+                    ledger_id: watermark.ledger_id,
+                    after_seq: watermark.committed_seq,
+                },
+            })
+            .unwrap();
+        assert_eq!(cut.status, TraversalCutStatus::Complete);
+        assert_eq!(cut.receipts.len(), 2);
+        let traversal = TraversalQuery::new(assembly.stores().traversal_store.as_ref())
+            .traverse(&cut, &rule.traversal_request())
+            .unwrap();
+        let expected_object = rule.expected_object().unwrap();
+        assert!(traversal
+            .objects
+            .iter()
+            .any(|object| object.object_ref == expected_object));
+        assert!(traversal
+            .occurrences
+            .iter()
+            .any(|occurrence| occurrence.relation_type == rule.relation_type));
+
+        let mut ingestion = assembly
+            .handle_factories()
+            .get("world_model.evidence_ingestion")
+            .unwrap()
+            .build_handle();
+        ingestion
+            .start_after_lease(RuntimeLeaseContext {
+                runtime_id: "world_model.evidence_ingestion".to_string(),
+                lease_id: "ingestion-lease-a".to_string(),
+            })
+            .unwrap();
+        let ingestion_tick = ingestion.tick(WorkBudget { max_items: 32 }).unwrap();
+        assert!(ingestion_tick.items_committed >= 2);
+        let family = assembly
+            .stores()
+            .belief_family_registry
+            .current(FAMILY_ID)
+            .unwrap()
+            .unwrap();
+        let belief_key = configured_belief_key(
+            &family,
+            &expected_object,
+            &PerspectiveKey::new("default", "default").unwrap(),
+            &BranchScope::main(),
+        );
+        assert_eq!(
+            assembly
+                .stores()
+                .belief_store
+                .revision_history(&belief_key)
+                .unwrap()
+                .len(),
+            1
+        );
+
+        assembly
+            .ports()
+            .event_append()
+            .append_envelope_idempotent(workspace_owner_publication(subject, "workspace-v2"))
+            .unwrap();
+        graph.tick(WorkBudget { max_items: 32 }).unwrap();
+        let unchanged_tick = curation.tick(WorkBudget { max_items: 1 }).unwrap();
+        assert_eq!(unchanged_tick.items_committed, 3);
+        let unchanged = assembly
+            .ports()
+            .event_replay()
+            .read_after_limit(0, 32)
+            .unwrap()
+            .into_iter()
+            .filter(|record| {
+                record.envelope.event_type == meld_world_model::CURATION_RESULT_EVENT_TYPE
+            })
+            .map(|record| {
+                serde_json::from_value::<meld_world_model::CurationResult>(record.envelope.data)
+                    .unwrap()
+            })
+            .find(|result| {
+                result.disposition == meld_world_model::CurationTerminalDisposition::Unchanged
+            })
+            .unwrap();
+        assert_ne!(unchanged.operation_id, operation_id);
+        ingestion.tick(WorkBudget { max_items: 32 }).unwrap();
+        assert_eq!(
+            assembly
+                .stores()
+                .belief_store
+                .revision_history(&belief_key)
+                .unwrap()
+                .len(),
+            1
+        );
+        assembly.flush_product_boundary().unwrap();
+        drop(ingestion);
+        drop(graph);
+        drop(curation);
+        drop(assembly);
+
+        let reopened = harness.assembly(StewardshipTheoryBindings {
+            outcome_mapping: Some(standing_curation_outcome_mapping()),
+            ..StewardshipTheoryBindings::default()
+        });
+        let persisted =
+            meld_world_model::CurationQuery::new(reopened.stores().curation_store.as_ref())
+                .result_for_operation(&operation_id)
+                .unwrap()
+                .unwrap();
+        assert_eq!(persisted.result_id, result_id);
+        assert_eq!(
+            persisted.disposition,
+            meld_world_model::CurationTerminalDisposition::Applied
+        );
+        let mut reopened_graph = reopened
+            .handle_factories()
+            .get("world_model.graph_replay")
+            .unwrap()
+            .build_handle();
+        reopened_graph
+            .start_after_lease(RuntimeLeaseContext {
+                runtime_id: "world_model.graph_replay".to_string(),
+                lease_id: "graph-lease-reopen".to_string(),
+            })
+            .unwrap();
+        reopened_graph.tick(WorkBudget { max_items: 32 }).unwrap();
+        let mut reopened_curation = reopened
+            .handle_factories()
+            .get("world_model.standing_curation")
+            .unwrap()
+            .build_handle();
+        reopened_curation
+            .start_after_lease(RuntimeLeaseContext {
+                runtime_id: "world_model.standing_curation".to_string(),
+                lease_id: "curation-lease-reopen".to_string(),
+            })
+            .unwrap();
+        let replay_tick = reopened_curation.tick(WorkBudget { max_items: 1 }).unwrap();
+        assert_eq!(replay_tick.items_attempted, 1);
+        assert_eq!(replay_tick.items_committed, 0);
+        assert_eq!(replay_tick.waiting_on.len(), 1);
+        assert_eq!(
+            reopened
+                .ports()
+                .event_replay()
+                .read_after_limit(0, 32)
+                .unwrap()
+                .len(),
+            5
+        );
+        let reopened_family = reopened
+            .stores()
+            .belief_family_registry
+            .current(FAMILY_ID)
+            .unwrap()
+            .unwrap();
+        let reopened_key = configured_belief_key(
+            &reopened_family,
+            &rule.expected_object().unwrap(),
+            &PerspectiveKey::new("default", "default").unwrap(),
+            &BranchScope::main(),
+        );
+        assert_eq!(
+            reopened
+                .stores()
+                .belief_store
+                .revision_history(&reopened_key)
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     /// Route stubs shaped like production bindings; never invoked because

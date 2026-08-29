@@ -17,6 +17,7 @@ use meld_world_model::belief::{
 use meld_world_model::strategy::StrategyTheoryRegistryStore;
 use meld_world_model::world_state::graph::store::TraversalStore;
 use meld_world_model::world_state::store::WorldStateStore;
+use meld_world_model::CurationStore;
 use thiserror::Error;
 
 use crate::context::frame::FrameStorage;
@@ -179,6 +180,8 @@ pub struct OpenProductStores {
     pub node_store: ScopedResource<Arc<SledNodeRecordStore>>,
     /// World model graph reducer state and traversal indexes.
     pub traversal_store: ScopedResource<Arc<TraversalStore>>,
+    /// Standing Curation operations, acceptances, results, and publication receipts.
+    pub curation_store: ScopedResource<Arc<CurationStore>>,
     /// World model belief configuration, evidence, and revision state.
     pub belief_store: ScopedResource<Arc<BeliefStore>>,
     /// World model belief-family theory registry (Runtime Initialization stage 2 home).
@@ -336,6 +339,7 @@ impl OpenProductStores {
 
         let (
             traversal,
+            curation,
             belief,
             family_registry,
             curation_registry,
@@ -350,6 +354,10 @@ impl OpenProductStores {
                 ScopedResource::open(
                     "traversal_store",
                     Arc::new(TraversalStore::new(world_model_db.clone()).map_err(to_world_model)?),
+                ),
+                ScopedResource::open(
+                    "curation_store",
+                    Arc::new(CurationStore::new(world_model_db.clone()).map_err(to_world_model)?),
                 ),
                 ScopedResource::open(
                     "belief_store",
@@ -402,6 +410,7 @@ impl OpenProductStores {
         } else {
             (
                 ScopedResource::closed("traversal_store"),
+                ScopedResource::closed("curation_store"),
                 ScopedResource::closed("belief_store"),
                 ScopedResource::closed("belief_family_registry"),
                 ScopedResource::closed("curation_rule_registry"),
@@ -522,6 +531,7 @@ impl OpenProductStores {
         Ok(Self {
             node_store,
             traversal_store: traversal,
+            curation_store: curation,
             belief_store: belief,
             belief_family_registry: family_registry,
             curation_rule_registry: curation_registry,
@@ -557,6 +567,9 @@ impl OpenProductStores {
             store.flush().map_err(to_sled)?;
         }
         if let Some(store) = self.traversal_store.opened() {
+            store.flush().map_err(to_world_model)?;
+        }
+        if let Some(store) = self.curation_store.opened() {
             store.flush().map_err(to_world_model)?;
         }
         if let Some(store) = self.belief_store.opened() {
