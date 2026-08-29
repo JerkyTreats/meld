@@ -1,24 +1,26 @@
 # WMR-VC-02 Delivery Gate Acceptance Receipt
 
-Date: 2026-08-28
+Date: 2026-08-29
 
 Gate identifier: `WMR-VC-02-DG`
 
 Gate revision: frozen revision 1
 
-Candidate digest: `ba37bbe63575f8316373adaaaf318767514d00a103f3fe80440d0f17b3383cdb`
+Candidate digest: `01dc68b6f55bfaee115e102a973d8ca4595c5a5bf74f51733f069c251c2a6ce1`
+
+Initial candidate digest: `ba37bbe63575f8316373adaaaf318767514d00a103f3fe80440d0f17b3383cdb`
 
 Implementation review: [WMR-VC-02 Implementation Review](../reviews/wmr_vc_02_implementation_review_receipt.md)
 
 Style Assurance: [WMR-VC-02 Style Assurance](../reviews/wmr_vc_02_style_assurance_receipt.md)
 
-Overall verdict: accepted
+Overall verdict: accepted after one bounded evidence correction and verification pass
 
 ## Acceptance Inputs
 
-The acceptance pass used the frozen [delivery gate](wmr_vc_02_standing_curation_settlement_gate.md), the exact candidate above, direct product proof through the real root runtime, the passed implementation review, the satisfied Style Assurance receipt, and the complete sequential workspace regression result.
+The verification pass used the frozen [delivery gate](wmr_vc_02_standing_curation_settlement_gate.md), the exact successor candidate above, direct product proof through the real root runtime, the targeted implementation verification, the satisfied successor Style Assurance receipt, and the complete sequential workspace regression result.
 
-No gate definition changed during acceptance. One bounded correction cycle resolved the frozen implementation findings before the verification pass. No violation remains.
+An independent audit reproduced the initial candidate and found no implementation defect, architectural violation, parallel authority, or regression. It correctly judged the initial acceptance not eligible because required evidence for `C15`, edge `E08`, and `C17` was incomplete. The gate definition did not change. The two frozen violations received evidence-correction dispositions and no violation remains after the one allowed verification pass.
 
 ## Criterion Verdicts
 
@@ -38,9 +40,9 @@ No gate definition changed during acceptance. One bounded correction cycle resol
 | `WMR-VC-02-DG-C12` | passed | the root proof observes exact workspace plus Curation owner receipts and occurrence-rich traversal only after Graph catch-up |
 | `WMR-VC-02-DG-C13` | passed | only the installed mapping selects the applied terminal Event as Belief evidence |
 | `WMR-VC-02-DG-C14` | passed | the unchanged incumbent evidence ingestion actor commits evidence and revision before cursor movement |
-| `WMR-VC-02-DG-C15` | passed | reopen and replay preserve operation, result, Event, Graph, evidence, and Belief identities without repeating semantic execution |
+| `WMR-VC-02-DG-C15` | passed | reopen after terminal persistence with both publications pending or only terminal publication pending reuses the result, performs no second semantic execution, appends only missing deterministic Events, and persists exact receipts |
 | `WMR-VC-02-DG-C16` | passed | the changed-input unchanged result is Graph-visible, deliberately unmapped, and creates no new Belief revision |
-| `WMR-VC-02-DG-C17` | passed | direct proof, implementation review, Style Assurance, strict lint, formatting, and complete workspace regression all pass |
+| `WMR-VC-02-DG-C17` | passed | direct proof, targeted implementation verification, satisfied Style Assurance, restart state, durable replay state machine, focused fuzz campaign, strict lint, formatting, and complete workspace regression all pass |
 | `WMR-VC-02-DG-C18` | passed | nine production files and two thousand fifty-seven added production lines remain within the frozen write scope and tripwires |
 
 ## Product Handoff Established
@@ -65,7 +67,10 @@ Existing Agent Goal formation and satisfaction remain canonical. Planned Curatio
 
 ## Violations And Exceptions
 
-Frozen violations: none
+| Violation | Criterion and edge | Initial evidence | Program-owner disposition | Verification |
+| --- | --- | --- | --- | --- |
+| `WMR-VC-02-GA-V01` | `C15` and `E08` | no test interrupted after terminal persistence while one or both publication receipts were missing | evidence correction limited to restart proof | passed for both missing-receipt states |
+| `WMR-VC-02-GA-V02` | `C17` | Style Assurance lacked comparable durable deserialization and replay fuzz or state-machine proof | evidence correction limited to executable assurance | passed through state-machine proof, focused fuzz build, and bounded nightly campaign |
 
 Authorized exceptions: none
 

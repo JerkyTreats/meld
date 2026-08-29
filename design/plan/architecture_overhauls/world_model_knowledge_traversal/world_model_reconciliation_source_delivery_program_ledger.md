@@ -142,7 +142,8 @@ Reconstructed `WMR-VC-02` is completed.
 | implementation review | [passed](reviews/wmr_vc_02_implementation_review_receipt.md) |
 | Style Assurance | [satisfied](reviews/wmr_vc_02_style_assurance_receipt.md) |
 | Delivery Gate | [accepted](delivery_gates/wmr_vc_02_gate_acceptance_receipt.md) |
-| candidate digest | `ba37bbe63575f8316373adaaaf318767514d00a103f3fe80440d0f17b3383cdb` |
+| evidence remediation | [verified](delivery_gates/wmr_vc_02_evidence_remediation_record.md) |
+| candidate digest | `01dc68b6f55bfaee115e102a973d8ca4595c5a5bf74f51733f069c251c2a6ce1` |
 | expansion decision | one Curation-owned durable tree family in the existing world-model database is approved |
 
 Product increment: one installed standing Curation rule consumes one complete immutable workspace cut, persists one exact acceptance and terminal result, publishes deterministic Curation Events, becomes visible through the existing Graph owner route, and produces a distinct Belief revision only under an installed evidence mapping.
@@ -331,7 +332,7 @@ Current Gate Evidence includes both accepted verticals: fresh and unchanged real
 
 `WMR-VC-01-DG` is accepted in the [Gate Acceptance Receipt](delivery_gates/wmr_vc_01_gate_acceptance_receipt.md). Every frozen criterion passed with no exception.
 
-`WMR-VC-02-DG` is accepted in the [Gate Acceptance Receipt](delivery_gates/wmr_vc_02_gate_acceptance_receipt.md). Every frozen criterion passed with no exception.
+`WMR-VC-02-DG` is accepted in the [Gate Acceptance Receipt](delivery_gates/wmr_vc_02_gate_acceptance_receipt.md) after one bounded evidence correction. The initial audit verdict was not eligible under `C15`, `E08`, and `C17`. Both frozen evidence violations passed verification with no exception.
 
 ## Review State
 
@@ -359,15 +360,15 @@ Current source implementation review: [passed after one bounded correction cycle
 
 ## Style Assurance
 
-Current Style Assurance: [satisfied after one bounded correction cycle](reviews/wmr_vc_02_style_assurance_receipt.md)
+Current Style Assurance: [satisfied after one bounded evidence correction](reviews/wmr_vc_02_style_assurance_receipt.md)
 
 Style Assurance owner: primary Style Assurance lane
 
-Candidate identity: `ba37bbe63575f8316373adaaaf318767514d00a103f3fe80440d0f17b3383cdb`
+Candidate identity: `01dc68b6f55bfaee115e102a973d8ca4595c5a5bf74f51733f069c251c2a6ce1`
 
-Applicable policy: Contribution Policy comments and domain layout, Rust formatting and lint, focused recovery and property tests, and complete sequential workspace regression
+Applicable policy: Contribution Policy comments and domain layout, Rust formatting and lint, focused crash-window recovery, property and state-machine proof, crate-native fuzz precedent, and complete sequential workspace regression
 
-Current findings: three bounded findings, all corrected and returned through implementation verification before assurance resumed
+Current findings: four bounded findings, all corrected and returned through implementation verification before assurance resumed. The fourth finding corrects the initial missing crash-window and durable replay assurance.
 
 ## Complexity Delta
 
@@ -387,6 +388,8 @@ New background runtimes: one root-composed bounded standing Curation participant
 
 Direct product behavior proved: exact Agent and workspace cut through Curation, Event, Graph, configured Belief settlement, changed-input unmapped result, replay, and reopen
 
+Evidence-only successor delta: two executable evidence files and one fuzz-package registration, with no production source or runtime behavior change
+
 Current Gate Acceptance: accepted
 
 Implementation review, Style Assurance, and Gate Acceptance receipts are complete. There are no exceptions and no successor-slice authority.
@@ -399,7 +402,9 @@ That delivery effect is committed as `795f9193`.
 
 The `WMR-VC-02` preparation effect is committed as `eabc9a75`.
 
-This delivery commit adds the accepted standing Curation runtime, durable operation family, deterministic publication, Graph visibility, configured Belief settlement proof, and exact review evidence for candidate digest `ba37bbe63575f8316373adaaaf318767514d00a103f3fe80440d0f17b3383cdb`.
+The original delivery commit adds the standing Curation runtime, durable operation family, deterministic publication, Graph visibility, configured Belief settlement proof, and initial review evidence.
+
+If applied, this evidence correction commit adds the missing publication-interruption restart proof, durable replay state machine, focused Curation fuzz target, and corrected Gate Acceptance lineage for candidate digest `01dc68b6f55bfaee115e102a973d8ca4595c5a5bf74f51733f069c251c2a6ce1` without changing runtime behavior.
 
 ## Risks And Exceptions
 

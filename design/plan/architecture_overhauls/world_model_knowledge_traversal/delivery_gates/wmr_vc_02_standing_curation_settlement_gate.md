@@ -143,4 +143,4 @@ Any failed criterion blocks Gate Acceptance. The gate has no waiver authority. A
 
 One initial Gate Acceptance pass and one verification pass after one bounded remediation cycle.
 
-The user authorized implementation on 2026-08-28. Revision 1 was frozen before source edits and accepted against candidate digest `ba37bbe63575f8316373adaaaf318767514d00a103f3fe80440d0f17b3383cdb`. Acceptance establishes handoff eligibility only and does not authorize planned Curation or any later vertical.
+The user authorized implementation on 2026-08-28. Revision 1 was frozen before source edits. An independent audit judged the initial candidate not eligible for missing restart and durable replay assurance. One bounded evidence correction passed verification against candidate digest `01dc68b6f55bfaee115e102a973d8ca4595c5a5bf74f51733f069c251c2a6ce1`. Acceptance establishes handoff eligibility only and does not authorize planned Curation or any later vertical.

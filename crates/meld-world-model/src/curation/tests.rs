@@ -53,6 +53,27 @@ struct MockEvents {
     envelopes: Mutex<BTreeMap<String, EventEnvelope>>,
 }
 
+struct InterruptingEvents {
+    inner: Arc<MockEvents>,
+    successful_appends: AtomicUsize,
+    successes_before_failure: usize,
+}
+
+impl CurationEventPort for InterruptingEvents {
+    fn watermark(&self) -> Result<EventWatermark, String> {
+        self.inner.watermark()
+    }
+
+    fn append_idempotent(&self, envelope: EventEnvelope) -> Result<AppendReceipt, String> {
+        if self.successful_appends.load(Ordering::SeqCst) >= self.successes_before_failure {
+            return Err("injected publication interruption".to_string());
+        }
+        let receipt = self.inner.append_idempotent(envelope)?;
+        self.successful_appends.fetch_add(1, Ordering::SeqCst);
+        Ok(receipt)
+    }
+}
+
 impl CurationEventPort for MockEvents {
     fn watermark(&self) -> Result<EventWatermark, String> {
         Ok(EventWatermark {
@@ -422,6 +443,13 @@ fn reopened_actor_reuses_the_same_terminal_identity_for_the_same_cut() {
 }
 
 #[test]
+fn reopen_recovers_terminal_result_with_one_or_both_publications_pending() {
+    for successes_before_failure in [0, 1] {
+        assert_publication_recovery_after_reopen(successes_before_failure);
+    }
+}
+
+#[test]
 fn owner_neutral_rule_authors_dissimilar_installed_vocabulary() {
     let db = sled::Config::new().temporary(true).open().unwrap();
     let store = Arc::new(CurationStore::new(db).unwrap());
@@ -549,6 +577,149 @@ proptest::proptest! {
     }
 }
 
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(32))]
+
+    #[test]
+    fn durable_replay_state_machine_preserves_exact_records_across_reopen(
+        actions in proptest::collection::vec(proptest::num::u8::ANY, 1..32)
+    ) {
+        let temp = tempfile::tempdir().unwrap();
+        let store_path = temp.path().join("world-model.sled");
+        let revision = {
+            let store = CurationStore::new(sled::open(&store_path).unwrap()).unwrap();
+            let revision = store.install_rule(rule(), 1).unwrap();
+            store.flush().unwrap();
+            revision
+        };
+        let operation = CurationOperation::reconstruct(
+            authority(),
+            revision.revision_ref(),
+            cut(30),
+            revision.rule.traversal_request(),
+        )
+        .unwrap();
+        let acceptance = CurationAcceptanceRecord::for_operation(&operation, &revision).unwrap();
+        let result = CurationResult::new(
+            &operation,
+            CurationTerminalDisposition::Abstained,
+            "state-machine abstention",
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap();
+        let terminal_receipt = CurationPublicationReceipt {
+            result_id: result.result_id.clone(),
+            kind: CurationPublicationKind::Terminal,
+            event_record_id: result.event_record_id(),
+            event_position: LedgerCursor {
+                ledger_id: operation.source_cut.event_position.ledger_id,
+                after_seq: operation.source_cut.event_position.after_seq + 1,
+            },
+        };
+        let mut operation_persisted = false;
+        let mut acceptance_persisted = false;
+        let mut result_persisted = false;
+        let mut receipt_persisted = false;
+
+        for action in actions {
+            let store = CurationStore::new(sled::open(&store_path).unwrap()).unwrap();
+            match action % 6 {
+                0 => {
+                    let decoded: CurationOperation = serde_json::from_slice(
+                        &serde_json::to_vec(&operation).unwrap()
+                    ).unwrap();
+                    store.put_operation(&decoded).unwrap();
+                    operation_persisted = true;
+                }
+                1 if operation_persisted => {
+                    let decoded: CurationAcceptanceRecord = serde_json::from_slice(
+                        &serde_json::to_vec(&acceptance).unwrap()
+                    ).unwrap();
+                    store.put_acceptance(&decoded).unwrap();
+                    acceptance_persisted = true;
+                }
+                2 if acceptance_persisted => {
+                    let decoded: CurationResult = serde_json::from_slice(
+                        &serde_json::to_vec(&result).unwrap()
+                    ).unwrap();
+                    store.put_result(&decoded).unwrap();
+                    result_persisted = true;
+                }
+                3 if result_persisted => {
+                    let decoded: CurationPublicationReceipt = serde_json::from_slice(
+                        &serde_json::to_vec(&terminal_receipt).unwrap()
+                    ).unwrap();
+                    store.put_publication_receipt(&decoded).unwrap();
+                    receipt_persisted = true;
+                }
+                4 => {
+                    let decoded: StandingCurationRuleRevision = serde_json::from_slice(
+                        &serde_json::to_vec(&revision).unwrap()
+                    ).unwrap();
+                    decoded.validate().unwrap();
+                    operation.validate().unwrap();
+                    result.validate(&operation).unwrap();
+                }
+                _ => {
+                    proptest::prop_assert_eq!(
+                        store.operation_for_selection(&operation.selection_id).unwrap(),
+                        operation_persisted.then(|| operation.clone())
+                    );
+                    proptest::prop_assert_eq!(
+                        store.acceptance(&acceptance.acceptance_id).unwrap(),
+                        acceptance_persisted.then(|| acceptance.clone())
+                    );
+                    proptest::prop_assert_eq!(
+                        store.result_for_operation(&operation.operation_id).unwrap(),
+                        result_persisted.then(|| result.clone())
+                    );
+                    proptest::prop_assert_eq!(
+                        store.publication_receipt(
+                            &result.result_id,
+                            CurationPublicationKind::Terminal,
+                        ).unwrap(),
+                        receipt_persisted.then(|| terminal_receipt.clone())
+                    );
+                }
+            }
+            store.flush().unwrap();
+        }
+
+        {
+            let store = CurationStore::new(sled::open(&store_path).unwrap()).unwrap();
+            store.put_operation(&operation).unwrap();
+            store.put_acceptance(&acceptance).unwrap();
+            store.put_result(&result).unwrap();
+            store.put_publication_receipt(&terminal_receipt).unwrap();
+            store.flush().unwrap();
+        }
+        let reopened = CurationStore::new(sled::open(&store_path).unwrap()).unwrap();
+        proptest::prop_assert_eq!(
+            reopened.operation_for_selection(&operation.selection_id).unwrap(),
+            Some(operation.clone())
+        );
+        proptest::prop_assert_eq!(
+            reopened.acceptance(&acceptance.acceptance_id).unwrap(),
+            Some(acceptance)
+        );
+        proptest::prop_assert_eq!(
+            reopened.result_for_operation(&operation.operation_id).unwrap(),
+            Some(result.clone())
+        );
+        proptest::prop_assert_eq!(
+            reopened.publication_receipt(
+                &result.result_id,
+                CurationPublicationKind::Terminal,
+            ).unwrap(),
+            Some(terminal_receipt)
+        );
+    }
+}
+
 fn result_events(events: &MockEvents) -> Vec<CurationResult> {
     let mut results = events
         .envelopes
@@ -560,6 +731,122 @@ fn result_events(events: &MockEvents) -> Vec<CurationResult> {
         .collect::<Vec<_>>();
     results.sort_by_key(|result| result.source_event_position.after_seq);
     results
+}
+
+fn assert_publication_recovery_after_reopen(successes_before_failure: usize) {
+    let temp = tempfile::tempdir().unwrap();
+    let store_path = temp.path().join("world-model.sled");
+    let source_cut = cut(14);
+    let ledger_id = source_cut.event_position.ledger_id;
+    let traversal = Arc::new(MockTraversal {
+        result: Mutex::new(TraversalResult {
+            result_id: "pending-publication-traversal".to_string(),
+            cut_id: source_cut.cut_id.clone(),
+            objects: Vec::new(),
+            occurrences: Vec::new(),
+            paths: Vec::new(),
+            receipts: source_cut.receipts.clone(),
+            frontier: Vec::new(),
+            truncation: TraversalTruncation::default(),
+        }),
+        cut: Mutex::new(source_cut.clone()),
+        failures: AtomicUsize::new(0),
+        traversals: AtomicUsize::new(0),
+    });
+    let durable_events = Arc::new(MockEvents {
+        ledger_id,
+        watermark: 14,
+        envelopes: Mutex::new(BTreeMap::new()),
+    });
+    let operation;
+    let result;
+
+    {
+        let store = Arc::new(CurationStore::new(sled::open(&store_path).unwrap()).unwrap());
+        let revision = store.install_rule(rule(), 1).unwrap();
+        operation = CurationOperation::reconstruct(
+            authority(),
+            revision.revision_ref(),
+            source_cut,
+            revision.rule.traversal_request(),
+        )
+        .unwrap();
+        let interrupted_events = Arc::new(InterruptingEvents {
+            inner: Arc::clone(&durable_events),
+            successful_appends: AtomicUsize::new(0),
+            successes_before_failure,
+        });
+        let actor = StandingCurationActor::new(
+            "world_model.standing_curation",
+            "session-pending-publication",
+            authority(),
+            revision,
+            Arc::clone(&store),
+            Arc::clone(&traversal) as Arc<dyn CurationTraversalPort>,
+            interrupted_events as Arc<dyn CurationEventPort>,
+        )
+        .unwrap();
+
+        let interrupted = actor.bounded_step(1);
+
+        assert_eq!(interrupted.results_persisted, 1);
+        assert_eq!(interrupted.publications_appended, successes_before_failure);
+        assert_eq!(interrupted.retryable_errors.len(), 1);
+        result = store
+            .result_for_operation(&operation.operation_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.disposition, CurationTerminalDisposition::Applied);
+        assert_eq!(
+            store
+                .publication_receipt(&result.result_id, CurationPublicationKind::Semantic)
+                .unwrap()
+                .is_some(),
+            successes_before_failure == 1
+        );
+        assert!(store
+            .publication_receipt(&result.result_id, CurationPublicationKind::Terminal)
+            .unwrap()
+            .is_none());
+        store.flush().unwrap();
+    }
+
+    let reopened_store = Arc::new(CurationStore::new(sled::open(&store_path).unwrap()).unwrap());
+    let reopened_actor = StandingCurationActor::new(
+        "world_model.standing_curation",
+        "session-pending-publication",
+        authority(),
+        reopened_store.active_rule("agent-a").unwrap().unwrap(),
+        Arc::clone(&reopened_store),
+        Arc::clone(&traversal) as Arc<dyn CurationTraversalPort>,
+        Arc::clone(&durable_events) as Arc<dyn CurationEventPort>,
+    )
+    .unwrap();
+
+    let recovered = reopened_actor.bounded_step(1);
+
+    assert_eq!(recovered.reused_results, 1);
+    assert_eq!(recovered.results_persisted, 0);
+    assert_eq!(
+        recovered.publications_appended,
+        2 - successes_before_failure
+    );
+    assert_eq!(traversal.traversals.load(Ordering::SeqCst), 1);
+    assert_eq!(durable_events.envelopes.lock().unwrap().len(), 2);
+    assert_eq!(
+        reopened_store
+            .result_for_operation(&operation.operation_id)
+            .unwrap(),
+        Some(result.clone())
+    );
+    assert!(reopened_store
+        .publication_receipt(&result.result_id, CurationPublicationKind::Semantic)
+        .unwrap()
+        .is_some());
+    assert!(reopened_store
+        .publication_receipt(&result.result_id, CurationPublicationKind::Terminal)
+        .unwrap()
+        .is_some());
 }
 
 struct Fixture {

@@ -45,3 +45,10 @@ path = "fuzz_targets/fuzz_agent_contracts.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_curation_replay"
+path = "fuzz_targets/fuzz_curation_replay.rs"
+test = false
+doc = false
+bench = false

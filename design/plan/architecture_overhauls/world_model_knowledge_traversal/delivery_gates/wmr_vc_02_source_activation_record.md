@@ -14,7 +14,9 @@ Approved expansion: one Curation-owned durable tree family inside the existing w
 
 Frozen gate: [WMR-VC-02-DG revision 1](wmr_vc_02_standing_curation_settlement_gate.md)
 
-Accepted candidate digest: `ba37bbe63575f8316373adaaaf318767514d00a103f3fe80440d0f17b3383cdb`
+Accepted candidate digest: `01dc68b6f55bfaee115e102a973d8ca4595c5a5bf74f51733f069c251c2a6ce1`
+
+Evidence remediation: [verified](wmr_vc_02_evidence_remediation_record.md)
 
 Implementation review: [passed](../reviews/wmr_vc_02_implementation_review_receipt.md)
 
