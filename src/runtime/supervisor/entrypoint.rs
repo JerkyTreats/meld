@@ -1740,7 +1740,7 @@ mod tests {
         let mut config = ProductRuntimeConfig::for_product_root(temp.path());
         config.enabled_runtime_ids = vec!["world_model.graph_replay".to_string()];
         let assembly = ProductRuntimeAssembly::load(config).unwrap();
-        let subject = DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap();
+        let subject = DomainObjectRef::new("context", "head", "node-a::analysis").unwrap();
         assembly
             .event_authority()
             .append_capability()
@@ -1748,14 +1748,14 @@ mod tests {
                 EventEnvelope::new_domain(
                     "2026-06-22T00:00:00Z".to_string(),
                     "session-a",
-                    "workspace_fs",
+                    "context",
                     "workspace-a",
-                    "workspace.node.observed",
+                    "context.head_tombstoned",
                     None,
                     json!({ "node": "node-a" }),
                 )
                 .with_graph(vec![subject], Vec::new())
-                .with_record_id("workspace-node-a"),
+                .with_record_id("context-head-a"),
                 AppendMode::Idempotent,
             )
             .unwrap();
@@ -1839,7 +1839,7 @@ mod tests {
         let mut config = ProductRuntimeConfig::for_product_root(temp.path());
         config.enabled_runtime_ids = vec!["world_model.graph_replay".to_string()];
         let assembly = ProductRuntimeAssembly::load(config).unwrap();
-        let subject = DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap();
+        let subject = DomainObjectRef::new("context", "head", "node-a::analysis").unwrap();
         assembly
             .event_authority()
             .append_capability()
@@ -1847,14 +1847,14 @@ mod tests {
                 EventEnvelope::new_domain(
                     "2026-06-22T00:00:00Z".to_string(),
                     "session-a",
-                    "workspace_fs",
+                    "context",
                     "workspace-a",
-                    "workspace.node.observed",
+                    "context.head_tombstoned",
                     None,
                     json!({ "node": "node-a" }),
                 )
                 .with_graph(vec![subject], Vec::new())
-                .with_record_id("workspace-node-a"),
+                .with_record_id("context-head-report-a"),
                 AppendMode::Idempotent,
             )
             .unwrap();

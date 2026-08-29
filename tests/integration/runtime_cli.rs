@@ -1,5 +1,6 @@
 use meld::cli::{Commands, RunContext, RuntimeCommands, WorldCommands};
 use meld::config::{ConfigLoader, PhysicalBinding};
+use meld::context::events::head_tombstoned_envelope;
 use meld::error::ApiError;
 use meld::events::binding::resolve_product_event_authority;
 use meld::runtime::assembly::ProductRuntimeAssembly;
@@ -81,22 +82,11 @@ fn runtime_run_ticks_graph_replay_handle() {
     with_xdg_env(&temp_dir, || {
         let workspace_root = workspace(&temp_dir);
         let assembly = open_bound_assembly(&workspace_root);
-        let subject = DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap();
         let appended = assembly
             .event_authority()
             .append_capability()
             .append_durable(
-                EventEnvelope::new_domain(
-                    "2026-06-22T00:00:00Z".to_string(),
-                    "session-a",
-                    "workspace_fs",
-                    "workspace-a",
-                    "workspace.node.observed",
-                    None,
-                    json!({ "node": "node-a" }),
-                )
-                .with_graph(vec![subject], Vec::new())
-                .with_record_id("workspace-node-a"),
+                head_tombstoned_envelope("session-a", [1; 32], "analysis", None),
                 AppendMode::Plain,
             )
             .unwrap();
@@ -264,20 +254,7 @@ fn runtime_run_accounts_distinguish_work_from_quiescence() {
             .event_authority()
             .append_capability()
             .append_durable(
-                EventEnvelope::new_domain(
-                    "2026-07-25T00:00:00Z".to_string(),
-                    "session-account",
-                    "workspace_fs",
-                    "workspace-a",
-                    "workspace.node.observed",
-                    None,
-                    json!({ "node": "node-account" }),
-                )
-                .with_graph(
-                    vec![DomainObjectRef::new("workspace_fs", "node", "node-account").unwrap()],
-                    Vec::new(),
-                )
-                .with_record_id("workspace-node-account"),
+                head_tombstoned_envelope("session-account", [2; 32], "analysis", None),
                 AppendMode::Plain,
             )
             .unwrap();

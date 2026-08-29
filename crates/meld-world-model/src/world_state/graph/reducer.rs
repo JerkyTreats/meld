@@ -10,8 +10,8 @@
 use crate::error::StorageError;
 use crate::events::{EventEnvelope, EventRecord, EventRecordRef, LedgerIdentity};
 use crate::world_state::graph::contracts::{
-    AnchorEndInput, AnchorSelectionInput, AnchorSelectionRecord, TraversalFactRecord,
-    TraversalIntent,
+    AnchorEndInput, AnchorSelectionInput, AnchorSelectionRecord, OwnerPublicationOperation,
+    ProjectedOwnerPublication, TraversalFactRecord, TraversalIntent, OWNER_PUBLICATION_EVENT_TYPE,
 };
 use crate::world_state::graph::events::{
     anchor_selected_envelope_from_record, anchor_superseded_envelope_from_record,
@@ -69,6 +69,11 @@ impl TraversalReducer {
             return Ok(false);
         }
 
+        if event.event_type == OWNER_PUBLICATION_EVENT_TYPE {
+            self.apply_owner_publication(store, ledger_id, event)?;
+            return Ok(true);
+        }
+
         // The spine:: prefix is a frozen stored-identifier format: existing
         // traversal facts reference it, so it survives the ledger renaming.
         let source_fact_id = format!("spine::{}", event.seq);
@@ -94,6 +99,45 @@ impl TraversalReducer {
         }
 
         Ok(true)
+    }
+
+    fn apply_owner_publication(
+        &mut self,
+        store: &TraversalStore,
+        ledger_id: LedgerIdentity,
+        event: &EventRecord,
+    ) -> Result<(), StorageError> {
+        let operation: OwnerPublicationOperation = serde_json::from_value(event.data.clone())
+            .map_err(|error| {
+                StorageError::InvalidPath(format!("invalid owner publication payload: {error}"))
+            })?;
+        operation.validate()?;
+        if event.domain_id != operation.batch.owner_id {
+            return Err(StorageError::InvalidPath(
+                "owner publication domain does not own its payload".to_string(),
+            ));
+        }
+        if event.record_id.as_deref() != Some(operation.event_record_id().as_str()) {
+            return Err(StorageError::InvalidPath(
+                "owner publication record identity does not match its payload".to_string(),
+            ));
+        }
+        let expected = crate::world_state::graph::events::owner_publication_envelope(
+            &event.session,
+            &operation,
+        )?;
+        if event.objects != expected.objects || event.relations != expected.relations {
+            return Err(StorageError::InvalidPath(
+                "owner publication Event hints do not match the typed payload".to_string(),
+            ));
+        }
+        store.put_owner_publication(&ProjectedOwnerPublication {
+            operation,
+            source_event: EventRecordRef {
+                ledger_id,
+                seq: event.seq,
+            },
+        })
     }
 
     fn select_anchor(
@@ -237,10 +281,9 @@ impl TraversalReducer {
 }
 
 fn is_traversal_source_event(event: &EventRecord) -> bool {
-    matches!(
-        event.domain_id.as_str(),
-        "workspace_fs" | "context" | "execution"
-    )
+    event.event_type == OWNER_PUBLICATION_EVENT_TYPE
+        || event.event_type == "workspace_fs.snapshot_selected"
+        || matches!(event.domain_id.as_str(), "context" | "execution")
 }
 
 fn reducer_intents_for_event(

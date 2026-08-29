@@ -3,15 +3,18 @@ use std::sync::Arc;
 
 use crate::branches::format::{
     format_branch_graph_status_text, format_branches_status_text, format_federated_neighbors_text,
-    format_federated_walk_text,
+    format_federated_owner_walk_text, format_federated_walk_text,
 };
 use crate::branches::query::BranchQueryScope;
 use crate::branches::{BranchQueryRuntime, BranchRuntime};
 use crate::cli::BranchesCommands;
 use crate::error::{ApiError, StorageError};
 use crate::events::DomainObjectRef;
+use crate::world_state::graph::contracts::{
+    BoundedTraversalRequest, GraphWalkSpec, OwnerPublicationScope, TraversalBounds,
+    TraversalDirection,
+};
 use crate::world_state::graph::store::TraversalStore;
-use crate::world_state::{GraphWalkSpec, TraversalDirection};
 
 pub fn handle_cli_command(command: &BranchesCommands) -> Result<String, ApiError> {
     handle_cli_command_with_workspace(command, None)
@@ -28,6 +31,15 @@ pub fn handle_cli_command_with_active_store(
     command: &BranchesCommands,
     workspace_root: Option<&Path>,
     active_store: Option<(&str, Arc<TraversalStore>)>,
+) -> Result<String, ApiError> {
+    handle_cli_command_with_runtime_state(command, workspace_root, active_store, None)
+}
+
+pub fn handle_cli_command_with_runtime_state(
+    command: &BranchesCommands,
+    workspace_root: Option<&Path>,
+    active_store: Option<(&str, Arc<TraversalStore>)>,
+    event_position: Option<crate::events::LedgerCursor>,
 ) -> Result<String, ApiError> {
     let query_runtime = active_store
         .map(|(branch_id, store)| BranchQueryRuntime::with_active_store(branch_id, store))
@@ -111,6 +123,53 @@ pub fn handle_cli_command_with_active_store(
                 &spec,
             )?;
             render_output(format, &output, format_federated_walk_text)
+        }
+        BranchesCommands::GraphOwnerWalk {
+            scope,
+            branch_ids,
+            owner_id,
+            owner_scope_id,
+            domain,
+            object_kind,
+            object_id,
+            direction,
+            relation_types,
+            max_depth,
+            max_objects,
+            max_occurrences,
+            max_paths,
+            format,
+        } => {
+            let event_position = event_position.ok_or_else(|| {
+                ApiError::ConfigError(
+                    "graph-owner-walk requires the product Event authority position".to_string(),
+                )
+            })?;
+            let output = query_runtime.owner_walk(
+                parse_scope(scope, branch_ids)?,
+                workspace_root,
+                event_position,
+                owner_id,
+                OwnerPublicationScope {
+                    scope_id: owner_scope_id.clone(),
+                    branch_id: None,
+                    perspective_id: None,
+                    valid_at: None,
+                },
+                &BoundedTraversalRequest {
+                    roots: vec![object_ref(domain, object_kind, object_id)?],
+                    direction: parse_direction(direction)?,
+                    relation_types: relation_types_filter(relation_types)
+                        .map(|items| items.to_vec()),
+                    bounds: TraversalBounds {
+                        max_depth: *max_depth,
+                        max_objects: *max_objects,
+                        max_occurrences: *max_occurrences,
+                        max_paths: *max_paths,
+                    },
+                },
+            )?;
+            render_output(format, &output, format_federated_owner_walk_text)
         }
     }
 }

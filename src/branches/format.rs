@@ -1,6 +1,7 @@
 use crate::branches::contracts::BranchesStatusOutput;
 use crate::branches::query::{
-    BranchGraphStatusOutput, FederatedNeighborsOutput, FederatedWalkOutput,
+    BranchGraphStatusOutput, FederatedNeighborsOutput, FederatedOwnerWalkOutput,
+    FederatedWalkOutput,
 };
 
 pub fn format_branch_status_text(output: &BranchesStatusOutput) -> String {
@@ -100,5 +101,31 @@ pub fn format_federated_walk_text(output: &FederatedWalkOutput) -> String {
         "Traversed Relations: {}\n",
         output.walk.traversed_relations.len()
     ));
+    out.trim_end().to_string()
+}
+
+pub fn format_federated_owner_walk_text(output: &FederatedOwnerWalkOutput) -> String {
+    let mut out = format!(
+        "Owner walk across {} readable branches\n",
+        output.metadata.readable_branch_ids.len()
+    );
+    for branch in &output.branches {
+        out.push_str(&format!("Branch ID: {}\n", branch.branch_id));
+        out.push_str(&format!(
+            "Cut: {} {:?}\n",
+            branch.cut.cut_id, branch.cut.status
+        ));
+        out.push_str(&format!("Receipts: {}\n", branch.cut.receipts.len()));
+        out.push_str(&format!("Objects: {}\n", branch.result.objects.len()));
+        out.push_str(&format!(
+            "Occurrences: {}\n",
+            branch.result.occurrences.len()
+        ));
+        out.push_str(&format!("Paths: {}\n", branch.result.paths.len()));
+        out.push_str(&format!(
+            "Truncated: {}\n",
+            branch.result.truncation.is_truncated()
+        ));
+    }
     out.trim_end().to_string()
 }

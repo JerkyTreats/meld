@@ -262,6 +262,51 @@ pub enum BranchesCommands {
         #[arg(long, default_value = "text")]
         format: String,
     },
+    /// Query exact owner publications through an immutable bounded cut
+    GraphOwnerWalk {
+        /// Branch scope to query
+        #[arg(long, default_value = "active")]
+        scope: String,
+        /// One or more explicit branch ids when scope is branch
+        #[arg(long = "branch-id")]
+        branch_ids: Vec<String>,
+        /// Semantic owner id
+        #[arg(long, default_value = "workspace_fs")]
+        owner_id: String,
+        /// Exact owner-local scope id
+        #[arg(long = "owner-scope-id")]
+        owner_scope_id: String,
+        /// Domain id for the root object
+        #[arg(long)]
+        domain: String,
+        /// Object kind for the root object
+        #[arg(long = "object-kind")]
+        object_kind: String,
+        /// Object id for the root object
+        #[arg(long = "object-id")]
+        object_id: String,
+        /// Traversal direction
+        #[arg(long, default_value = "both")]
+        direction: String,
+        /// Relation type filters
+        #[arg(long = "relation-type")]
+        relation_types: Vec<String>,
+        /// Maximum traversal depth
+        #[arg(long, default_value_t = 4)]
+        max_depth: usize,
+        /// Maximum object publications
+        #[arg(long, default_value_t = 1024)]
+        max_objects: usize,
+        /// Maximum relation occurrences
+        #[arg(long, default_value_t = 2048)]
+        max_occurrences: usize,
+        /// Maximum occurrence-qualified paths
+        #[arg(long, default_value_t = 2048)]
+        max_paths: usize,
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1180,6 +1225,48 @@ mod tests {
                 assert_eq!(format, "json");
             }
             _ => panic!("expected branches graph-neighbors command"),
+        }
+    }
+
+    #[test]
+    fn parses_branches_graph_owner_walk_command() {
+        let cli = Cli::try_parse_from([
+            "meld",
+            "branches",
+            "graph-owner-walk",
+            "--owner-scope-id",
+            "/workspace",
+            "--domain",
+            "workspace_fs",
+            "--object-kind",
+            "source",
+            "--object-id",
+            "/workspace",
+            "--max-occurrences",
+            "9",
+            "--format",
+            "json",
+        ])
+        .unwrap();
+        match cli.command {
+            Commands::Branches {
+                command:
+                    BranchesCommands::GraphOwnerWalk {
+                        scope,
+                        owner_id,
+                        owner_scope_id,
+                        max_occurrences,
+                        format,
+                        ..
+                    },
+            } => {
+                assert_eq!(scope, "active");
+                assert_eq!(owner_id, "workspace_fs");
+                assert_eq!(owner_scope_id, "/workspace");
+                assert_eq!(max_occurrences, 9);
+                assert_eq!(format, "json");
+            }
+            _ => panic!("expected graph owner walk command"),
         }
     }
 }

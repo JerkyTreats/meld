@@ -15,9 +15,11 @@ use crate::tree::builder::{Tree, TreeBuilder};
 use crate::tree::walker::WalkerConfig;
 use crate::types::NodeID;
 use crate::workspace::events::{
-    node_observed_envelope, scan_completed_envelope, snapshot_materialized_envelope, snapshot_ref,
-    snapshot_selected_envelope, source_attached_envelope,
+    node_observed_envelope, owner_publication_operation, scan_completed_envelope,
+    snapshot_materialized_envelope, snapshot_ref, snapshot_selected_envelope,
+    source_attached_envelope,
 };
+use meld_world_model::world_state::graph::events::owner_publication_envelope;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -206,12 +208,21 @@ pub(crate) fn execute_workspace_scan_observed(
         if let Some(observer) = progress.as_mut() {
             observer(total_nodes, total_nodes);
         }
-        let observed = if request.collect_observed {
+        let observed = if request.collect_observed || request.session_id.is_some() {
             collect_records(&tree)?
         } else {
             // Root-only record: build_outcome still resolves root_node_ref
             // from it, and opted-out callers never read observed_nodes.
             vec![root_record(&tree)?]
+        };
+        let publication_candidates = match request.session_id.as_deref() {
+            Some(session_id) => vec![build_owner_publication_candidate(
+                session_id,
+                workspace_root,
+                &tree,
+                &observed,
+            )?],
+            None => Vec::new(),
         };
         return build_outcome(
             WorkspaceScanStatus::UpToDate,
@@ -219,7 +230,7 @@ pub(crate) fn execute_workspace_scan_observed(
             &tree,
             previous_root_hash,
             observed,
-            Vec::new(),
+            publication_candidates,
         );
     }
 
@@ -263,7 +274,7 @@ pub(crate) fn execute_workspace_scan_observed(
                 &tree,
                 previous_root_hash.as_deref(),
                 &observed,
-            );
+            )?;
             // Only full scans terminate with a scan_completed fact; the
             // shared builder is also reused by the watch path, which does not.
             candidates.push(scan_completed_envelope(
@@ -319,7 +330,7 @@ pub(crate) fn build_publication_candidates(
     tree: &Tree,
     previous_root_hash: Option<&str>,
     observed: &[NodeRecord],
-) -> Vec<EventEnvelope> {
+) -> Result<Vec<EventEnvelope>, ApiError> {
     let current_root_hex = hex::encode(tree.root_id);
     let mut candidates = Vec::with_capacity(observed.len() + 3);
     if previous_root_hash.is_none() {
@@ -346,7 +357,25 @@ pub(crate) fn build_publication_candidates(
             record,
         ));
     }
-    candidates
+    candidates.push(build_owner_publication_candidate(
+        session_id,
+        workspace_root,
+        tree,
+        observed,
+    )?);
+    Ok(candidates)
+}
+
+pub(crate) fn build_owner_publication_candidate(
+    session_id: &str,
+    workspace_root: &Path,
+    tree: &Tree,
+    observed: &[NodeRecord],
+) -> Result<EventEnvelope, ApiError> {
+    let operation = owner_publication_operation(workspace_root, tree.root_id, observed)
+        .map_err(ApiError::StorageError)?;
+    owner_publication_envelope(session_id, &operation)
+        .map_err(|error| ApiError::ConfigError(error.to_string()))
 }
 
 // Callers supply `observed` already sorted by path.

@@ -344,11 +344,15 @@ fn workspace_scan_capability_second_scan_is_incremental() {
     );
     assert_eq!(second_summary["node_count"], json!(FIXTURE_NODE_COUNT));
 
-    // An incremental rerun writes nothing, so it has no publication candidates.
-    assert!(second
-        .emitted_artifacts
-        .iter()
-        .all(|artifact| artifact.artifact_type_id != "workspace_event_candidates"));
+    // An unchanged scan reconstructs the exact owner operation so a caller can
+    // retry a publication lost before durable append.
+    let second_candidates = artifact(&second, "workspace_event_candidates");
+    let candidate_list = second_candidates.content["candidates"].as_array().unwrap();
+    assert_eq!(candidate_list.len(), 1);
+    assert_eq!(
+        candidate_list[0]["type"],
+        json!("world_state.owner_publication.v1")
+    );
     let observed = artifact(&second, "workspace_observed_node_refs");
     assert_eq!(
         observed.content["nodes"].as_array().unwrap().len(),
@@ -456,10 +460,10 @@ fn workspace_scan_publication_candidates_are_deterministic_for_a_fixed_tree() {
 
     assert_eq!(first, second);
     // Guard against vacuous equality: the full first-scan candidate sequence
-    // (attach, materialize, select, one node_observed per node, complete).
+    // includes the owner publication after the raw telemetry descriptors.
     assert_eq!(
         first.2["candidates"].as_array().unwrap().len(),
-        FIXTURE_NODE_COUNT + 4
+        FIXTURE_NODE_COUNT + 5
     );
 }
 

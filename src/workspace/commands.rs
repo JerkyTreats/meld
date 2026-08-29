@@ -13,8 +13,9 @@ use crate::telemetry::ProgressRuntime;
 use crate::tree::builder::TreeBuilder;
 use crate::types::NodeID;
 use crate::workspace::scan::{
-    build_publication_candidates, execute_workspace_scan_observed, stored_workspace_root_hash,
-    workspace_walker_config, WorkspaceScanPolicy, WorkspaceScanRequest, WorkspaceScanStatus,
+    build_owner_publication_candidate, build_publication_candidates,
+    execute_workspace_scan_observed, stored_workspace_root_hash, workspace_walker_config,
+    WorkspaceScanPolicy, WorkspaceScanRequest, WorkspaceScanStatus,
 };
 use crate::workspace::section;
 use crate::workspace::types::{
@@ -22,6 +23,7 @@ use crate::workspace::types::{
     ProviderStatusEntry, ProviderStatusOutput, UnifiedStatusOutput, ValidateResult,
     WorkspaceScanInfo, WorkspaceScanState, WorkspaceStatusRequest, WorkspaceStatusResult,
 };
+use meld_world_model::world_state::graph::contracts::OWNER_PUBLICATION_EVENT_TYPE;
 use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -551,6 +553,16 @@ impl WorkspaceCommandService {
         let outcome =
             execute_workspace_scan_observed(api, &request, Some(&mut emit_scan_progress))?;
 
+        if let Some((progress, _)) = telemetry {
+            for envelope in outcome.publication_candidates.iter().cloned() {
+                if envelope.event_type == OWNER_PUBLICATION_EVENT_TYPE {
+                    progress.emit_envelope_idempotent(envelope)?;
+                } else {
+                    progress.emit_envelope_best_effort(envelope);
+                }
+            }
+        }
+
         match outcome.summary.status {
             WorkspaceScanStatus::UpToDate => Ok(format!(
                 "Tree already exists (root: {}). Use --force to rebuild.",
@@ -558,9 +570,6 @@ impl WorkspaceCommandService {
             )),
             WorkspaceScanStatus::Scanned => {
                 if let Some((progress, session_id)) = telemetry {
-                    for envelope in outcome.publication_candidates {
-                        progress.emit_envelope_best_effort(envelope);
-                    }
                     progress.emit_event_best_effort(
                         session_id,
                         "scan_completed",
@@ -657,31 +666,51 @@ impl WorkspaceCommandService {
     }
 }
 
-/// Emits the workspace snapshot fact sequence for the watch path,
-/// best-effort: nodes missing from the tree or failing record conversion are
-/// skipped. The sequence itself comes from the scan core's shared builder.
+/// Durably emits the exact owner publication and preserves legacy telemetry.
 pub(crate) fn emit_workspace_snapshot_facts(
     progress: &Arc<ProgressRuntime>,
     session_id: &str,
     workspace_root: &Path,
     tree: &crate::tree::builder::Tree,
     previous_root_hash: Option<&str>,
-    observed_node_ids: &[NodeID],
-) {
-    let observed: Vec<NodeRecord> = observed_node_ids
+    _observed_node_ids: &[NodeID],
+) -> Result<(), ApiError> {
+    let mut all_observed = tree
+        .nodes
+        .iter()
+        .map(|(node_id, node)| {
+            NodeRecord::from_merkle_node(*node_id, node, tree).map_err(ApiError::StorageError)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    all_observed.sort_by(|left, right| left.path.cmp(&right.path));
+    let mut observed = _observed_node_ids
         .iter()
         .filter_map(|node_id| {
             let node = tree.nodes.get(node_id)?;
             NodeRecord::from_merkle_node(*node_id, node, tree).ok()
         })
-        .collect();
-    for envelope in build_publication_candidates(
+        .collect::<Vec<_>>();
+    observed.sort_by(|left, right| left.path.cmp(&right.path));
+    let mut candidates = build_publication_candidates(
         session_id,
         workspace_root,
         tree,
         previous_root_hash,
         &observed,
-    ) {
-        progress.emit_envelope_best_effort(envelope);
+    )?;
+    candidates.retain(|envelope| envelope.event_type != OWNER_PUBLICATION_EVENT_TYPE);
+    candidates.push(build_owner_publication_candidate(
+        session_id,
+        workspace_root,
+        tree,
+        &all_observed,
+    )?);
+    for envelope in candidates {
+        if envelope.event_type == OWNER_PUBLICATION_EVENT_TYPE {
+            progress.emit_envelope_idempotent(envelope)?;
+        } else {
+            progress.emit_envelope_best_effort(envelope);
+        }
     }
+    Ok(())
 }

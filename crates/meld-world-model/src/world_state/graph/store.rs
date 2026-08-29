@@ -23,13 +23,14 @@ use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
 
 use crate::error::StorageError;
-use crate::events::{DomainObjectRef, EventRelation};
+use crate::events::{DomainObjectRef, EventRelation, LedgerCursor, LedgerIdentity};
 use crate::world_state::graph::contracts::{
     AnchorProvenanceRecord, AnchorSelectionRecord, GraphWalkResult, GraphWalkSpec,
-    TraversalDirection, TraversalFactRecord,
+    ProjectedOwnerPublication, TraversalDirection, TraversalFactRecord,
 };
 
 const TREE_FACTS: &str = "traversal_facts";
+const TREE_OWNER_PUBLICATIONS: &str = "traversal_owner_publications";
 const TREE_FACT_OBJECTS: &str = "traversal_fact_objects";
 const TREE_OBJECT_FACTS: &str = "traversal_object_facts";
 const TREE_OUTGOING_RELATIONS: &str = "traversal_outgoing_relations";
@@ -55,11 +56,18 @@ pub struct RelationRecord {
     pub seq: u64,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+struct PersistedGraphCursor {
+    ledger_id: LedgerIdentity,
+    after_seq: u64,
+}
+
 /// Sled-backed graph traversal store.
 #[derive(Clone)]
 pub struct TraversalStore {
     db: Db,
     facts: Tree,
+    owner_publications: Tree,
     fact_objects: Tree,
     object_facts: Tree,
     outgoing_relations: Tree,
@@ -79,6 +87,9 @@ impl TraversalStore {
     pub fn new(db: Db) -> Result<Self, StorageError> {
         Ok(Self {
             facts: db.open_tree(TREE_FACTS).map_err(to_storage_io)?,
+            owner_publications: db
+                .open_tree(TREE_OWNER_PUBLICATIONS)
+                .map_err(to_storage_io)?,
             fact_objects: db.open_tree(TREE_FACT_OBJECTS).map_err(to_storage_io)?,
             object_facts: db.open_tree(TREE_OBJECT_FACTS).map_err(to_storage_io)?,
             outgoing_relations: db
@@ -185,6 +196,76 @@ impl TraversalStore {
             return Ok(None);
         };
         Ok(Some(serde_json::from_slice(&raw).map_err(to_storage_data)?))
+    }
+
+    /// Persist one Graph-owned projection of an intact owner operation.
+    pub fn put_owner_publication(
+        &self,
+        publication: &ProjectedOwnerPublication,
+    ) -> Result<(), StorageError> {
+        publication.operation.validate()?;
+        let candidate = &publication.operation;
+        for existing in self.owner_publications_through_seq(u64::MAX)? {
+            let existing = existing.operation;
+            if existing.batch.owner_id == candidate.batch.owner_id
+                && existing.batch.scope == candidate.batch.scope
+                && existing.batch.revision_id == candidate.batch.revision_id
+                && existing.operation_id != candidate.operation_id
+            {
+                return Err(StorageError::InvalidPath(format!(
+                    "owner revision '{}' has divergent publication operations",
+                    candidate.batch.revision_id
+                )));
+            }
+        }
+        let key = encode_seq_index_key(
+            publication.source_event.seq,
+            &publication.operation.operation_id,
+        );
+        self.owner_publications
+            .insert(
+                key.as_bytes(),
+                serde_json::to_vec(publication).map_err(to_storage_data)?,
+            )
+            .map_err(to_storage_io)?;
+        Ok(())
+    }
+
+    /// Read owner publications visible through one durable Graph position.
+    pub fn owner_publications_through_seq(
+        &self,
+        through_seq: u64,
+    ) -> Result<Vec<ProjectedOwnerPublication>, StorageError> {
+        let mut publications = Vec::new();
+        for item in self.owner_publications.iter() {
+            let (key, value) = item.map_err(to_storage_io)?;
+            let key = std::str::from_utf8(key.as_ref()).map_err(|error| {
+                StorageError::IoError(io::Error::new(io::ErrorKind::InvalidData, error))
+            })?;
+            let Some((seq, _)) = key.split_once("::") else {
+                return Err(StorageError::InvalidPath(
+                    "invalid owner publication key".to_string(),
+                ));
+            };
+            let seq = seq.parse::<u64>().map_err(to_storage_parse)?;
+            if seq > through_seq {
+                break;
+            }
+            let publication: ProjectedOwnerPublication =
+                serde_json::from_slice(&value).map_err(to_storage_data)?;
+            publication.operation.validate()?;
+            if publication.source_event.seq != seq {
+                return Err(StorageError::InvalidPath(
+                    "owner publication key and source event disagree".to_string(),
+                ));
+            }
+            publications.push(publication);
+        }
+        publications.sort_by(|left, right| {
+            (left.source_event.seq, &left.operation.operation_id)
+                .cmp(&(right.source_event.seq, &right.operation.operation_id))
+        });
+        Ok(publications)
     }
 
     /// Read facts mentioning an object after a source sequence cursor.
@@ -455,6 +536,35 @@ impl TraversalStore {
         value.parse::<u64>().map_err(to_storage_parse)
     }
 
+    /// Read the canonical identity-bearing Graph projection position.
+    pub fn authority_cursor(
+        &self,
+        expected_ledger_id: LedgerIdentity,
+    ) -> Result<LedgerCursor, StorageError> {
+        let Some(raw) = self
+            .runtime_meta
+            .get(KEY_AUTHORITY_CURSOR)
+            .map_err(to_storage_io)?
+        else {
+            return Ok(LedgerCursor {
+                ledger_id: expected_ledger_id,
+                after_seq: 0,
+            });
+        };
+        let persisted: PersistedGraphCursor =
+            serde_json::from_slice(&raw).map_err(to_storage_data)?;
+        if persisted.ledger_id != expected_ledger_id {
+            return Err(StorageError::IdentityMismatch {
+                expected: expected_ledger_id,
+                actual: persisted.ledger_id,
+            });
+        }
+        Ok(LedgerCursor {
+            ledger_id: persisted.ledger_id,
+            after_seq: persisted.after_seq,
+        })
+    }
+
     /// Persist the last event-ledger sequence reduced into this store.
     pub fn set_last_reduced_seq(&self, seq: u64) -> Result<(), StorageError> {
         self.runtime_meta
@@ -473,6 +583,7 @@ impl TraversalStore {
     pub(super) fn reset_for_event_authority_migration(&self) -> Result<(), StorageError> {
         for tree in [
             &self.facts,
+            &self.owner_publications,
             &self.fact_objects,
             &self.object_facts,
             &self.outgoing_relations,

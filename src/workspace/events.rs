@@ -1,5 +1,11 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 
+use meld_world_model::world_state::graph::contracts::{
+    HydrationReference, OwnerCompletenessReceipt, OwnerCompletenessStatus, OwnerObjectPublication,
+    OwnerPublicationBatch, OwnerPublicationOperation, OwnerPublicationScope, OwnerPublicationState,
+    OwnerRelationOccurrence,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -257,4 +263,200 @@ pub fn node_ref(node_id: NodeID) -> Result<DomainObjectRef, crate::error::Storag
         "node",
         hex::encode(node_id),
     )?)
+}
+
+/// Reconstruct the exact owner operation for one workspace tree revision.
+pub fn owner_publication_operation(
+    workspace_root: &Path,
+    root_node_id: NodeID,
+    records: &[NodeRecord],
+) -> Result<OwnerPublicationOperation, crate::error::StorageError> {
+    const OWNER_ID: &str = "workspace_fs";
+    const RULE_REVISION: &str = "workspace-tree-owner-publication-v1";
+
+    let source = source_ref(workspace_root)?;
+    let snapshot = snapshot_ref(root_node_id)?;
+    let head = snapshot_head_ref(workspace_root)?;
+    let revision_id = hex::encode(root_node_id);
+    let scope = OwnerPublicationScope {
+        scope_id: source.object_id.clone(),
+        branch_id: None,
+        perspective_id: None,
+        valid_at: None,
+    };
+    let mut objects = vec![
+        owner_object(
+            &source,
+            "source",
+            &source.object_id,
+            &revision_id,
+            BTreeMap::new(),
+        ),
+        owner_object(
+            &snapshot,
+            "snapshot",
+            &revision_id,
+            &revision_id,
+            BTreeMap::new(),
+        ),
+        owner_object(
+            &head,
+            "snapshot_head",
+            &source.object_id,
+            &revision_id,
+            BTreeMap::new(),
+        ),
+    ];
+    let mut relations = vec![
+        owner_relation(
+            "snapshot-belongs-to-source",
+            "belongs_to",
+            &snapshot,
+            &source,
+            &revision_id,
+        ),
+        owner_relation(
+            "head-attached-to-source",
+            "attached_to",
+            &head,
+            &source,
+            &revision_id,
+        ),
+        owner_relation(
+            "head-selects-snapshot",
+            "selected",
+            &head,
+            &snapshot,
+            &revision_id,
+        ),
+    ];
+    for record in records {
+        let node = node_ref(record.node_id)?;
+        let node_id = hex::encode(record.node_id);
+        let mut qualifications = BTreeMap::new();
+        qualifications.insert(
+            "path".to_string(),
+            record.path.to_string_lossy().to_string(),
+        );
+        qualifications.insert(
+            "node_kind".to_string(),
+            match record.node_type {
+                crate::store::NodeType::Directory => "directory",
+                crate::store::NodeType::File { .. } => "file",
+            }
+            .to_string(),
+        );
+        objects.push(owner_object(
+            &node,
+            "node",
+            &node_id,
+            &revision_id,
+            qualifications,
+        ));
+        relations.push(owner_relation(
+            &format!("node-belongs-to-source::{node_id}"),
+            "belongs_to",
+            &node,
+            &source,
+            &revision_id,
+        ));
+        relations.push(owner_relation(
+            &format!("node-observed-in-snapshot::{node_id}"),
+            "observed_in",
+            &node,
+            &snapshot,
+            &revision_id,
+        ));
+        if let Some(parent_id) = record.parent {
+            let parent = node_ref(parent_id)?;
+            relations.push(owner_relation(
+                &format!(
+                    "parent-contains-node::{}::{node_id}",
+                    hex::encode(parent_id)
+                ),
+                "contains",
+                &parent,
+                &node,
+                &revision_id,
+            ));
+        }
+    }
+    let mut included_ids = objects
+        .iter()
+        .map(|object| object.publication_id.clone())
+        .chain(
+            relations
+                .iter()
+                .map(|relation| relation.occurrence_id.clone()),
+        )
+        .collect::<Vec<_>>();
+    included_ids.sort();
+    OwnerPublicationOperation::reconstruct(
+        RULE_REVISION,
+        OwnerPublicationBatch {
+            owner_id: OWNER_ID.to_string(),
+            revision_id: revision_id.clone(),
+            scope: scope.clone(),
+            objects,
+            relations,
+            completeness: OwnerCompletenessReceipt {
+                receipt_id: format!("workspace-completeness::{revision_id}"),
+                scope,
+                included_ids,
+                exclusions: Vec::new(),
+                failures: Vec::new(),
+                status: OwnerCompletenessStatus::Complete,
+            },
+        },
+    )
+    .map_err(|error| crate::error::StorageError::InvalidPath(error.to_string()))
+}
+
+fn owner_object(
+    object_ref: &DomainObjectRef,
+    product_kind: &str,
+    product_id: &str,
+    revision_id: &str,
+    qualifications: BTreeMap<String, String>,
+) -> OwnerObjectPublication {
+    OwnerObjectPublication {
+        publication_id: format!("object::{}", object_ref.index_key()),
+        object_ref: object_ref.clone(),
+        state: OwnerPublicationState::Observed,
+        source_product_ref: product_id.to_string(),
+        hydration: HydrationReference {
+            owner_id: "workspace_fs".to_string(),
+            product_kind: product_kind.to_string(),
+            product_id: product_id.to_string(),
+            revision_id: revision_id.to_string(),
+            role: "published_material".to_string(),
+        },
+        provenance_refs: vec![format!("workspace-revision::{revision_id}")],
+        qualifications,
+    }
+}
+
+fn owner_relation(
+    occurrence_id: &str,
+    relation_type: &str,
+    src: &DomainObjectRef,
+    dst: &DomainObjectRef,
+    revision_id: &str,
+) -> OwnerRelationOccurrence {
+    OwnerRelationOccurrence {
+        occurrence_id: occurrence_id.to_string(),
+        relation_type: relation_type.to_string(),
+        src: src.clone(),
+        dst: dst.clone(),
+        source_product_ref: occurrence_id.to_string(),
+        hydration: HydrationReference {
+            owner_id: "workspace_fs".to_string(),
+            product_kind: "workspace_relation".to_string(),
+            product_id: occurrence_id.to_string(),
+            revision_id: revision_id.to_string(),
+            role: "qualified_relation".to_string(),
+        },
+        qualifications: BTreeMap::new(),
+        provenance_refs: vec![format!("workspace-revision::{revision_id}")],
+    }
 }

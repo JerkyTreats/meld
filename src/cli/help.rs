@@ -60,6 +60,7 @@ pub fn branches_command_name(command: &BranchesCommands) -> &'static str {
         BranchesCommands::GraphStatus { .. } => "graph_status",
         BranchesCommands::GraphNeighbors { .. } => "graph_neighbors",
         BranchesCommands::GraphWalk { .. } => "graph_walk",
+        BranchesCommands::GraphOwnerWalk { .. } => "graph_owner_walk",
     }
 }
 

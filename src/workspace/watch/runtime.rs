@@ -205,12 +205,30 @@ impl WatchDaemon {
         let builder =
             TreeBuilder::new(self.config.workspace_root.clone()).with_walker_config(walker_config);
         let tree = builder.build().map_err(ApiError::from)?;
+        let previous_root_hash = stored_workspace_root_hash(
+            self.api.node_store().as_ref(),
+            &self.config.workspace_root,
+            &tree.root_id,
+        )?;
 
         NodeRecord::populate_store_from_tree(
             self.api.node_store().as_ref() as &dyn NodeRecordStore,
             &tree,
         )
         .map_err(ApiError::from)?;
+
+        if let (Some(session_id), Some(progress)) = (&self.config.session_id, &self.config.progress)
+        {
+            let all_node_ids = tree.nodes.keys().copied().collect::<Vec<_>>();
+            emit_workspace_snapshot_facts(
+                progress,
+                session_id,
+                &self.config.workspace_root,
+                &tree,
+                previous_root_hash.as_deref(),
+                &all_node_ids,
+            )?;
+        }
 
         let _ = ignore::maybe_sync_gitignore_after_tree(
             &self.config.workspace_root,
@@ -294,7 +312,7 @@ impl WatchDaemon {
                 &update.tree,
                 update.previous_root_hash.as_deref(),
                 &update.observed_nodes,
-            );
+            )?;
         }
 
         if self.config.auto_create_frames {
@@ -665,6 +683,9 @@ mod tests {
     use crate::workflow::WorkflowRegistry;
     use crate::workspace::events::WorkspaceNodeObservedEventData;
     use meld_events::events::test_support::{EventStore, EventStoreTestSupport as _}; // boundary-allow: event-test
+    use meld_world_model::world_state::graph::contracts::{
+        OwnerPublicationOperation, OWNER_PUBLICATION_EVENT_TYPE,
+    };
     use std::path::Path;
     use tempfile::TempDir;
 
@@ -758,6 +779,36 @@ mod tests {
         };
         let daemon = WatchDaemon::new(api, config).unwrap();
         (daemon, progress, event_store, session_id)
+    }
+
+    #[test]
+    fn watch_startup_reconstructs_and_idempotently_retries_the_exact_revision() {
+        let temp = TempDir::new().unwrap();
+        let workspace_root = temp.path().join("workspace");
+        std::fs::create_dir_all(&workspace_root).unwrap();
+        std::fs::write(workspace_root.join("doc.txt"), "hello").unwrap();
+        let (daemon, progress, event_store, session_id) =
+            create_watch_test_runtime(&temp, workspace_root);
+
+        daemon.build_initial_tree().unwrap();
+        progress.barrier().unwrap();
+        daemon.build_initial_tree().unwrap();
+        progress.barrier().unwrap();
+
+        let owner_events = event_store
+            .read_events_after(&session_id, 0)
+            .unwrap()
+            .into_iter()
+            .filter(|event| event.event_type == OWNER_PUBLICATION_EVENT_TYPE)
+            .collect::<Vec<_>>();
+        assert_eq!(owner_events.len(), 1);
+        let operation: OwnerPublicationOperation =
+            serde_json::from_value(owner_events[0].data.clone()).unwrap();
+        operation.validate().unwrap();
+        assert!(operation.batch.objects.iter().any(|publication| publication
+            .qualifications
+            .get("path")
+            .is_some_and(|path| path.ends_with("doc.txt"))));
     }
 
     #[test]

@@ -8,10 +8,14 @@ use crate::branches::contracts::BranchCatalogEntry;
 use crate::branches::locator;
 use crate::branches::runtime::BranchRuntime;
 use crate::error::{ApiError, StorageError};
-use crate::events::{DomainObjectRef, EventRelation};
+use crate::events::{DomainObjectRef, EventRelation, LedgerCursor};
+use crate::world_state::graph::contracts::{
+    BoundedTraversalRequest, GraphWalkSpec, OwnerCurrentnessPolicy, OwnerPublicationScope,
+    TraversalCut, TraversalCutRequest, TraversalDirection, TraversalFactRecord,
+    TraversalOwnerRequirement, TraversalResult,
+};
 use crate::world_state::graph::query::TraversalQuery;
 use crate::world_state::graph::store::TraversalStore;
-use crate::world_state::{GraphWalkSpec, TraversalDirection, TraversalFactRecord};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BranchQueryScope {
@@ -115,6 +119,20 @@ pub struct FederatedNeighborsOutput {
 pub struct FederatedWalkOutput {
     pub metadata: FederatedReadMetadata,
     pub walk: FederatedGraphWalkResult,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BranchOwnerWalkResult {
+    pub branch_id: String,
+    pub canonical_locator: String,
+    pub cut: TraversalCut,
+    pub result: TraversalResult,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FederatedOwnerWalkOutput {
+    pub metadata: FederatedReadMetadata,
+    pub branches: Vec<BranchOwnerWalkResult>,
 }
 
 #[derive(Clone, Default)]
@@ -325,6 +343,62 @@ impl BranchQueryRuntime {
                 traversed_relations,
             },
         })
+    }
+
+    /// Query exact owner material without consulting structural Graph facts.
+    pub fn owner_walk(
+        &self,
+        scope: BranchQueryScope,
+        workspace_root: Option<&Path>,
+        event_position: LedgerCursor,
+        owner_id: &str,
+        owner_scope: OwnerPublicationScope,
+        request: &BoundedTraversalRequest,
+    ) -> Result<FederatedOwnerWalkOutput, ApiError> {
+        let selection = self.select_branches(scope, workspace_root)?;
+        let strict_scope = selection.scope.is_strict();
+        let mut metadata = self.base_metadata(&selection);
+        let mut branches = Vec::new();
+        for entry in &selection.entries {
+            let read = self.open_traversal_store(entry).and_then(|store| {
+                let query = TraversalQuery::new(store.as_ref());
+                let cut = query
+                    .cut(&TraversalCutRequest {
+                        owners: vec![TraversalOwnerRequirement {
+                            owner_id: owner_id.to_string(),
+                            scope: owner_scope.clone(),
+                            required: true,
+                        }],
+                        scope: owner_scope.clone(),
+                        currentness: OwnerCurrentnessPolicy::LatestComplete,
+                        event_position,
+                    })
+                    .map_err(ApiError::from)?;
+                let result = query.traverse(&cut, request).map_err(ApiError::from)?;
+                Ok(BranchOwnerWalkResult {
+                    branch_id: entry.branch_id.clone(),
+                    canonical_locator: entry.canonical_locator.clone(),
+                    cut,
+                    result,
+                })
+            });
+            match read {
+                Ok(result) => {
+                    metadata.readable_branch_ids.push(entry.branch_id.clone());
+                    branches.push(result);
+                }
+                Err(error) if strict_scope => return Err(error),
+                Err(error) => metadata
+                    .skipped_branches
+                    .push(read_failure(entry, error.to_string())),
+            }
+        }
+        if metadata.readable_branch_ids.is_empty() {
+            return Err(no_readable_branches_error(&metadata));
+        }
+        metadata.readable_branch_ids.sort();
+        branches.sort_by(|left, right| left.branch_id.cmp(&right.branch_id));
+        Ok(FederatedOwnerWalkOutput { metadata, branches })
     }
 
     fn select_branches(

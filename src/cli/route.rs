@@ -200,15 +200,32 @@ impl RunContext {
         if let Err(err) = self.assembly.progress().barrier() {
             warn!(error = %err, "failed to drain ledger writer before graph catch-up");
         }
-        match self.assembly.graph_runtime().catch_up() {
-            Ok(applied_events) => {
-                let last_reduced_seq = match self.assembly.graph_runtime().durable_event_cursor() {
-                    Ok(cursor) => cursor.after_seq,
-                    Err(err) => {
-                        warn!(error = %err, "failed to read last reduced seq after graph catch-up");
-                        0
-                    }
-                };
+        let catch_up = || -> Result<(usize, u64), meld_events::error::StorageError> {
+            let graph = self.assembly.graph_runtime();
+            let mut applied_events = 0usize;
+            loop {
+                let before = graph.durable_event_cursor()?.after_seq;
+                applied_events += graph.catch_up()?;
+                let after = graph.durable_event_cursor()?.after_seq;
+                let tip = self
+                    .event_watermark_capability()
+                    .snapshot()
+                    .map_err(|error| {
+                        meld_events::error::StorageError::Unavailable(error.to_string())
+                    })?
+                    .tip_seq;
+                if after >= tip {
+                    return Ok((applied_events, after));
+                }
+                if after <= before {
+                    return Err(meld_events::error::StorageError::Unavailable(format!(
+                        "graph catch-up made no progress at sequence {after} toward Event tip {tip}"
+                    )));
+                }
+            }
+        };
+        match catch_up() {
+            Ok((applied_events, last_reduced_seq)) => {
                 if let Err(err) = self.branch_runtime.record_branch_graph_catch_up_success(
                     &self.active_branch,
                     &self.assembly.product_runtime().layout().world_model_db,
@@ -239,6 +256,14 @@ impl RunContext {
     pub fn execute(&self, command: &Commands) -> Result<String, ApiError> {
         let started = Instant::now();
         let command_name = command_name(command);
+        let command_event_position =
+            self.event_watermark_capability()
+                .snapshot()
+                .ok()
+                .map(|watermark| meld_events::LedgerCursor {
+                    ledger_id: watermark.ledger_id,
+                    after_seq: watermark.tip_seq,
+                });
         let session_id = start_command_session(self.assembly.progress().as_ref(), &command_name)?;
         self.assembly
             .api()
@@ -248,7 +273,7 @@ impl RunContext {
             &session_id,
             command,
         );
-        let result = self.execute_inner(command, &session_id);
+        let result = self.execute_inner(command, &session_id, command_event_position);
         // No hidden graph catch-up after the command: catch-up is
         // supervised actor work, never a command-routing side effect. Only
         // the branch last-seen touch survives from the removed pass.
@@ -275,7 +300,12 @@ impl RunContext {
         result
     }
 
-    fn execute_inner(&self, command: &Commands, session_id: &str) -> Result<String, ApiError> {
+    fn execute_inner(
+        &self,
+        command: &Commands,
+        session_id: &str,
+        command_event_position: Option<meld_events::LedgerCursor>,
+    ) -> Result<String, ApiError> {
         match command {
             Commands::Scan { force } => crate::workspace::tooling::handle_scan_command(
                 self.assembly.api().as_ref(),
@@ -388,13 +418,14 @@ impl RunContext {
             }
             Commands::Branches { command } => {
                 let graph_runtime = self.assembly.graph_runtime();
-                crate::branches::tooling::handle_cli_command_with_active_store(
+                crate::branches::tooling::handle_cli_command_with_runtime_state(
                     command,
                     Some(&self.workspace_root),
                     Some((
                         self.active_branch.branch_id(),
                         graph_runtime.traversal_store().clone(),
                     )),
+                    command_event_position,
                 )
             }
             Commands::Danger { .. } => Err(ApiError::ConfigError(
