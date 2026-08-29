@@ -77,3 +77,11 @@ Authorized exceptions: none
 ## Acceptance Limits
 
 Acceptance makes `WMR-VC-02` handoff eligible and completes the reconstructed historical `SI-02` outcome. It does not authorize planned Curation, another source slice, downstream Agent progression, or product migration.
+
+## User Acceptance And Commit Closeout
+
+The user formally accepted the implementation on 2026-08-29.
+
+The accepted runtime delivery is committed as `138f6c7f`. The bounded evidence correction and final acceptance records are committed as `741e1f39`. Together they identify the accepted `WMR-VC-02` source candidate and proof.
+
+The workspace was clean at closeout. Formal acceptance does not broaden this receipt or authorize `WMR-VC-03` source work.
