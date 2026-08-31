@@ -222,7 +222,6 @@ fn planner_boundary() {
             "Operator",
             "Effect",
             "Task",
-            "Capability",
         ] {
             assert!(!source.contains(forbidden), "{path} contains {forbidden}");
         }
@@ -281,7 +280,7 @@ fn planner_contracts_round_trip() {
         warning
     );
     assert_eq!(
-        serde_json::from_str::<meld_world_model::PlannerProjectionOutput>(
+        serde_json::from_str::<meld_world_model::WorldModelView>(
             &serde_json::to_string(&output).unwrap()
         )
         .unwrap(),

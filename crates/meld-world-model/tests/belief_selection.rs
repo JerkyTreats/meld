@@ -860,7 +860,7 @@ fn stored_records_without_theory_revision_still_load() {
         .as_object_mut()
         .unwrap()
         .remove("theory_revision");
-    let legacy_projection: meld_world_model::PlannerProjectionOutput =
+    let legacy_projection: meld_world_model::WorldModelView =
         serde_json::from_value(projection_json).unwrap();
     assert_eq!(legacy_projection.theory_revision, None);
     assert_eq!(legacy_projection.source_refs, projection.source_refs);
@@ -992,7 +992,7 @@ fn unanchored_projection_declares_the_maintained_scope_accessible() {
         .project_world_state_for_unanchored_key(&key)
         .unwrap();
 
-    let accessible = |output: &meld_world_model::PlannerProjectionOutput| {
+    let accessible = |output: &meld_world_model::WorldModelView| {
         output
             .world_state
             .propositions()

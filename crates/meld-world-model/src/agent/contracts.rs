@@ -1,15 +1,136 @@
 //! Public agent records and command contracts.
 
-use std::collections::BTreeMap;
-
-use meld_lang::{Condition, Goal, GoalLifecycle, GoalSource, Literal, Proposition, Term};
+use meld_lang::{Condition, Goal, Literal, Term};
 use serde::{Deserialize, Serialize};
 
 use crate::belief::{BeliefKey, BranchScope};
 use crate::error::StorageError;
 use crate::events::DomainObjectRef;
-use crate::planner::PlannerProjectionOutput;
 use crate::world_state::graph::PerspectiveKey;
+
+/// Durable Agent-owned Goal under one exact reconciliation fence.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentReconciliationGoal {
+    pub goal: Goal,
+    pub context_id: String,
+    pub authority_scope_id: String,
+    pub activation_generation: String,
+    pub created_at_seq: u64,
+}
+
+/// Immutable Agent judgment over one complete Plan revision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentPlanJudgmentKind {
+    Admitted,
+    Rejected { reason: String },
+    Superseded { successor_plan_revision_id: String },
+}
+
+/// Durable Agent decision that is deliberately distinct from product authority.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentPlanJudgment {
+    pub judgment_id: String,
+    pub agent_id: String,
+    pub goal_id: String,
+    pub plan_revision_id: String,
+    pub context_id: String,
+    pub authority_scope_id: String,
+    pub activation_generation: String,
+    pub kind: AgentPlanJudgmentKind,
+}
+
+/// Product-specific authority granted only after fresh eligibility.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentAuthorizedProduct {
+    Epistemic(Box<crate::strategy::StrategyEpistemicOperation>),
+    Task(crate::strategy::StrategyTask),
+}
+
+/// Exact currentness evidence retained with one product progression position.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentCurrentnessCheck {
+    pub frozen_cut_id: String,
+    pub observed_cut_id: Option<String>,
+    pub refusal: Option<crate::planner::PlannerRefusal>,
+}
+
+/// Exact live fence that must still hold when Agent grants product authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentAuthorizationFence {
+    pub activation_generation: String,
+    pub authority_policy_content_hash: String,
+}
+
+/// Durable state of one Plan product.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentProductState {
+    Blocked { reason: String },
+    Eligible,
+    Authorized { authorization_id: String },
+    ConsumerAccepted { acceptance_id: String },
+    Terminal { result_id: String },
+    MilestoneAccepted { milestone_id: String },
+    AwaitingExecution,
+}
+
+/// Durable progression and currentness for one exact Plan product.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentProductProgress {
+    pub progress_id: String,
+    pub agent_id: String,
+    pub goal_id: String,
+    pub plan_revision_id: String,
+    pub product_id: String,
+    pub context_id: String,
+    pub authority_scope_id: String,
+    pub activation_generation: String,
+    pub currentness: AgentCurrentnessCheck,
+    pub state: AgentProductState,
+}
+
+/// Immutable per-product authorization persisted before publication.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentProductAuthorization {
+    pub authorization_id: String,
+    pub agent_id: String,
+    pub goal_id: String,
+    pub plan_revision_id: String,
+    pub product_id: String,
+    pub context_id: String,
+    pub authority_scope_id: String,
+    pub authority_policy_content_hash: String,
+    pub activation_generation: String,
+    pub idempotency_key: String,
+    pub product: AgentAuthorizedProduct,
+    pub curation_authorization: Option<crate::CurationPlannedAuthorization>,
+}
+
+/// Exact Curation consumer receipt retained by Agent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentConsumerReceipt {
+    pub receipt_id: String,
+    pub authorization_id: String,
+    pub operation_id: String,
+    pub acceptance_id: String,
+    pub result_id: Option<String>,
+}
+
+/// Exact owner milestone accepted by Agent for one Plan dependency.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentMilestoneAcceptance {
+    pub milestone_id: String,
+    pub agent_id: String,
+    pub goal_id: String,
+    pub plan_revision_id: String,
+    pub product_id: String,
+    pub requirement: crate::strategy::PlanMilestoneRequirement,
+    pub owner_position_id: String,
+    pub context_id: String,
+    pub activation_generation: String,
+}
 
 /// Stable durable identifier for an agent.
 pub type AgentId = String;
@@ -17,14 +138,6 @@ pub type AgentId = String;
 pub type AgentSubscriptionId = String;
 /// Stable durable identifier for an activation lease record.
 pub type AgentActivationId = String;
-/// Stable durable identifier for a curation decision.
-pub type AgentDecisionId = String;
-/// Stable durable identifier for a goal command emitted by an agent.
-pub type AgentGoalCommandId = String;
-/// Stable durable identifier for a goal mutation command emitted by an agent.
-pub type AgentGoalMutationCommandId = String;
-/// Stable durable identifier for an accepted agent sink receipt.
-pub type AgentSinkReceiptId = String;
 
 /// Lifecycle status for an agent record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -76,28 +189,6 @@ pub enum AgentActivationStatus {
     Activated,
     /// Activation failed and may carry an error string.
     Failed,
-}
-
-/// Classification of a persisted curation decision.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum AgentDecisionKind {
-    /// The decision produced a goal command boundary object.
-    GoalCommand,
-    /// The decision produced a goal mutation boundary object.
-    GoalMutationCommand,
-    /// The input was understood but no new command was needed.
-    Absorbed,
-    /// The input could not produce a determinate command.
-    Indeterminate,
-}
-
-/// Execution boundary that accepted or replayed an agent-authored command.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum AgentSinkReceiptKind {
-    /// Receipt for a proposed goal command.
-    GoalCommand,
-    /// Receipt for a goal lifecycle mutation command.
-    GoalMutationCommand,
 }
 
 /// Durable description of an agent and the world scope it observes.
@@ -268,93 +359,34 @@ impl AgentActivationRecord {
     }
 }
 
-/// Stable key used to suppress duplicate curation output.
+/// Read-only compatibility shape for a decision written before reconciliation cutover.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentCurationDedupeKey {
-    /// Agent that owns the decision family.
-    pub agent_id: AgentId,
-    /// Stable subject index key.
-    pub subject_key: String,
-    /// Branch identifier for the belief stream.
-    pub branch_id: String,
-    /// Runtime configured dimension identifier.
-    pub dimension_id: String,
-    /// Serialized target condition used by the generated goal.
-    pub target_condition_key: String,
-    /// Runtime configured source family for the goal.
-    pub source_kind: String,
-    /// Standing condition that owns this Goal family on elevated paths.
-    #[serde(default)]
-    pub maintained_condition_id: Option<String>,
+pub struct LegacyAgentDecisionInputRefs {
+    pub belief_revision_id: Option<String>,
 }
 
-impl AgentCurationDedupeKey {
-    /// Build the dedupe key for a configured threshold rule.
-    pub fn threshold_rule(
-        agent_id: impl Into<String>,
-        subject: &DomainObjectRef,
-        branch_scope: &BranchScope,
-        rule: &AgentCurationRuleConfig,
-    ) -> Self {
-        Self {
-            agent_id: agent_id.into(),
-            subject_key: subject.index_key(),
-            branch_id: branch_scope.branch_id.clone(),
-            dimension_id: rule.dimension_id.clone(),
-            target_condition_key: rule.target_condition_key(),
-            source_kind: rule.source_kind.clone(),
-            maintained_condition_id: None,
-        }
-    }
+/// Read-only compatibility classification for a pre-cutover decision record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LegacyAgentDecisionKind {
+    GoalCommand,
+    GoalMutationCommand,
+    Absorbed,
+    Indeterminate,
+}
 
-    /// Build the dedupe key for one standing condition.
-    pub fn maintained_condition(
-        agent_id: impl Into<String>,
-        subject: &DomainObjectRef,
-        branch_scope: &BranchScope,
-        condition: &super::AgentMaintainedCondition,
-    ) -> Self {
-        Self {
-            agent_id: agent_id.into(),
-            subject_key: subject.index_key(),
-            branch_id: branch_scope.branch_id.clone(),
-            dimension_id: condition.dimension_id.clone(),
-            target_condition_key: condition_key(&condition.desired),
-            source_kind: "maintained_condition_breach".to_string(),
-            maintained_condition_id: Some(condition.condition_id.clone()),
-        }
-    }
+/// Read-only compatibility record for historical traversal evidence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LegacyAgentDecisionRecord {
+    pub decision_id: String,
+    pub agent_id: String,
+    pub decision: LegacyAgentDecisionKind,
+    pub input_refs: LegacyAgentDecisionInputRefs,
+}
 
-    /// Return the canonical storage key for dedupe indexes.
-    pub fn index_key(&self) -> String {
-        let legacy = format!(
-            "{}::{}::{}::{}::{}::{}",
-            self.agent_id,
-            self.subject_key,
-            self.branch_id,
-            self.dimension_id,
-            self.target_condition_key,
-            self.source_kind
-        );
-        match &self.maintained_condition_id {
-            Some(condition_id) => format!("{legacy}::{condition_id}"),
-            None => legacy,
-        }
-    }
-
-    /// Validate every dedupe component used in storage indexes.
-    pub fn validate(&self) -> Result<(), StorageError> {
-        require_non_empty("dedupe agent id", &self.agent_id)?;
-        require_non_empty("dedupe subject key", &self.subject_key)?;
-        require_non_empty("dedupe branch id", &self.branch_id)?;
-        require_non_empty("dedupe dimension id", &self.dimension_id)?;
-        require_non_empty("dedupe target condition key", &self.target_condition_key)?;
-        require_non_empty("dedupe source kind", &self.source_kind)?;
-        if let Some(condition_id) = &self.maintained_condition_id {
-            require_non_empty("dedupe maintained condition id", condition_id)?;
-        }
-        Ok(())
-    }
+/// Read-only compatibility receipt for a pre-cutover Execution command.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LegacyAgentSinkReceiptRecord {
+    pub decision_id: String,
 }
 
 /// Runtime configuration for a threshold based curation rule.
@@ -473,167 +505,6 @@ impl AgentCurationRuleBinding {
     }
 }
 
-/// Durable references to the state used for one curation decision.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentCurationInputRefs {
-    /// Belief revision supplied by delivery, when available.
-    pub belief_revision_id: Option<String>,
-    /// Belief stream read for the decision.
-    pub belief_key: BeliefKey,
-    /// Planner projection version read for the decision.
-    pub planner_projection_version: String,
-    /// Planner source references captured as stable debug strings.
-    pub planner_source_refs: Vec<String>,
-    /// Planner warnings captured as stable debug strings.
-    pub planner_warnings: Vec<String>,
-}
-
-impl AgentCurationInputRefs {
-    /// Validate references required to replay or inspect a decision.
-    pub fn validate(&self) -> Result<(), StorageError> {
-        self.belief_key.validate()?;
-        require_non_empty(
-            "planner projection version",
-            &self.planner_projection_version,
-        )?;
-        Ok(())
-    }
-}
-
-/// Durable output of one curation pass.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AgentCurationDecision {
-    /// Stable decision identifier.
-    pub decision_id: AgentDecisionId,
-    /// Agent that made the decision.
-    pub agent_id: AgentId,
-    /// Subscription that delivered the input.
-    pub subscription_id: AgentSubscriptionId,
-    /// Decision classification.
-    pub decision: AgentDecisionKind,
-    /// Goal command emitted by the decision, when present.
-    pub goal_command_id: Option<AgentGoalCommandId>,
-    /// Goal mutation command emitted by the decision, when present.
-    #[serde(default)]
-    pub goal_mutation_command_id: Option<AgentGoalMutationCommandId>,
-    /// Exact Strategy authorization settled with this decision.
-    #[serde(default)]
-    pub strategy_authorization: Option<crate::strategy::StrategyAuthorization>,
-    /// Exact curation-rule revision used for a Goal-producing decision.
-    #[serde(default)]
-    pub curation_rule_revision: Option<crate::belief::TheoryRevisionRef>,
-    /// Exact maintained-condition revision used for this decision.
-    #[serde(default)]
-    pub maintained_condition_revision: Option<crate::belief::TheoryRevisionRef>,
-    /// Dedupe key that defines the command family.
-    pub dedupe_key: AgentCurationDedupeKey,
-    /// References to belief and planner inputs used by the decision.
-    pub input_refs: AgentCurationInputRefs,
-    /// Human readable reason for the decision.
-    pub reason: String,
-    /// Sequence assigned when the decision was created.
-    pub created_at_seq: u64,
-}
-
-impl AgentCurationDecision {
-    /// Validate decision identifiers, indexes, references, and reason.
-    pub fn validate(&self) -> Result<(), StorageError> {
-        require_non_empty("decision id", &self.decision_id)?;
-        require_non_empty("agent id", &self.agent_id)?;
-        require_non_empty("subscription id", &self.subscription_id)?;
-        self.dedupe_key.validate()?;
-        self.input_refs.validate()?;
-        if let Some(reference) = &self.maintained_condition_revision {
-            reference.validate_for_registry("agent_maintained_condition")?;
-        }
-        require_non_empty("decision reason", &self.reason)?;
-        Ok(())
-    }
-}
-
-/// Stable identity returned by an execution-owned sink after command submit.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentSinkSubmission {
-    /// Command id accepted or absorbed by the execution boundary.
-    pub command_id: String,
-    /// Goal id that execution associated with the submitted command.
-    pub goal_id: String,
-    /// Sink-specific outcome label such as applied, duplicate, or recovered.
-    pub outcome: String,
-}
-
-impl AgentSinkSubmission {
-    /// Build a sink submission identity.
-    pub fn new(
-        command_id: impl Into<String>,
-        goal_id: impl Into<String>,
-        outcome: impl Into<String>,
-    ) -> Self {
-        Self {
-            command_id: command_id.into(),
-            goal_id: goal_id.into(),
-            outcome: outcome.into(),
-        }
-    }
-
-    /// Validate identifiers returned by the sink.
-    pub fn validate(&self) -> Result<(), StorageError> {
-        require_non_empty("sink command id", &self.command_id)?;
-        require_non_empty("sink goal id", &self.goal_id)?;
-        require_non_empty("sink outcome", &self.outcome)?;
-        if !matches!(self.outcome.as_str(), "applied" | "duplicate" | "recovered") {
-            return Err(StorageError::InvalidPath(format!(
-                "sink outcome '{}' is not an accepted command outcome",
-                self.outcome
-            )));
-        }
-        Ok(())
-    }
-}
-
-/// Durable receipt that lets an agent retry advance without resubmitting.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentSinkReceipt {
-    /// Stable receipt identifier.
-    pub receipt_id: AgentSinkReceiptId,
-    /// Decision whose command crossed the execution boundary.
-    pub decision_id: AgentDecisionId,
-    /// Type of command accepted by execution.
-    pub kind: AgentSinkReceiptKind,
-    /// Accepted sink identity.
-    pub submission: AgentSinkSubmission,
-    /// Sequence assigned when the receipt was recorded.
-    pub recorded_at_seq: u64,
-}
-
-impl AgentSinkReceipt {
-    /// Build a receipt from a persisted decision and accepted submission.
-    pub fn new(
-        decision: &AgentCurationDecision,
-        kind: AgentSinkReceiptKind,
-        submission: AgentSinkSubmission,
-    ) -> Self {
-        Self {
-            receipt_id: deterministic_id(
-                "agent-sink-receipt",
-                &format!("{}::{}", decision.decision_id, submission.command_id),
-            ),
-            decision_id: decision.decision_id.clone(),
-            kind,
-            submission,
-            recorded_at_seq: decision.created_at_seq,
-        }
-    }
-
-    /// Validate receipt identity and sink submission.
-    pub fn validate(&self) -> Result<(), StorageError> {
-        require_non_empty("sink receipt id", &self.receipt_id)?;
-        require_non_empty("sink receipt decision id", &self.decision_id)?;
-        self.submission.validate()?;
-        Ok(())
-    }
-}
-
 /// Command to create an idempotent seed agent record.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SeedAgentRegistration {
@@ -748,368 +619,6 @@ impl AdvanceSubscriptionCommand {
     }
 }
 
-/// Command wrapper for persisting a curation decision.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct RecordCurationDecisionCommand {
-    /// Decision to write to durable storage.
-    pub decision: AgentCurationDecision,
-}
-
-/// World-model curation output that proposes one execution goal.
-///
-/// Execution does not interpret this producer-specific object directly.
-/// Integration maps it into a neutral execution goal acceptance request.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AgentGoalCommand {
-    /// Stable command identifier reused for execution idempotency.
-    pub command_id: AgentGoalCommandId,
-    /// Ground proposed goal owned by the emitting agent.
-    pub goal: Goal,
-    /// Dedupe key that must match the goal target and agent.
-    pub dedupe_key: AgentCurationDedupeKey,
-    /// Exact Strategy authorization required for guarded Goal admission.
-    #[serde(default)]
-    pub strategy_authorization: Option<crate::strategy::StrategyAuthorization>,
-}
-
-impl AgentGoalCommand {
-    /// Validate producer invariants before crossing into execution.
-    pub fn validate(&self) -> Result<(), StorageError> {
-        require_non_empty("goal command id", &self.command_id)?;
-        self.dedupe_key.validate()?;
-        if let Some(variable) = self.goal.target.grounding_issue() {
-            return Err(StorageError::InvalidPath(format!(
-                "agent goal command target must be ground: {variable}"
-            )));
-        }
-        if !matches!(self.goal.lifecycle, GoalLifecycle::Proposed) {
-            return Err(StorageError::InvalidPath(
-                "agent goal command lifecycle must be proposed".to_string(),
-            ));
-        }
-        require_goal_matches_dedupe(&self.goal, &self.dedupe_key)?;
-        if let Some(authorization) = &self.strategy_authorization {
-            if authorization.candidate.goal_id != self.goal.goal_id
-                || authorization.agent_decision_id.trim().is_empty()
-                || authorization.authorization_id.trim().is_empty()
-            {
-                return Err(StorageError::InvalidPath(
-                    "Strategy authorization does not match the goal command".to_string(),
-                ));
-            }
-        }
-        Ok(())
-    }
-}
-
-/// Agent-authored mutation against an existing execution goal.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum AgentGoalMutationKind {
-    /// Mark an active goal satisfied at the supplied review sequence.
-    Satisfy {
-        /// Sequence where the agent established satisfaction.
-        at_seq: u64,
-        /// Lifecycle epoch of the goal identity the review observed.
-        ///
-        /// Satisfaction evidence binds the epoch it was produced under per
-        /// the frozen future-drift rule. Additive: commands stored before
-        /// epochs existed deserialize to zero.
-        #[serde(default)]
-        lifecycle_epoch: u64,
-    },
-    /// Reopen a satisfied goal in place after later belief drift.
-    ///
-    /// The same goal identity transitions from satisfied to active with the
-    /// lifecycle epoch advanced by execution. Provenance cites the belief
-    /// revision whose drift triggered the reopen.
-    Reopen {
-        /// Belief revision whose drift triggered the reopen.
-        triggering_belief_revision_id: String,
-        /// Lifecycle epoch of the satisfied goal the review observed.
-        #[serde(default)]
-        observed_lifecycle_epoch: u64,
-    },
-}
-
-/// World-model curation output that requests a goal lifecycle mutation.
-///
-/// Execution owns durable lifecycle state. Integration validates and maps this
-/// command into execution's public goal set API.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AgentGoalMutationCommand {
-    /// Stable command identifier reused for execution idempotency.
-    pub command_id: AgentGoalMutationCommandId,
-    /// Agent that authored the mutation.
-    pub agent_id: AgentId,
-    /// Existing execution goal to mutate.
-    pub goal_id: String,
-    /// Mutation kind and mutation-specific data.
-    pub kind: AgentGoalMutationKind,
-    /// Dedupe key for the target goal family.
-    pub dedupe_key: AgentCurationDedupeKey,
-    /// Caller supplied review sequence used for idempotency and timestamps.
-    pub review_seq: u64,
-    /// Planner projection version used for the satisfaction review.
-    pub projection_version: String,
-    /// Planner source references copied from the review input.
-    pub planner_source_refs: Vec<String>,
-    /// Planner warnings copied from the review input.
-    pub planner_warnings: Vec<String>,
-}
-
-impl AgentGoalMutationCommand {
-    /// Validate invariants before crossing into the execution boundary.
-    pub fn validate(&self) -> Result<(), StorageError> {
-        require_non_empty("agent goal mutation command id", &self.command_id)?;
-        require_non_empty("agent id", &self.agent_id)?;
-        require_non_empty("goal id", &self.goal_id)?;
-        if self.review_seq == 0 {
-            return Err(StorageError::InvalidPath(
-                "review seq must be greater than zero".to_string(),
-            ));
-        }
-        require_non_empty("projection version", &self.projection_version)?;
-        self.dedupe_key.validate()?;
-        if self.dedupe_key.agent_id != self.agent_id {
-            return Err(StorageError::InvalidPath(
-                "agent goal mutation dedupe key agent id mismatch".to_string(),
-            ));
-        }
-        match &self.kind {
-            AgentGoalMutationKind::Satisfy { at_seq, .. } if *at_seq == self.review_seq => Ok(()),
-            AgentGoalMutationKind::Satisfy { .. } => Err(StorageError::InvalidPath(
-                "satisfy at seq must equal review seq".to_string(),
-            )),
-            AgentGoalMutationKind::Reopen {
-                triggering_belief_revision_id,
-                ..
-            } => require_non_empty(
-                "reopen triggering belief revision id",
-                triggering_belief_revision_id,
-            ),
-        }
-    }
-}
-
-/// Snapshot of execution goals visible to curation.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct ActiveGoalSummary {
-    /// Active or proposed goals supplied by the execution boundary.
-    pub goals: Vec<Goal>,
-    /// Lifecycle epoch by goal id as observed at the execution boundary.
-    ///
-    /// Execution owns the authoritative epoch; this map only carries what
-    /// the boundary showed the review, so satisfaction and reopen commands
-    /// can bind the epoch they observed. Additive: snapshots stored before
-    /// epochs existed deserialize to an empty map and read as epoch zero.
-    #[serde(default)]
-    pub lifecycle_epochs: BTreeMap<String, u64>,
-}
-
-impl ActiveGoalSummary {
-    /// Build a snapshot without epoch observations.
-    ///
-    /// Every goal reads as epoch zero, matching execution records that
-    /// predate epochs.
-    pub fn from_goals(goals: Vec<Goal>) -> Self {
-        Self {
-            goals,
-            lifecycle_epochs: BTreeMap::new(),
-        }
-    }
-
-    /// Return the observed lifecycle epoch for one goal id.
-    ///
-    /// Zero when the boundary reported no epoch for the goal.
-    pub fn lifecycle_epoch(&self, goal_id: &str) -> u64 {
-        self.lifecycle_epochs.get(goal_id).copied().unwrap_or(0)
-    }
-    /// Return the first active or proposed goal that matches the dedupe key.
-    pub fn first_open_matching_goal(&self, dedupe_key: &AgentCurationDedupeKey) -> Option<&Goal> {
-        self.goals.iter().find(|goal| {
-            matches!(
-                goal.lifecycle,
-                GoalLifecycle::Active | GoalLifecycle::Proposed
-            ) && goal.agent_id == dedupe_key.agent_id
-                && goal_matches_dedupe(goal, dedupe_key)
-        })
-    }
-
-    /// Return the first visible goal that matches the dedupe key.
-    pub fn first_matching_goal(&self, dedupe_key: &AgentCurationDedupeKey) -> Option<&Goal> {
-        self.goals.iter().find(|goal| {
-            goal.agent_id == dedupe_key.agent_id && goal_matches_dedupe(goal, dedupe_key)
-        })
-    }
-
-    /// Return whether an active or proposed goal already matches the dedupe key.
-    pub fn has_matching_goal(&self, dedupe_key: &AgentCurationDedupeKey) -> bool {
-        self.first_open_matching_goal(dedupe_key).is_some()
-    }
-}
-
-/// Complete input to the pure curation rule.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AgentCurationInput {
-    /// Agent record used for scope and ownership checks.
-    pub agent: AgentRecord,
-    /// Subscription that delivered the input.
-    pub subscription: AgentSubscriptionRecord,
-    /// Delivery sequence used for decision ordering.
-    pub delivered_seq: u64,
-    /// Runtime rule configuration applied to the input.
-    pub rule_config: AgentCurationRuleConfig,
-    /// Current belief view, if the belief store has one.
-    pub belief_view: Option<crate::belief::BeliefView>,
-    /// Planner projection read for the same subject and branch.
-    pub planner_projection: PlannerProjectionOutput,
-    /// Execution goal snapshot used for absorption.
-    pub active_goals: ActiveGoalSummary,
-    /// Durable references to the curation inputs.
-    pub input_refs: AgentCurationInputRefs,
-}
-
-/// Complete input to pure agent-owned satisfaction curation.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AgentGoalSatisfactionInput {
-    /// Agent record used for scope and ownership checks.
-    pub agent: AgentRecord,
-    /// Subscription that anchors the review to one belief stream.
-    pub subscription: AgentSubscriptionRecord,
-    /// Caller supplied review sequence used for decision identity.
-    pub review_seq: u64,
-    /// Planner projection evaluated against active goal targets.
-    pub planner_projection: PlannerProjectionOutput,
-    /// Execution goal snapshot used to select active owned goals.
-    pub active_goals: ActiveGoalSummary,
-    /// Durable references to the curation inputs.
-    pub input_refs: AgentCurationInputRefs,
-}
-
-/// Durable review envelope for agent-owned goal satisfaction checks.
-///
-/// The review identity is assigned by the runtime caller and is distinct from
-/// belief revision identity, since several reviews may inspect the same belief
-/// state while execution retries or checkpoint recovery are in progress.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentSatisfactionReview {
-    /// Agent that owns the satisfaction judgment.
-    pub agent_id: AgentId,
-    /// Subscription anchoring the review to one belief stream.
-    pub subscription_id: AgentSubscriptionId,
-    /// Caller supplied review sequence used for decision identity.
-    pub review_seq: u64,
-}
-
-impl AgentSatisfactionReview {
-    /// Validate identifiers and the monotonic review sequence.
-    pub fn validate(&self) -> Result<(), StorageError> {
-        require_non_empty("agent id", &self.agent_id)?;
-        require_non_empty("subscription id", &self.subscription_id)?;
-        if self.review_seq == 0 {
-            return Err(StorageError::InvalidPath(
-                "review seq must be greater than zero".to_string(),
-            ));
-        }
-        Ok(())
-    }
-
-    /// Return the stable storage key for one satisfaction review attempt.
-    pub fn index_key(&self) -> String {
-        format!(
-            "{}::{}::{}",
-            self.agent_id, self.subscription_id, self.review_seq
-        )
-    }
-}
-
-/// Durable claim that one satisfaction review inspects one belief revision.
-///
-/// This is the smallest satisfaction eligibility checkpoint. It pins the
-/// review sequence claimed for the current revision of one subscription so
-/// crash replay reuses the same review identity instead of inventing a new
-/// sequence, and it lets eligibility distinguish an unchanged absorbed
-/// revision (ineligible) from a newly arrived revision (eligible) without
-/// scanning decision history. One record per agent and subscription; a new
-/// claim replaces the previous one only after its trigger is complete.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentSatisfactionCheckpoint {
-    /// Agent that owns the satisfaction trigger.
-    pub agent_id: AgentId,
-    /// Subscription anchoring the trigger to one belief stream.
-    pub subscription_id: AgentSubscriptionId,
-    /// Belief revision claimed for review.
-    pub belief_revision_id: String,
-    /// Review sequence claimed for the revision, reused on replay.
-    pub review_seq: u64,
-    /// Injected sequence at which the claim was recorded.
-    pub claimed_at_seq: u64,
-}
-
-impl AgentSatisfactionCheckpoint {
-    /// Validate identifiers and the claimed review sequence.
-    pub fn validate(&self) -> Result<(), StorageError> {
-        require_non_empty("agent id", &self.agent_id)?;
-        require_non_empty("subscription id", &self.subscription_id)?;
-        require_non_empty("belief revision id", &self.belief_revision_id)?;
-        if self.review_seq == 0 {
-            return Err(StorageError::InvalidPath(
-                "review seq must be greater than zero".to_string(),
-            ));
-        }
-        Ok(())
-    }
-
-    /// Build the storage key for one agent and subscription pair.
-    pub fn natural_key(agent_id: &str, subscription_id: &str) -> String {
-        format!("{agent_id}::{subscription_id}")
-    }
-
-    /// Return the review identity this checkpoint claims.
-    pub fn review(&self) -> AgentSatisfactionReview {
-        AgentSatisfactionReview {
-            agent_id: self.agent_id.clone(),
-            subscription_id: self.subscription_id.clone(),
-            review_seq: self.review_seq,
-        }
-    }
-}
-
-/// Delivery envelope supplied by a runtime subscription driver.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentDelivery {
-    /// Agent that should receive the delivery.
-    pub agent_id: AgentId,
-    /// Subscription that produced the delivery.
-    pub subscription_id: AgentSubscriptionId,
-    /// Belief revision being delivered.
-    pub belief_revision_id: String,
-    /// Monotonic sequence for cursor checks.
-    pub revision_seq: u64,
-}
-
-impl AgentDelivery {
-    /// Validate delivery identifiers.
-    pub fn validate(&self) -> Result<(), StorageError> {
-        require_non_empty("agent id", &self.agent_id)?;
-        require_non_empty("subscription id", &self.subscription_id)?;
-        require_non_empty("belief revision id", &self.belief_revision_id)?;
-        Ok(())
-    }
-}
-
-/// Result of one curation pass after persistence.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AgentCurationOutcome {
-    /// Persisted decision for the delivered input.
-    pub decision: AgentCurationDecision,
-    /// Optional goal command returned to the execution boundary.
-    pub goal_command: Option<AgentGoalCommand>,
-    /// Optional goal mutation command returned to the execution boundary.
-    #[serde(default)]
-    pub goal_mutation_command: Option<AgentGoalMutationCommand>,
-}
-
 pub(crate) fn require_non_empty(label: &str, value: &str) -> Result<(), StorageError> {
     if value.trim().is_empty() {
         return Err(StorageError::InvalidPath(format!(
@@ -1134,89 +643,4 @@ pub(crate) fn stable_hash_hex(bytes: &[u8]) -> String {
 
 pub(crate) fn deterministic_id(prefix: &str, key: &str) -> String {
     format!("{prefix}-{}", stable_hash_hex(key.as_bytes()))
-}
-
-fn goal_matches_dedupe(goal: &Goal, dedupe_key: &AgentCurationDedupeKey) -> bool {
-    if !goal_source_matches_dedupe(&goal.source, dedupe_key) {
-        return false;
-    }
-    match &goal.target {
-        Proposition::Holds {
-            subject,
-            dimension,
-            condition,
-        } => {
-            let Term::Object(subject) = subject else {
-                return false;
-            };
-            let Term::Dimension(dimension) = dimension else {
-                return false;
-            };
-            subject.index_key() == dedupe_key.subject_key
-                && dimension == &dedupe_key.dimension_id
-                && condition_key(condition) == dedupe_key.target_condition_key
-        }
-        _ => false,
-    }
-}
-
-fn require_goal_matches_dedupe(
-    goal: &Goal,
-    dedupe_key: &AgentCurationDedupeKey,
-) -> Result<(), StorageError> {
-    if goal.agent_id != dedupe_key.agent_id {
-        return dedupe_mismatch("agent id");
-    }
-
-    let Proposition::Holds {
-        subject,
-        dimension,
-        condition,
-    } = &goal.target
-    else {
-        return dedupe_mismatch("goal target kind");
-    };
-
-    let Term::Object(subject) = subject else {
-        return dedupe_mismatch("goal target subject");
-    };
-    if subject.index_key() != dedupe_key.subject_key {
-        return dedupe_mismatch("goal target subject");
-    }
-
-    let Term::Dimension(dimension) = dimension else {
-        return dedupe_mismatch("goal target dimension");
-    };
-    if dimension != &dedupe_key.dimension_id {
-        return dedupe_mismatch("goal target dimension");
-    }
-
-    if condition_key(condition) != dedupe_key.target_condition_key {
-        return dedupe_mismatch("goal target condition");
-    }
-
-    if !goal_source_matches_dedupe(&goal.source, dedupe_key) {
-        return dedupe_mismatch("goal source maintained condition");
-    }
-
-    Ok(())
-}
-
-fn goal_source_matches_dedupe(source: &GoalSource, dedupe_key: &AgentCurationDedupeKey) -> bool {
-    let Some(expected_condition_id) = &dedupe_key.maintained_condition_id else {
-        return true;
-    };
-    matches!(
-        source,
-        GoalSource::MaintainedConditionBreach {
-            maintained_condition_id,
-            ..
-        } if maintained_condition_id == expected_condition_id
-    )
-}
-
-fn dedupe_mismatch(field: &str) -> Result<(), StorageError> {
-    Err(StorageError::InvalidPath(format!(
-        "agent goal command dedupe key does not match {field}"
-    )))
 }

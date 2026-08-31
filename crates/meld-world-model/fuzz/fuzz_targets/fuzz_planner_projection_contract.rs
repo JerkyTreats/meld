@@ -1,10 +1,11 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use meld_world_model::planner::{project_world_state, PlannerProjectionInput};
+use meld_world_model::planner::{PlannerAssemblyRequest, PlannerCut};
 
 fuzz_target!(|data: &[u8]| {
-    if let Ok(input) = serde_json::from_slice::<PlannerProjectionInput>(data) {
-        let _ = project_world_state(input);
+    if let Ok(request) = serde_json::from_slice::<PlannerAssemblyRequest>(data) {
+        let outcome = PlannerCut::assemble(request);
+        let _ = serde_json::to_vec(&outcome);
     }
 });

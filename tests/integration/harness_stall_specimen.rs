@@ -173,10 +173,9 @@ fn the_anchor_stall_is_recorded_and_the_walk_names_the_dead_end() {
             "the divergence presents the subject-vocabulary mismatch: {divergence}"
         );
 
-        // A real coupling hop over live emissions: an absent goal command
-        // walks through curation's quiet selection to the same anchor
-        // divergence, so the condition vocabulary the walk compiles
-        // against is proven to match what the domains actually emit.
+        // The legacy diagnostic vocabulary remains a read-only view of
+        // incumbent reports. The retired actor has no current tick, so this
+        // question ends truthfully instead of inventing a producer.
         let goal_chain = EligibilityWalker::new(&reports)
             .with_traversal(traversal)
             .why_absent(EligibilityQuestion {
@@ -189,19 +188,9 @@ fn the_anchor_stall_is_recorded_and_the_walk_names_the_dead_end() {
             .iter()
             .map(|link| link.runtime_id.as_str())
             .collect();
-        assert_eq!(
-            hops,
-            vec![
-                "world_model.agent_goal_curation",
-                "world_model.belief_assessment",
-            ],
-            "the goal absence walks one live coupling hop; divergences: {:?}",
-            goal_chain.divergences
-        );
-        assert!(goal_chain
-            .divergences
-            .iter()
-            .any(|divergence| divergence.contains("appears in no anchor record")));
+        assert!(hops.is_empty());
+        assert!(goal_chain.divergences.iter().any(|divergence| divergence
+            .contains("no preserved tick for world_model.agent_goal_curation")));
     }
 
     // The manifest records the stalled step schedule as the durable

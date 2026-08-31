@@ -1,6 +1,6 @@
 //! Public contracts for bounded Strategy construction.
 
-use meld_lang::{Bindings, Composition, Goal, Method, Operator, Proposition, WorldState};
+use meld_lang::{Bindings, Composition, Goal, Method, Operator, Proposition};
 use serde::{Deserialize, Serialize};
 
 /// Immutable domain theory needed to connect one Goal to prospective evidence.
@@ -90,10 +90,8 @@ pub struct StrategyProblem {
     pub problem_id: String,
     /// Ground proposed Goal.
     pub goal: Goal,
-    /// Exact planner projection visible to Strategy.
-    pub world_state: WorldState,
-    /// Stable planner projection identity.
-    pub planner_snapshot_id: String,
+    /// Complete immutable reasoning cut visible to Strategy.
+    pub planner_cut: crate::planner::PlannerCut,
     /// Activated domain theory.
     pub theory: StrategyTheorySnapshot,
     /// Atomic construction vocabulary.
@@ -102,6 +100,8 @@ pub struct StrategyProblem {
     pub methods: Vec<Method>,
     /// Declared deterministic comparison policy.
     pub evaluation_policy: StrategyEvaluationPolicy,
+    /// Exact constructible Curation operations frozen beside the cut.
+    pub curation_operations: Vec<crate::CurationOperation>,
 }
 
 /// One bounded invocation of Strategy construction.
@@ -115,7 +115,7 @@ pub struct StrategySearchRequest {
 
 /// Origin of a constructed candidate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum StrategyCandidateOrigin {
+pub enum StrategyPlanOrigin {
     /// Constructed directly from Capability contracts.
     Direct,
     /// Seeded by one reusable Method.
@@ -124,7 +124,7 @@ pub enum StrategyCandidateOrigin {
 
 /// Minimal deterministic evaluation vector.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StrategyCandidateEvaluation {
+pub struct StrategyPlanEvaluation {
     /// Number of atomic action steps.
     pub step_count: usize,
     /// Aggregate estimated time.
@@ -133,19 +133,86 @@ pub struct StrategyCandidateEvaluation {
     pub provider_calls: u32,
 }
 
-/// Ground candidate returned for independent verification and Agent judgment.
+/// Owner milestone that discharges one exact Plan dependency.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanMilestoneRequirement {
+    CurationTerminal {
+        operation_id: String,
+    },
+    GraphVisible {
+        owner_id: String,
+        revision_id: String,
+    },
+    BeliefRevision {
+        belief_key: String,
+        revision_id: String,
+    },
+    AgentAccepted {
+        product_id: String,
+    },
+    FutureExecutionAdmission {
+        task_id: String,
+    },
+}
+
+/// One independently complete executable product retained by Agent only.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StrategyCandidate {
-    /// Content-derived candidate identity.
-    pub candidate_id: String,
+pub struct StrategyTask {
+    pub task_id: String,
+    pub composition: Composition,
+    pub capability_contract_ids: Vec<String>,
+    pub expected_outcome_contract_id: String,
+    pub authority_requirements: Vec<String>,
+    pub idempotency_key: String,
+}
+
+/// One bounded epistemic product grounded from the Curation catalog.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StrategyEpistemicOperation {
+    pub product_id: String,
+    pub operation: crate::CurationOperation,
+    pub authority_requirements: Vec<String>,
+    pub idempotency_key: String,
+}
+
+/// Exact causal or information dependency between Plan products.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StrategyPlanDependency {
+    pub dependency_id: String,
+    pub producer_product_id: String,
+    pub consumer_product_id: String,
+    pub required_milestone: PlanMilestoneRequirement,
+}
+
+/// One completed causal fact that reconstruction must preserve exactly.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StrategyCompletedHistoryEntry {
+    /// Plan revision under which the product reached its milestone.
+    pub source_plan_revision_id: String,
+    /// Exact semantic product whose history is retained.
+    pub product_id: String,
+    /// Owner milestone accepted for that product.
+    pub accepted_milestone: PlanMilestoneRequirement,
+    /// Exact durable owner position that justified acceptance.
+    pub owner_position_id: String,
+}
+
+/// Ground immutable heterogeneous Plan returned for Agent judgment.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StrategyPlan {
+    /// Content-derived immutable Plan revision identity.
+    pub plan_revision_id: String,
+    /// Stable lineage identity for one Agent Goal.
+    pub plan_family_id: String,
     /// Problem against which this candidate was constructed.
     pub problem_id: String,
     /// Exact Goal identity.
     pub goal_id: String,
-    /// Exact planner snapshot identity.
-    pub planner_snapshot_id: String,
+    /// Exact Planner consistency root.
+    pub planner_cut_id: String,
     /// Candidate construction origin.
-    pub origin: StrategyCandidateOrigin,
+    pub origin: StrategyPlanOrigin,
     /// Ground semantic action graph.
     pub composition: Composition,
     /// Ground bindings used during construction.
@@ -156,27 +223,57 @@ pub struct StrategyCandidate {
     pub evidence_route: ProspectiveEvidenceRoute,
     /// Exact Capability contract identities selected by the candidate.
     pub capability_contract_ids: Vec<String>,
+    /// Independently complete executable products.
+    pub tasks: Vec<StrategyTask>,
+    /// Independently complete bounded epistemic products.
+    pub epistemic_operations: Vec<StrategyEpistemicOperation>,
+    /// Exact inter-product causal ordering.
+    pub dependencies: Vec<StrategyPlanDependency>,
+    /// Exact desired conditions and satisfaction meaning.
+    pub conditions: Vec<Proposition>,
+    /// Frozen construction context identity.
+    pub frozen_context_id: String,
+    /// Human-inspectable deterministic explanation.
+    pub explanation: String,
+    /// Named predecessor when this revision reconstructs an earlier Plan.
+    pub predecessor_plan_revision_id: Option<String>,
     /// Deterministic minimal evaluation.
-    pub evaluation: StrategyCandidateEvaluation,
+    pub evaluation: StrategyPlanEvaluation,
 }
 
-/// Exact Agent-owned authorization for one verified Strategy candidate.
+/// Complete immutable input for reconstructing one successor Plan.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct StrategyAuthorization {
-    /// Content-derived authorization identity.
-    pub authorization_id: String,
-    /// Agent decision that owns this authorization.
-    pub agent_decision_id: String,
-    /// Exact verified candidate selected by the Agent.
-    pub candidate: StrategyCandidate,
-    /// Evaluation policy applied before authorization.
-    pub evaluation_policy_id: String,
-    /// Exact complete Strategy theory revision used for construction.
-    #[serde(default)]
-    pub strategy_theory_revision: Option<crate::belief::TheoryRevisionRef>,
-    /// Effective authority under which this exact candidate may execute.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub authority_decision: Option<meld_lang::AuthorityDecision>,
+pub struct StrategySuccessorRequest {
+    /// Frozen construction request for the successor revision.
+    pub search: StrategySearchRequest,
+    /// Exact immutable predecessor Plan, including its content identity.
+    pub predecessor_plan: Box<StrategyPlan>,
+    /// Completed causal history that the successor must retain unchanged.
+    pub completed_history: Vec<StrategyCompletedHistoryEntry>,
+}
+
+/// One successor Plan paired with the unchanged completed causal history.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StrategySuccessorPlan {
+    /// Newly constructed immutable Plan revision.
+    pub plan: StrategyPlan,
+    /// Completed predecessor history preserved byte-for-byte semantically.
+    pub completed_history: Vec<StrategyCompletedHistoryEntry>,
+}
+
+/// Result of one pure bounded successor construction.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StrategySuccessorResult {
+    /// Exact problem identity.
+    pub problem_id: String,
+    /// Completion posture of the bounded construction attempt.
+    pub completion: StrategySearchCompletion,
+    /// Strongest successor retained by the minimal engine.
+    pub recommendation: Option<StrategySuccessorPlan>,
+    /// Typed grounds observed while rejecting construction.
+    pub rejections: Vec<StrategyRejectionGround>,
+    /// Deterministic work counts.
+    pub statistics: StrategySearchStatistics,
 }
 
 /// Why a branch could not become an eligible candidate.
@@ -200,6 +297,8 @@ pub enum StrategyRejectionGround {
     InvalidEvidenceRoute,
     /// Candidate content differs from its identity or problem anchoring.
     IdentityMismatch,
+    /// The supplied predecessor is corrupt or belongs to another Plan family.
+    InvalidPredecessor,
     /// Explicit structural bounds stopped the attempt.
     BoundsExceeded,
 }
@@ -228,7 +327,7 @@ pub struct StrategySearchResult {
     /// Completion posture of the attempt.
     pub completion: StrategySearchCompletion,
     /// Strongest candidate retained by the minimal engine.
-    pub recommendation: Option<StrategyCandidate>,
+    pub recommendation: Option<StrategyPlan>,
     /// Typed grounds observed while rejecting branches.
     pub rejections: Vec<StrategyRejectionGround>,
     /// Deterministic work counts.
@@ -237,11 +336,9 @@ pub struct StrategySearchResult {
 
 /// Result of independently checking a candidate.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum CandidateVerification {
+pub enum PlanVerification {
     /// Candidate is sound for the supplied problem.
-    Valid {
-        evaluation: StrategyCandidateEvaluation,
-    },
+    Valid { evaluation: StrategyPlanEvaluation },
     /// Candidate is unsound for the supplied problem.
     Invalid {
         grounds: Vec<StrategyRejectionGround>,

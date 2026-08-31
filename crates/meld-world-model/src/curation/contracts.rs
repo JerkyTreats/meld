@@ -151,6 +151,67 @@ pub struct CurationOperation {
     pub rule_revision: TheoryRevisionRef,
     pub source_cut: TraversalCut,
     pub traversal_request: BoundedTraversalRequest,
+    /// Agent authorization attached only at planned publication time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planned_authorization: Option<CurationPlannedAuthorization>,
+}
+
+/// Exact Agent product authority Curation validates before planned acceptance.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CurationPlannedAuthorization {
+    pub authorization_id: String,
+    pub agent_id: String,
+    pub goal_id: String,
+    pub plan_revision_id: String,
+    pub product_id: String,
+    pub operation_id: String,
+    pub context_id: String,
+    pub authority_scope_id: String,
+    pub activation_generation: String,
+    pub idempotency_key: String,
+}
+
+impl CurationPlannedAuthorization {
+    pub fn validate(&self, operation: &CurationOperation) -> Result<(), StorageError> {
+        for value in [
+            &self.authorization_id,
+            &self.agent_id,
+            &self.goal_id,
+            &self.plan_revision_id,
+            &self.product_id,
+            &self.operation_id,
+            &self.context_id,
+            &self.authority_scope_id,
+            &self.activation_generation,
+            &self.idempotency_key,
+        ] {
+            require_non_empty("planned Curation authorization field", value)?;
+        }
+        if self.operation_id != operation.operation_id
+            || self.agent_id != operation.authority.agent_id
+            || self.activation_generation != operation.authority.activation_generation
+        {
+            return invalid("planned Curation authorization does not match its operation fence");
+        }
+        let expected = stable_identity(
+            "agent-product-authorization-v1",
+            &(
+                &self.agent_id,
+                &self.goal_id,
+                &self.plan_revision_id,
+                &self.product_id,
+                &self.operation_id,
+                &self.context_id,
+                &self.authority_scope_id,
+                &self.activation_generation,
+                &self.idempotency_key,
+            ),
+        )?;
+        if self.authorization_id != expected {
+            return invalid("planned Curation authorization identity is not canonical");
+        }
+        Ok(())
+    }
 }
 
 impl CurationOperation {
@@ -188,18 +249,40 @@ impl CurationOperation {
             rule_revision,
             source_cut,
             traversal_request,
+            planned_authorization: None,
         })
     }
 
+    /// Attach one exact durable Agent authorization without changing semantic identity.
+    pub fn with_planned_authorization(
+        mut self,
+        authorization: CurationPlannedAuthorization,
+    ) -> Result<Self, StorageError> {
+        authorization.validate(&self)?;
+        self.planned_authorization = Some(authorization);
+        Ok(self)
+    }
+
+    /// Return the immutable semantic operation persisted by Curation.
+    pub(crate) fn semantic_operation(&self) -> Self {
+        let mut operation = self.clone();
+        operation.planned_authorization = None;
+        operation
+    }
+
     pub fn validate(&self) -> Result<(), StorageError> {
-        if Self::reconstruct(
+        let expected = Self::reconstruct(
             self.authority.clone(),
             self.rule_revision.clone(),
             self.source_cut.clone(),
             self.traversal_request.clone(),
-        )? != *self
+        )?;
+        if expected.operation_id != self.operation_id || expected.selection_id != self.selection_id
         {
             return invalid("standing Curation operation identity is not canonical");
+        }
+        if let Some(authorization) = &self.planned_authorization {
+            authorization.validate(self)?;
         }
         Ok(())
     }
@@ -254,6 +337,11 @@ impl CurationAcceptanceRecord {
             != Some(operation.authority.perspective.perspective_id.as_str())
         {
             Some("initiating Agent perspective differs from the standing rule scope")
+        } else if let Some(authorization) = &operation.planned_authorization {
+            authorization
+                .validate(operation)
+                .err()
+                .map(|_| "planned authorization is invalid")
         } else {
             None
         };

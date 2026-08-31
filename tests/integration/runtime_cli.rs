@@ -9,7 +9,7 @@ use meld::runtime::storage::ProductStorageLayout;
 use meld::runtime::supervisor::{RuntimeId, SupervisorReportStore};
 use meld::runtime::theory::{ResolvedStewardshipTheory, TheoryInstallationReceipt};
 use meld_events::{AppendMode, DomainObjectRef, EventEnvelope};
-use meld_lang::{Condition, GoalSource, Literal, Term};
+use meld_lang::{Condition, Literal, Term};
 use serde_json::json;
 use serde_json::Value;
 use std::path::Path;
@@ -474,40 +474,12 @@ fn stewardship_receipts_activate_routes_and_preserve_a_b_lineage() {
         }
         assert!(!capability_runtime.catalog.contains("merkle_traversal", 1));
 
-        let decisions = product
-            .stores()
-            .agent_store
-            .recent_decisions("docs-writer", 32)
-            .unwrap();
-        let authorized = decisions
-            .iter()
-            .find(|decision| decision.strategy_authorization.is_some())
-            .expect("receipt-backed curation must reach Strategy authorization");
-        assert_eq!(
-            authorized.curation_rule_revision.as_ref(),
-            Some(&receipt.curation_rule)
-        );
-        assert_eq!(
-            authorized.maintained_condition_revision.as_ref(),
-            Some(&receipt.maintained_condition)
-        );
-        assert_eq!(
-            authorized
-                .strategy_authorization
-                .as_ref()
-                .and_then(|authorization| authorization.strategy_theory_revision.as_ref()),
-            Some(&receipt.strategy_theory)
-        );
         assert!(product
             .stores()
             .goal_store
             .goal_records()
             .unwrap()
-            .iter()
-            .any(|record| matches!(
-                record.goal.source,
-                GoalSource::MaintainedConditionBreach { .. }
-            )));
+            .is_empty());
 
         let curation_a = product
             .stores()
@@ -608,29 +580,6 @@ fn stewardship_receipts_activate_routes_and_preserve_a_b_lineage() {
         .unwrap();
         assert_eq!(historical_a.curation_rule, curation_a);
         assert_eq!(historical_a.maintained_condition, condition_a);
-        let decisions_b = product_b
-            .stores()
-            .agent_store
-            .recent_decisions("docs-writer", 64)
-            .unwrap();
-        assert!(decisions_b.iter().any(|decision| {
-            decision.curation_rule_revision.as_ref() == Some(&receipt.curation_rule)
-        }));
-        let decision_b = decisions_b
-            .iter()
-            .find(|decision| {
-                decision.curation_rule_revision.as_ref() == Some(&receipt_b.curation_rule)
-                    && decision.maintained_condition_revision.as_ref()
-                        == Some(&receipt_b.maintained_condition)
-            })
-            .expect("revision B must produce its own exact decision lineage");
-        assert_eq!(
-            decision_b.decision,
-            meld_world_model::agent::AgentDecisionKind::Absorbed
-        );
-        assert!(decision_b.strategy_authorization.is_none());
-        assert_eq!(decision_b.reason, "matching active goal already exists");
-
         drop(run_context_b);
         provider.shutdown();
     });

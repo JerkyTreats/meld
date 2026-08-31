@@ -6,9 +6,10 @@ use std::sync::Arc;
 use sled::{Db, Tree};
 
 use crate::agent::contracts::{
-    AgentActivationRecord, AgentCurationDecision, AgentCurationDedupeKey, AgentRecord,
-    AgentSatisfactionCheckpoint, AgentSatisfactionReview, AgentSinkReceipt, AgentStatus,
-    AgentSubscriptionRecord, AgentSubscriptionStatus,
+    AgentActivationRecord, AgentConsumerReceipt, AgentMilestoneAcceptance, AgentPlanJudgment,
+    AgentProductAuthorization, AgentProductProgress, AgentReconciliationGoal, AgentRecord,
+    AgentStatus, AgentSubscriptionRecord, AgentSubscriptionStatus, LegacyAgentDecisionRecord,
+    LegacyAgentSinkReceiptRecord,
 };
 use crate::error::StorageError;
 
@@ -19,18 +20,20 @@ const TREE_SUBSCRIPTIONS_BY_AGENT: &str = "agent_subscriptions_by_agent";
 const TREE_SUBSCRIPTIONS_BY_KEY: &str = "agent_subscriptions_by_key";
 const TREE_ACTIVATIONS: &str = "agent_activations";
 const TREE_ACTIVATIONS_BY_AGENT: &str = "agent_activations_by_agent";
-const TREE_DECISIONS: &str = "agent_curation_decisions";
-const TREE_DECISIONS_BY_AGENT: &str = "agent_decisions_by_agent";
-const TREE_DECISIONS_BY_DEDUPE: &str = "agent_decisions_by_dedupe";
-const TREE_DECISIONS_BY_REVISION: &str = "agent_decisions_by_revision";
-const TREE_SATISFACTION_DECISIONS_BY_REVIEW: &str = "agent_satisfaction_decisions_by_review";
-const TREE_SATISFACTION_CHECKPOINTS: &str = "agent_satisfaction_checkpoints";
-const TREE_SINK_RECEIPTS: &str = "agent_sink_receipts";
-const TREE_SINK_RECEIPTS_BY_COMMAND: &str = "agent_sink_receipts_by_command";
+const TREE_LEGACY_DECISIONS: &str = "agent_curation_decisions";
+const TREE_LEGACY_SINK_RECEIPTS: &str = "agent_sink_receipts";
+const TREE_LEGACY_SINK_RECEIPTS_BY_COMMAND: &str = "agent_sink_receipts_by_command";
+const TREE_RECONCILIATION_GOALS: &str = "agent_reconciliation_goals";
+const TREE_RECONCILIATION_PLANS: &str = "agent_reconciliation_plans";
+const TREE_RECONCILIATION_JUDGMENTS: &str = "agent_reconciliation_plan_judgments";
+const TREE_RECONCILIATION_PROGRESS: &str = "agent_reconciliation_product_progress";
+const TREE_RECONCILIATION_RECEIPTS: &str = "agent_reconciliation_consumer_receipts";
+const TREE_RECONCILIATION_MILESTONES: &str = "agent_reconciliation_milestones";
 const KEY_PAD: usize = 20;
 
 /// Sled backed storage for durable agent records and indexes.
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct AgentStore {
     db: Db,
     agents: Tree,
@@ -40,16 +43,18 @@ pub struct AgentStore {
     subscriptions_by_key: Tree,
     activations: Tree,
     activations_by_agent: Tree,
-    decisions: Tree,
-    decisions_by_agent: Tree,
-    decisions_by_dedupe: Tree,
-    decisions_by_revision: Tree,
-    satisfaction_decisions_by_review: Tree,
-    satisfaction_checkpoints: Tree,
-    sink_receipts: Tree,
-    sink_receipts_by_command: Tree,
+    legacy_decisions: Tree,
+    legacy_sink_receipts: Tree,
+    legacy_sink_receipts_by_command: Tree,
+    reconciliation_goals: Tree,
+    reconciliation_plans: Tree,
+    reconciliation_judgments: Tree,
+    reconciliation_progress: Tree,
+    reconciliation_receipts: Tree,
+    reconciliation_milestones: Tree,
 }
 
+#[allow(dead_code)]
 impl AgentStore {
     /// Open all agent trees from the shared world model database.
     pub fn new(db: Db) -> Result<Self, StorageError> {
@@ -67,28 +72,178 @@ impl AgentStore {
             activations_by_agent: db
                 .open_tree(TREE_ACTIVATIONS_BY_AGENT)
                 .map_err(to_storage_io)?,
-            decisions: db.open_tree(TREE_DECISIONS).map_err(to_storage_io)?,
-            decisions_by_agent: db
-                .open_tree(TREE_DECISIONS_BY_AGENT)
+            legacy_decisions: db.open_tree(TREE_LEGACY_DECISIONS).map_err(to_storage_io)?,
+            legacy_sink_receipts: db
+                .open_tree(TREE_LEGACY_SINK_RECEIPTS)
                 .map_err(to_storage_io)?,
-            decisions_by_dedupe: db
-                .open_tree(TREE_DECISIONS_BY_DEDUPE)
+            legacy_sink_receipts_by_command: db
+                .open_tree(TREE_LEGACY_SINK_RECEIPTS_BY_COMMAND)
                 .map_err(to_storage_io)?,
-            decisions_by_revision: db
-                .open_tree(TREE_DECISIONS_BY_REVISION)
+            reconciliation_goals: db
+                .open_tree(TREE_RECONCILIATION_GOALS)
                 .map_err(to_storage_io)?,
-            satisfaction_decisions_by_review: db
-                .open_tree(TREE_SATISFACTION_DECISIONS_BY_REVIEW)
+            reconciliation_plans: db
+                .open_tree(TREE_RECONCILIATION_PLANS)
                 .map_err(to_storage_io)?,
-            satisfaction_checkpoints: db
-                .open_tree(TREE_SATISFACTION_CHECKPOINTS)
+            reconciliation_judgments: db
+                .open_tree(TREE_RECONCILIATION_JUDGMENTS)
                 .map_err(to_storage_io)?,
-            sink_receipts: db.open_tree(TREE_SINK_RECEIPTS).map_err(to_storage_io)?,
-            sink_receipts_by_command: db
-                .open_tree(TREE_SINK_RECEIPTS_BY_COMMAND)
+            reconciliation_progress: db
+                .open_tree(TREE_RECONCILIATION_PROGRESS)
+                .map_err(to_storage_io)?,
+            reconciliation_receipts: db
+                .open_tree(TREE_RECONCILIATION_RECEIPTS)
+                .map_err(to_storage_io)?,
+            reconciliation_milestones: db
+                .open_tree(TREE_RECONCILIATION_MILESTONES)
                 .map_err(to_storage_io)?,
             db,
         })
+    }
+
+    /// Persist one Agent-owned Goal without rewriting an existing identity.
+    pub fn put_reconciliation_goal(
+        &self,
+        record: &AgentReconciliationGoal,
+    ) -> Result<bool, StorageError> {
+        put_immutable(&self.reconciliation_goals, &record.goal.goal_id, record)
+    }
+
+    pub fn reconciliation_goal(
+        &self,
+        goal_id: &str,
+    ) -> Result<Option<AgentReconciliationGoal>, StorageError> {
+        get_immutable(&self.reconciliation_goals, goal_id)
+    }
+
+    /// Persist one immutable Strategy Plan body as Agent history.
+    pub fn put_reconciliation_plan(
+        &self,
+        plan: &crate::strategy::StrategyPlan,
+    ) -> Result<bool, StorageError> {
+        put_immutable(&self.reconciliation_plans, &plan.plan_revision_id, plan)
+    }
+
+    pub fn reconciliation_plan(
+        &self,
+        plan_id: &str,
+    ) -> Result<Option<crate::strategy::StrategyPlan>, StorageError> {
+        get_immutable(&self.reconciliation_plans, plan_id)
+    }
+
+    pub fn put_plan_judgment(&self, record: &AgentPlanJudgment) -> Result<bool, StorageError> {
+        put_immutable(&self.reconciliation_judgments, &record.judgment_id, record)
+    }
+
+    pub fn plan_judgment(
+        &self,
+        judgment_id: &str,
+    ) -> Result<Option<AgentPlanJudgment>, StorageError> {
+        get_immutable(&self.reconciliation_judgments, judgment_id)
+    }
+
+    pub fn put_product_progress(
+        &self,
+        record: &AgentProductProgress,
+    ) -> Result<bool, StorageError> {
+        put_immutable(
+            &self.reconciliation_progress,
+            &format!("progress::{}", record.progress_id),
+            record,
+        )
+    }
+
+    pub fn product_progress(
+        &self,
+        progress_id: &str,
+    ) -> Result<Option<AgentProductProgress>, StorageError> {
+        get_immutable(
+            &self.reconciliation_progress,
+            &format!("progress::{progress_id}"),
+        )
+    }
+
+    pub fn put_product_authorization(
+        &self,
+        record: &AgentProductAuthorization,
+    ) -> Result<bool, StorageError> {
+        put_immutable(
+            &self.reconciliation_progress,
+            &format!("authorization::{}", record.authorization_id),
+            record,
+        )
+    }
+
+    pub fn product_authorization(
+        &self,
+        authorization_id: &str,
+    ) -> Result<Option<AgentProductAuthorization>, StorageError> {
+        get_immutable(
+            &self.reconciliation_progress,
+            &format!("authorization::{authorization_id}"),
+        )
+    }
+
+    /// Read immutable product authorizations retained for one Agent Goal.
+    pub fn product_authorizations_for_goal(
+        &self,
+        goal_id: &str,
+    ) -> Result<Vec<AgentProductAuthorization>, StorageError> {
+        let mut records = Vec::new();
+        for row in self.reconciliation_progress.scan_prefix(b"authorization::") {
+            let (_, raw) = row.map_err(to_storage_io)?;
+            let record: AgentProductAuthorization =
+                serde_json::from_slice(&raw).map_err(to_storage_data)?;
+            if record.goal_id == goal_id {
+                records.push(record);
+            }
+        }
+        records.sort_by(|left, right| left.authorization_id.cmp(&right.authorization_id));
+        Ok(records)
+    }
+
+    pub fn put_consumer_receipt(
+        &self,
+        record: &AgentConsumerReceipt,
+    ) -> Result<bool, StorageError> {
+        put_immutable(&self.reconciliation_receipts, &record.receipt_id, record)
+    }
+
+    pub fn consumer_receipt(
+        &self,
+        receipt_id: &str,
+    ) -> Result<Option<AgentConsumerReceipt>, StorageError> {
+        get_immutable(&self.reconciliation_receipts, receipt_id)
+    }
+
+    pub fn put_milestone(&self, record: &AgentMilestoneAcceptance) -> Result<bool, StorageError> {
+        put_immutable(
+            &self.reconciliation_milestones,
+            &record.milestone_id,
+            record,
+        )
+    }
+
+    pub fn milestone(
+        &self,
+        milestone_id: &str,
+    ) -> Result<Option<AgentMilestoneAcceptance>, StorageError> {
+        get_immutable(&self.reconciliation_milestones, milestone_id)
+    }
+
+    /// Monotonic durable position across the append-only reconciliation family.
+    pub fn reconciliation_position(&self) -> u64 {
+        [
+            &self.reconciliation_goals,
+            &self.reconciliation_plans,
+            &self.reconciliation_judgments,
+            &self.reconciliation_progress,
+            &self.reconciliation_receipts,
+            &self.reconciliation_milestones,
+        ]
+        .into_iter()
+        .map(|tree| tree.len() as u64)
+        .sum()
     }
 
     /// Open the store behind a shared pointer for facade wiring.
@@ -300,257 +455,36 @@ impl AgentStore {
         Ok(out)
     }
 
-    /// Persist a curation decision unless the dedupe and revision key already exists.
-    pub fn put_decision(
-        &self,
-        decision: &AgentCurationDecision,
-    ) -> Result<AgentCurationDecision, StorageError> {
-        decision.validate()?;
-        if let Some(existing) = self.decision_by_dedupe_and_revision(
-            &decision.dedupe_key,
-            decision.input_refs.belief_revision_id.as_deref(),
-        )? {
-            return Ok(existing);
-        }
-        let dedupe_index_key = decision_dedupe_revision_key(
-            &decision.dedupe_key,
-            decision.input_refs.belief_revision_id.as_deref(),
-        );
-        self.insert_decision_record(decision, &dedupe_index_key)
-    }
-
-    /// Persist a satisfaction decision unless its review was already recorded.
-    ///
-    /// Satisfaction reviews use review identity for idempotency because the
-    /// same belief revision may be reviewed more than once across retries and
-    /// reopen checkpoints.
-    pub fn put_satisfaction_decision(
-        &self,
-        review: &AgentSatisfactionReview,
-        decision: &AgentCurationDecision,
-    ) -> Result<AgentCurationDecision, StorageError> {
-        review.validate()?;
-        decision.validate()?;
-        if decision.agent_id != review.agent_id {
-            return Err(StorageError::InvalidPath(
-                "satisfaction review agent mismatch".to_string(),
-            ));
-        }
-        if decision.subscription_id != review.subscription_id {
-            return Err(StorageError::InvalidPath(
-                "satisfaction review subscription mismatch".to_string(),
-            ));
-        }
-        if decision.created_at_seq != review.review_seq {
-            return Err(StorageError::InvalidPath(
-                "satisfaction review seq mismatch".to_string(),
-            ));
-        }
-        if let Some(existing) = self.decision_by_satisfaction_review(review)? {
-            return Ok(existing);
-        }
-        if let Some(existing) = self.get_decision(&decision.decision_id)? {
-            if existing != *decision {
-                return Err(StorageError::InvalidPath(
-                    "satisfaction decision id conflict".to_string(),
-                ));
-            }
-            self.index_satisfaction_dedupe(review, decision)?;
-            self.index_satisfaction_review(review, &existing.decision_id)?;
-            return Ok(existing);
-        }
-        let dedupe_index_key =
-            decision_dedupe_satisfaction_review_key(&decision.dedupe_key, review);
-        let persisted = self.insert_decision_record(decision, &dedupe_index_key)?;
-        self.index_satisfaction_review(review, &persisted.decision_id)?;
-        Ok(persisted)
-    }
-
-    /// Read one curation decision by id.
-    pub fn get_decision(
+    /// Read one historical pre-cutover decision without exposing a writer.
+    pub fn legacy_decision(
         &self,
         decision_id: &str,
-    ) -> Result<Option<AgentCurationDecision>, StorageError> {
+    ) -> Result<Option<LegacyAgentDecisionRecord>, StorageError> {
         decode_optional(
-            self.decisions
+            self.legacy_decisions
                 .get(decision_id.as_bytes())
                 .map_err(to_storage_io)?,
         )
     }
 
-    /// List recent decisions for an agent in deterministic sequence and id order.
-    pub fn recent_decisions(
-        &self,
-        agent_id: &str,
-        limit: usize,
-    ) -> Result<Vec<AgentCurationDecision>, StorageError> {
-        let prefix = format!("{agent_id}::");
-        let mut out = Vec::new();
-        for item in self.decisions_by_agent.scan_prefix(prefix.as_bytes()) {
-            let (_, value) = item.map_err(to_storage_io)?;
-            let decision_id = String::from_utf8(value.to_vec()).map_err(to_storage_utf8)?;
-            if let Some(decision) = self.get_decision(&decision_id)? {
-                out.push(decision);
-            }
-        }
-        out.sort_by(|left, right| {
-            left.created_at_seq
-                .cmp(&right.created_at_seq)
-                .then_with(|| left.decision_id.cmp(&right.decision_id))
-        });
-        if out.len() > limit {
-            out = out.split_off(out.len() - limit);
-        }
-        Ok(out)
-    }
-
-    /// Return the latest decision stored for a dedupe key.
-    pub fn decision_by_dedupe_key(
-        &self,
-        dedupe_key: &AgentCurationDedupeKey,
-    ) -> Result<Option<AgentCurationDecision>, StorageError> {
-        let prefix = format!("{}::", dedupe_key.index_key());
-        let mut decisions = Vec::new();
-        for item in self.decisions_by_dedupe.scan_prefix(prefix.as_bytes()) {
-            let (_, value) = item.map_err(to_storage_io)?;
-            let decision_id = String::from_utf8(value.to_vec()).map_err(to_storage_utf8)?;
-            if let Some(decision) = self.get_decision(&decision_id)? {
-                decisions.push(decision);
-            }
-        }
-        decisions.sort_by(|left, right| {
-            left.created_at_seq
-                .cmp(&right.created_at_seq)
-                .then_with(|| left.decision_id.cmp(&right.decision_id))
-        });
-        Ok(decisions.pop())
-    }
-
-    /// Read the decision for an exact dedupe and belief revision pair.
-    pub fn decision_by_dedupe_and_revision(
-        &self,
-        dedupe_key: &AgentCurationDedupeKey,
-        revision_id: Option<&str>,
-    ) -> Result<Option<AgentCurationDecision>, StorageError> {
-        let key = decision_dedupe_revision_key(dedupe_key, revision_id);
-        let Some(raw) = self
-            .decisions_by_dedupe
-            .get(key.as_bytes())
-            .map_err(to_storage_io)?
-        else {
-            return Ok(None);
-        };
-        let decision_id = String::from_utf8(raw.to_vec()).map_err(to_storage_utf8)?;
-        self.get_decision(&decision_id)
-    }
-
-    /// Read the decision recorded for one satisfaction review.
-    pub fn decision_by_satisfaction_review(
-        &self,
-        review: &AgentSatisfactionReview,
-    ) -> Result<Option<AgentCurationDecision>, StorageError> {
-        review.validate()?;
-        let Some(raw) = self
-            .satisfaction_decisions_by_review
-            .get(review.index_key().as_bytes())
-            .map_err(to_storage_io)?
-        else {
-            return Ok(None);
-        };
-        let decision_id = String::from_utf8(raw.to_vec()).map_err(to_storage_utf8)?;
-        self.get_decision(&decision_id)
-    }
-
-    /// Persist the satisfaction trigger claim for one agent and subscription.
-    ///
-    /// The claim must be durable before its review runs so crash replay
-    /// resumes the same review identity instead of inventing a new sequence.
-    pub fn put_satisfaction_checkpoint(
-        &self,
-        checkpoint: &AgentSatisfactionCheckpoint,
-    ) -> Result<(), StorageError> {
-        checkpoint.validate()?;
-        self.satisfaction_checkpoints
-            .insert(
-                AgentSatisfactionCheckpoint::natural_key(
-                    &checkpoint.agent_id,
-                    &checkpoint.subscription_id,
-                )
-                .as_bytes(),
-                serde_json::to_vec(checkpoint).map_err(to_storage_data)?,
-            )
-            .map_err(to_storage_io)?;
-        Ok(())
-    }
-
-    /// Read the satisfaction trigger claim for one agent and subscription.
-    pub fn get_satisfaction_checkpoint(
-        &self,
-        agent_id: &str,
-        subscription_id: &str,
-    ) -> Result<Option<AgentSatisfactionCheckpoint>, StorageError> {
-        decode_optional(
-            self.satisfaction_checkpoints
-                .get(AgentSatisfactionCheckpoint::natural_key(agent_id, subscription_id).as_bytes())
-                .map_err(to_storage_io)?,
-        )
-    }
-
-    /// Persist a sink receipt unless the decision already has one.
-    pub fn put_sink_receipt(
-        &self,
-        receipt: &AgentSinkReceipt,
-    ) -> Result<AgentSinkReceipt, StorageError> {
-        receipt.validate()?;
-        if let Some(existing) = self.sink_receipt_by_decision(&receipt.decision_id)? {
-            if existing.submission.command_id != receipt.submission.command_id
-                || existing.submission.goal_id != receipt.submission.goal_id
-            {
-                return Err(StorageError::InvalidPath(
-                    "sink receipt decision conflict".to_string(),
-                ));
-            }
-            return Ok(existing);
-        }
-        self.sink_receipts
-            .insert(
-                receipt.decision_id.as_bytes(),
-                serde_json::to_vec(receipt).map_err(to_storage_data)?,
-            )
-            .map_err(to_storage_io)?;
-        self.sink_receipts_by_command
-            .insert(
-                sink_receipt_command_key(&receipt.submission.command_id, &receipt.decision_id)
-                    .as_bytes(),
-                receipt.decision_id.as_bytes(),
-            )
-            .map_err(to_storage_io)?;
-        Ok(receipt.clone())
-    }
-
-    /// Read the sink receipt recorded for one curation decision.
-    pub fn sink_receipt_by_decision(
-        &self,
-        decision_id: &str,
-    ) -> Result<Option<AgentSinkReceipt>, StorageError> {
-        decode_optional(
-            self.sink_receipts
-                .get(decision_id.as_bytes())
-                .map_err(to_storage_io)?,
-        )
-    }
-
-    /// List receipts for a command id in deterministic decision order.
-    pub fn sink_receipts_by_command(
+    /// Read historical receipts for one pre-cutover command without exposing a writer.
+    pub fn legacy_sink_receipts_by_command(
         &self,
         command_id: &str,
-    ) -> Result<Vec<AgentSinkReceipt>, StorageError> {
+    ) -> Result<Vec<LegacyAgentSinkReceiptRecord>, StorageError> {
         let prefix = format!("{command_id}::");
-        let mut out = Vec::new();
-        for item in self.sink_receipts_by_command.scan_prefix(prefix.as_bytes()) {
+        let mut out: Vec<LegacyAgentSinkReceiptRecord> = Vec::new();
+        for item in self
+            .legacy_sink_receipts_by_command
+            .scan_prefix(prefix.as_bytes())
+        {
             let (_, value) = item.map_err(to_storage_io)?;
             let decision_id = String::from_utf8(value.to_vec()).map_err(to_storage_utf8)?;
-            if let Some(receipt) = self.sink_receipt_by_decision(&decision_id)? {
+            if let Some(receipt) = decode_optional(
+                self.legacy_sink_receipts
+                    .get(decision_id.as_bytes())
+                    .map_err(to_storage_io)?,
+            )? {
                 out.push(receipt);
             }
         }
@@ -561,67 +495,6 @@ impl AgentStore {
     /// Flush all sled writes for this store.
     pub fn flush(&self) -> Result<(), StorageError> {
         self.db.flush().map_err(to_storage_io)?;
-        Ok(())
-    }
-
-    fn insert_decision_record(
-        &self,
-        decision: &AgentCurationDecision,
-        dedupe_index_key: &str,
-    ) -> Result<AgentCurationDecision, StorageError> {
-        self.decisions
-            .insert(
-                decision.decision_id.as_bytes(),
-                serde_json::to_vec(decision).map_err(to_storage_data)?,
-            )
-            .map_err(to_storage_io)?;
-        self.decisions_by_agent
-            .insert(
-                decision_agent_key(
-                    &decision.agent_id,
-                    decision.created_at_seq,
-                    &decision.decision_id,
-                )
-                .as_bytes(),
-                decision.decision_id.as_bytes(),
-            )
-            .map_err(to_storage_io)?;
-        self.decisions_by_dedupe
-            .insert(dedupe_index_key.as_bytes(), decision.decision_id.as_bytes())
-            .map_err(to_storage_io)?;
-        if let Some(revision_id) = &decision.input_refs.belief_revision_id {
-            self.decisions_by_revision
-                .insert(
-                    decision_revision_key(revision_id, &decision.decision_id).as_bytes(),
-                    decision.decision_id.as_bytes(),
-                )
-                .map_err(to_storage_io)?;
-        }
-        Ok(decision.clone())
-    }
-
-    fn index_satisfaction_review(
-        &self,
-        review: &AgentSatisfactionReview,
-        decision_id: &str,
-    ) -> Result<(), StorageError> {
-        self.satisfaction_decisions_by_review
-            .insert(review.index_key().as_bytes(), decision_id.as_bytes())
-            .map_err(to_storage_io)?;
-        Ok(())
-    }
-
-    fn index_satisfaction_dedupe(
-        &self,
-        review: &AgentSatisfactionReview,
-        decision: &AgentCurationDecision,
-    ) -> Result<(), StorageError> {
-        self.decisions_by_dedupe
-            .insert(
-                decision_dedupe_satisfaction_review_key(&decision.dedupe_key, review).as_bytes(),
-                decision.decision_id.as_bytes(),
-            )
-            .map_err(to_storage_io)?;
         Ok(())
     }
 }
@@ -638,40 +511,6 @@ fn activation_agent_key(agent_id: &str, seq: u64, activation_id: &str) -> String
     format!("{agent_id}::{seq:0KEY_PAD$}::{activation_id}")
 }
 
-fn decision_agent_key(agent_id: &str, seq: u64, decision_id: &str) -> String {
-    format!("{agent_id}::{seq:0KEY_PAD$}::{decision_id}")
-}
-
-fn decision_dedupe_revision_key(
-    dedupe_key: &AgentCurationDedupeKey,
-    revision_id: Option<&str>,
-) -> String {
-    format!(
-        "{}::{}",
-        dedupe_key.index_key(),
-        revision_id.unwrap_or("missing")
-    )
-}
-
-fn decision_dedupe_satisfaction_review_key(
-    dedupe_key: &AgentCurationDedupeKey,
-    review: &AgentSatisfactionReview,
-) -> String {
-    format!(
-        "{}::satisfaction-review::{}",
-        dedupe_key.index_key(),
-        review.index_key()
-    )
-}
-
-fn decision_revision_key(revision_id: &str, decision_id: &str) -> String {
-    format!("{revision_id}::{decision_id}")
-}
-
-fn sink_receipt_command_key(command_id: &str, decision_id: &str) -> String {
-    format!("{command_id}::{decision_id}")
-}
-
 fn decode_optional<T: serde::de::DeserializeOwned>(
     raw: Option<sled::IVec>,
 ) -> Result<Option<T>, StorageError> {
@@ -679,6 +518,35 @@ fn decode_optional<T: serde::de::DeserializeOwned>(
         return Ok(None);
     };
     Ok(Some(serde_json::from_slice(&raw).map_err(to_storage_data)?))
+}
+
+fn put_immutable<T>(tree: &Tree, key: &str, value: &T) -> Result<bool, StorageError>
+where
+    T: serde::Serialize + serde::de::DeserializeOwned + PartialEq,
+{
+    if let Some(raw) = tree.get(key.as_bytes()).map_err(to_storage_io)? {
+        let existing: T = serde_json::from_slice(&raw).map_err(to_storage_data)?;
+        if existing != *value {
+            return Err(StorageError::InvalidPath(format!(
+                "Agent reconciliation identity '{key}' has divergent content"
+            )));
+        }
+        return Ok(false);
+    }
+    tree.insert(
+        key.as_bytes(),
+        serde_json::to_vec(value).map_err(to_storage_data)?,
+    )
+    .map_err(to_storage_io)?;
+    tree.flush().map_err(to_storage_io)?;
+    Ok(true)
+}
+
+fn get_immutable<T>(tree: &Tree, key: &str) -> Result<Option<T>, StorageError>
+where
+    T: serde::de::DeserializeOwned,
+{
+    decode_optional(tree.get(key.as_bytes()).map_err(to_storage_io)?)
 }
 
 fn to_storage_io(err: sled::Error) -> StorageError {

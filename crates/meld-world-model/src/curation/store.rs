@@ -5,8 +5,8 @@ use sled::{Db, Tree};
 
 use crate::curation::{
     stable_identity, CurationAcceptanceRecord, CurationAdmissionDecision, CurationOperation,
-    CurationPublicationKind, CurationPublicationReceipt, CurationResult, StandingCurationRule,
-    StandingCurationRuleRevision,
+    CurationPlannedAuthorization, CurationPublicationKind, CurationPublicationReceipt,
+    CurationResult, StandingCurationRule, StandingCurationRuleRevision,
 };
 use crate::error::StorageError;
 
@@ -14,6 +14,7 @@ const TREE_RULES: &str = "curation_rule_revisions";
 const TREE_ACTIVE_RULES: &str = "curation_active_rules";
 const TREE_OPERATIONS: &str = "curation_operations";
 const TREE_OPERATION_BY_SELECTION: &str = "curation_operation_by_selection";
+const TREE_PLANNED_AUTHORIZATIONS: &str = "curation_planned_authorizations";
 const TREE_ACCEPTANCES: &str = "curation_acceptances";
 const TREE_ACCEPTANCE_BY_OPERATION: &str = "curation_acceptance_by_operation";
 const TREE_RESULTS: &str = "curation_results";
@@ -28,6 +29,7 @@ pub struct CurationStore {
     active_rules: Tree,
     operations: Tree,
     operation_by_selection: Tree,
+    planned_authorizations: Tree,
     acceptances: Tree,
     acceptance_by_operation: Tree,
     results: Tree,
@@ -43,6 +45,9 @@ impl CurationStore {
             operations: db.open_tree(TREE_OPERATIONS).map_err(to_storage_io)?,
             operation_by_selection: db
                 .open_tree(TREE_OPERATION_BY_SELECTION)
+                .map_err(to_storage_io)?,
+            planned_authorizations: db
+                .open_tree(TREE_PLANNED_AUTHORIZATIONS)
                 .map_err(to_storage_io)?,
             acceptances: db.open_tree(TREE_ACCEPTANCES).map_err(to_storage_io)?,
             acceptance_by_operation: db
@@ -147,8 +152,9 @@ impl CurationStore {
 
     pub fn put_operation(&self, operation: &CurationOperation) -> Result<(), StorageError> {
         operation.validate()?;
-        if let Some(existing) = self.operation_for_selection(&operation.selection_id)? {
-            if existing != *operation {
+        let semantic_operation = operation.semantic_operation();
+        if let Some(existing) = self.operation_for_selection(&semantic_operation.selection_id)? {
+            if existing != semantic_operation {
                 return Err(StorageError::InvalidPath(
                     "one standing Curation selection cannot create divergent operations"
                         .to_string(),
@@ -156,14 +162,113 @@ impl CurationStore {
             }
             return Ok(());
         }
-        put_exact(&self.operations, &operation.operation_id, operation)?;
+        put_exact(
+            &self.operations,
+            &semantic_operation.operation_id,
+            &semantic_operation,
+        )?;
         self.operation_by_selection
             .insert(
-                operation.selection_id.as_bytes(),
-                operation.operation_id.as_bytes(),
+                semantic_operation.selection_id.as_bytes(),
+                semantic_operation.operation_id.as_bytes(),
             )
             .map_err(to_storage_io)?;
         Ok(())
+    }
+
+    /// Durably accept an Agent-authorized planned operation for the canonical actor.
+    pub fn submit_planned(&self, operation: &CurationOperation) -> Result<(), StorageError> {
+        let Some(authorization) = &operation.planned_authorization else {
+            return Err(StorageError::InvalidPath(
+                "planned Curation submission requires Agent product authorization".to_string(),
+            ));
+        };
+        operation.validate()?;
+        self.put_operation(operation)?;
+        put_exact(
+            &self.planned_authorizations,
+            &operation.operation_id,
+            authorization,
+        )?;
+        self.db.flush().map_err(to_storage_io)?;
+        Ok(())
+    }
+
+    /// Return the first durable planned operation not yet accepted.
+    pub fn next_planned_operation(
+        &self,
+        agent_id: &str,
+    ) -> Result<Option<CurationOperation>, StorageError> {
+        let mut pending = Vec::new();
+        for row in self.planned_authorizations.iter() {
+            let (operation_id, raw) = row.map_err(to_storage_io)?;
+            let operation_id = std::str::from_utf8(&operation_id).map_err(|error| {
+                StorageError::InvalidPath(format!(
+                    "invalid planned Curation authorization index: {error}"
+                ))
+            })?;
+            let authorization: CurationPlannedAuthorization = decode(&raw)?;
+            let operation = self.operation(operation_id)?.ok_or_else(|| {
+                StorageError::InvalidPath(
+                    "planned Curation authorization references a missing operation".to_string(),
+                )
+            })?;
+            authorization.validate(&operation)?;
+            if operation.authority.agent_id == agent_id {
+                let complete = if let Some(result) =
+                    self.result_for_operation(&operation.operation_id)?
+                {
+                    let terminal = self
+                        .publication_receipt(&result.result_id, CurationPublicationKind::Terminal)?
+                        .is_some();
+                    let semantic = result.semantic_publication.is_none()
+                        || self
+                            .publication_receipt(
+                                &result.result_id,
+                                CurationPublicationKind::Semantic,
+                            )?
+                            .is_some();
+                    terminal && semantic
+                } else {
+                    false
+                };
+                if !complete {
+                    pending.push(operation.with_planned_authorization(authorization)?);
+                }
+            }
+        }
+        pending.sort_by(|left, right| left.operation_id.cmp(&right.operation_id));
+        Ok(pending.into_iter().next())
+    }
+
+    pub fn acceptance_for_planned_operation(
+        &self,
+        operation_id: &str,
+    ) -> Result<Option<CurationAcceptanceRecord>, StorageError> {
+        if self
+            .planned_authorization_for_operation(operation_id)?
+            .is_none()
+        {
+            return Ok(None);
+        }
+        self.acceptance_for_operation(operation_id)
+    }
+
+    pub fn planned_authorization_for_operation(
+        &self,
+        operation_id: &str,
+    ) -> Result<Option<CurationPlannedAuthorization>, StorageError> {
+        let authorization: Option<CurationPlannedAuthorization> =
+            get_optional(&self.planned_authorizations, operation_id)?;
+        if let Some(authorization) = &authorization {
+            let operation = self.operation(operation_id)?.ok_or_else(|| {
+                StorageError::InvalidPath(
+                    "planned Curation authorization references a missing operation".to_string(),
+                )
+            })?;
+            authorization.validate(&operation)?;
+        }
+        Ok(authorization)
     }
 
     pub fn operation_for_selection(

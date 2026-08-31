@@ -8,10 +8,153 @@ use serde::{Deserialize, Serialize};
 use crate::belief::{BeliefView, BranchScope, TheoryRevisionRef};
 use crate::error::StorageError;
 use crate::events::DomainObjectRef;
+use crate::world_state::graph::contracts::{
+    BoundedTraversalRequest, TraversalCut, TraversalCutRequest, TraversalResult,
+};
 use crate::world_state::graph::{AnchorId, PerspectiveKey};
 
 /// Static projection version for the first planner-facing world state slice.
 pub const PLANNER_PROJECTION_VERSION: &str = "world_model.planner.v1";
+
+/// Native owner position that may be required by one installed Planner policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlannerSourceKind {
+    Graph,
+    Belief,
+    Directive,
+    MaintainedCondition,
+    CapabilityCatalog,
+    CurationCatalog,
+    StrategyPolicy,
+    Causation,
+    Regime,
+}
+
+/// Exact immutable native-owner revision supplied to Planner.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct PlannerSourcePosition {
+    pub kind: PlannerSourceKind,
+    pub owner_id: String,
+    pub source_id: String,
+    pub revision_id: String,
+    pub content_hash: String,
+    pub scope_id: String,
+    pub branch_id: String,
+    pub perspective_id: String,
+    pub authority_scope_id: String,
+    pub invalidated_by_revision_id: Option<String>,
+}
+
+/// Deliberately limited installed policy for one Planner decision context.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlannerAssemblyPolicy {
+    pub policy_revision_id: String,
+    pub required_sources: Vec<PlannerSourceKind>,
+    pub explicitly_not_required: Vec<PlannerSourceKind>,
+}
+
+/// Exact Agent and authority fence for one Planner assembly.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlannerDecisionContext {
+    pub context_id: String,
+    pub agent_id: String,
+    pub goal_id: String,
+    pub subject: DomainObjectRef,
+    pub scope_id: String,
+    pub branch_id: String,
+    pub perspective_id: String,
+    pub authority_scope_id: String,
+    pub activation_generation: String,
+}
+
+/// Complete immutable input to Planner cut assembly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlannerAssemblyRequest {
+    pub context: PlannerDecisionContext,
+    pub policy: PlannerAssemblyPolicy,
+    pub traversal_cut: TraversalCut,
+    pub traversal_request: BoundedTraversalRequest,
+    pub traversal_result: TraversalResult,
+    pub source_positions: Vec<PlannerSourcePosition>,
+    pub view_input: PlannerProjectionInput,
+}
+
+/// Store-backed request that resolves the exact Graph and Belief positions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlannerCurrentAssemblyRequest {
+    pub context: PlannerDecisionContext,
+    pub policy: PlannerAssemblyPolicy,
+    pub traversal_cut_request: TraversalCutRequest,
+    pub traversal_request: BoundedTraversalRequest,
+    pub belief_key: crate::belief::BeliefKey,
+    pub unanchored_belief: bool,
+    pub source_positions: Vec<PlannerSourcePosition>,
+}
+
+/// Typed reason that Planner refused an incomplete or inconsistent request.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlannerRefusalGround {
+    Missing {
+        kind: PlannerSourceKind,
+    },
+    Unexpected {
+        kind: PlannerSourceKind,
+    },
+    Duplicate {
+        kind: PlannerSourceKind,
+    },
+    Invalidated {
+        kind: PlannerSourceKind,
+        revision_id: String,
+    },
+    ScopeMismatch {
+        kind: PlannerSourceKind,
+    },
+    BranchMismatch {
+        kind: PlannerSourceKind,
+    },
+    PerspectiveMismatch {
+        kind: PlannerSourceKind,
+    },
+    Unauthorized {
+        kind: PlannerSourceKind,
+    },
+    IncompleteTraversal,
+    TraversalResultMismatch,
+    InvalidInput {
+        detail: String,
+    },
+}
+
+/// Exhaustive refusal returned before Strategy is invoked.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlannerRefusal {
+    pub request_context_id: String,
+    pub grounds: Vec<PlannerRefusalGround>,
+}
+
+/// Canonical immutable reasoning consistency root.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlannerCut {
+    pub cut_id: String,
+    pub context: PlannerDecisionContext,
+    pub policy: PlannerAssemblyPolicy,
+    pub traversal_cut: TraversalCut,
+    pub traversal_request: BoundedTraversalRequest,
+    pub traversal_result: TraversalResult,
+    pub source_positions: Vec<PlannerSourcePosition>,
+    pub world_model_view: WorldModelView,
+}
+
+/// Complete-or-refused Planner outcome.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlannerAssemblyOutcome {
+    Complete(Box<PlannerCut>),
+    Refused(PlannerRefusal),
+}
 
 /// Decision context for one projection request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,7 +248,7 @@ pub struct PlannerGraphScope {
 
 /// Output envelope for a projected ground world state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PlannerProjectionOutput {
+pub struct WorldModelView {
     pub world_state: WorldState,
     pub projection_version: String,
     pub source_refs: Vec<PlannerSourceRef>,

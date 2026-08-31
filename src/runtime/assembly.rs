@@ -40,10 +40,10 @@ use meld_execution::task_network::{
     PublicationRuntime, PublishPendingPublicationsRequest, SledTaskNetworkStore,
 };
 use meld_lang::{AuthorityPolicyBinding, Method};
+use meld_lang::{Goal, GoalLifecycle, GoalSource};
 use meld_world_model::agent::{
-    AgentActivationStatus, AgentCurationRuleBinding, AgentGoalCurationActor,
-    AgentMaintainedConditionBinding, AgentSatisfactionCurationActor, AgentStatus, AgentStepReport,
-    AgentStepRequest, AgentStore,
+    AgentActivationStatus, AgentAuthorizationFence, AgentReconciliationActor,
+    AgentReconciliationReport, AgentStatus, AgentStore, AGENT_RECONCILIATION_RUNTIME_ID,
 };
 use meld_world_model::belief::{
     BeliefAssessmentActor, BeliefAssessmentReport, BeliefAssessmentRequest, BeliefFamilyRegistry,
@@ -52,12 +52,16 @@ use meld_world_model::belief::{
     EvidenceIngestionReport, EvidenceIngestionRequest, OutcomeEvidenceMapping,
     OutcomeMappingSetConfig,
 };
+use meld_world_model::world_state::graph::contracts::{
+    OwnerCurrentnessPolicy, TraversalCutRequest, TraversalOwnerRequirement,
+};
 use meld_world_model::world_state::graph::runtime::{GraphCatchUpBudget, GraphRuntime};
 use meld_world_model::world_state::graph::store::TraversalStore;
 use meld_world_model::PerspectiveKey;
 use meld_world_model::{
     CurationAuthority, CurationEventPort, CurationStepReport, CurationStore, CurationTraversalPort,
-    StandingCurationActor, StandingCurationRuleRevision,
+    PlannerAssemblyPolicy, PlannerCurrentAssemblyRequest, PlannerDecisionContext,
+    PlannerSourceKind, PlannerSourcePosition, StandingCurationActor, StandingCurationRuleRevision,
 };
 use serde::{Deserialize, Serialize};
 
@@ -75,10 +79,10 @@ use crate::runtime::lifecycle::{
     STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID,
 };
 use crate::runtime::ports::{
-    CurationGoalExecutionPort, ExactKeyPlanningProjectionPort, ExecutionAgentGoalQueryPort,
-    ExecutionGoalCommandPort, ExecutionGoalMutationPort, ProductCurationTraversalPort,
-    ProductEventAppendPort, ProductEventReplayPort, ProductRuntimePorts, ProviderPortConfig,
-    SharedClaimedTaskInvoker, SharedPackageRunPreparer, SharedPackageStepInvoker,
+    ExactKeyPlanningProjectionPort, ProductAgentAuthorityPort, ProductAgentPlannerPort,
+    ProductCurationTraversalPort, ProductEventAppendPort, ProductEventReplayPort,
+    ProductPlannedCurationPort, ProductRuntimePorts, ProviderPortConfig, SharedClaimedTaskInvoker,
+    SharedPackageRunPreparer, SharedPackageStepInvoker,
 };
 use crate::runtime::registration::{RegistrationKind, RegistrationSet, RuntimeRegistration};
 use crate::runtime::storage::{
@@ -936,27 +940,20 @@ struct StandingCurationFactory {
     events: ProductEventAppendPort,
 }
 
-/// Which bounded agent actor an [`AgentActorFactory`] builds.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum AgentActorKind {
-    GoalCuration,
-    SatisfactionCuration,
-}
-
 #[derive(Clone)]
 struct AgentActorFactory {
-    kind: AgentActorKind,
     runtime_id: String,
-    agent_id: String,
-    agent_store: Arc<AgentStore>,
-    belief_store: Arc<BeliefStore>,
-    traversal_store: Arc<TraversalStore>,
-    goal_store: Arc<PersistentGoalSetStore>,
-    goal_command: ExecutionGoalCommandPort,
-    goal_mutation: ExecutionGoalMutationPort,
-    strategy: Option<meld_world_model::AgentStrategyRuntimeConfig>,
-    curation_rule: Option<AgentCurationRuleBinding>,
-    maintained_condition: Option<AgentMaintainedConditionBinding>,
+    goal: Goal,
+    store: Arc<AgentStore>,
+    planner: Arc<dyn meld_world_model::AgentPlannerPort>,
+    authority_port: Arc<dyn meld_world_model::AgentAuthorityPort>,
+    frozen_authority: AgentAuthorizationFence,
+    curation: Arc<dyn meld_world_model::AgentCurationPort>,
+    strategy: meld_world_model::AgentStrategyRuntimeConfig,
+    authority: CurationAuthority,
+    rule: StandingCurationRuleRevision,
+    #[cfg(test)]
+    planner_source_positions: Vec<PlannerSourcePosition>,
 }
 
 #[derive(Clone)]
@@ -1064,15 +1061,9 @@ struct StandingCurationHandle {
 }
 
 struct AgentActorHandle {
-    kind: AgentActorKind,
     runtime_id: String,
     agent_id: String,
-    curation: Option<AgentGoalCurationActor>,
-    satisfaction: Option<AgentSatisfactionCurationActor>,
-    goal_query: ExecutionAgentGoalQueryPort,
-    goal_command: ExecutionGoalCommandPort,
-    goal_mutation: ExecutionGoalMutationPort,
-    sequence: DurableStepSequence,
+    actor: AgentReconciliationActor,
 }
 
 struct PlanningHandle {
@@ -1714,16 +1705,12 @@ impl RuntimeFactoryRegistry {
             )?,
             RuntimeFactoryDescriptor::new("world_model.belief_assessment", vec![WorldModel])?,
             RuntimeFactoryDescriptor::new(
-                "world_model.agent_goal_curation",
-                vec![GoalCommand, GoalMutation, PlannerProjection, WorldModel],
+                AGENT_RECONCILIATION_RUNTIME_ID,
+                vec![PlannerProjection, WorldModel],
             )?,
             RuntimeFactoryDescriptor::new(
                 "world_model.evidence_ingestion",
                 vec![EventReplay, EventConsumerRegistry, WorldModel],
-            )?,
-            RuntimeFactoryDescriptor::new(
-                "world_model.satisfaction_curation",
-                vec![GoalCommand, GoalMutation, PlannerProjection, WorldModel],
             )?,
             RuntimeFactoryDescriptor::new("execution.goal_set", vec![GoalCommand])?,
             RuntimeFactoryDescriptor::new(
@@ -2235,29 +2222,33 @@ impl RuntimeSemanticHandleFactory {
                     },
                 )))
             }
-            "world_model.agent_goal_curation" | "world_model.satisfaction_curation" => {
+            AGENT_RECONCILIATION_RUNTIME_ID => {
                 let Some(composed) = stewardship else {
                     return Ok(Self::None);
                 };
-                let (Some(belief), Some(traversal), Some(agent_store), Some(goal_store)) = (
+                let (
+                    Some(belief),
+                    Some(traversal),
+                    Some(agent_store),
+                    Some(curation_store),
+                    Some(registry),
+                    Some(theory_receipts),
+                    Some(pds_packages),
+                ) = (
                     stores.belief_store.opened(),
                     stores.traversal_store.opened(),
                     stores.agent_store.opened(),
-                    stores.goal_store.opened(),
-                ) else {
-                    return Ok(Self::None);
-                };
-                let (Some(goal_command), Some(goal_mutation)) =
-                    (ports.try_goal_command(), ports.try_goal_mutation())
+                    stores.curation_store.opened(),
+                    stores.belief_family_registry.opened(),
+                    stores.theory_receipts.opened(),
+                    stores.pds_packages.opened(),
+                )
                 else {
                     return Ok(Self::None);
                 };
-                // Stage 5 hydration probe: activation loads durable agent
-                // identities and never creates them. A missing genesis
-                // identity is a truthful unresolved required binding.
                 let agent_id = composed.bindings.agent_id.clone();
-                match agent_store.get_agent(&agent_id) {
-                    Ok(Some(_)) => {}
+                let agent = match agent_store.get_agent(&agent_id) {
+                    Ok(Some(agent)) => agent,
                     Ok(None) => {
                         return unresolved(
                             diagnostics,
@@ -2275,49 +2266,255 @@ impl RuntimeSemanticHandleFactory {
                             format!("agent record probe failed: {error}"),
                         )
                     }
-                }
-                let kind = if runtime_id == "world_model.agent_goal_curation" {
-                    AgentActorKind::GoalCuration
-                } else {
-                    AgentActorKind::SatisfactionCuration
                 };
-                let curation_rule = composed
-                    .theory
-                    .resolved
-                    .as_ref()
-                    .map(|resolved| {
-                        AgentCurationRuleBinding::for_revision(
-                            &resolved.curation_rule.rule_id,
-                            &resolved.curation_rule.content_hash,
-                            resolved.curation_rule.rule.clone(),
+                let Some(resolved) = composed.theory.resolved.as_ref() else {
+                    return unresolved(
+                        diagnostics,
+                        "agent_reasoning_theory_unresolved",
+                        "Agent reconciliation requires one complete installed theory receipt"
+                            .to_string(),
+                    );
+                };
+                let Some(strategy) = composed.theory.strategy.clone() else {
+                    return unresolved(
+                        diagnostics,
+                        "agent_strategy_unresolved",
+                        "Agent reconciliation requires installed Strategy theory".to_string(),
+                    );
+                };
+                let activation = agent_store
+                    .activations_for_agent(&agent_id)
+                    .map_err(|error| {
+                        RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
+                    })?
+                    .into_iter()
+                    .next_back()
+                    .filter(|activation| activation.status == AgentActivationStatus::Activated);
+                let Some(activation) = activation else {
+                    return unresolved(
+                        diagnostics,
+                        "agent_reconciliation_activation_unresolved",
+                        format!("Agent '{agent_id}' has no active generation"),
+                    );
+                };
+                let rule = curation_store
+                    .active_rule(&agent_id)
+                    .map_err(|error| {
+                        RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
+                    })?
+                    .ok_or_else(|| {
+                        RuntimeAssemblyError::RuntimeHandleConstruction(
+                            "Agent reconciliation Curation rule is not installed".to_string(),
                         )
-                    })
-                    .transpose()
-                    .map_err(|error| {
-                        RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
                     })?;
-                let maintained_condition = composed
-                    .theory
-                    .resolved
+                let condition = &resolved.maintained_condition.condition;
+                let goal_id = format!(
+                    "agent-goal::{}::{}::{}",
+                    agent_id, condition.condition_id, activation.activation_id
+                );
+                let goal = Goal {
+                    goal_id: goal_id.clone(),
+                    agent_id: agent_id.clone(),
+                    target: condition
+                        .target_for(agent.subject.clone())
+                        .map_err(|error| {
+                            RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
+                        })?,
+                    priority: condition.goal_priority.clone(),
+                    source: GoalSource::MaintainedConditionBreach {
+                        maintained_condition_id: condition.condition_id.clone(),
+                        dimension: condition.dimension_id.clone(),
+                        observed: "requires_reconciliation".to_string(),
+                        desired: condition.desired_summary.clone(),
+                    },
+                    lifecycle: GoalLifecycle::Proposed,
+                };
+                let authority_scope_id = strategy
+                    .authority_policy
                     .as_ref()
-                    .map(|resolved| resolved.maintained_condition.binding())
-                    .transpose()
+                    .map(|binding| binding.policy.policy_id.clone())
+                    .unwrap_or_else(|| "world_model.agent_reconciliation".to_string());
+                let context = PlannerDecisionContext {
+                    context_id: format!("agent-context::{goal_id}"),
+                    agent_id: agent_id.clone(),
+                    goal_id,
+                    subject: agent.subject.clone(),
+                    scope_id: rule.rule.scope.scope_id.clone(),
+                    branch_id: agent.branch_scope.branch_id.clone(),
+                    perspective_id: agent.perspective_key.perspective_id.clone(),
+                    authority_scope_id: authority_scope_id.clone(),
+                    activation_generation: activation.activation_id.clone(),
+                };
+                let source =
+                    |kind,
+                     owner_id: &str,
+                     source_id: &str,
+                     revision_id: &str,
+                     content_hash: &str| PlannerSourcePosition {
+                        kind,
+                        owner_id: owner_id.to_string(),
+                        source_id: source_id.to_string(),
+                        revision_id: revision_id.to_string(),
+                        content_hash: content_hash.to_string(),
+                        scope_id: context.scope_id.clone(),
+                        branch_id: context.branch_id.clone(),
+                        perspective_id: context.perspective_id.clone(),
+                        authority_scope_id: context.authority_scope_id.clone(),
+                        invalidated_by_revision_id: None,
+                    };
+                let capability_catalog_revision_id = {
+                    let bytes = serde_json::to_vec(&resolved.receipt.executable_contracts)
+                        .map_err(|error| {
+                            RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
+                        })?;
+                    blake3::hash(&bytes).to_hex().to_string()
+                };
+                let family_revision = registry
+                    .current(&composed.bindings.belief_family_id)
                     .map_err(|error| {
                         RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
+                    })?
+                    .ok_or_else(|| {
+                        RuntimeAssemblyError::RuntimeHandleConstruction(
+                            "Agent reconciliation belief family is not installed".to_string(),
+                        )
                     })?;
+                let belief_key = meld_world_model::configured_belief_key(
+                    &family_revision,
+                    &agent.subject,
+                    &agent.perspective_key,
+                    &agent.branch_scope,
+                );
+                let current = ports.event_append().watermark().map_err(|error| {
+                    RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
+                })?;
+                let planner_source_positions = vec![
+                    source(
+                        PlannerSourceKind::Directive,
+                        "agent",
+                        &agent.agent_id,
+                        &resolved.receipt.receipt_id,
+                        &resolved.receipt.receipt_id,
+                    ),
+                    source(
+                        PlannerSourceKind::MaintainedCondition,
+                        "agent",
+                        &condition.condition_id,
+                        &resolved.maintained_condition.content_hash,
+                        &resolved.maintained_condition.content_hash,
+                    ),
+                    source(
+                        PlannerSourceKind::CapabilityCatalog,
+                        "execution.capability",
+                        "active-executable-contract-set",
+                        &capability_catalog_revision_id,
+                        &capability_catalog_revision_id,
+                    ),
+                    source(
+                        PlannerSourceKind::CurationCatalog,
+                        "curation",
+                        &rule.rule_id,
+                        &rule.content_hash,
+                        &rule.content_hash,
+                    ),
+                    source(
+                        PlannerSourceKind::StrategyPolicy,
+                        "strategy",
+                        &strategy.package.evaluation_policy.policy_id,
+                        &resolved.strategy_theory.content_hash,
+                        &resolved.strategy_theory.content_hash,
+                    ),
+                ];
+                let planner_request = PlannerCurrentAssemblyRequest {
+                    context: context.clone(),
+                    policy: PlannerAssemblyPolicy {
+                        policy_revision_id: format!(
+                            "reasoning-policy::{}",
+                            resolved.receipt.receipt_id
+                        ),
+                        required_sources: vec![
+                            PlannerSourceKind::Graph,
+                            PlannerSourceKind::Belief,
+                            PlannerSourceKind::Directive,
+                            PlannerSourceKind::MaintainedCondition,
+                            PlannerSourceKind::CapabilityCatalog,
+                            PlannerSourceKind::CurationCatalog,
+                            PlannerSourceKind::StrategyPolicy,
+                        ],
+                        explicitly_not_required: vec![
+                            PlannerSourceKind::Causation,
+                            PlannerSourceKind::Regime,
+                        ],
+                    },
+                    traversal_cut_request: TraversalCutRequest {
+                        owners: {
+                            let mut owners = vec![
+                                TraversalOwnerRequirement {
+                                    owner_id: rule.rule.source_owner_id.clone(),
+                                    scope: rule.rule.scope.clone(),
+                                    required: true,
+                                },
+                                TraversalOwnerRequirement {
+                                    owner_id: meld_world_model::CURATION_OWNER_ID.to_string(),
+                                    scope: rule.rule.scope.clone(),
+                                    required: false,
+                                },
+                            ];
+                            owners.sort();
+                            owners
+                        },
+                        scope: rule.rule.scope.clone(),
+                        currentness: OwnerCurrentnessPolicy::LatestComplete,
+                        event_position: meld_events::LedgerCursor {
+                            ledger_id: current.ledger_id,
+                            after_seq: current.committed_seq,
+                        },
+                    },
+                    traversal_request: rule.rule.traversal_request(),
+                    belief_key,
+                    unanchored_belief: family_revision.config.anchor_requirement
+                        == meld_world_model::belief::AnchorRequirement::Unanchored,
+                    source_positions: planner_source_positions.clone(),
+                };
+                let authority = CurationAuthority {
+                    agent_id: agent_id.clone(),
+                    perspective: agent.perspective_key,
+                    branch_scope: agent.branch_scope,
+                    activation_generation: activation.activation_id,
+                    subject: agent.subject,
+                };
+                let frozen_authority = AgentAuthorizationFence {
+                    activation_generation: authority.activation_generation.clone(),
+                    authority_policy_content_hash: resolved
+                        .receipt
+                        .authority_policy
+                        .content_hash
+                        .clone(),
+                };
                 Ok(Self::AgentActor(Box::new(AgentActorFactory {
-                    kind,
                     runtime_id: runtime_id.to_string(),
-                    agent_id,
-                    agent_store: Arc::clone(agent_store),
-                    belief_store: Arc::clone(belief),
-                    traversal_store: Arc::clone(traversal),
-                    goal_store: Arc::clone(goal_store),
-                    goal_command: goal_command.clone(),
-                    goal_mutation: goal_mutation.clone(),
-                    strategy: composed.theory.strategy.clone(),
-                    curation_rule,
-                    maintained_condition,
+                    goal,
+                    store: Arc::clone(agent_store),
+                    planner: Arc::new(ProductAgentPlannerPort::new(
+                        Arc::clone(belief),
+                        Arc::clone(traversal),
+                        ports.event_append().clone(),
+                        planner_request,
+                    )),
+                    authority_port: Arc::new(ProductAgentAuthorityPort::new(
+                        Arc::clone(agent_store),
+                        Arc::clone(theory_receipts),
+                        Arc::clone(pds_packages),
+                        resolved.receipt.selection.clone(),
+                        agent_id,
+                    )),
+                    frozen_authority,
+                    curation: Arc::new(ProductPlannedCurationPort::new(Arc::clone(curation_store))),
+                    strategy,
+                    authority,
+                    rule,
+                    #[cfg(test)]
+                    planner_source_positions,
                 })))
             }
             "execution.planning" => {
@@ -2510,59 +2707,23 @@ impl RuntimeSemanticHandleFactory {
                 }))
             }
             Self::AgentActor(factory) => {
-                let (curation, satisfaction) = match factory.kind {
-                    AgentActorKind::GoalCuration => {
-                        let actor = match factory.strategy.clone() {
-                            Some(strategy) => AgentGoalCurationActor::new_with_strategy(
-                                factory.runtime_id.clone(),
-                                factory.agent_id.clone(),
-                                Arc::clone(&factory.agent_store),
-                                Arc::clone(&factory.belief_store),
-                                Arc::clone(&factory.traversal_store),
-                                strategy,
-                            ),
-                            None => AgentGoalCurationActor::new(
-                                factory.runtime_id.clone(),
-                                factory.agent_id.clone(),
-                                Arc::clone(&factory.agent_store),
-                                Arc::clone(&factory.belief_store),
-                                Arc::clone(&factory.traversal_store),
-                            ),
-                        };
-                        let actor = match factory.curation_rule.clone() {
-                            Some(rule) => actor.with_curation_rule(rule),
-                            None => actor,
-                        };
-                        let actor = match factory.maintained_condition.clone() {
-                            Some(condition) => actor.with_maintained_condition(condition),
-                            None => actor,
-                        };
-                        (Some(actor), None)
-                    }
-                    AgentActorKind::SatisfactionCuration => (
-                        None,
-                        Some(AgentSatisfactionCurationActor::new(
-                            factory.runtime_id.clone(),
-                            factory.agent_id.clone(),
-                            Arc::clone(&factory.agent_store),
-                            Arc::clone(&factory.belief_store),
-                            Arc::clone(&factory.traversal_store),
-                        )),
-                    ),
-                };
+                let actor = AgentReconciliationActor::new(
+                    factory.runtime_id.clone(),
+                    factory.goal.clone(),
+                    Arc::clone(&factory.store),
+                    Arc::clone(&factory.planner),
+                    Arc::clone(&factory.authority_port),
+                    factory.frozen_authority.clone(),
+                    Arc::clone(&factory.curation),
+                    factory.strategy.clone(),
+                    factory.authority.clone(),
+                    factory.rule.clone(),
+                )
+                .expect("Agent reconciliation factory holds validated exact bindings");
                 RuntimeSemanticHandle::AgentActor(Box::new(AgentActorHandle {
-                    kind: factory.kind,
                     runtime_id: factory.runtime_id.clone(),
-                    agent_id: factory.agent_id.clone(),
-                    curation,
-                    satisfaction,
-                    goal_query: ExecutionAgentGoalQueryPort::new(Arc::clone(&factory.goal_store)),
-                    goal_command: factory.goal_command.clone(),
-                    goal_mutation: factory.goal_mutation.clone(),
-                    sequence: DurableStepSequence::new(
-                        Arc::clone(&factory.belief_store),
-                        &factory.runtime_id,
-                    ),
+                    agent_id: factory.goal.agent_id.clone(),
+                    actor,
                 }))
             }
             Self::Planning(factory) => RuntimeSemanticHandle::Planning(Box::new(PlanningHandle {
@@ -2883,43 +3044,11 @@ impl StandingCurationHandle {
 
 impl AgentActorHandle {
     fn tick(&mut self, budget: WorkBudget) -> WorkerTickReport {
-        let sequence = match self.sequence.next() {
-            Ok(sequence) => sequence,
-            Err(error) => {
-                return WorkerTickReport::fatal(
-                    self.runtime_id.clone(),
-                    "world_model",
-                    Some("agent_curation"),
-                    "agent_step_sequence",
-                    "step_sequence_failed",
-                    error,
-                )
-            }
-        };
-        let request = AgentStepRequest {
-            sequence,
-            max_items: budget.max_items,
-        };
-        // Curation crosses into execution only through the named
-        // curation-to-goal-set port, bound here at composition.
-        let mut port = CurationGoalExecutionPort::new(
-            self.goal_command.clone(),
-            self.goal_mutation.clone(),
-            sequence,
-        );
-        let report = match self.kind {
-            AgentActorKind::GoalCuration => self
-                .curation
-                .as_ref()
-                .expect("goal curation handle holds its actor")
-                .bounded_step(&request, &mut self.goal_query, &mut port),
-            AgentActorKind::SatisfactionCuration => self
-                .satisfaction
-                .as_ref()
-                .expect("satisfaction handle holds its actor")
-                .bounded_step(&request, &mut self.goal_query, &mut port),
-        };
-        agent_step_worker_report(report, &self.runtime_id, &self.agent_id)
+        agent_step_worker_report(
+            self.actor.bounded_step(budget.max_items),
+            &self.runtime_id,
+            &self.agent_id,
+        )
     }
 }
 
@@ -3428,11 +3557,9 @@ fn standing_curation_worker_report(report: CurationStepReport) -> WorkerTickRepo
 
 /// Translate one bounded agent step report into the supervisor shape.
 ///
-/// Like assessment, the injected step sequence is bookkeeping: both
-/// checkpoints carry it and progress derives from persisted decisions and
-/// accepted sink submissions.
+/// Checkpoints are the durable append-only Agent reconciliation position.
 fn agent_step_worker_report(
-    report: AgentStepReport,
+    report: AgentReconciliationReport,
     runtime_id: &str,
     agent_id: &str,
 ) -> WorkerTickReport {
@@ -3440,31 +3567,31 @@ fn agent_step_worker_report(
         actor_id: runtime_id.to_string(),
         scope: worker_scope("world_model", Some("agent_curation"), Some(agent_id), None),
         input_checkpoint: WorkerCheckpoint {
-            name: "agent_step_sequence".to_string(),
-            value: report.input_sequence,
+            name: "agent_reconciliation_records".to_string(),
+            value: report.input_position,
         },
         output_checkpoint: WorkerCheckpoint {
-            name: "agent_step_sequence".to_string(),
-            value: report.input_sequence,
+            name: "agent_reconciliation_records".to_string(),
+            value: report.output_position,
         },
         items_attempted: report.items_attempted,
-        items_committed: report.decisions_persisted + report.sink_submissions,
+        items_committed: report.records_persisted,
         retryable_errors: report
             .retryable_errors
             .into_iter()
-            .map(|issue| WorkerTickIssue {
-                item_id: issue.item_id,
-                code: issue.code,
-                message: issue.message,
+            .map(|message| WorkerTickIssue {
+                item_id: None,
+                code: "agent_reconciliation_retryable".to_string(),
+                message,
             })
             .collect(),
         fatal_errors: report
             .fatal_errors
             .into_iter()
-            .map(|issue| WorkerTickIssue {
-                item_id: issue.item_id,
-                code: issue.code,
-                message: issue.message,
+            .map(|message| WorkerTickIssue {
+                item_id: None,
+                code: "agent_reconciliation_fatal".to_string(),
+                message,
             })
             .collect(),
         budget_exhausted: report.budget_exhausted,
@@ -3597,9 +3724,7 @@ mod tests {
     use std::sync::Mutex;
 
     use meld_events::EventEnvelope;
-    use meld_execution::goals::GoalCommandOutcome;
     use meld_execution::task_network::EventAppendSink;
-    use meld_lang::{Goal, GoalLifecycle, GoalPriority, GoalSource, Proposition, Term};
     use meld_world_model::PerspectiveKey;
     use proptest::prelude::*;
 
@@ -3620,10 +3745,10 @@ mod tests {
             assembly.supervisor_store().path(),
             temp.path().join("supervisor.sled")
         );
-        assert_eq!(assembly.registry().len(), 14);
+        assert_eq!(assembly.registry().len(), 13);
         assert!(assembly
             .registry()
-            .contains("world_model.agent_goal_curation"));
+            .contains(AGENT_RECONCILIATION_RUNTIME_ID));
         let task_dispatch = assembly
             .desired_runtime_state()
             .iter()
@@ -3654,7 +3779,7 @@ mod tests {
             description.supervisor_store_path,
             expected_root.join("supervisor.sled")
         );
-        assert_eq!(description.desired_runtime_state.len(), 14);
+        assert_eq!(description.desired_runtime_state.len(), 13);
         assert!(!description.product_root.exists());
         assert!(!description.supervisor_store_path.exists());
     }
@@ -3671,7 +3796,7 @@ mod tests {
 
         assert_eq!(second.product_root(), temp.path());
         assert!(second.registry().contains("execution.publication"));
-        assert_eq!(second.desired_runtime_state().len(), 14);
+        assert_eq!(second.desired_runtime_state().len(), 13);
     }
 
     #[test]
@@ -3696,7 +3821,7 @@ mod tests {
                 .iter()
                 .filter(|state| state.enabled)
                 .count(),
-            12
+            11
         );
     }
 
@@ -3892,62 +4017,236 @@ mod tests {
     }
 
     #[test]
-    fn goal_command_port_accepts_agent_goal_command() {
-        let temp = tempfile::tempdir().unwrap();
-        let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
-        let command = agent_goal_command();
+    fn root_registry_exposes_one_agent_reconciliation_participant_without_execution_writers() {
+        let registry = RuntimeFactoryRegistry::first_proof_registry().unwrap();
+        let agent_ids = registry
+            .descriptors()
+            .filter(|descriptor| descriptor.runtime_id.starts_with("world_model.agent"))
+            .map(|descriptor| descriptor.runtime_id.as_str())
+            .collect::<Vec<_>>();
 
-        let outcome = assembly
-            .ports()
-            .goal_command()
-            .accept_agent_goal_command(command, 7)
-            .unwrap();
-
-        match outcome {
-            GoalCommandOutcome::Applied(record) => {
-                assert_eq!(record.goal.goal_id, "goal-a");
-                assert!(matches!(record.goal.lifecycle, GoalLifecycle::Active));
-                assert_eq!(record.created_at_seq, 7);
-            }
-            other => panic!("unexpected outcome: {other:?}"),
-        }
+        assert_eq!(agent_ids, vec![AGENT_RECONCILIATION_RUNTIME_ID]);
+        let descriptor = registry.get(AGENT_RECONCILIATION_RUNTIME_ID).unwrap();
+        assert_eq!(
+            descriptor.required_resources,
+            vec![
+                RuntimeResource::PlannerProjection,
+                RuntimeResource::WorldModel
+            ]
+        );
+        assert!(!descriptor
+            .required_resources
+            .contains(&RuntimeResource::GoalCommand));
+        assert!(!descriptor
+            .required_resources
+            .contains(&RuntimeResource::GoalMutation));
     }
 
     #[test]
-    fn goal_mutation_port_satisfies_agent_goal_mutation() {
-        let temp = tempfile::tempdir().unwrap();
-        let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
-        let command = agent_goal_command();
-        let goal_id = command.goal.goal_id.clone();
-        let dedupe_key = command.dedupe_key.clone();
-        assembly
-            .ports()
-            .goal_command()
-            .accept_agent_goal_command(command, 7)
-            .unwrap();
+    fn root_handle_drives_mixed_plan_through_curation_to_unpublished_task_eligibility() {
+        use meld_world_model::agent::AgentActivationRecord;
 
-        let mutation = agent_goal_mutation_command(dedupe_key, goal_id, 9);
-        let outcome = assembly
-            .ports()
-            .goal_mutation()
-            .satisfy_agent_goal_mutation(mutation.clone())
+        let harness = StewardshipHarness::new();
+        let subject = stewardship_subject_ref(&harness.binding).unwrap();
+        let rule = standing_curation_rule(subject.clone());
+        {
+            let assembly = harness.assembly(StewardshipTheoryBindings::default());
+            harness.run_world_genesis(&assembly);
+            crate::docs::theory::install_package(
+                assembly.stores(),
+                &Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/docs_freshness"),
+                5,
+            )
             .unwrap();
-        let replay = assembly
-            .ports()
-            .goal_mutation()
-            .satisfy_agent_goal_mutation(mutation)
-            .unwrap();
-        assert_eq!(replay, outcome);
-
-        match outcome {
-            GoalCommandOutcome::Applied(record) => {
-                assert!(matches!(
-                    record.goal.lifecycle,
-                    GoalLifecycle::Satisfied { at_seq: 9 }
-                ));
-            }
-            other => panic!("unexpected outcome: {other:?}"),
+            assembly
+                .stores()
+                .agent_store
+                .put_activation(&AgentActivationRecord {
+                    activation_id: "activation-root-v1".to_string(),
+                    agent_id: STEWARD_AGENT_ID.to_string(),
+                    started_at_seq: 6,
+                    status: AgentActivationStatus::Activated,
+                    last_error: None,
+                    lease_id: Some("agent-activation-root-v1".to_string()),
+                })
+                .unwrap();
+            assembly
+                .stores()
+                .curation_store
+                .install_rule(rule, 7)
+                .unwrap();
+            assembly
+                .ports()
+                .event_append()
+                .append_envelope_idempotent(workspace_owner_publication(
+                    subject.clone(),
+                    "workspace-v1",
+                ))
+                .unwrap();
+            assembly
+                .graph_runtime()
+                .catch_up_bounded(GraphCatchUpBudget { max_items: 16 })
+                .unwrap();
+            assembly.flush_product_boundary().unwrap();
         }
+
+        let assembly = harness.assembly(StewardshipTheoryBindings::default());
+        let resolved = ResolvedStewardshipTheory::resolve(
+            assembly.stores(),
+            &harness.binding.package,
+            &subject,
+        )
+        .unwrap();
+        let catalog_bytes = serde_json::to_vec(&resolved.receipt.executable_contracts).unwrap();
+        let catalog_revision_id = blake3::hash(&catalog_bytes).to_hex().to_string();
+        let agent_factory = assembly
+            .handle_factories()
+            .get(AGENT_RECONCILIATION_RUNTIME_ID)
+            .unwrap();
+        assert!(agent_factory.has_semantic_body());
+        let RuntimeSemanticHandleFactory::AgentActor(agent_semantic) = &agent_factory.semantic
+        else {
+            panic!("production Agent descriptor did not resolve its Agent participant");
+        };
+        let capability_source = agent_semantic
+            .planner_source_positions
+            .iter()
+            .find(|position| position.kind == PlannerSourceKind::CapabilityCatalog)
+            .unwrap();
+        assert_eq!(capability_source.owner_id, "execution.capability");
+        assert_eq!(capability_source.revision_id, catalog_revision_id);
+        assert_eq!(capability_source.content_hash, catalog_revision_id);
+        let strategy_source = agent_semantic
+            .planner_source_positions
+            .iter()
+            .find(|position| position.kind == PlannerSourceKind::StrategyPolicy)
+            .unwrap();
+        assert_eq!(
+            strategy_source.source_id,
+            resolved.strategy_theory.package.evaluation_policy.policy_id
+        );
+        assert_eq!(
+            strategy_source.revision_id,
+            resolved.strategy_theory.content_hash
+        );
+        assert_eq!(
+            strategy_source.content_hash,
+            resolved.strategy_theory.content_hash
+        );
+        assert_ne!(
+            strategy_source.content_hash,
+            resolved.strategy_theory.theory_id
+        );
+
+        let mut belief = assembly
+            .handle_factories()
+            .get("world_model.belief_assessment")
+            .unwrap()
+            .build_handle();
+        belief
+            .start_after_lease(RuntimeLeaseContext {
+                runtime_id: "world_model.belief_assessment".to_string(),
+                lease_id: "belief-root-proof".to_string(),
+            })
+            .unwrap();
+        let belief_report = belief.tick(WorkBudget { max_items: 8 }).unwrap();
+        assert!(belief_report.fatal_errors.is_empty());
+        assert!(belief_report.items_committed > 0);
+
+        let mut handle = agent_factory.build_handle();
+        handle
+            .start_after_lease(RuntimeLeaseContext {
+                runtime_id: AGENT_RECONCILIATION_RUNTIME_ID.to_string(),
+                lease_id: "agent-root-proof".to_string(),
+            })
+            .unwrap();
+        let first = handle.tick(WorkBudget { max_items: 8 }).unwrap();
+        assert_eq!(first.actor_id, AGENT_RECONCILIATION_RUNTIME_ID);
+        assert!(first.fatal_errors.is_empty(), "{first:#?}");
+        assert!(first.items_committed > 0);
+        let mut curation = assembly
+            .handle_factories()
+            .get("world_model.standing_curation")
+            .unwrap()
+            .build_handle();
+        curation
+            .start_after_lease(RuntimeLeaseContext {
+                runtime_id: "world_model.standing_curation".to_string(),
+                lease_id: "curation-root-proof".to_string(),
+            })
+            .unwrap();
+        let curation_report = curation.tick(WorkBudget { max_items: 1 }).unwrap();
+        assert!(curation_report.fatal_errors.is_empty());
+        assert!(curation_report.items_committed > 0);
+        assembly
+            .graph_runtime()
+            .catch_up_bounded(GraphCatchUpBudget { max_items: 16 })
+            .unwrap();
+        assembly.flush_product_boundary().unwrap();
+        drop(handle);
+        drop(curation);
+        drop(belief);
+        drop(assembly);
+
+        let assembly = harness.assembly(StewardshipTheoryBindings::default());
+        let mut handle = assembly
+            .handle_factories()
+            .get(AGENT_RECONCILIATION_RUNTIME_ID)
+            .unwrap()
+            .build_handle();
+        handle
+            .start_after_lease(RuntimeLeaseContext {
+                runtime_id: AGENT_RECONCILIATION_RUNTIME_ID.to_string(),
+                lease_id: "agent-root-proof-reopen".to_string(),
+            })
+            .unwrap();
+        let second = handle.tick(WorkBudget { max_items: 8 }).unwrap();
+        assert_eq!(second.input_checkpoint.value, first.output_checkpoint.value);
+        assert!(second.output_checkpoint.value > second.input_checkpoint.value);
+        assert!(
+            second
+                .waiting_on
+                .iter()
+                .any(|waiting| waiting.condition == "future_execution_admission"),
+            "{second:#?}"
+        );
+        let replay = handle.tick(WorkBudget { max_items: 8 }).unwrap();
+        assert_eq!(
+            replay.input_checkpoint.value,
+            second.output_checkpoint.value
+        );
+        assert_eq!(
+            replay.output_checkpoint.value,
+            replay.input_checkpoint.value
+        );
+        assert_eq!(replay.items_committed, 0);
+        assert!(replay
+            .waiting_on
+            .iter()
+            .all(|wait| wait.subject_key.is_some()));
+        assembly
+            .stores()
+            .agent_store
+            .put_activation(&AgentActivationRecord {
+                activation_id: "activation-root-v2".to_string(),
+                agent_id: STEWARD_AGENT_ID.to_string(),
+                started_at_seq: 8,
+                status: AgentActivationStatus::Activated,
+                last_error: None,
+                lease_id: Some("agent-activation-root-v2".to_string()),
+            })
+            .unwrap();
+        let stale = handle.tick(WorkBudget { max_items: 8 }).unwrap();
+        assert!(stale
+            .waiting_on
+            .iter()
+            .any(|wait| wait.condition == "agent_authority_changed"));
+        assert!(assembly
+            .stores()
+            .goal_store
+            .goal_records()
+            .unwrap()
+            .is_empty());
     }
 
     #[test]
@@ -4002,7 +4301,7 @@ mod tests {
         let package = assembly.supervisor_startup_package();
 
         assert_eq!(package.product_root, temp.path());
-        assert_eq!(package.handle_factories.len(), 14);
+        assert_eq!(package.handle_factories.len(), 13);
         assert_eq!(package.default_work_budget.max_items, 64);
         assert_eq!(package.lifecycle_config.heartbeat_interval_ms, 1_000);
         assert_eq!(package.lifecycle_config.lease_duration_ms, 15 * 60 * 1_000);
@@ -4107,219 +4406,6 @@ mod tests {
             disabled_error,
             RuntimeAssemblyError::RuntimeRegistry(RuntimeRegistryError::DuplicateRuntimeId(_))
         ));
-    }
-
-    #[test]
-    fn construction_does_not_append_events_or_query_semantic_work() {
-        let temp = tempfile::tempdir().unwrap();
-        seed_invalid_goal_record(temp.path());
-        seed_invalid_belief_view(temp.path());
-        seed_invalid_task_network_journal(temp.path());
-
-        let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
-
-        assert!(assembly
-            .ports()
-            .event_replay()
-            .read_after_limit(0, 1)
-            .unwrap()
-            .is_empty());
-        assert!(assembly.stores().goal_store.active_goals().is_err());
-        assert!(assembly
-            .ports()
-            .planner_projection()
-            .project_current_world_state(&subject(), "docs_freshness", None, None)
-            .is_err());
-        assert!(assembly
-            .ports()
-            .adapters()
-            .task_networks()
-            .factory()
-            .open_network("network-a")
-            .is_err());
-        let outcome = assembly
-            .ports()
-            .goal_command()
-            .accept_agent_goal_command(agent_goal_command(), 7)
-            .unwrap();
-        assert!(matches!(outcome, GoalCommandOutcome::Applied(_)));
-    }
-
-    #[test]
-    fn assembly_reopens_ports_over_persisted_state() {
-        let temp = tempfile::tempdir().unwrap();
-        let first = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
-        let envelope = EventEnvelope::with_now_domain(
-            "session-a",
-            "execution",
-            "network-a",
-            "execution.test",
-            None,
-            serde_json::json!({"ok": true}),
-        )
-        .with_record_id("record-a");
-        let command = agent_goal_command();
-        let command_replay = command.clone();
-
-        first
-            .ports()
-            .event_append()
-            .append_envelope_idempotent(envelope)
-            .unwrap();
-        first
-            .ports()
-            .goal_command()
-            .accept_agent_goal_command(command, 7)
-            .unwrap();
-        let network = first
-            .ports()
-            .adapters()
-            .task_networks()
-            .factory()
-            .open_network("network-a")
-            .unwrap();
-        network.flush().unwrap();
-        first.flush_product_boundary().unwrap();
-        first.flush_supervisor_store().unwrap();
-        drop(first);
-
-        let second = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
-        let records = second
-            .ports()
-            .event_replay()
-            .read_after_limit(0, 10)
-            .unwrap();
-        let outcome = second
-            .ports()
-            .goal_command()
-            .accept_agent_goal_command(command_replay, 7)
-            .unwrap();
-
-        assert_eq!(records.len(), 1);
-        assert!(matches!(outcome, GoalCommandOutcome::Applied(_)));
-        second.flush_product_boundary().unwrap();
-        second.flush_supervisor_store().unwrap();
-    }
-
-    fn agent_goal_mutation_command(
-        dedupe_key: meld_world_model::AgentCurationDedupeKey,
-        goal_id: String,
-        review_seq: u64,
-    ) -> meld_world_model::AgentGoalMutationCommand {
-        meld_world_model::AgentGoalMutationCommand {
-            command_id: "mutation-a".to_string(),
-            agent_id: "agent-a".to_string(),
-            goal_id,
-            kind: meld_world_model::AgentGoalMutationKind::Satisfy {
-                at_seq: review_seq,
-                lifecycle_epoch: 0,
-            },
-            dedupe_key,
-            review_seq,
-            projection_version: "world_model.planner.v1".to_string(),
-            planner_source_refs: Vec::new(),
-            planner_warnings: Vec::new(),
-        }
-    }
-
-    fn seed_invalid_goal_record(root: &Path) {
-        let layout = ProductStorageLayout::from_root(root);
-        let db = sled::open(layout.execution_goals_db).unwrap();
-        db.open_tree("execution_goal_records")
-            .unwrap()
-            .insert("corrupt-goal", b"not json".as_slice())
-            .unwrap();
-        db.flush().unwrap();
-        drop(db);
-    }
-
-    fn seed_invalid_belief_view(root: &Path) {
-        let layout = ProductStorageLayout::from_root(root);
-        let subject = subject();
-        let perspective = PerspectiveKey::new("default", "default").unwrap();
-        let belief_key = meld_world_model::BeliefKey {
-            subject: subject.clone(),
-            dimension_id: "docs_freshness".to_string(),
-            predicate_id: "confidence".to_string(),
-            perspective: perspective.clone(),
-            branch_scope: meld_world_model::BranchScope::main(),
-            evidence_policy_id: "default_policy".to_string(),
-        };
-        let key = belief_key.index_key();
-        let db = sled::open(layout.world_model_db).unwrap();
-        db.open_tree("belief_views")
-            .unwrap()
-            .insert(key.as_bytes(), b"not json".as_slice())
-            .unwrap();
-        db.open_tree("belief_view_by_subject")
-            .unwrap()
-            .insert(
-                format!(
-                    "{}::{}::{}",
-                    subject.index_key(),
-                    perspective.index_key(),
-                    key
-                )
-                .as_bytes(),
-                key.as_bytes(),
-            )
-            .unwrap();
-        db.flush().unwrap();
-        drop(db);
-    }
-
-    fn seed_invalid_task_network_journal(root: &Path) {
-        let layout = ProductStorageLayout::from_root(root);
-        std::fs::create_dir_all(&layout.task_networks_root).unwrap();
-        let db = sled::open(layout.task_networks_root.join("network-a.sled")).unwrap();
-        db.open_tree("task_network_journal_by_revision")
-            .unwrap()
-            .insert(1_u64.to_be_bytes().as_slice(), b"not json".as_slice())
-            .unwrap();
-        db.flush().unwrap();
-        drop(db);
-    }
-
-    fn agent_goal_command() -> meld_world_model::AgentGoalCommand {
-        let subject = subject();
-        let rule = meld_world_model::AgentCurationRuleConfig {
-            maintained_condition_id: None,
-            dimension_id: "docs_freshness".to_string(),
-            threshold: 0.7,
-            priority_urgency: 8,
-            desired_summary: "fresh docs".to_string(),
-            source_kind: "docs_freshness".to_string(),
-        };
-        let dedupe_key = meld_world_model::AgentCurationDedupeKey::threshold_rule(
-            "agent-a",
-            &subject,
-            &meld_world_model::BranchScope::main(),
-            &rule,
-        );
-        meld_world_model::AgentGoalCommand {
-            command_id: "command-a".to_string(),
-            goal: Goal {
-                goal_id: "goal-a".to_string(),
-                agent_id: "agent-a".to_string(),
-                target: Proposition::Holds {
-                    subject: Term::Object(subject),
-                    dimension: Term::Dimension("docs_freshness".to_string()),
-                    condition: rule.target_condition(),
-                },
-                priority: GoalPriority {
-                    urgency: 8,
-                    cost_ceiling: None,
-                },
-                source: GoalSource::BeliefDivergence {
-                    dimension: "docs_freshness".to_string(),
-                    observed: "confidence=0.2".to_string(),
-                    desired: "fresh docs".to_string(),
-                },
-                lifecycle: GoalLifecycle::Proposed,
-            },
-            dedupe_key,
-            strategy_authorization: None,
-        }
     }
 
     fn subject() -> meld_events::DomainObjectRef {
@@ -4779,7 +4865,7 @@ mod tests {
 
         let set = derive_stewardship_registrations(&harness.binding).unwrap();
 
-        assert_eq!(set.registrations.len(), 14);
+        assert_eq!(set.registrations.len(), 13);
         for passive in STEWARDSHIP_PASSIVE_SERVICE_IDS {
             assert_eq!(
                 set.kind_of(passive),
@@ -4792,8 +4878,7 @@ mod tests {
             "world_model.belief_assessment",
             "world_model.evidence_ingestion",
             "world_model.standing_curation",
-            "world_model.agent_goal_curation",
-            "world_model.satisfaction_curation",
+            AGENT_RECONCILIATION_RUNTIME_ID,
             "execution.planning",
             "execution.task_dispatch",
             "execution.publication",
@@ -4829,8 +4914,7 @@ mod tests {
             "world_model.belief_assessment",
             "world_model.evidence_ingestion",
             "world_model.standing_curation",
-            "world_model.agent_goal_curation",
-            "world_model.satisfaction_curation",
+            AGENT_RECONCILIATION_RUNTIME_ID,
             "execution.planning",
         ] {
             assert_eq!(
@@ -4924,8 +5008,6 @@ mod tests {
             "world_model.graph_replay",
             "world_model.belief_assessment",
             "world_model.evidence_ingestion",
-            "world_model.agent_goal_curation",
-            "world_model.satisfaction_curation",
             "execution.publication",
             STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID,
         ];
@@ -4940,6 +5022,10 @@ mod tests {
                 "'{runtime_id}' must be truthfully active after genesis, got {lifecycle:?}"
             );
         }
+        assert_eq!(
+            lifecycle_of(&status, AGENT_RECONCILIATION_RUNTIME_ID),
+            Some(RegistrationLifecycle::UnresolvedRequiredBinding)
+        );
         // Planning theory has no durable registry yet, so it stays a
         // truthful unresolved binding until a composition injects it.
         assert_eq!(
@@ -5412,7 +5498,7 @@ mod tests {
             let assembly = harness.assembly(StewardshipTheoryBindings::default());
             let sequence = DurableStepSequence::new(
                 Arc::clone(assembly.stores().belief_store.opened().unwrap()),
-                "world_model.satisfaction_curation",
+                AGENT_RECONCILIATION_RUNTIME_ID,
             );
             let first = sequence.next().unwrap();
             let second = sequence.next().unwrap();
@@ -5425,7 +5511,7 @@ mod tests {
         let assembly = harness.assembly(StewardshipTheoryBindings::default());
         let sequence = DurableStepSequence::new(
             Arc::clone(assembly.stores().belief_store.opened().unwrap()),
-            "world_model.satisfaction_curation",
+            AGENT_RECONCILIATION_RUNTIME_ID,
         );
         assert!(sequence.next().unwrap() > first_sequence);
     }

@@ -5,7 +5,6 @@ use std::path::PathBuf;
 use meld_execution::planning::PlanningRuntimeActorReport;
 use meld_execution::task_network::{PublicationBridgeReport, PublicationRuntimeReport};
 use meld_world_model::world_state::graph::runtime::GraphCatchUpReport;
-use meld_world_model::AgentRuntimeReport;
 use serde::{Deserialize, Serialize};
 
 /// Current schema version for runtime status cache records.
@@ -1236,49 +1235,6 @@ impl From<PlanningRuntimeActorReport> for WorkerTickReport {
     }
 }
 
-impl From<AgentRuntimeReport> for WorkerTickReport {
-    fn from(report: AgentRuntimeReport) -> Self {
-        Self {
-            actor_id: report.actor_id.clone(),
-            scope: WorkerScope {
-                domain_id: "world_model".to_string(),
-                stream_id: None,
-                work_key: Some("agent_curation".to_string()),
-                agent_id: Some(report.actor_id),
-                perspective_key: None,
-                branch_id: None,
-                subject_key: None,
-            },
-            input_checkpoint: WorkerCheckpoint {
-                name: "agent_input_sequence".to_string(),
-                value: report.input_sequence,
-            },
-            output_checkpoint: WorkerCheckpoint {
-                name: "agent_output_sequence".to_string(),
-                value: report.output_sequence,
-            },
-            items_attempted: report.delivered_count,
-            items_committed: report.decision_count + report.sink_submission_count,
-            retryable_errors: report
-                .retryable_errors
-                .into_iter()
-                .map(string_issue)
-                .collect(),
-            fatal_errors: report.fatal_errors.into_iter().map(string_issue).collect(),
-            budget_exhausted: report.budget_exhausted,
-            waiting_on: Vec::new(),
-        }
-    }
-}
-
-fn string_issue(message: String) -> WorkerTickIssue {
-    WorkerTickIssue {
-        item_id: None,
-        code: "runtime_issue".to_string(),
-        message,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1424,42 +1380,6 @@ mod tests {
             worker.retryable_errors[0].item_id.as_deref(),
             Some("goal-a")
         );
-    }
-
-    #[test]
-    fn agent_runtime_report_maps_to_worker_report() {
-        let report = AgentRuntimeReport {
-            actor_id: "agent-a".to_string(),
-            input_sequence: 20,
-            output_sequence: 21,
-            delivered_count: 2,
-            decision_count: 1,
-            sink_submission_count: 1,
-            sink_receipts: Vec::new(),
-            retryable_errors: vec!["retry".to_string()],
-            fatal_errors: Vec::new(),
-            budget_exhausted: false,
-        };
-
-        let worker: WorkerTickReport = report.into();
-        let action = RuntimeActionRecord::from_worker_tick(
-            "action-agent",
-            "world_model.agent_goal_curation",
-            25,
-            worker.clone(),
-        );
-
-        assert_eq!(worker.actor_id, "agent-a");
-        assert_eq!(worker.scope.agent_id.as_deref(), Some("agent-a"));
-        assert_eq!(worker.input_checkpoint.name, "agent_input_sequence");
-        assert_eq!(worker.output_checkpoint.name, "agent_output_sequence");
-        assert_eq!(worker.items_attempted, 2);
-        assert_eq!(worker.items_committed, 2);
-        assert_eq!(worker.retryable_errors[0].code, "runtime_issue");
-        assert_eq!(action.object_ref.object_type, "agent_curation");
-        assert_eq!(action.object_ref.object_id, "agent-a");
-        assert_eq!(action.checkpoints[0].input_name, "agent_input_sequence");
-        assert_eq!(action.checkpoints[0].output_name, "agent_output_sequence");
     }
 
     #[test]

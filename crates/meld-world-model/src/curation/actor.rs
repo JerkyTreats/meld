@@ -81,36 +81,45 @@ impl StandingCurationActor {
         };
         report.input_after_seq = watermark.committed_seq;
         report.output_after_seq = watermark.committed_seq;
-        let cut_request = TraversalCutRequest {
-            owners: expected_cut_owners(&self.rule),
-            scope: self.rule.rule.scope.clone(),
-            currentness: OwnerCurrentnessPolicy::LatestComplete,
-            event_position: crate::events::LedgerCursor {
-                ledger_id: watermark.ledger_id,
-                after_seq: watermark.committed_seq,
-            },
-        };
-        let cut = match self.traversal.cut(&cut_request) {
-            Ok(cut) => cut,
-            Err(error) => {
-                report.retryable_errors.push(error.to_string());
-                return report;
+        let candidate = match self.store.next_planned_operation(&self.authority.agent_id) {
+            Ok(Some(operation)) => operation,
+            Ok(None) => {
+                let cut_request = TraversalCutRequest {
+                    owners: expected_cut_owners(&self.rule),
+                    scope: self.rule.rule.scope.clone(),
+                    currentness: OwnerCurrentnessPolicy::LatestComplete,
+                    event_position: crate::events::LedgerCursor {
+                        ledger_id: watermark.ledger_id,
+                        after_seq: watermark.committed_seq,
+                    },
+                };
+                let cut = match self.traversal.cut(&cut_request) {
+                    Ok(cut) => cut,
+                    Err(error) => {
+                        report.retryable_errors.push(error.to_string());
+                        return report;
+                    }
+                };
+                if cut.status != TraversalCutStatus::Complete {
+                    report.waiting_on.push(WaitingOnDeclaration::broad(
+                        CURATION_CUT_INCOMPLETE,
+                        format!("Curation awaits a complete cut: {:?}", cut.issues),
+                    ));
+                    return report;
+                }
+                match CurationOperation::reconstruct(
+                    self.authority.clone(),
+                    self.rule.revision_ref(),
+                    cut,
+                    self.rule.rule.traversal_request(),
+                ) {
+                    Ok(operation) => operation,
+                    Err(error) => {
+                        report.fatal_errors.push(error.to_string());
+                        return report;
+                    }
+                }
             }
-        };
-        if cut.status != TraversalCutStatus::Complete {
-            report.waiting_on.push(WaitingOnDeclaration::broad(
-                CURATION_CUT_INCOMPLETE,
-                format!("standing Curation awaits a complete cut: {:?}", cut.issues),
-            ));
-            return report;
-        }
-        let candidate = match CurationOperation::reconstruct(
-            self.authority.clone(),
-            self.rule.revision_ref(),
-            cut,
-            self.rule.rule.traversal_request(),
-        ) {
-            Ok(operation) => operation,
             Err(error) => {
                 report.fatal_errors.push(error.to_string());
                 return report;
@@ -118,7 +127,16 @@ impl StandingCurationActor {
         };
         report.operations_attempted = 1;
         let operation = match self.store.operation_for_selection(&candidate.selection_id) {
-            Ok(Some(operation)) => operation,
+            Ok(Some(operation)) => match candidate.planned_authorization.clone() {
+                Some(authorization) => match operation.with_planned_authorization(authorization) {
+                    Ok(operation) => operation,
+                    Err(error) => {
+                        report.fatal_errors.push(error.to_string());
+                        return report;
+                    }
+                },
+                None => operation,
+            },
             Ok(None) => candidate,
             Err(error) => {
                 report.fatal_errors.push(error.to_string());

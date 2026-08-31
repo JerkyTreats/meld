@@ -1,17 +1,12 @@
 use std::sync::Arc;
 
 use meld_events::{DomainObjectRef, EventEnvelope, EventRecord, EventRelation};
-use meld_execution::capability::{
-    ArtifactSchemaVersionRange, CapabilityCatalog, CapabilityTypeContract, ExecutionClass,
-    ExecutionContract, InputCardinality, InputSlotSpec, OutputSlotSpec, ScopeContract,
-};
-use meld_execution::planning::{MethodLibrary, PlanningRuntime};
 use meld_lang::{
     Composition, Condition, CostEstimate, Effect, GoalLifecycle, Literal, Method, Operator,
     Proposition, Resolution, SlotConstraint, Step, StepKind, Term,
 };
 use meld_world_model::agent::{
-    AgentCurationDedupeKey, AgentCurationRuleConfig, AgentSubscriptionRecord, SeedAgentRegistration,
+    AgentCurationRuleConfig, AgentSubscriptionRecord, SeedAgentRegistration,
 };
 use meld_world_model::belief::{BeliefKey, BranchScope};
 use meld_world_model::world_state::graph::store::TraversalStore;
@@ -63,10 +58,6 @@ impl DocsFreshnessFirstProofFixture {
 
     pub fn subject(&self) -> DomainObjectRef {
         domain_object(SUBJECT_DOMAIN_ID, SUBJECT_OBJECT_KIND, SUBJECT_OBJECT_ID)
-    }
-
-    pub fn subject_term(&self) -> Term {
-        Term::Object(self.subject())
     }
 
     pub fn perspective(&self) -> PerspectiveKey {
@@ -133,7 +124,16 @@ impl DocsFreshnessFirstProofFixture {
     }
 
     pub fn expected_goal_source_identity(&self) -> String {
-        self.threshold_dedupe_key().index_key()
+        let rule = self.curation_rule_config();
+        format!(
+            "{}::{}::{}::{}::{}::{}",
+            AGENT_ID,
+            self.subject().index_key(),
+            self.branch_scope().branch_id,
+            rule.dimension_id,
+            rule.target_condition_key(),
+            rule.source_kind
+        )
     }
 
     pub fn expected_goal_command_id(&self) -> String {
@@ -256,44 +256,6 @@ impl DocsFreshnessFirstProofFixture {
         }"#
     }
 
-    pub fn capability_catalog(&self) -> CapabilityCatalog {
-        let mut catalog = CapabilityCatalog::new();
-        catalog
-            .register(CapabilityTypeContract {
-                capability_type_id: "docs.write".to_string(),
-                capability_version: 1,
-                owning_domain: "docs".to_string(),
-                scope_contract: ScopeContract {
-                    scope_kind: "filesystem".to_string(),
-                    scope_ref_kind: "node_id".to_string(),
-                    allow_fan_out: false,
-                },
-                binding_contract: vec![],
-                input_contract: vec![InputSlotSpec {
-                    slot_id: "source".to_string(),
-                    accepted_artifact_type_ids: vec!["source_doc".to_string()],
-                    schema_versions: ArtifactSchemaVersionRange { min: 1, max: 1 },
-                    required: false,
-                    cardinality: InputCardinality::One,
-                }],
-                output_contract: vec![OutputSlotSpec {
-                    slot_id: "patch".to_string(),
-                    artifact_type_id: REQUIRED_ARTIFACT_TYPE_ID.to_string(),
-                    schema_version: 1,
-                    guaranteed: true,
-                }],
-                effect_contract: vec![],
-                execution_contract: ExecutionContract {
-                    execution_class: ExecutionClass::Queued,
-                    completion_semantics: "result_or_failure".to_string(),
-                    retry_class: "provider_io".to_string(),
-                    cancellation_supported: true,
-                },
-            })
-            .unwrap();
-        catalog
-    }
-
     pub fn docs_method(&self) -> Method {
         Method {
             method_id: METHOD_ID.to_string(),
@@ -351,18 +313,6 @@ impl DocsFreshnessFirstProofFixture {
             cost: self.method_cost(),
             preference: 1,
         }
-    }
-
-    pub fn planning_runtime(&self) -> PlanningRuntime {
-        let catalog = self.capability_catalog();
-        let library = MethodLibrary::from_methods(vec![self.docs_method()], &catalog);
-        PlanningRuntime::new(library, catalog)
-    }
-
-    pub fn empty_planning_runtime(&self) -> PlanningRuntime {
-        let catalog = self.capability_catalog();
-        let library = MethodLibrary::from_methods(Vec::<Method>::new(), &catalog);
-        PlanningRuntime::new(library, catalog)
     }
 
     pub fn seeded_graph(&self) -> (tempfile::TempDir, Arc<TraversalStore>, DomainObjectRef) {
@@ -485,15 +435,6 @@ impl DocsFreshnessFirstProofFixture {
             money_microdollars: 25_000,
             provider_calls: 1,
         }
-    }
-
-    fn threshold_dedupe_key(&self) -> AgentCurationDedupeKey {
-        AgentCurationDedupeKey::threshold_rule(
-            AGENT_ID.to_string(),
-            &self.subject(),
-            &self.branch_scope(),
-            &self.curation_rule_config(),
-        )
     }
 }
 

@@ -1,12 +1,12 @@
 # World Model Reconciliation Source Delivery Program Ledger
 
-Date: 2026-08-29
+Date: 2026-08-31
 
-Mode: design
+Mode: embedded phased delivery
 
-Readiness: `approval-ready`
+Readiness: `third vertical accepted`
 
-Program state: first and second verticals completed, third vertical proposed, no source slice active
+Program state: first three verticals completed, no later source slice active
 
 Canonical initiative: World Model Reconciliation
 
@@ -14,7 +14,7 @@ Canonical pickup rule: this ledger alone selects the next program task
 
 ## New Agent Entry Point
 
-A new agent begins here. The user accepted `WMR-VC-01` on 2026-08-28 and it is committed as `795f9193`. The user formally accepted reconstructed `WMR-VC-02` on 2026-08-29. Its runtime delivery is committed as `138f6c7f` and its accepted evidence correction is committed as `741e1f39`. No source slice is active.
+A new agent begins here. The user accepted `WMR-VC-01` on 2026-08-28 and it is committed as `795f9193`. The user formally accepted reconstructed `WMR-VC-02` on 2026-08-29. Its runtime delivery is committed as `138f6c7f` and its accepted evidence correction is committed as `741e1f39`. The user authorized `WMR-VC-03` implementation and its Agent-owned durable reconciliation trees on 2026-08-30. The exact candidate passed implementation review, Style Assurance, and Gate Acceptance on 2026-08-31. No later source slice is active.
 
 Read the [single-runtime recovery amendment](world_model_reconciliation_single_runtime_recovery.md), the [Runtime Invariants](../../../../governance/runtime_invariants.md), the [current code ground map](current_code_groundmap.md), and the accepted detailed designs before proposing source work.
 
@@ -22,9 +22,9 @@ The canonical first runtime groundmap is complete in [Source Runtime Groundmap](
 
 The accepted second vertical is recorded in the [WMR-VC-02 Gate Acceptance Receipt](delivery_gates/wmr_vc_02_gate_acceptance_receipt.md). Read the [epistemic Curation source assessment](epistemic_curation_source_assessment.md), its [delivery-design review](reviews/wmr_vc_02_delivery_design_review_receipt.md), the completed [Source Activation Record](delivery_gates/wmr_vc_02_source_activation_record.md), and the accepted [Delivery Gate](delivery_gates/wmr_vc_02_standing_curation_settlement_gate.md).
 
-The proposed third vertical is approval-ready in the [reasoning reconciliation source assessment](reasoning_reconciliation_source_assessment.md), its [delivery-design review](reviews/wmr_vc_03_delivery_design_review_receipt.md), and proposed [Delivery Gate](delivery_gates/wmr_vc_03_reasoning_reconciliation_gate.md). It is not active. Freeze its gate and create a Source Activation Record only after explicit implementation authorization and approval of the proposed Agent-owned durable reconciliation trees inside the existing world-model database.
+The completed third vertical is defined by the [reasoning reconciliation source assessment](reasoning_reconciliation_source_assessment.md), its [delivery-design review](reviews/wmr_vc_03_delivery_design_review_receipt.md), the accepted [Delivery Gate](delivery_gates/wmr_vc_03_reasoning_reconciliation_gate.md), and the completed [Source Activation Record](delivery_gates/wmr_vc_03_source_activation_record.md).
 
-Do not implement prior `WMR-SI-01`, `WMR-SI-02`, or `WMR-SI-03`, restore archived source, or infer source authority from approval-ready status. The next valid source boundary is reconstructed `WMR-VC-03` after its named approvals.
+Do not implement prior `WMR-SI-01`, `WMR-SI-02`, or `WMR-SI-03`, restore archived source, or infer later-slice authority from completion. No source slice after accepted `WMR-VC-03` is active.
 
 ## Objective And Product Proof
 
@@ -51,11 +51,11 @@ No archived implementation may be cherry-picked into a future slice without fres
 
 Program posture: `first slice`
 
-Obligation floor: operational durability for incumbent records, accepted Curation operations, publication recovery, Graph projection, and Belief cursor ordering
+Obligation floor: operational durability for incumbent and new reconciliation records
 
 Current confidence is high for semantic ownership, existing transport seams, and the accepted standing Curation storage shape. The two accepted verticals retain the first-slice maturity posture without authorizing broader architecture.
 
-The user approved the architecture, accepted the Runtime Invariants, authorized rollback to `e3382ff5`, authorized this program reconstruction, explicitly approved `WMR-VC-01`, and authorized implementation of the prepared `WMR-VC-02` boundary. This includes the one Curation-owned durable tree family inside the existing world-model database. No part of that authority activates planned Curation or a later slice.
+The user approved the architecture, accepted the Runtime Invariants, authorized rollback to `e3382ff5`, authorized this program reconstruction, explicitly approved `WMR-VC-01`, and authorized the completed `WMR-VC-02` boundary. On 2026-08-30 the user also authorized `WMR-VC-03` implementation and approved one Agent-owned durable reconciliation tree family inside the existing world-model database. No part of that authority activates `WMR-VC-04` or later work.
 
 ## Completed Slice
 
@@ -191,22 +191,26 @@ Approval state: the exact candidate passed the frozen gate. No later source auth
 
 User closeout: the user formally accepted the implementation on 2026-08-29. Runtime delivery commit `138f6c7f` and evidence correction commit `741e1f39` together form the accepted source candidate. The worktree was clean at closeout.
 
-## Proposed Third Slice
+## Completed Third Slice
 
-Reconstructed `WMR-VC-03` is approval-ready and inactive.
+Reconstructed `WMR-VC-03` is completed.
 
 | Field | Current state |
 | --- | --- |
 | task | exact reasoning reconciliation through real planned Curation acceptance and complete Task eligibility |
-| mode | design |
-| status | awaiting approval |
-| source authority | none |
-| source baseline | `741e1f39` |
+| mode | embedded phased delivery |
+| status | complete |
+| source authority | explicit user authorization on 2026-08-30 |
+| source baseline | `4a01416f` |
 | primary evidence | [reasoning reconciliation source assessment](reasoning_reconciliation_source_assessment.md) |
 | delivery-design review | [passed for explicit approval](reviews/wmr_vc_03_delivery_design_review_receipt.md) |
-| Delivery Gate | [revision 1 proposed](delivery_gates/wmr_vc_03_reasoning_reconciliation_gate.md) |
-| proposed expansion | Agent-owned durable Goal, Plan, judgment, progression, receipt, and milestone trees inside the existing world-model database |
-| activation prerequisite | explicit implementation authorization and explicit approval of the proposed durable-tree expansion |
+| activation record | [complete](delivery_gates/wmr_vc_03_source_activation_record.md) |
+| implementation review | [passed](reviews/wmr_vc_03_implementation_review_receipt.md) |
+| Style Assurance | [satisfied](reviews/wmr_vc_03_style_assurance_receipt.md) |
+| Delivery Gate | [accepted](delivery_gates/wmr_vc_03_gate_acceptance_receipt.md) |
+| candidate digest | `46bd1e2b3d4435f23dbed3cf9ecaadf0a63b7b1318029f790bdcccfa50e7967a` |
+| approved expansion | Agent-owned durable Goal, Plan, judgment, progression, receipt, and milestone trees inside the existing world-model database |
+| obligation floor | operational durability for incumbent and new reconciliation records |
 
 Product increment: one Agent-owned Goal receives one complete deliberately limited `PlannerCut`, one immutable mixed `StrategyPlan`, one durable Plan judgment, one planned Epistemic Operation authorization, one real Curation acceptance and terminal result, one exact Agent milestone acceptance, and one complete Task eligibility decision. The Task remains unpublished until the future Execution admission consumer exists.
 
@@ -229,7 +233,7 @@ Explicitly reused unchanged:
 - Execution Goal Set, Planning, Task Network, and Workflow source
 - Startup and product inspection
 
-Proposed behavior-change scope:
+Authorized behavior-change scope:
 
 - Planner complete cut assembly, refusal, identity, and derived view containment
 - Strategy heterogeneous Plan grammar, pure construction, verification, and successor identity
@@ -254,11 +258,11 @@ Style Assurance owner: primary Style Assurance lane over the exact reviewed cand
 
 Gate owner: primary bounded Gate Acceptance lane
 
-Approval state: the design is complete and reviewed. Source implementation and the proposed durable-tree expansion remain unauthorized.
+Approval state: the exact candidate passed the frozen gate with no exception. No later source authority is implied.
 
-## Authorized Active Slice
+## Source Authority State
 
-No source slice is active. `WMR-VC-03-DG` revision 1 remains proposed. Explicit user authorization and durable-tree approval are required before the gate is frozen and a Source Activation Record is created.
+`WMR-VC-03-DG` revision 1 is accepted for the exact candidate recorded above. The Agent-owned durable reconciliation trees are part of that accepted candidate. No later source slice is active.
 
 ## Product Trace
 
@@ -336,7 +340,7 @@ Historical source gates cannot be reactivated. The reconstructed program must is
 | --- | --- | --- |
 | `WMR-VC-01` | historical `SI-01` outcome through one canonical workspace and branch-inspection route | completed and accepted |
 | `WMR-VC-02` | standing Curation through Graph visibility and configured Belief settlement | completed and accepted |
-| `WMR-VC-03` | exact reasoning context through mixed Plan, real planned Curation acceptance, and complete Task eligibility | awaiting approval |
+| `WMR-VC-03` | exact reasoning context through mixed Plan, real planned Curation acceptance, and complete Task eligibility | completed and accepted |
 | Execution route | complete Task admission through independent owner return | backlog |
 | product initialization | PDS through one Agent generation and lifecycle | backlog |
 | Startup proof | complete nonce route | backlog |
@@ -346,7 +350,7 @@ Historical source gates cannot be reactivated. The reconstructed program must is
 
 The recovery amendment identifies six candidate cuts: epistemic knowledge, reconciliation, Execution, product initialization, Startup proof, and product migration.
 
-`WMR-VC-01` and `WMR-VC-02` are completed source cuts. Reconciliation is now proposed as `WMR-VC-03`. Execution, product initialization, Startup proof, and product migration remain assessment horizons.
+`WMR-VC-01`, `WMR-VC-02`, and `WMR-VC-03` are completed source cuts. Execution, product initialization, Startup proof, and product migration remain assessment horizons without source authority.
 
 If a candidate cut is too broad, divide it by complete runtime behavior rather than by crate or domain. Every smaller cut must still leave one canonical route for each responsibility it accepts.
 
@@ -368,11 +372,11 @@ Accepted `WMR-VC-02` adds one Curation-owned durable tree family inside the exis
 
 The optional policy that blocks dependent PDS activation until Startup satisfaction remains unselected and unauthorized.
 
-`WMR-VC-03` proposes one Agent-owned durable reconciliation tree family inside the existing world-model database. It stores Agent Goals, Plan bodies and judgments, product progression, consumer receipts, and milestone acceptance. The current Agent threshold-decision trees, Execution Goal storage, and process memory cannot provide the accepted ownership and restart behavior. The proposal adds no database, crate, dependency, service, or background runtime count. It remains unauthorized until the user approves it with source activation.
+`WMR-VC-03` adds one approved Agent-owned durable reconciliation tree family inside the existing world-model database. It stores Agent Goals, Plan bodies and judgments, product progression, consumer receipts, and milestone acceptance. The current Agent threshold-decision trees, Execution Goal storage, and process memory cannot provide the accepted ownership and restart behavior. The expansion adds no database, crate, dependency, service, or background runtime count.
 
 ## Hard Limits And Tripwires
 
-Stop if source work begins without explicit `WMR-VC-03` authorization, approval of its durable-tree expansion, a frozen gate, and a Source Activation Record.
+Any future source work requires a new explicit activation and frozen gate. Completion of `WMR-VC-03` does not authorize its successor.
 
 Stop if a proposed slice adds a canonical implementation without migrating its real runtime entrypoint. Stop if an incumbent equivalent remains live after replacement. Stop if a dormant public successor is offered as product proof. Stop if durable read compatibility is used to preserve an old writer or planner. Stop if a future cleanup slice is offered as the reason to accept present parallelism.
 
@@ -394,7 +398,15 @@ Current accepted runtime-route delta: the root runtime composes standing Curatio
 
 Current background-runtime delta: one bounded standing Curation participant in the existing supervisor
 
-The rejected additive attempt remains recoverable but is outside current source authority. `WMR-VC-03` is approval-ready in design mode. No source slice is active.
+Completed `WMR-VC-03` source baseline: `4a01416f`
+
+Completed approved store and schema delta: one Agent-owned durable reconciliation tree family inside the existing world-model database
+
+Completed runtime-route delta: one root-composed Agent reconciliation participant over exact Planner, Strategy, Agent, Curation, Graph, Belief, and theory seams
+
+Completed direct-proof boundary: exact `PlannerCut`, mixed `StrategyPlan`, durable Agent judgment and product authorization, planned Curation acceptance and milestone reconciliation, and one complete Task eligible but unpublished to Execution
+
+The rejected additive attempt remains recoverable but is outside current source authority. `WMR-VC-03` is accepted. No other source slice is active.
 
 ## Delivery Gate Definitions
 
@@ -415,17 +427,19 @@ The accepted `WMR-VC-01-DG` includes these criteria and direct production proof 
 
 `WMR-VC-02-DG` revision 1 is accepted. It proves standing Curation composition across Agent authority, exact Traversal input, Curation durability, Event publication, Graph visibility, configured Belief settlement, and restart.
 
-`WMR-VC-03-DG` revision 1 is proposed. It will prove exact limited PlannerCut assembly, immutable mixed Plan construction, Agent-owned Goal and Plan progression, real planned Curation acceptance, exact milestone reconciliation, complete Task eligibility without Execution publication, restart, and full superseded-route deletion. It is not frozen or acceptance-ready before source activation.
+`WMR-VC-03-DG` revision 1 is accepted. It proves exact limited PlannerCut assembly, immutable mixed Plan construction, Agent-owned Goal and Plan progression, real planned Curation acceptance, exact milestone reconciliation, complete Task eligibility without Execution publication, restart, and full superseded-route deletion.
 
 ## Gate Evidence
 
-Current Gate Evidence includes both accepted verticals: fresh and unchanged real workspace scans, exact owner cuts, standing Curation admission and terminality, durable idempotent append, Event and Graph lag, Graph replay and reopen, configured and unmapped Belief settlement, occurrence preservation, bounded incompleteness, preadmission rejection, accepted failure, dissimilar owner specimens, the complete workspace test suite, property proof, and strict changed-crate lint.
+Current Gate Evidence includes all three accepted verticals: fresh and unchanged real workspace scans, exact owner cuts, standing and planned Curation admission and terminality, durable idempotent append, Event and Graph lag, Graph replay and reopen, configured and unmapped Belief settlement, complete Planner cuts and typed refusals, immutable mixed Plan succession, Agent judgment and authorization, exact milestone reconciliation, unpublished Task eligibility, six-boundary recovery, the complete workspace suite, properties, state machines, strict lint, and focused fuzz.
 
 ## Gate Acceptance
 
 `WMR-VC-01-DG` is accepted in the [Gate Acceptance Receipt](delivery_gates/wmr_vc_01_gate_acceptance_receipt.md). Every frozen criterion passed with no exception.
 
 `WMR-VC-02-DG` is accepted in the [Gate Acceptance Receipt](delivery_gates/wmr_vc_02_gate_acceptance_receipt.md) after one bounded evidence correction. The initial audit verdict was not eligible under `C15`, `E08`, and `C17`. Both frozen evidence violations passed verification with no exception.
+
+`WMR-VC-03-DG` is accepted in the [Gate Acceptance Receipt](delivery_gates/wmr_vc_03_gate_acceptance_receipt.md) after one bounded correction cycle. All seven frozen implementation findings passed the single bounded verification pass with no exception.
 
 ## Review State
 
@@ -449,9 +463,9 @@ Delivery-design frozen findings: `WMR-VC-02-DR-F01` through `WMR-VC-02-DR-F04`, 
 
 Delivery-design verdict: passed for explicit user approval
 
-Current source implementation review: [passed after one bounded correction cycle](reviews/wmr_vc_02_implementation_review_receipt.md)
+Accepted second-slice implementation review: [passed after one bounded correction cycle](reviews/wmr_vc_02_implementation_review_receipt.md)
 
-Delivery-design review owner for proposed `WMR-VC-03`: primary integrated architecture review lane
+Delivery-design review owner for `WMR-VC-03`: primary integrated architecture review lane
 
 Delivery-design review receipt: [WMR-VC-03 Delivery Design Review](reviews/wmr_vc_03_delivery_design_review_receipt.md)
 
@@ -459,43 +473,47 @@ Delivery-design frozen findings: `WMR-VC-03-DR-F01` through `WMR-VC-03-DR-F04`, 
 
 Delivery-design verdict: passed for explicit user approval
 
-`WMR-VC-03` implementation review has not begun.
+Accepted third-slice implementation review: [passed after one bounded correction cycle](reviews/wmr_vc_03_implementation_review_receipt.md)
 
 ## Style Assurance
 
-Current Style Assurance: [satisfied after one bounded evidence correction](reviews/wmr_vc_02_style_assurance_receipt.md)
+Accepted second-slice Style Assurance: [satisfied after one bounded evidence correction](reviews/wmr_vc_02_style_assurance_receipt.md)
+
+Accepted third-slice Style Assurance: [satisfied](reviews/wmr_vc_03_style_assurance_receipt.md)
 
 Style Assurance owner: primary Style Assurance lane
 
-Candidate identity: `01dc68b6f55bfaee115e102a973d8ca4595c5a5bf74f51733f069c251c2a6ce1`
+Candidate identity: `46bd1e2b3d4435f23dbed3cf9ecaadf0a63b7b1318029f790bdcccfa50e7967a`
 
-Applicable policy: Contribution Policy comments and domain layout, Rust formatting and lint, focused crash-window recovery, property and state-machine proof, crate-native fuzz precedent, and complete sequential workspace regression
+Applicable policy: Contribution Policy comments and domain layout, Rust formatting and lint, six-boundary restart recovery, property and state-machine proof, crate-native fuzz precedent, and complete sequential workspace regression
 
-Current findings: four bounded findings, all corrected and returned through implementation verification before assurance resumed. The fourth finding corrects the initial missing crash-window and durable replay assurance.
+Current findings: none. The seven frozen implementation findings passed bounded verification before Style Assurance began.
 
-## Complexity Delta
+## Last Accepted Complexity Delta
 
-Changed production source files: nine
+Changed production source files: twenty-four
 
-Production source lines added: two thousand fifty-seven
+Production source lines added: 3999
 
-Production source lines removed: four
+Production source lines removed: 4829
 
 New crates and dependencies: zero
 
-New public contracts: standing Curation rule, authority, operation, acceptance, result, publication receipt, ports, query, and worker report
+New public contracts: complete Planner cut and refusal, immutable Strategy Plan and successor history, Agent reconciliation judgment, authorization, progress, receipt, milestone, live authority fence, and planned Curation authorization
 
-New stores and schemas: one Curation-owned sled tree family in the existing world-model database
+New stores and schemas: one Agent-owned reconciliation tree family in the existing world-model database
 
-New background runtimes: one root-composed bounded standing Curation participant
+New background runtimes: one root-composed bounded Agent reconciliation participant replacing two split Agent participants
 
-Direct product behavior proved: exact Agent and workspace cut through Curation, Event, Graph, configured Belief settlement, changed-input unmapped result, replay, and reopen
+Direct product behavior proved: exact Planner cut, immutable mixed Plan, durable Agent judgment and product authorization, real planned Curation acceptance and terminal result, exact milestone acceptance, complete unpublished Task eligibility, live authority fencing, replay, and reopen
 
-Evidence-only successor delta: two executable evidence files and one fuzz-package registration, with no production source or runtime behavior change
+Superseded authority delta: direct projection authority, candidate planning, split Agent curation, and Agent-to-Execution Goal writers are removed from compiled runtime authority
 
-Current Gate Acceptance: accepted
+Accepted second-slice Gate Acceptance: accepted
 
-Implementation review, Style Assurance, and Gate Acceptance receipts are complete. There are no exceptions and no successor-slice authority.
+Last accepted Gate Acceptance: [WMR-VC-03 accepted](delivery_gates/wmr_vc_03_gate_acceptance_receipt.md)
+
+Implementation review, Style Assurance, and Gate Acceptance receipts are complete for candidate digest `46bd1e2b3d4435f23dbed3cf9ecaadf0a63b7b1318029f790bdcccfa50e7967a`. There are no exceptions and no successor-slice authority.
 
 ## Commit Effects
 
@@ -513,7 +531,9 @@ If applied, this evidence correction commit adds the missing publication-interru
 
 That evidence correction effect is committed as `741e1f39`.
 
-If applied, this design commit records formal user acceptance and commit closeout for `WMR-VC-02`, reconstructs the rejected historical `SI-03` outcome as approval-ready `WMR-VC-03`, defines its exact replacement route and proposed Gate Definition, and preserves the boundary that no third-slice source work is authorized.
+The `WMR-VC-03` activation effect records explicit implementation authorization, approves its Agent-owned durable reconciliation trees, freezes Gate Definition revision 1, and opens source work against clean baseline `4a01416f` without authorizing a later slice.
+
+If applied, this commit replaces split Agent curation and incumbent reasoning authority with one durable Agent reconciliation path over `PlannerCut`, immutable mixed `StrategyPlan`, canonical planned Curation, exact milestone acceptance, and complete unpublished Task eligibility. It records the accepted candidate digest `46bd1e2b3d4435f23dbed3cf9ecaadf0a63b7b1318029f790bdcccfa50e7967a` without authorizing a later slice.
 
 ## Risks And Exceptions
 
@@ -525,20 +545,20 @@ There are no authorized exceptions.
 
 ## Reassessment
 
-The accepted first two verticals prove that the program can reuse the existing workspace source, Event authority, Graph runtime, traversal store, configured Belief ingestion, and root actor assembly. The active maturity posture remains first slice because two narrow end-to-end paths work while planned Curation and downstream reconciliation remain unimplemented.
+The accepted first three verticals prove that the program can reuse the existing workspace source, Event authority, Graph runtime, traversal store, configured Belief ingestion, Curation authority, theory stores, and root actor assembly. The maturity posture remains first slice because Execution admission, product initialization, Startup proof, and product migration remain unimplemented.
 
-The obligation floor remains operational durability. The second accepted cut adds no new crate, service, Event authority, Graph authority, standalone database, Belief consumer, or compatibility writer. It adds one Curation-owned durable tree family and one bounded root participant while retaining all incumbent semantic authorities.
+The obligation floor is operational durability for incumbent and new reconciliation records. The accepted third cut adds only the approved Agent-owned durable reconciliation trees and one root Agent reconciliation participant. It adds no crate, dependency, database, service, Event authority, Graph authority, Belief consumer, compatibility writer, or later-slice behavior.
 
-Standing epistemic Curation is complete. Existing Agent curation remains the authority for Goal formation and satisfaction until an accepted `WMR-VC-03` cutover replaces it. Planned Curation and Agent result acceptance remain outside current source authority.
+Standing epistemic Curation and planned Curation reconciliation are complete. The split Agent curation actors and Agent-originated Execution Goal writers are retired from compiled runtime authority. One durable Agent reconciliation participant now owns Goal, Plan, judgment, authorization, receipt, milestone, and eligible Task progression.
 
 The user authorized `WMR-VC-02` and its one Curation-owned durable tree family on 2026-08-28, then formally accepted the complete implementation and evidence correction on 2026-08-29. The accepted maturity envelope still applies.
 
-`WMR-VC-03` is the next direct product slice because it replaces the current reasoning and Agent control route while reaching the real Curation consumer. Its complete Task stops at eligibility because Execution admission is not yet a canonical consumer. This is a boundary decision, not permission to begin source work.
+`WMR-VC-03` is the accepted direct product slice that replaces the prior reasoning and Agent control route while reaching the real Curation consumer. Its complete Task stops at eligibility because Execution admission is not yet an authorized canonical consumer.
 
 ## Advancement
 
-To activate `WMR-VC-03`, record explicit user implementation authorization and approval of the Agent-owned durable reconciliation trees, freeze `WMR-VC-03-DG` revision 1 without changing its criteria, create the Source Activation Record against the clean baseline, and only then begin source work.
+Do not activate `WMR-VC-04` or any later source slice from completion of `WMR-VC-03`. The next action is a new evidence-backed assessment and explicit source activation, not implementation under this gate.
 
 ## Final Reconciliation
 
-The semantic architecture remains approved. The prior source delivery strategy remains withdrawn. `WMR-VC-01` completes the reconstructed historical `SI-01` outcome through one canonical workspace publication and production owner-inspection route. `WMR-VC-02` completes the reconstructed historical `SI-02` outcome through standing Curation, Graph visibility, configured Belief settlement, restart recovery, and durable replay assurance. `WMR-VC-03` is approval-ready but inactive. No later source slice is active.
+The semantic architecture remains approved. The prior source delivery strategy remains withdrawn. `WMR-VC-01` completes the reconstructed historical `SI-01` outcome through one canonical workspace publication and production owner-inspection route. `WMR-VC-02` completes the reconstructed historical `SI-02` outcome through standing Curation, Graph visibility, configured Belief settlement, restart recovery, and durable replay assurance. `WMR-VC-03` completes exact reasoning reconciliation through mixed Plan construction, planned Curation, exact milestone acceptance, and unpublished Task eligibility for candidate digest `46bd1e2b3d4435f23dbed3cf9ecaadf0a63b7b1318029f790bdcccfa50e7967a`. No later source slice is active.

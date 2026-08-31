@@ -124,6 +124,150 @@ fn applied_result_replays_without_reexecuting_or_republishing() {
 }
 
 #[test]
+fn planned_intake_recovers_through_the_same_actor_and_store_authority() {
+    let fixture = Fixture::new(0);
+    let source_cut = fixture.traversal.cut.lock().unwrap().clone();
+    let operation = CurationOperation::reconstruct(
+        authority(),
+        fixture.rule.revision_ref(),
+        source_cut,
+        fixture.rule.rule.traversal_request(),
+    )
+    .unwrap();
+    let authorization = planned_authorization(&operation);
+    let operation = operation.with_planned_authorization(authorization).unwrap();
+    fixture.store.submit_planned(&operation).unwrap();
+
+    let interrupting_events = Arc::new(InterruptingEvents {
+        inner: Arc::clone(&fixture.events),
+        successful_appends: AtomicUsize::new(0),
+        successes_before_failure: 0,
+    });
+    let interrupted_actor = StandingCurationActor::new(
+        "world_model.standing_curation",
+        "session-a",
+        authority(),
+        fixture.rule.clone(),
+        Arc::clone(&fixture.store),
+        Arc::clone(&fixture.traversal) as Arc<dyn CurationTraversalPort>,
+        interrupting_events as Arc<dyn CurationEventPort>,
+    )
+    .unwrap();
+    let interrupted = interrupted_actor.bounded_step(1);
+    assert_eq!(interrupted.operations_attempted, 1);
+    assert_eq!(interrupted.results_persisted, 1);
+    assert!(!interrupted.retryable_errors.is_empty());
+    assert!(fixture
+        .store
+        .acceptance_for_planned_operation(&operation.operation_id)
+        .unwrap()
+        .is_some());
+
+    let reopened_actor = StandingCurationActor::new(
+        "world_model.standing_curation",
+        "session-a",
+        authority(),
+        fixture.rule.clone(),
+        Arc::clone(&fixture.store),
+        Arc::clone(&fixture.traversal) as Arc<dyn CurationTraversalPort>,
+        Arc::clone(&fixture.events) as Arc<dyn CurationEventPort>,
+    )
+    .unwrap();
+    let recovered = reopened_actor.bounded_step(1);
+
+    assert_eq!(recovered.reused_results, 1);
+    assert_eq!(recovered.publications_appended, 2);
+    assert!(fixture
+        .store
+        .result_for_operation(&operation.operation_id)
+        .unwrap()
+        .is_some());
+}
+
+#[test]
+fn standing_then_planned_same_selection_converges_without_identity_drift() {
+    let fixture = Fixture::new(0);
+
+    let standing = fixture.actor.bounded_step(1);
+    assert_eq!(standing.results_persisted, 1);
+    assert_eq!(standing.publications_appended, 2);
+
+    let semantic_operation = fixture
+        .store
+        .operation_for_selection(
+            &CurationOperation::reconstruct(
+                authority(),
+                fixture.rule.revision_ref(),
+                fixture.traversal.cut.lock().unwrap().clone(),
+                fixture.rule.rule.traversal_request(),
+            )
+            .unwrap()
+            .selection_id,
+        )
+        .unwrap()
+        .unwrap();
+    let operation_id = semantic_operation.operation_id.clone();
+    let standing_acceptance =
+        CurationAcceptanceRecord::for_operation(&semantic_operation, &fixture.rule).unwrap();
+    assert_eq!(
+        fixture
+            .store
+            .acceptance(&standing_acceptance.acceptance_id)
+            .unwrap(),
+        Some(standing_acceptance.clone())
+    );
+    assert!(fixture
+        .store
+        .acceptance_for_planned_operation(&operation_id)
+        .unwrap()
+        .is_none());
+
+    let authorization = planned_authorization(&semantic_operation);
+    let authorization_id = authorization.authorization_id.clone();
+    let planned = semantic_operation
+        .clone()
+        .with_planned_authorization(authorization)
+        .unwrap();
+    fixture.store.submit_planned(&planned).unwrap();
+
+    assert_eq!(
+        fixture
+            .store
+            .operation_for_selection(&semantic_operation.selection_id)
+            .unwrap(),
+        Some(semantic_operation.clone())
+    );
+    assert_eq!(
+        fixture
+            .store
+            .planned_authorization_for_operation(&operation_id)
+            .unwrap()
+            .unwrap()
+            .authorization_id,
+        authorization_id
+    );
+    assert_eq!(
+        fixture
+            .store
+            .acceptance_for_planned_operation(&operation_id)
+            .unwrap(),
+        Some(standing_acceptance)
+    );
+    assert!(fixture
+        .store
+        .next_planned_operation("agent-a")
+        .unwrap()
+        .is_none());
+
+    let replay = fixture.actor.bounded_step(1);
+    assert_eq!(replay.reused_results, 1);
+    assert_eq!(replay.results_persisted, 0);
+    assert_eq!(replay.publications_appended, 0);
+    assert!(replay.fatal_errors.is_empty());
+    assert_eq!(fixture.traversal.traversals.load(Ordering::SeqCst), 1);
+}
+
+#[test]
 fn bounded_incomplete_result_retains_frontier_exclusions_failures_and_cut() {
     let fixture = Fixture::new(0);
     let source_cut = fixture.traversal.cut.lock().unwrap().clone();
@@ -851,6 +995,8 @@ fn assert_publication_recovery_after_reopen(successes_before_failure: usize) {
 
 struct Fixture {
     actor: StandingCurationActor,
+    store: Arc<CurationStore>,
+    rule: StandingCurationRuleRevision,
     traversal: Arc<MockTraversal>,
     events: Arc<MockEvents>,
 }
@@ -886,14 +1032,16 @@ impl Fixture {
             "world_model.standing_curation",
             "session-a",
             authority(),
-            rule,
-            store,
+            rule.clone(),
+            Arc::clone(&store),
             Arc::clone(&traversal) as Arc<dyn CurationTraversalPort>,
             Arc::clone(&events) as Arc<dyn CurationEventPort>,
         )
         .unwrap();
         Self {
             actor,
+            store,
+            rule,
             traversal,
             events,
         }
@@ -928,6 +1076,32 @@ fn authority() -> CurationAuthority {
         branch_scope: BranchScope::main(),
         activation_generation: "activation-a".to_string(),
         subject: DomainObjectRef::new("workspace_fs", "node", "subject-a").unwrap(),
+    }
+}
+
+fn planned_authorization(operation: &CurationOperation) -> CurationPlannedAuthorization {
+    let fields = (
+        "agent-a",
+        "goal-a",
+        "plan-a",
+        "epistemic-a",
+        &operation.operation_id,
+        "context-a",
+        "authority-a",
+        "activation-a",
+        "idempotency-a",
+    );
+    CurationPlannedAuthorization {
+        authorization_id: stable_identity("agent-product-authorization-v1", &fields).unwrap(),
+        agent_id: fields.0.to_string(),
+        goal_id: fields.1.to_string(),
+        plan_revision_id: fields.2.to_string(),
+        product_id: fields.3.to_string(),
+        operation_id: fields.4.clone(),
+        context_id: fields.5.to_string(),
+        authority_scope_id: fields.6.to_string(),
+        activation_generation: fields.7.to_string(),
+        idempotency_key: fields.8.to_string(),
     }
 }
 

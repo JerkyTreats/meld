@@ -1,13 +1,9 @@
 //! Execution owned contracts and runtime ports.
 
 pub mod contracts;
-pub mod goal_mutation;
 pub mod ports;
 
 pub use contracts::{ProviderExecutionBinding, ProviderRuntimeOverrides};
-pub use goal_mutation::{
-    satisfy_request_from_agent_mutation, GoalMutationError, GoalMutationRequest,
-};
 pub use ports::{
     BeliefContextReadPort, BeliefStatusLabel, BeliefSubjectSignal, ContextReadPort,
     ContextWritePort, EventPublicationPort, ExecutionContext, ExecutionEventContext,

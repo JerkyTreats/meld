@@ -471,7 +471,7 @@ impl<'a> ThreadWalker<'a> {
                 };
                 Ok(Resolution::from(
                     agent
-                        .get_decision(decision_id)
+                        .legacy_decision(decision_id)
                         .map_err(storage_error)?
                         .map(|decision| {
                             format!("{:?} decision by {}", decision.decision, decision.agent_id)
@@ -671,7 +671,7 @@ impl<'a> ThreadWalker<'a> {
                 let Some(agent) = self.agent else {
                     return Ok(refs);
                 };
-                if let Some(decision) = agent.get_decision(decision_id).map_err(storage_error)? {
+                if let Some(decision) = agent.legacy_decision(decision_id).map_err(storage_error)? {
                     if let Some(revision_id) = &decision.input_refs.belief_revision_id {
                         refs.push(Reference::hop(
                             ThreadSubject::BeliefRevision {
@@ -697,7 +697,7 @@ impl<'a> ThreadWalker<'a> {
                         match self.agent {
                             Some(agent) => {
                                 let receipts = agent
-                                    .sink_receipts_by_command(command_id)
+                                    .legacy_sink_receipts_by_command(command_id)
                                     .map_err(storage_error)?;
                                 // A source command with no recorded receipt
                                 // is a dead end, not silence: the receipt is
@@ -921,10 +921,7 @@ mod tests {
     use meld_lang::{
         Condition, Goal, GoalLifecycle, GoalPriority, GoalSource, Literal, Proposition, Term,
     };
-    use meld_world_model::agent::{
-        AgentCurationDecision, AgentCurationDedupeKey, AgentCurationInputRefs, AgentDecisionKind,
-        AgentSinkReceipt, AgentSinkReceiptKind, AgentSinkSubmission, AgentStore,
-    };
+    use meld_world_model::agent::AgentStore;
     use meld_world_model::belief::{
         AssessmentLease, BeliefKey, BeliefProvenanceSummary, BeliefRevision, BeliefStatus,
         BeliefStore, BranchScope, ContradictionState, EvidenceItem, EvidenceRole, EvidenceValue,
@@ -976,6 +973,7 @@ mod tests {
         let traversal = TraversalStore::new(db.clone()).unwrap();
         let belief = BeliefStore::new(db.clone()).unwrap();
         let agent = AgentStore::new(db.clone()).unwrap();
+        let legacy_db = db.clone();
         let goals = PersistentGoalSetStore::new(db).unwrap();
 
         traversal
@@ -1088,45 +1086,35 @@ mod tests {
             )
             .unwrap();
 
-        agent
-            .put_decision(&AgentCurationDecision {
-                decision_id: DECISION_ID.to_string(),
-                agent_id: "seed.docs_freshness".to_string(),
-                subscription_id: "subscription-1".to_string(),
-                decision: AgentDecisionKind::GoalCommand,
-                goal_command_id: Some(COMMAND_ID.to_string()),
-                goal_mutation_command_id: None,
-                strategy_authorization: None,
-                curation_rule_revision: None,
-                maintained_condition_revision: None,
-                dedupe_key: AgentCurationDedupeKey {
-                    agent_id: "seed.docs_freshness".to_string(),
-                    subject_key: subject().index_key(),
-                    branch_id: "main".to_string(),
-                    dimension_id: "docs_freshness".to_string(),
-                    target_condition_key: "confidence>0.7".to_string(),
-                    source_kind: "belief_divergence".to_string(),
-                    maintained_condition_id: None,
-                },
-                input_refs: AgentCurationInputRefs {
-                    belief_revision_id: Some(REVISION_ID.to_string()),
-                    belief_key: belief_key(),
-                    planner_projection_version: "1".to_string(),
-                    planner_source_refs: Vec::new(),
-                    planner_warnings: Vec::new(),
-                },
-                reason: "posterior over threshold".to_string(),
-                created_at_seq: 6,
-            })
+        legacy_db
+            .open_tree("agent_curation_decisions")
+            .unwrap()
+            .insert(
+                DECISION_ID.as_bytes(),
+                serde_json::to_vec(&serde_json::json!({
+                    "decision_id": DECISION_ID,
+                    "agent_id": "seed.docs_freshness",
+                    "decision": "GoalCommand",
+                    "input_refs": { "belief_revision_id": REVISION_ID }
+                }))
+                .unwrap(),
+            )
             .unwrap();
-        agent
-            .put_sink_receipt(&AgentSinkReceipt {
-                receipt_id: "receipt-1".to_string(),
-                decision_id: DECISION_ID.to_string(),
-                kind: AgentSinkReceiptKind::GoalCommand,
-                submission: AgentSinkSubmission::new(COMMAND_ID, GOAL_ID, "applied"),
-                recorded_at_seq: 7,
-            })
+        legacy_db
+            .open_tree("agent_sink_receipts")
+            .unwrap()
+            .insert(
+                DECISION_ID.as_bytes(),
+                serde_json::to_vec(&serde_json::json!({ "decision_id": DECISION_ID })).unwrap(),
+            )
+            .unwrap();
+        legacy_db
+            .open_tree("agent_sink_receipts_by_command")
+            .unwrap()
+            .insert(
+                format!("{COMMAND_ID}::{DECISION_ID}").as_bytes(),
+                DECISION_ID.as_bytes(),
+            )
             .unwrap();
         goals
             .add_goal(AddGoalCommand {

@@ -12,7 +12,7 @@ use meld::init::world::{StageDisposition, WorldInitRequest, WorldInitStage};
 use meld_events::{
     DomainObjectRef, EventAuthority, EventAuthorityOpenOptions, LedgerCursor, ReplayRequest,
 };
-use meld_world_model::agent::{AgentCurationRuleConfig, AgentQuery, AgentStatus, AgentStore};
+use meld_world_model::agent::{AgentCurationRuleConfig, AgentStatus, AgentStore};
 use meld_world_model::belief::{BeliefFamilyRegistryStore, BranchScope};
 use meld_world_model::PerspectiveKey;
 
@@ -208,10 +208,7 @@ fn full_pipeline_applies_once_and_reruns_unchanged() {
     );
 
     // The genesis identities are durably operational after the first run.
-    let agent = AgentQuery::new(&world.agent_store)
-        .agent(AGENT_ID)
-        .unwrap()
-        .unwrap();
+    let agent = world.agent_store.get_agent(AGENT_ID).unwrap().unwrap();
     assert_eq!(agent.status, AgentStatus::Operational);
     assert_eq!(
         agent.installed_curation_rule().unwrap().clone(),
@@ -257,10 +254,7 @@ fn partial_stage_selection_runs_only_the_selected_stage() {
         install_only.stage_reports[0].disposition,
         StageDisposition::Applied
     );
-    assert!(AgentQuery::new(&world.agent_store)
-        .agent(AGENT_ID)
-        .unwrap()
-        .is_none());
+    assert!(world.agent_store.get_agent(AGENT_ID).unwrap().is_none());
     assert_eq!(world.genesis_fact_count(), 0);
 
     // The remaining stages complete genesis against the installed theory.

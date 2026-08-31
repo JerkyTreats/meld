@@ -4,7 +4,13 @@ Date: 2026-08-29
 
 Gate identifier: `WMR-VC-03-DG`
 
-Revision: 1 proposed
+Revision: frozen revision 1
+
+Status: accepted
+
+Source baseline: `4a01416f`
+
+Activation record: [WMR-VC-03 Source Activation](wmr_vc_03_source_activation_record.md)
 
 Candidate slice: `WMR-VC-03`
 
@@ -14,7 +20,7 @@ Gate owner: primary bounded Gate Acceptance lane
 
 Exception authority: user
 
-Freeze rule: freeze revision 1 only after explicit source authorization and approval of the proposed Agent-owned durable reconciliation trees
+Freeze authority: explicit user implementation authorization and approval of the Agent-owned durable reconciliation trees on 2026-08-30
 
 ## Coherence Horizon
 
@@ -30,11 +36,11 @@ Execution admission, Goal Set replacement, Task Network lowering and realization
 - accepted [PlannerCut, Strategy Plan, and Agent progression design](../detailed_design/planner_cut_strategy_plan_and_agent_progression.md)
 - accepted [PlannerCut and Plan transition ledger](../detailed_design/planner_cut_and_plan_transition_ledger.md)
 - [delivery-design review](../reviews/wmr_vc_03_delivery_design_review_receipt.md)
-- this proposed Gate Definition
-- future source activation record
-- future implementation review receipt
-- future Style Assurance Receipt
-- future Gate Acceptance Receipt
+- this frozen Gate Definition
+- [source activation record](wmr_vc_03_source_activation_record.md)
+- [implementation review receipt](../reviews/wmr_vc_03_implementation_review_receipt.md)
+- [Style Assurance Receipt](../reviews/wmr_vc_03_style_assurance_receipt.md)
+- [Gate Acceptance Receipt](wmr_vc_03_gate_acceptance_receipt.md)
 
 Named upstream artifacts:
 
@@ -161,4 +167,4 @@ Acceptance does not authorize `WMR-VC-04`, Execution admission, PDS, Startup, or
 
 ## Current Authority State
 
-Revision 1 is proposed and reviewed for approval. It is not frozen. `WMR-VC-03` source implementation remains unauthorized until the user explicitly authorizes the slice and approves the proposed Agent-owned durable reconciliation trees inside the existing world-model database.
+Revision 1 is accepted for candidate digest `46bd1e2b3d4435f23dbed3cf9ecaadf0a63b7b1318029f790bdcccfa50e7967a` in the [Gate Acceptance Receipt](wmr_vc_03_gate_acceptance_receipt.md). No later source slice is active, and no authority is granted to change this gate or activate `WMR-VC-04`.

@@ -14,10 +14,6 @@ use meld_events::{
 use meld_execution::capability::{
     BoundCapabilityInstance, CapabilityInvocationPayload, CapabilityInvocationResult,
 };
-use meld_execution::goals::{
-    GoalAcceptanceLifecycle, GoalAcceptanceRequest, GoalCommandMetadata, GoalCommandOutcome,
-    GoalSetApi, PersistentGoalSetStore,
-};
 use meld_execution::planning::realization::TaskPackageRoutePlan;
 use meld_execution::planning::{
     PlanningProjectionError as ExecutionPlanningProjectionError, PlanningProjectionPort,
@@ -35,16 +31,13 @@ use meld_execution::task_network::dispatch_actor::{
 use meld_execution::task_network::state::TaskNode;
 use meld_execution::task_network::store::TaskNetworkStoreFactory;
 use meld_execution::task_network::EventAppendSink;
-use meld_world_model::agent::{
-    ActiveGoalSummary, AgentActiveGoalQuery, AgentActiveGoalQueryError, AgentGoalCommandSink,
-    AgentGoalMutationSink, AgentSinkError, AgentSinkSubmission,
-};
 use meld_world_model::belief::{
     configured_belief_key, BeliefFamilyRegistry, BeliefFamilyRegistryStore,
     EvidenceEventReplaySource,
 };
 use meld_world_model::planner::{
-    PlannerProjectionError, PlannerProjectionOutput, PlannerQuery, PlannerSourceRef,
+    PlannerAssemblyOutcome, PlannerCurrentAssemblyRequest, PlannerProjectionError, PlannerQuery,
+    PlannerSourceRef, WorldModelView,
 };
 use meld_world_model::world_state::graph::contracts::{
     BoundedTraversalRequest, TraversalCut, TraversalCutRequest, TraversalResult,
@@ -54,21 +47,22 @@ use meld_world_model::world_state::graph::{
     GraphConsumerCursorReporter, GraphDerivedEventSink, GraphEventReplaySource, PerspectiveKey,
 };
 use meld_world_model::{
-    AgentGoalCommand, AgentGoalMutationCommand, BeliefQuery, BeliefStore, CurationEventPort,
-    CurationTraversalPort,
+    AgentActivationStatus, AgentAuthorityPort, AgentAuthorizationFence, AgentCurationPort,
+    AgentPlannerPort, AgentStatus, AgentStore, BeliefQuery, BeliefStore, CurationAcceptanceRecord,
+    CurationEventPort, CurationOperation, CurationResult, CurationStore, CurationTraversalPort,
 };
 use meld_world_model::{BranchScope, TraversalQuery};
 
+use crate::config::SelectedStewardshipPackage;
 use crate::context::frame::FrameStorage;
 use crate::control::projection::ExecutionProjectionReplaySource;
-use crate::execution::goal_mutation::{
-    execution_mutation_from_agent_command, ExecutionGoalMutation, GoalMutationRequest,
-};
 use crate::prompt_context::PromptContextArtifactStorage;
 use crate::provider::ProviderExecutionBinding;
 use crate::runtime::error::{RuntimeAssemblyError, RuntimePortError};
 use crate::runtime::storage::{OpenProductStores, ScopedResource};
+use crate::runtime::theory::{TheoryInstallationReceiptStore, TheoryReceiptError};
 use crate::store::SledNodeRecordStore;
+use crate::theory::PdsPackageStore;
 
 /// Maximum events returned by one root-assembled replay port call.
 pub const MAX_EVENT_REPLAY_LIMIT: usize = 1024;
@@ -83,8 +77,6 @@ pub struct ProductRuntimePorts {
     event_append: ProductEventAppendPort,
     event_replay: ProductEventReplayPort,
     graph_cursor: ProductGraphCursorPort,
-    goal_command: ScopedResource<ExecutionGoalCommandPort>,
-    goal_mutation: ScopedResource<ExecutionGoalMutationPort>,
     planner_projection: ScopedResource<PlannerProjectionPort>,
     adapters: RuntimeAdapterPorts,
 }
@@ -144,30 +136,36 @@ pub struct ProductGraphCursorPort {
     registry: EventConsumerRegistryCapability,
 }
 
-/// Execution goal command sink backed by the execution goal API.
-///
-/// The port validates and maps producer commands into execution-owned goal
-/// acceptance. It does not decide whether a goal is worthwhile or cache goal
-/// ids as root progress.
-#[derive(Clone)]
-pub struct ExecutionGoalCommandPort {
-    store: Arc<PersistentGoalSetStore>,
-}
-
-/// Execution goal mutation sink backed by the execution goal API.
-///
-/// The port maps already-persisted world model satisfaction decisions into
-/// execution lifecycle mutations. It does not run satisfaction curation.
-#[derive(Clone)]
-pub struct ExecutionGoalMutationPort {
-    store: Arc<PersistentGoalSetStore>,
-}
-
 /// Planner projection query port backed by world model stores.
 #[derive(Clone)]
 pub struct PlannerProjectionPort {
     belief_store: Arc<BeliefStore>,
     traversal_store: Arc<TraversalStore>,
+}
+
+/// Exact current Planner assembly boundary used by Agent reconciliation.
+#[derive(Clone)]
+pub struct ProductAgentPlannerPort {
+    belief_store: Arc<BeliefStore>,
+    traversal_store: Arc<TraversalStore>,
+    event_append: ProductEventAppendPort,
+    request: PlannerCurrentAssemblyRequest,
+}
+
+/// Read-only live activation and authority-policy observer for Agent.
+#[derive(Clone)]
+pub struct ProductAgentAuthorityPort {
+    agent_store: Arc<AgentStore>,
+    receipts: Arc<TheoryInstallationReceiptStore>,
+    pds_packages: Arc<PdsPackageStore>,
+    selection: SelectedStewardshipPackage,
+    agent_id: String,
+}
+
+/// Planned Curation intake over the canonical Curation store and actor authority.
+#[derive(Clone)]
+pub struct ProductPlannedCurationPort {
+    store: Arc<CurationStore>,
 }
 
 /// Context frame adapter port.
@@ -231,29 +229,10 @@ impl ProductRuntimePorts {
             ),
             None => ScopedResource::closed("planner_projection_port"),
         };
-        let (goal_command, goal_mutation) = match stores.goal_store.opened() {
-            Some(goal_store) => (
-                ScopedResource::open(
-                    "goal_command_port",
-                    ExecutionGoalCommandPort::new(Arc::clone(goal_store)),
-                ),
-                ScopedResource::open(
-                    "goal_mutation_port",
-                    ExecutionGoalMutationPort::new(Arc::clone(goal_store)),
-                ),
-            ),
-            None => (
-                ScopedResource::closed("goal_command_port"),
-                ScopedResource::closed("goal_mutation_port"),
-            ),
-        };
-
         Ok(Self {
             event_append,
             event_replay: event_replay.clone(),
             graph_cursor: ProductGraphCursorPort::new(authority.consumer_registry_capability()),
-            goal_command,
-            goal_mutation,
             planner_projection,
             adapters: RuntimeAdapterPorts {
                 context: match stores.frame_storage.opened() {
@@ -309,26 +288,6 @@ impl ProductRuntimePorts {
     /// Return the graph consumer cursor reporter.
     pub fn graph_cursor(&self) -> &ProductGraphCursorPort {
         &self.graph_cursor
-    }
-
-    /// Return the goal command sink port.
-    pub fn goal_command(&self) -> &ExecutionGoalCommandPort {
-        &self.goal_command
-    }
-
-    /// Return the goal command sink port when its store is in scope.
-    pub fn try_goal_command(&self) -> Option<&ExecutionGoalCommandPort> {
-        self.goal_command.opened()
-    }
-
-    /// Return the goal mutation sink port.
-    pub fn goal_mutation(&self) -> &ExecutionGoalMutationPort {
-        &self.goal_mutation
-    }
-
-    /// Return the goal mutation sink port when its store is in scope.
-    pub fn try_goal_mutation(&self) -> Option<&ExecutionGoalMutationPort> {
-        self.goal_mutation.opened()
     }
 
     /// Return the planner projection query port.
@@ -568,102 +527,6 @@ impl GraphConsumerCursorReporter for ProductGraphCursorPort {
     }
 }
 
-impl ExecutionGoalCommandPort {
-    /// Bind the port to an opened execution goal store.
-    pub fn new(store: Arc<PersistentGoalSetStore>) -> Self {
-        Self { store }
-    }
-
-    /// Accept a producer neutral goal request through execution-owned APIs.
-    pub fn accept_goal(
-        &self,
-        request: GoalAcceptanceRequest,
-    ) -> Result<GoalCommandOutcome, RuntimePortError> {
-        let mut store = self.store.as_ref().clone();
-        GoalSetApi::new(&mut store)
-            .accept_goal(request)
-            .map_err(|error| RuntimePortError::Storage(error.to_string()))
-    }
-
-    /// Validate and accept one world-model authored goal command.
-    pub fn accept_agent_goal_command(
-        &self,
-        command: AgentGoalCommand,
-        seq: u64,
-    ) -> Result<GoalCommandOutcome, RuntimePortError> {
-        command
-            .validate()
-            .map_err(|error| RuntimePortError::InvalidRequest(error.to_string()))?;
-        let request = GoalAcceptanceRequest {
-            metadata: GoalCommandMetadata {
-                command_id: command.command_id,
-                source_identity: Some(command.dedupe_key.index_key()),
-                seq,
-            },
-            goal: command.goal,
-            lifecycle_policy: GoalAcceptanceLifecycle::RequireProposedThenActivate,
-            strategy_authorization: command.strategy_authorization.map(|authorization| {
-                let method_id = match authorization.candidate.origin {
-                    meld_world_model::StrategyCandidateOrigin::Direct => None,
-                    meld_world_model::StrategyCandidateOrigin::Method { method_id } => {
-                        Some(method_id)
-                    }
-                };
-                meld_execution::goals::ExecutionStrategyAuthorization {
-                    strategy_theory_id: authorization
-                        .strategy_theory_revision
-                        .as_ref()
-                        .map(|reference| reference.id.clone()),
-                    strategy_theory_content_hash: authorization
-                        .strategy_theory_revision
-                        .as_ref()
-                        .map(|reference| reference.content_hash.clone()),
-                    authorization_id: authorization.authorization_id,
-                    agent_decision_id: authorization.agent_decision_id,
-                    candidate_id: authorization.candidate.candidate_id,
-                    goal_id: authorization.candidate.goal_id,
-                    planner_snapshot_id: authorization.candidate.planner_snapshot_id,
-                    composition: authorization.candidate.composition,
-                    bindings: authorization.candidate.bindings,
-                    capability_contract_ids: authorization.candidate.capability_contract_ids,
-                    method_id,
-                    authority_decision: authorization.authority_decision,
-                }
-            }),
-        };
-        self.accept_goal(request)
-    }
-}
-
-impl ExecutionGoalMutationPort {
-    /// Bind the port to an opened execution goal store.
-    pub fn new(store: Arc<PersistentGoalSetStore>) -> Self {
-        Self { store }
-    }
-
-    /// Apply a world-model goal mutation through execution-owned APIs.
-    ///
-    /// Routes both satisfaction and reopen mutations; the historical name is
-    /// kept for existing callers.
-    pub fn satisfy_agent_goal_mutation(
-        &self,
-        command: AgentGoalMutationCommand,
-    ) -> Result<GoalCommandOutcome, RuntimePortError> {
-        let mutation = execution_mutation_from_agent_command(GoalMutationRequest { command })
-            .map_err(|error| RuntimePortError::InvalidRequest(error.to_string()))?;
-        let mut store = self.store.as_ref().clone();
-        let mut api = GoalSetApi::new(&mut store);
-        match mutation {
-            ExecutionGoalMutation::Satisfy(command) => api
-                .satisfy_goal(command)
-                .map_err(|error| RuntimePortError::Storage(error.to_string())),
-            ExecutionGoalMutation::Reopen(command) => api
-                .reopen_goal(command)
-                .map_err(|error| RuntimePortError::Storage(error.to_string())),
-        }
-    }
-}
-
 impl PlannerProjectionPort {
     /// Bind the port to opened world model graph and belief stores.
     pub fn new(belief_store: Arc<BeliefStore>, traversal_store: Arc<TraversalStore>) -> Self {
@@ -673,21 +536,192 @@ impl PlannerProjectionPort {
         }
     }
 
-    /// Project current planner state for one subject and dimension.
+    /// Return the view subordinate to one compatibility Planner cut.
+    ///
+    /// This adapter remains for Execution planning and can be removed when its
+    /// projection contract accepts `PlannerCut` directly.
     pub fn project_current_world_state(
         &self,
         subject: &DomainObjectRef,
         dimension_id: &str,
         perspective: Option<PerspectiveKey>,
         branch_scope: Option<BranchScope>,
-    ) -> Result<PlannerProjectionOutput, RuntimePortError> {
+    ) -> Result<WorldModelView, RuntimePortError> {
         let query = PlannerQuery::new(
             BeliefQuery::new(self.belief_store.as_ref()),
             TraversalQuery::new(self.traversal_store.as_ref()),
         );
         query
-            .project_current_world_state(subject, dimension_id, perspective, branch_scope)
+            .compatibility_cut_current_world_state(subject, dimension_id, perspective, branch_scope)
+            .map(|cut| cut.world_model_view)
             .map_err(map_projection_error)
+    }
+}
+
+impl ProductAgentPlannerPort {
+    pub fn new(
+        belief_store: Arc<BeliefStore>,
+        traversal_store: Arc<TraversalStore>,
+        event_append: ProductEventAppendPort,
+        request: PlannerCurrentAssemblyRequest,
+    ) -> Self {
+        Self {
+            belief_store,
+            traversal_store,
+            event_append,
+            request,
+        }
+    }
+}
+
+impl AgentPlannerPort for ProductAgentPlannerPort {
+    fn assemble(&self) -> PlannerAssemblyOutcome {
+        let mut request = self.request.clone();
+        match self.event_append.watermark() {
+            Ok(watermark) => {
+                request.traversal_cut_request.event_position = LedgerCursor {
+                    ledger_id: watermark.ledger_id,
+                    after_seq: watermark.committed_seq,
+                }
+            }
+            Err(error) => {
+                return PlannerAssemblyOutcome::Refused(meld_world_model::PlannerRefusal {
+                    request_context_id: request.context.context_id,
+                    grounds: vec![meld_world_model::PlannerRefusalGround::InvalidInput {
+                        detail: error.to_string(),
+                    }],
+                })
+            }
+        }
+        PlannerQuery::new(
+            BeliefQuery::new(self.belief_store.as_ref()),
+            TraversalQuery::new(self.traversal_store.as_ref()),
+        )
+        .assemble_current(request)
+    }
+}
+
+impl ProductPlannedCurationPort {
+    pub fn new(store: Arc<CurationStore>) -> Self {
+        Self { store }
+    }
+}
+
+impl ProductAgentAuthorityPort {
+    pub fn new(
+        agent_store: Arc<AgentStore>,
+        receipts: Arc<TheoryInstallationReceiptStore>,
+        pds_packages: Arc<PdsPackageStore>,
+        selection: SelectedStewardshipPackage,
+        agent_id: String,
+    ) -> Self {
+        Self {
+            agent_store,
+            receipts,
+            pds_packages,
+            selection,
+            agent_id,
+        }
+    }
+}
+
+impl AgentAuthorityPort for ProductAgentAuthorityPort {
+    fn observe(
+        &self,
+    ) -> Result<Option<AgentAuthorizationFence>, meld_world_model::error::StorageError> {
+        let Some(agent) = self.agent_store.get_agent(&self.agent_id)? else {
+            return Ok(None);
+        };
+        if agent.status != AgentStatus::Operational {
+            return Ok(None);
+        }
+        let Some(activation) = self
+            .agent_store
+            .activations_for_agent(&self.agent_id)?
+            .into_iter()
+            .next_back()
+        else {
+            return Ok(None);
+        };
+        if activation.status != AgentActivationStatus::Activated {
+            return Ok(None);
+        }
+        let authority_policy_content_hash = match self.receipts.current(&self.selection) {
+            Ok(receipt) => Some(receipt.authority_policy.content_hash),
+            Err(TheoryReceiptError::NotInstalled) => self.routed_authority_policy_content_hash()?,
+            Err(error) => {
+                return Err(meld_world_model::error::StorageError::InvalidPath(
+                    error.to_string(),
+                ))
+            }
+        };
+        let Some(authority_policy_content_hash) = authority_policy_content_hash else {
+            return Ok(None);
+        };
+        Ok(Some(AgentAuthorizationFence {
+            activation_generation: activation.activation_id,
+            authority_policy_content_hash,
+        }))
+    }
+}
+
+impl ProductAgentAuthorityPort {
+    fn routed_authority_policy_content_hash(
+        &self,
+    ) -> Result<Option<String>, meld_world_model::error::StorageError> {
+        let heads = self.pds_packages.heads().map_err(|error| {
+            meld_world_model::error::StorageError::InvalidPath(error.to_string())
+        })?;
+        let [head] = heads.as_slice() else {
+            return Ok(None);
+        };
+        let receipt = self
+            .pds_packages
+            .resolve_receipt(&head.receipt_id)
+            .map_err(|error| meld_world_model::error::StorageError::InvalidPath(error.to_string()))?
+            .ok_or_else(|| {
+                meld_world_model::error::StorageError::InvalidPath(
+                    "active routed package head references a missing receipt".to_string(),
+                )
+            })?;
+        let mut policies = receipt.components.iter().filter(|component| {
+            component.route.owner_domain == "execution"
+                && component.route.component_kind == "authority-policy"
+                && component.route.route_version == 1
+                && component.owner_revision.id == self.selection.authority_policy_id
+        });
+        let Some(policy) = policies.next() else {
+            return Ok(None);
+        };
+        if policies.next().is_some() {
+            return Err(meld_world_model::error::StorageError::InvalidPath(
+                "active routed package has ambiguous authority-policy revisions".to_string(),
+            ));
+        }
+        Ok(Some(policy.owner_revision.content_hash.clone()))
+    }
+}
+
+impl AgentCurationPort for ProductPlannedCurationPort {
+    fn submit(
+        &self,
+        operation: CurationOperation,
+    ) -> Result<(), meld_world_model::error::StorageError> {
+        self.store.submit_planned(&operation)
+    }
+
+    fn acceptance(
+        &self,
+        operation_id: &str,
+    ) -> Result<Option<CurationAcceptanceRecord>, meld_world_model::error::StorageError> {
+        self.store.acceptance_for_planned_operation(operation_id)
+    }
+
+    fn result(
+        &self,
+        operation_id: &str,
+    ) -> Result<Option<CurationResult>, meld_world_model::error::StorageError> {
+        self.store.result_for_operation(operation_id)
     }
 }
 
@@ -791,141 +825,12 @@ impl EvidenceEventReplaySource for ProductEventReplayPort {
     }
 }
 
-/// Execution-owned active-goal view adapted for world-model curation.
-///
-/// Owner: root translation only. The adapter copies every goal record the
-/// execution store holds for one agent — including proposed and satisfied
-/// records so dedupe and the reopen path see them — together with the
-/// authoritative lifecycle epoch by goal id, so satisfaction and reopen
-/// commands bind the epoch they observed.
-#[derive(Clone)]
-pub struct ExecutionAgentGoalQueryPort {
-    store: Arc<PersistentGoalSetStore>,
-}
-
-impl ExecutionAgentGoalQueryPort {
-    /// Bind the port to an opened execution goal store.
-    pub fn new(store: Arc<PersistentGoalSetStore>) -> Self {
-        Self { store }
-    }
-}
-
-impl AgentActiveGoalQuery for ExecutionAgentGoalQueryPort {
-    fn active_goals_for_agent(
-        &mut self,
-        agent_id: &str,
-    ) -> Result<ActiveGoalSummary, AgentActiveGoalQueryError> {
-        let records = self
-            .store
-            .goal_records()
-            .map_err(|error| AgentActiveGoalQueryError::retryable(error.to_string()))?;
-        let mut summary = ActiveGoalSummary::default();
-        for record in records
-            .into_iter()
-            .filter(|record| record.goal.agent_id == agent_id)
-        {
-            summary
-                .lifecycle_epochs
-                .insert(record.goal.goal_id.clone(), record.lifecycle_epoch);
-            summary.goals.push(record.goal);
-        }
-        Ok(summary)
-    }
-}
-
-/// The named curation-to-goal-set port bound to execution goal storage.
-///
-/// This is the composition-time binding of
-/// [`meld_world_model::agent::CurationGoalSetPort`] (satisfied through the
-/// blanket impl over both sinks): curated goal commands route through the
-/// execution goal command port and both mutation kinds — satisfy and
-/// reopen — route through the execution goal mutation port. The sequence is
-/// the injected step sequence of the invoking bounded actor tick and is
-/// recorded as the accepted command's ordering sequence.
-pub struct CurationGoalExecutionPort {
-    command: ExecutionGoalCommandPort,
-    mutation: ExecutionGoalMutationPort,
-    sequence: u64,
-}
-
-impl CurationGoalExecutionPort {
-    /// Bind the port for one bounded step at the injected sequence.
-    pub fn new(
-        command: ExecutionGoalCommandPort,
-        mutation: ExecutionGoalMutationPort,
-        sequence: u64,
-    ) -> Self {
-        Self {
-            command,
-            mutation,
-            sequence,
-        }
-    }
-}
-
-impl AgentGoalCommandSink for CurationGoalExecutionPort {
-    fn submit_goal_command(
-        &mut self,
-        command: &AgentGoalCommand,
-    ) -> Result<AgentSinkSubmission, AgentSinkError> {
-        let command_id = command.command_id.clone();
-        let outcome = self
-            .command
-            .accept_agent_goal_command(command.clone(), self.sequence)
-            .map_err(|error| AgentSinkError::retryable(error.to_string()))?;
-        goal_outcome_submission(command_id, outcome)
-    }
-}
-
-impl AgentGoalMutationSink for CurationGoalExecutionPort {
-    fn submit_goal_mutation(
-        &mut self,
-        command: &AgentGoalMutationCommand,
-    ) -> Result<AgentSinkSubmission, AgentSinkError> {
-        let command_id = command.command_id.clone();
-        let outcome = self
-            .mutation
-            .satisfy_agent_goal_mutation(command.clone())
-            .map_err(|error| AgentSinkError::retryable(error.to_string()))?;
-        goal_outcome_submission(command_id, outcome)
-    }
-}
-
-/// Translate one goal command outcome into the sink submission vocabulary.
-///
-/// A stale no-op is absorbed as `duplicate`: the record was left
-/// byte-identical by design (epoch fence), so the curation receipt must not
-/// read as a fresh application.
-fn goal_outcome_submission(
-    command_id: String,
-    outcome: GoalCommandOutcome,
-) -> Result<AgentSinkSubmission, AgentSinkError> {
-    match outcome {
-        GoalCommandOutcome::Applied(record) => Ok(AgentSinkSubmission::new(
-            command_id,
-            record.goal.goal_id,
-            "applied",
-        )),
-        GoalCommandOutcome::Duplicate { existing_goal_id } => Ok(AgentSinkSubmission::new(
-            command_id,
-            existing_goal_id,
-            "duplicate",
-        )),
-        GoalCommandOutcome::StaleNoOp { goal_id, .. } => {
-            Ok(AgentSinkSubmission::new(command_id, goal_id, "duplicate"))
-        }
-        GoalCommandOutcome::NotFound { goal_id } => Err(AgentSinkError::fatal(format!(
-            "goal '{goal_id}' does not exist in the execution goal set"
-        ))),
-    }
-}
-
 /// Exact-key planner projection port for the execution planning actor.
 ///
 /// Owner: root translation. The port resolves the configured belief
 /// family's current theory revision per projection, derives the exact
-/// configured belief key, and reads through the world model's exact-key
-/// path, so the projected revision and theory lineage are the identities
+/// configured belief key, and assembles the compatibility Planner cut, so
+/// the subordinate view's revision and theory lineage are the identities
 /// the belief store holds for that key — never a same-subject neighbor.
 pub struct ExactKeyPlanningProjectionPort {
     belief_store: Arc<BeliefStore>,
@@ -991,14 +896,12 @@ impl PlanningProjectionPort for ExactKeyPlanningProjectionPort {
         // The family's anchor declaration decides scope semantics on the
         // planner side exactly as it does on the assessment side: an
         // unanchored family's maintained scope is declared accessible.
-        let output = if revision.config.anchor_requirement
-            == meld_world_model::belief::AnchorRequirement::Unanchored
-        {
-            query.project_world_state_for_unanchored_key(&key)
-        } else {
-            query.project_world_state_for_key(&key)
-        }
-        .map_err(|error| ExecutionPlanningProjectionError::retryable(error.to_string()))?;
+        let unanchored = revision.config.anchor_requirement
+            == meld_world_model::belief::AnchorRequirement::Unanchored;
+        let cut = query
+            .compatibility_cut_for_key(&key, unanchored)
+            .map_err(|error| ExecutionPlanningProjectionError::retryable(error.to_string()))?;
+        let output = cut.world_model_view;
 
         let source_refs: Vec<String> = output.source_refs.iter().map(render_source_ref).collect();
         // Frame identity is deterministic from the consumed belief revision
@@ -1362,194 +1265,4 @@ impl ClaimedTaskInvoker for SharedClaimedTaskInvoker {
 
 fn map_projection_error(error: PlannerProjectionError) -> RuntimePortError {
     RuntimePortError::PlannerProjection(error.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use meld_execution::goals::{GoalAcceptanceLifecycle, GoalAcceptanceRequest};
-    use meld_lang::{Goal, GoalLifecycle, GoalPriority, GoalSource, Proposition, Term};
-    use meld_world_model::agent::AgentGoalMutationKind;
-    use meld_world_model::AgentCurationDedupeKey;
-
-    #[test]
-    fn generic_terminal_capability_marker_prevents_unbounded_claim_replay() {
-        assert!(is_terminal_claimed_failure(&format!(
-            "{}: exhausted bounded validation",
-            meld_execution::error::TERMINAL_CAPABILITY_FAILURE_MARKER
-        )));
-        assert!(!is_terminal_claimed_failure(
-            "Provider request failed: connection reset"
-        ));
-    }
-
-    fn subject() -> DomainObjectRef {
-        DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap()
-    }
-
-    fn rule() -> meld_world_model::AgentCurationRuleConfig {
-        meld_world_model::AgentCurationRuleConfig {
-            maintained_condition_id: None,
-            dimension_id: "docs_freshness".to_string(),
-            threshold: 0.7,
-            priority_urgency: 8,
-            desired_summary: "fresh docs".to_string(),
-            source_kind: "docs_freshness".to_string(),
-        }
-    }
-
-    fn goal(goal_id: &str) -> Goal {
-        Goal {
-            goal_id: goal_id.to_string(),
-            agent_id: "agent-a".to_string(),
-            target: Proposition::Holds {
-                subject: Term::Object(subject()),
-                dimension: Term::Dimension("docs_freshness".to_string()),
-                condition: rule().target_condition(),
-            },
-            priority: GoalPriority {
-                urgency: 8,
-                cost_ceiling: None,
-            },
-            source: GoalSource::BeliefDivergence {
-                dimension: "docs_freshness".to_string(),
-                observed: "confidence=0.2".to_string(),
-                desired: "fresh docs".to_string(),
-            },
-            lifecycle: GoalLifecycle::Proposed,
-        }
-    }
-
-    fn open_goal_store() -> (tempfile::TempDir, Arc<PersistentGoalSetStore>) {
-        let temp = tempfile::tempdir().unwrap();
-        let db = sled::open(temp.path().join("goals.sled")).unwrap();
-        (temp, Arc::new(PersistentGoalSetStore::new(db).unwrap()))
-    }
-
-    fn accept_goal(store: &Arc<PersistentGoalSetStore>, goal_id: &str, seq: u64) {
-        let command = GoalAcceptanceRequest {
-            metadata: GoalCommandMetadata {
-                command_id: format!("command-{goal_id}"),
-                source_identity: Some(format!("identity-{goal_id}")),
-                seq,
-            },
-            goal: goal(goal_id),
-            lifecycle_policy: GoalAcceptanceLifecycle::RequireProposedThenActivate,
-            strategy_authorization: None,
-        };
-        ExecutionGoalCommandPort::new(Arc::clone(store))
-            .accept_goal(command)
-            .unwrap();
-    }
-
-    #[test]
-    fn agent_goal_query_port_reports_lifecycle_epochs_from_goal_records() {
-        let (_temp, store) = open_goal_store();
-        accept_goal(&store, "goal-a", 5);
-        let mutation_port = ExecutionGoalMutationPort::new(Arc::clone(&store));
-        let dedupe_key = AgentCurationDedupeKey::threshold_rule(
-            "agent-a",
-            &subject(),
-            &BranchScope::main(),
-            &rule(),
-        );
-        // Satisfy at epoch zero, then reopen: the durable record advances to
-        // lifecycle epoch one.
-        mutation_port
-            .satisfy_agent_goal_mutation(AgentGoalMutationCommand {
-                command_id: "mutation-satisfy".to_string(),
-                agent_id: "agent-a".to_string(),
-                goal_id: "goal-a".to_string(),
-                kind: AgentGoalMutationKind::Satisfy {
-                    at_seq: 6,
-                    lifecycle_epoch: 0,
-                },
-                dedupe_key: dedupe_key.clone(),
-                review_seq: 6,
-                projection_version: "world_model.planner.v1".to_string(),
-                planner_source_refs: Vec::new(),
-                planner_warnings: Vec::new(),
-            })
-            .unwrap();
-        mutation_port
-            .satisfy_agent_goal_mutation(AgentGoalMutationCommand {
-                command_id: "mutation-reopen".to_string(),
-                agent_id: "agent-a".to_string(),
-                goal_id: "goal-a".to_string(),
-                kind: AgentGoalMutationKind::Reopen {
-                    triggering_belief_revision_id: "belief-revision-b".to_string(),
-                    observed_lifecycle_epoch: 0,
-                },
-                dedupe_key,
-                review_seq: 7,
-                projection_version: "world_model.planner.v1".to_string(),
-                planner_source_refs: Vec::new(),
-                planner_warnings: Vec::new(),
-            })
-            .unwrap();
-
-        let summary = ExecutionAgentGoalQueryPort::new(Arc::clone(&store))
-            .active_goals_for_agent("agent-a")
-            .unwrap();
-
-        // The observed epoch flows from the execution goal record into the
-        // snapshot the satisfy adapter binds its mutations to.
-        assert_eq!(summary.lifecycle_epoch("goal-a"), 1);
-        assert_eq!(summary.goals.len(), 1);
-        assert!(matches!(summary.goals[0].lifecycle, GoalLifecycle::Active));
-    }
-
-    #[test]
-    fn agent_goal_query_port_filters_by_agent_identity() {
-        let (_temp, store) = open_goal_store();
-        accept_goal(&store, "goal-a", 5);
-
-        let summary = ExecutionAgentGoalQueryPort::new(Arc::clone(&store))
-            .active_goals_for_agent("agent-other")
-            .unwrap();
-
-        assert!(summary.goals.is_empty());
-        assert!(summary.lifecycle_epochs.is_empty());
-    }
-
-    #[test]
-    fn curation_port_routes_commands_and_absorbs_stale_mutations() {
-        let (_temp, store) = open_goal_store();
-        accept_goal(&store, "goal-a", 5);
-        let mut port = CurationGoalExecutionPort::new(
-            ExecutionGoalCommandPort::new(Arc::clone(&store)),
-            ExecutionGoalMutationPort::new(Arc::clone(&store)),
-            9,
-        );
-        let dedupe_key = AgentCurationDedupeKey::threshold_rule(
-            "agent-a",
-            &subject(),
-            &BranchScope::main(),
-            &rule(),
-        );
-
-        // A satisfy that observed a stale epoch is absorbed as duplicate:
-        // the goal record must stay byte-identical under the epoch fence.
-        let stale = port
-            .submit_goal_mutation(&AgentGoalMutationCommand {
-                command_id: "mutation-stale".to_string(),
-                agent_id: "agent-a".to_string(),
-                goal_id: "goal-a".to_string(),
-                kind: AgentGoalMutationKind::Satisfy {
-                    at_seq: 9,
-                    lifecycle_epoch: 3,
-                },
-                dedupe_key,
-                review_seq: 9,
-                projection_version: "world_model.planner.v1".to_string(),
-                planner_source_refs: Vec::new(),
-                planner_warnings: Vec::new(),
-            })
-            .unwrap();
-
-        assert_eq!(stale.outcome, "duplicate");
-        let record = store.get_goal("goal-a").unwrap().unwrap();
-        assert_eq!(record.lifecycle_epoch, 0);
-        assert!(matches!(record.goal.lifecycle, GoalLifecycle::Active));
-    }
 }

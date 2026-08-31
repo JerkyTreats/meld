@@ -68,6 +68,45 @@ pub fn search(request: &StrategySearchRequest) -> StrategySearchResult {
     state.finish(recommendation)
 }
 
+/// Reconstruct one immutable successor from an exact predecessor and history.
+///
+/// This function has no runtime reads or writes. Equal frozen inputs produce
+/// the same successor revision and preserve the supplied completed history.
+pub fn search_successor(request: &StrategySuccessorRequest) -> StrategySuccessorResult {
+    let predecessor = request.predecessor_plan.as_ref();
+    let expected_family = plan_family_identity(&request.search.problem);
+    if predecessor.plan_revision_id != plan_revision_identity(predecessor)
+        || predecessor.plan_family_id != expected_family
+        || predecessor.goal_id != request.search.problem.goal.goal_id
+    {
+        return StrategySuccessorResult {
+            problem_id: request.search.problem.problem_id.clone(),
+            completion: StrategySearchCompletion::Exhaustive,
+            recommendation: None,
+            rejections: vec![StrategyRejectionGround::InvalidPredecessor],
+            statistics: StrategySearchStatistics::default(),
+        };
+    }
+
+    let result = search(&request.search);
+    let recommendation = result.recommendation.map(|mut plan| {
+        plan.plan_family_id = predecessor.plan_family_id.clone();
+        plan.predecessor_plan_revision_id = Some(predecessor.plan_revision_id.clone());
+        plan.plan_revision_id = plan_revision_identity(&plan);
+        StrategySuccessorPlan {
+            plan,
+            completed_history: request.completed_history.clone(),
+        }
+    });
+    StrategySuccessorResult {
+        problem_id: result.problem_id,
+        completion: result.completion,
+        recommendation,
+        rejections: result.rejections,
+        statistics: result.statistics,
+    }
+}
+
 struct SearchState<'a> {
     request: &'a StrategySearchRequest,
     rejections: Vec<StrategyRejectionGround>,
@@ -101,7 +140,7 @@ impl<'a> SearchState<'a> {
         }
     }
 
-    fn finish(self, recommendation: Option<StrategyCandidate>) -> StrategySearchResult {
+    fn finish(self, recommendation: Option<StrategyPlan>) -> StrategySearchResult {
         StrategySearchResult {
             problem_id: self.request.problem.problem_id.clone(),
             completion: if self.bounded {
@@ -124,7 +163,7 @@ fn method_candidates(
     settlement: &Proposition,
     goal_bindings: &meld_lang::Bindings,
     state: &mut SearchState<'_>,
-) -> Vec<StrategyCandidate> {
+) -> Vec<StrategyPlan> {
     let mut methods: Vec<_> = request.problem.methods.iter().collect();
     methods.sort_by(|left, right| left.method_id.cmp(&right.method_id));
     let mut candidates = Vec::new();
@@ -144,7 +183,11 @@ fn method_candidates(
             });
             continue;
         };
-        if !preconditions_hold(&composition, &request.problem.world_state, state) {
+        if !preconditions_hold(
+            &composition,
+            &request.problem.planner_cut.world_model_view.world_state,
+            state,
+        ) {
             continue;
         }
         if !composition_contributes(&composition, settlement) {
@@ -156,7 +199,7 @@ fn method_candidates(
             settlement,
             bindings,
             composition,
-            StrategyCandidateOrigin::Method {
+            StrategyPlanOrigin::Method {
                 method_id: method.method_id.clone(),
             },
             state,
@@ -173,7 +216,7 @@ fn direct_candidates(
     settlement: &Proposition,
     goal_bindings: &meld_lang::Bindings,
     state: &mut SearchState<'_>,
-) -> Vec<StrategyCandidate> {
+) -> Vec<StrategyPlan> {
     let mut capabilities: Vec<_> = request.problem.capabilities.iter().collect();
     capabilities.sort_by(|left, right| left.contract_id.cmp(&right.contract_id));
     let mut candidates = Vec::new();
@@ -224,7 +267,7 @@ fn direct_candidates(
             settlement,
             bindings,
             composition,
-            StrategyCandidateOrigin::Direct,
+            StrategyPlanOrigin::Direct,
             state,
         ) {
             candidates.push(candidate);
@@ -253,7 +296,7 @@ fn close_inputs(
         .filter(|slot| slot.required)
     {
         if existing_artifact(
-            &request.problem.world_state,
+            &request.problem.planner_cut.world_model_view.world_state,
             scope.as_ref(),
             &input.artifact_type,
         ) {
@@ -332,7 +375,11 @@ fn close_inputs(
                 }],
                 edges: Vec::new(),
             };
-            if !preconditions_hold(&single, &request.problem.world_state, state) {
+            if !preconditions_hold(
+                &single,
+                &request.problem.planner_cut.world_model_view.world_state,
+                state,
+            ) {
                 continue;
             }
             let mut trial_selected = selected.clone();
@@ -381,15 +428,19 @@ fn finish_candidate(
     settlement: &Proposition,
     bindings: meld_lang::Bindings,
     composition: Composition,
-    origin: StrategyCandidateOrigin,
+    origin: StrategyPlanOrigin,
     state: &mut SearchState<'_>,
-) -> Option<StrategyCandidate> {
+) -> Option<StrategyPlan> {
     let validation = meld_lang::validate(&composition);
     if !validation.valid {
         state.reject(StrategyRejectionGround::InvalidComposition);
         return None;
     }
-    if !preconditions_hold(&composition, &request.problem.world_state, state) {
+    if !preconditions_hold(
+        &composition,
+        &request.problem.planner_cut.world_model_view.world_state,
+        state,
+    ) {
         return None;
     }
     let mut contract_ids = Vec::new();
@@ -422,20 +473,92 @@ fn finish_candidate(
     contract_ids.sort();
     contract_ids.dedup();
     let evaluation = evaluate_candidate(&composition);
-    let mut candidate = StrategyCandidate {
-        candidate_id: String::new(),
+    let task_id = stable_id(
+        "strategy-task-v1",
+        &(
+            &request.problem.goal.goal_id,
+            &request.problem.planner_cut.cut_id,
+            &composition,
+            &contract_ids,
+            &rule.evidence_route.outcome_contract_id,
+        ),
+    );
+    let task = StrategyTask {
+        task_id: task_id.clone(),
+        composition: composition.clone(),
+        capability_contract_ids: contract_ids.clone(),
+        expected_outcome_contract_id: rule.evidence_route.outcome_contract_id.clone(),
+        authority_requirements: request
+            .problem
+            .capabilities
+            .iter()
+            .map(|item| item.contract_id.clone())
+            .collect(),
+        idempotency_key: format!("task::{task_id}"),
+    };
+    let epistemic_operations = request
+        .problem
+        .curation_operations
+        .first()
+        .map(|operation| {
+            let product_id = stable_id(
+                "strategy-epistemic-product-v1",
+                &(&request.problem.goal.goal_id, &operation.operation_id),
+            );
+            StrategyEpistemicOperation {
+                idempotency_key: format!("curation::{product_id}"),
+                product_id,
+                operation: operation.clone(),
+                authority_requirements: vec![operation.authority.agent_id.clone()],
+            }
+        })
+        .into_iter()
+        .collect::<Vec<_>>();
+    let dependencies = epistemic_operations
+        .first()
+        .map(|operation| StrategyPlanDependency {
+            dependency_id: stable_id(
+                "strategy-dependency-v1",
+                &(
+                    &operation.product_id,
+                    &task_id,
+                    &operation.operation.operation_id,
+                ),
+            ),
+            producer_product_id: operation.product_id.clone(),
+            consumer_product_id: task_id.clone(),
+            required_milestone: PlanMilestoneRequirement::CurationTerminal {
+                operation_id: operation.operation.operation_id.clone(),
+            },
+        })
+        .into_iter()
+        .collect();
+    let plan_family_id = plan_family_identity(&request.problem);
+    let mut candidate = StrategyPlan {
+        plan_revision_id: String::new(),
+        plan_family_id,
         problem_id: request.problem.problem_id.clone(),
         goal_id: request.problem.goal.goal_id.clone(),
-        planner_snapshot_id: request.problem.planner_snapshot_id.clone(),
+        planner_cut_id: request.problem.planner_cut.cut_id.clone(),
         origin,
         composition,
         bindings,
         settlement_obligation: settlement.clone(),
         evidence_route: rule.evidence_route.clone(),
         capability_contract_ids: contract_ids,
+        tasks: vec![task],
+        epistemic_operations,
+        dependencies,
+        conditions: vec![request.problem.goal.target.clone()],
+        frozen_context_id: request.problem.planner_cut.context.context_id.clone(),
+        explanation: format!(
+            "Plan '{}' closes Goal '{}' through exact frozen products",
+            request.problem.problem_id, request.problem.goal.goal_id
+        ),
+        predecessor_plan_revision_id: None,
         evaluation,
     };
-    candidate.candidate_id = candidate_identity(&candidate);
+    candidate.plan_revision_id = plan_revision_identity(&candidate);
     Some(candidate)
 }
 
@@ -563,7 +686,7 @@ fn goal_scope(goal: &Proposition) -> Option<Term> {
     }
 }
 
-fn evaluate_candidate(composition: &Composition) -> StrategyCandidateEvaluation {
+fn evaluate_candidate(composition: &Composition) -> StrategyPlanEvaluation {
     let mut time_ms = 0;
     let mut provider_calls = 0;
     for step in &composition.steps {
@@ -572,39 +695,54 @@ fn evaluate_candidate(composition: &Composition) -> StrategyCandidateEvaluation 
             provider_calls += operator.cost.provider_calls;
         }
     }
-    StrategyCandidateEvaluation {
+    StrategyPlanEvaluation {
         step_count: composition.steps.len(),
         time_ms,
         provider_calls,
     }
 }
 
-fn candidate_key(candidate: &StrategyCandidate) -> (usize, u64, u32, &str) {
+fn candidate_key(candidate: &StrategyPlan) -> (usize, u64, u32, &str) {
     (
         candidate.evaluation.step_count,
         candidate.evaluation.time_ms,
         candidate.evaluation.provider_calls,
-        &candidate.candidate_id,
+        &candidate.plan_revision_id,
     )
 }
 
-fn alternative_candidate_key(candidate: &StrategyCandidate) -> (u64, u32, usize, &str) {
+fn alternative_candidate_key(candidate: &StrategyPlan) -> (u64, u32, usize, &str) {
     (
         candidate.evaluation.time_ms,
         candidate.evaluation.provider_calls,
         candidate.evaluation.step_count,
-        &candidate.candidate_id,
+        &candidate.plan_revision_id,
     )
 }
 
-pub(crate) fn candidate_identity(candidate: &StrategyCandidate) -> String {
+pub(crate) fn plan_revision_identity(candidate: &StrategyPlan) -> String {
     let mut identity = candidate.clone();
-    identity.candidate_id.clear();
+    identity.plan_revision_id.clear();
     let bytes =
         serde_json::to_vec(&identity).expect("Strategy candidate serialization is infallible");
-    format!("strategy-candidate-{}", blake3::hash(&bytes).to_hex())
+    format!("strategy-plan-v1::{}", blake3::hash(&bytes).to_hex())
 }
 
-pub(crate) fn candidate_evaluation(candidate: &StrategyCandidate) -> StrategyCandidateEvaluation {
+pub(crate) fn plan_family_identity(problem: &StrategyProblem) -> String {
+    stable_id(
+        "strategy-plan-family-v1",
+        &(
+            problem.goal.agent_id.as_str(),
+            problem.goal.goal_id.as_str(),
+        ),
+    )
+}
+
+fn stable_id(namespace: &str, value: &impl serde::Serialize) -> String {
+    let bytes = serde_json::to_vec(value).expect("Strategy identity is serializable");
+    format!("{namespace}::{}", blake3::hash(&bytes).to_hex())
+}
+
+pub(crate) fn candidate_evaluation(candidate: &StrategyPlan) -> StrategyPlanEvaluation {
     evaluate_candidate(&candidate.composition)
 }
