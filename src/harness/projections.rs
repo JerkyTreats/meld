@@ -396,7 +396,7 @@ fn first_operational_flywheel_topology() -> FlywheelTopology {
 
     FlywheelTopology {
         topology_id: "docs_freshness_operational_flywheel".to_string(),
-        revision: 1,
+        revision: 2,
         stations: vec![
             station("observation", "workspace", "Observe", &[]),
             station(
@@ -421,7 +421,13 @@ fn first_operational_flywheel_topology() -> FlywheelTopology {
                 "agent",
                 "world_model",
                 "Agent",
-                &["world_model.agent_goal_curation"],
+                &["world_model.agent_reconciliation"],
+            ),
+            station(
+                "execution_admission",
+                "execution",
+                "Future execution admission",
+                &[],
             ),
             station("goals", "execution", "Goals", &["execution.goal_set"]),
             station("planning", "execution", "Planning", &["execution.planning"]),
@@ -449,12 +455,6 @@ fn first_operational_flywheel_topology() -> FlywheelTopology {
                 "Evidence",
                 &["world_model.evidence_ingestion"],
             ),
-            station(
-                "satisfaction",
-                "world_model",
-                "Satisfaction",
-                &["world_model.satisfaction_curation"],
-            ),
         ],
         handoffs: vec![
             handoff(
@@ -471,7 +471,12 @@ fn first_operational_flywheel_topology() -> FlywheelTopology {
                 "current anchors and provenance",
             ),
             handoff("belief_agent", "belief", "agent", "belief revisions"),
-            handoff("agent_goals", "agent", "goals", "authorized goal commands"),
+            handoff(
+                "agent_execution_admission",
+                "agent",
+                "execution_admission",
+                "eligible unpublished tasks awaiting future admission",
+            ),
             handoff("goals_planning", "goals", "planning", "active goals"),
             handoff(
                 "planning_network",
@@ -497,18 +502,7 @@ fn first_operational_flywheel_topology() -> FlywheelTopology {
                 "evidence",
                 "published outcome events",
             ),
-            handoff(
-                "evidence_satisfaction",
-                "evidence",
-                "satisfaction",
-                "revised outcome beliefs",
-            ),
-            handoff(
-                "satisfaction_goals",
-                "satisfaction",
-                "goals",
-                "goal satisfaction mutations",
-            ),
+            handoff("evidence_belief", "evidence", "belief", "evidence inputs"),
         ],
     }
 }
@@ -658,7 +652,19 @@ mod tests {
                 && station_ids.contains(handoff.to_station_id.as_str())
         }));
         assert!(topology.handoffs.iter().any(|handoff| {
-            handoff.from_station_id == "satisfaction" && handoff.to_station_id == "goals"
+            handoff.from_station_id == "agent"
+                && handoff.to_station_id == "execution_admission"
+                && handoff.carries.contains("future admission")
         }));
+        assert!(topology
+            .handoffs
+            .iter()
+            .all(|handoff| { handoff.from_station_id != "execution_admission" }));
+        assert!(topology
+            .stations
+            .iter()
+            .flat_map(|station| station.runtime_ids.iter())
+            .all(|runtime_id| runtime_id != "world_model.agent_goal_curation"
+                && runtime_id != "world_model.satisfaction_curation"));
     }
 }

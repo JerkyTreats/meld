@@ -9,10 +9,10 @@
 //!
 //! The chain follows the flywheel couplings upstream: an absent task
 //! completion resolves through dispatch to planning, an absent plan to
-//! the goal set, an absent goal command to curation, an absent decision
-//! input to belief assessment, and an absent revision to evidence — until
-//! a declaration names a divergence nothing upstream can supply, such as
-//! the survey's absent anchor with its subject-vocabulary mismatch.
+//! the goal set, and missing Execution admission to Agent reconciliation.
+//! The current Agent boundary stops truthfully at its explicit future
+//! admission declaration. Belief and evidence questions remain directly
+//! queryable without inventing a retired Agent producer.
 
 use std::collections::BTreeSet;
 
@@ -37,8 +37,8 @@ pub enum AbsentRecordKind {
     TaskCompletion,
     /// A committed task-network plan from the planning actor.
     TaskNetworkPlan,
-    /// A goal command from agent curation.
-    GoalCommand,
+    /// Admission of one Agent-authorized task into Execution.
+    ExecutionAdmission,
     /// A committed belief revision from assessment.
     BeliefRevision,
     /// Promoted evidence from ingestion.
@@ -238,7 +238,7 @@ fn producer_runtime_id(kind: AbsentRecordKind) -> &'static str {
     match kind {
         AbsentRecordKind::TaskCompletion => "execution.task_dispatch",
         AbsentRecordKind::TaskNetworkPlan => "execution.planning",
-        AbsentRecordKind::GoalCommand => "world_model.agent_goal_curation",
+        AbsentRecordKind::ExecutionAdmission => "world_model.agent_reconciliation",
         AbsentRecordKind::BeliefRevision => "world_model.belief_assessment",
         AbsentRecordKind::Evidence => "world_model.evidence_ingestion",
     }
@@ -255,7 +255,7 @@ fn next_question_kind(condition: &str) -> Option<AbsentRecordKind> {
     {
         Some(AbsentRecordKind::TaskNetworkPlan)
     } else if condition == execution_conditions::NO_ACTIVE_GOALS {
-        Some(AbsentRecordKind::GoalCommand)
+        Some(AbsentRecordKind::ExecutionAdmission)
     } else if condition == world_model_conditions::NO_UNDELIVERED_REVISIONS
         || condition == world_model_conditions::NO_PENDING_SATISFACTION_REVIEWS
     {
@@ -368,11 +368,12 @@ mod tests {
         );
         publish(
             &mut reports,
-            "world_model.agent_goal_curation",
+            "world_model.agent_reconciliation",
             vec![WaitingOnDeclaration {
-                condition: "no_undelivered_revisions".to_string(),
+                condition: "future_execution_admission".to_string(),
                 subject_key: Some("workspace_fs::node::docs".to_string()),
-                detail: "every subscription has consumed its latest revision".to_string(),
+                detail: "eligible task remains unpublished until Execution admission exists"
+                    .to_string(),
             }],
         );
         publish(
@@ -390,7 +391,7 @@ mod tests {
     }
 
     #[test]
-    fn an_absent_task_completion_chains_to_the_anchor_divergence() {
+    fn an_absent_task_completion_stops_at_future_execution_admission() {
         let (_temp, reports) = store_with_flywheel_stall();
         let chain = EligibilityWalker::new(&reports)
             .why_absent(EligibilityQuestion {
@@ -409,12 +410,11 @@ mod tests {
             vec![
                 "execution.task_dispatch",
                 "execution.planning",
-                "world_model.agent_goal_curation",
-                "world_model.belief_assessment",
+                "world_model.agent_reconciliation",
             ]
         );
         assert_eq!(chain.divergences.len(), 1);
-        assert!(chain.divergences[0].starts_with("graph_anchor_absent"));
+        assert!(chain.divergences[0].starts_with("future_execution_admission"));
     }
 
     #[test]

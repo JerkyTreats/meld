@@ -14,6 +14,8 @@ Style Assurance: [WMR-VC-03 Style Assurance](../reviews/wmr_vc_03_style_assuranc
 
 Overall verdict: accepted after one bounded correction cycle and verification pass
 
+Post-acceptance status: superseded by the [accepted successor receipt](wmr_vc_03_successor_gate_acceptance_receipt.md) after a later audit found incomplete `C15` restart proof and stale compiled harness diagnostics.
+
 ## Acceptance Inputs
 
 Acceptance used the frozen [delivery gate](wmr_vc_03_reasoning_reconciliation_gate.md), the exact candidate above, the [source activation record](wmr_vc_03_source_activation_record.md), direct product proof through the real root runtime, the bounded implementation verification, satisfied Style Assurance, exact route and deletion inventories, the complete sequential workspace suite, strict lint, property and state-machine evidence, and three focused fuzz campaigns.

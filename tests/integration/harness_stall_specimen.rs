@@ -173,24 +173,28 @@ fn the_anchor_stall_is_recorded_and_the_walk_names_the_dead_end() {
             "the divergence presents the subject-vocabulary mismatch: {divergence}"
         );
 
-        // The legacy diagnostic vocabulary remains a read-only view of
-        // incumbent reports. The retired actor has no current tick, so this
-        // question ends truthfully instead of inventing a producer.
-        let goal_chain = EligibilityWalker::new(&reports)
+        // The current boundary names the unpublished task and stops at the
+        // explicit future Execution admission instead of inventing a retired
+        // Goal-command producer.
+        let admission_chain = EligibilityWalker::new(&reports)
             .with_traversal(traversal)
             .why_absent(EligibilityQuestion {
-                kind: AbsentRecordKind::GoalCommand,
-                subject_key: Some(format!("workspace_fs::node::{SUBJECT_ID}")),
+                kind: AbsentRecordKind::ExecutionAdmission,
+                subject_key: None,
             })
             .unwrap();
-        let hops: Vec<&str> = goal_chain
+        let hops: Vec<&str> = admission_chain
             .links
             .iter()
             .map(|link| link.runtime_id.as_str())
             .collect();
-        assert!(hops.is_empty());
-        assert!(goal_chain.divergences.iter().any(|divergence| divergence
-            .contains("no preserved tick for world_model.agent_goal_curation")));
+        assert!(hops
+            .iter()
+            .all(|runtime_id| { *runtime_id == "world_model.agent_reconciliation" }));
+        assert!(admission_chain.divergences.iter().any(|divergence| {
+            divergence.starts_with("future_execution_admission")
+                || divergence.contains("no preserved tick for world_model.agent_reconciliation")
+        }));
     }
 
     // The manifest records the stalled step schedule as the durable

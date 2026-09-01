@@ -807,6 +807,27 @@ mod tests {
         }
     }
 
+    struct DurableCuration {
+        store: Arc<CurationStore>,
+    }
+
+    impl AgentCurationPort for DurableCuration {
+        fn submit(&self, operation: CurationOperation) -> Result<(), StorageError> {
+            self.store.submit_planned(&operation)
+        }
+
+        fn acceptance(
+            &self,
+            operation_id: &str,
+        ) -> Result<Option<CurationAcceptanceRecord>, StorageError> {
+            self.store.acceptance_for_planned_operation(operation_id)
+        }
+
+        fn result(&self, operation_id: &str) -> Result<Option<CurationResult>, StorageError> {
+            self.store.result_for_operation(operation_id)
+        }
+    }
+
     struct Fixture {
         _temp: tempfile::TempDir,
         db: sled::Db,
@@ -1118,50 +1139,127 @@ mod tests {
 
     #[test]
     fn each_durable_agent_boundary_resumes_with_monotonic_zero_replay() {
-        let fixture = Fixture::new();
-        let curation = Arc::new(ImmediateCuration {
-            rule: fixture.rule.clone(),
-            operation: Mutex::new(None),
-            terminal: true,
-        });
+        let temp = tempfile::tempdir().unwrap();
+        let store_path = temp.path().join("world-model.sled");
+        let authority = authority();
+        let rule_body = rule();
+        let rule = {
+            let db = sled::open(&store_path).unwrap();
+            let store = CurationStore::new(db).unwrap();
+            let revision = store.install_rule(rule_body.clone(), 1).unwrap();
+            store.flush().unwrap();
+            revision
+        };
+        let cut = planner_cut(&rule_body);
+        let goal = goal();
+        let package: StrategyTheoryPackage = serde_json::from_str(include_str!(
+            "../../../../theory/docs_freshness/strategy_theory.docs_freshness.json"
+        ))
+        .unwrap();
+        let strategy =
+            AgentStrategyRuntimeConfig::activate_installed(package, subject(), "agent-docs")
+                .unwrap();
+        let operation = CurationOperation::reconstruct(
+            authority.clone(),
+            rule.revision_ref(),
+            cut.traversal_cut.clone(),
+            cut.traversal_request.clone(),
+        )
+        .unwrap();
+        let plan = search(&StrategySearchRequest {
+            problem: strategy.problem(goal.clone(), cut.clone(), vec![operation.clone()]),
+            bounds: strategy.bounds(),
+        })
+        .recommendation
+        .unwrap();
+        let epistemic = plan.epistemic_operations[0].clone();
+        let acceptance = CurationAcceptanceRecord::for_operation(&operation, &rule).unwrap();
+        let result = CurationResult::new(
+            &operation,
+            CurationTerminalDisposition::Abstained,
+            "canonical Curation declined semantic authorship",
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .unwrap();
         let mut last = 0;
-        for _ in 0..6 {
-            let store = Arc::new(AgentStore::new(fixture.db.clone()).unwrap());
-            let actor = AgentReconciliationActor::new(
-                AGENT_RECONCILIATION_RUNTIME_ID,
-                fixture.goal.clone(),
-                store,
-                Arc::new(PlannerSequence {
-                    outcomes: Mutex::new(VecDeque::new()),
-                    fallback: PlannerAssemblyOutcome::Complete(Box::new(fixture.cut.clone())),
-                }),
-                Arc::new(FixedAuthority(AgentAuthorizationFence {
-                    activation_generation: "activation-docs".to_string(),
-                    authority_policy_content_hash: "authority-docs-v1".to_string(),
-                })),
-                AgentAuthorizationFence {
-                    activation_generation: "activation-docs".to_string(),
-                    authority_policy_content_hash: "authority-docs-v1".to_string(),
-                },
-                Arc::clone(&curation) as Arc<dyn AgentCurationPort>,
-                fixture.strategy.clone(),
-                fixture.authority.clone(),
-                fixture.rule.clone(),
-            )
-            .unwrap();
-            let report = actor.bounded_step(1);
-            assert_eq!(report.input_position, last);
-            assert!(report.output_position > last, "{report:?}");
+        for boundary in 0..6 {
+            let report = {
+                let db = sled::open(&store_path).unwrap();
+                let store = Arc::new(AgentStore::new(db.clone()).unwrap());
+                let curation_store = Arc::new(CurationStore::new(db).unwrap());
+                let actor = AgentReconciliationActor::new(
+                    AGENT_RECONCILIATION_RUNTIME_ID,
+                    goal.clone(),
+                    Arc::clone(&store),
+                    Arc::new(PlannerSequence {
+                        outcomes: Mutex::new(VecDeque::new()),
+                        fallback: PlannerAssemblyOutcome::Complete(Box::new(cut.clone())),
+                    }),
+                    Arc::new(FixedAuthority(AgentAuthorizationFence {
+                        activation_generation: "activation-docs".to_string(),
+                        authority_policy_content_hash: "authority-docs-v1".to_string(),
+                    })),
+                    AgentAuthorizationFence {
+                        activation_generation: "activation-docs".to_string(),
+                        authority_policy_content_hash: "authority-docs-v1".to_string(),
+                    },
+                    Arc::new(DurableCuration {
+                        store: Arc::clone(&curation_store),
+                    }),
+                    strategy.clone(),
+                    authority.clone(),
+                    rule.clone(),
+                )
+                .unwrap();
+                let report = actor.bounded_step(1);
+                if boundary == 1 {
+                    curation_store.put_acceptance(&acceptance).unwrap();
+                    curation_store.put_result(&result).unwrap();
+                }
+                store.flush().unwrap();
+                curation_store.flush().unwrap();
+                report
+            };
+            assert_eq!(report.input_position, last, "boundary {boundary}");
+            assert!(
+                report.output_position > last,
+                "boundary {boundary}: {report:?}"
+            );
             last = report.output_position;
         }
-        let (replay, _) = fixture.actor(
-            vec![
-                PlannerAssemblyOutcome::Complete(Box::new(fixture.cut.clone())),
-                PlannerAssemblyOutcome::Complete(Box::new(fixture.cut.clone())),
-            ],
-            true,
-        );
-        let replay = replay.bounded_step(8);
+
+        let db = sled::open(&store_path).unwrap();
+        let store = Arc::new(AgentStore::new(db.clone()).unwrap());
+        let curation_store = Arc::new(CurationStore::new(db).unwrap());
+        let replay = AgentReconciliationActor::new(
+            AGENT_RECONCILIATION_RUNTIME_ID,
+            goal.clone(),
+            Arc::clone(&store),
+            Arc::new(PlannerSequence {
+                outcomes: Mutex::new(VecDeque::new()),
+                fallback: PlannerAssemblyOutcome::Complete(Box::new(cut.clone())),
+            }),
+            Arc::new(FixedAuthority(AgentAuthorizationFence {
+                activation_generation: "activation-docs".to_string(),
+                authority_policy_content_hash: "authority-docs-v1".to_string(),
+            })),
+            AgentAuthorizationFence {
+                activation_generation: "activation-docs".to_string(),
+                authority_policy_content_hash: "authority-docs-v1".to_string(),
+            },
+            Arc::new(DurableCuration {
+                store: Arc::clone(&curation_store),
+            }),
+            strategy,
+            authority,
+            rule,
+        )
+        .unwrap()
+        .bounded_step(8);
         assert_eq!(replay.input_position, last);
         assert_eq!(replay.output_position, last);
         assert_eq!(replay.records_persisted, 0);
@@ -1171,6 +1269,55 @@ mod tests {
             .waiting_on
             .iter()
             .all(|wait| wait.subject_key.is_some()));
+        assert_eq!(
+            store.reconciliation_plan(&plan.plan_revision_id).unwrap(),
+            Some(plan.clone())
+        );
+        let judgment_id = stable_id(
+            "agent-plan-judgment-v1",
+            &(
+                "agent-docs",
+                &goal.goal_id,
+                &plan.plan_revision_id,
+                &cut.context.context_id,
+                &cut.context.authority_scope_id,
+                &cut.context.activation_generation,
+                "admitted",
+            ),
+        );
+        assert!(store.plan_judgment(&judgment_id).unwrap().is_some());
+        assert_eq!(
+            curation_store
+                .acceptance_for_planned_operation(&operation.operation_id)
+                .unwrap(),
+            Some(acceptance)
+        );
+        assert_eq!(
+            curation_store
+                .result_for_operation(&operation.operation_id)
+                .unwrap(),
+            Some(result.clone())
+        );
+        assert_eq!(
+            store
+                .product_authorizations_for_goal(&goal.goal_id)
+                .unwrap()
+                .len(),
+            1
+        );
+        let milestone_id = stable_id(
+            "agent-milestone-acceptance-v1",
+            &(
+                "agent-docs",
+                &goal.goal_id,
+                &plan.plan_revision_id,
+                &epistemic.product_id,
+                &result.result_id,
+                &cut.context.context_id,
+                &cut.context.activation_generation,
+            ),
+        );
+        assert!(store.milestone(&milestone_id).unwrap().is_some());
     }
 
     #[test]

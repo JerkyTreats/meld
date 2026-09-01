@@ -4153,42 +4153,177 @@ mod tests {
         assert!(belief_report.fatal_errors.is_empty());
         assert!(belief_report.items_committed > 0);
 
-        let mut handle = agent_factory.build_handle();
-        handle
-            .start_after_lease(RuntimeLeaseContext {
-                runtime_id: AGENT_RECONCILIATION_RUNTIME_ID.to_string(),
-                lease_id: "agent-root-proof".to_string(),
-            })
-            .unwrap();
-        let first = handle.tick(WorkBudget { max_items: 8 }).unwrap();
-        assert_eq!(first.actor_id, AGENT_RECONCILIATION_RUNTIME_ID);
-        assert!(first.fatal_errors.is_empty(), "{first:#?}");
-        assert!(first.items_committed > 0);
-        let mut curation = assembly
-            .handle_factories()
-            .get("world_model.standing_curation")
-            .unwrap()
-            .build_handle();
-        curation
-            .start_after_lease(RuntimeLeaseContext {
-                runtime_id: "world_model.standing_curation".to_string(),
-                lease_id: "curation-root-proof".to_string(),
-            })
-            .unwrap();
-        let curation_report = curation.tick(WorkBudget { max_items: 1 }).unwrap();
-        assert!(curation_report.fatal_errors.is_empty());
-        assert!(curation_report.items_committed > 0);
-        assembly
-            .graph_runtime()
-            .catch_up_bounded(GraphCatchUpBudget { max_items: 16 })
-            .unwrap();
         assembly.flush_product_boundary().unwrap();
-        drop(handle);
-        drop(curation);
         drop(belief);
         drop(assembly);
 
+        let mut last_position = 0;
+        let mut exact_operation_id = None;
+        let mut exact_acceptance = None;
+        let mut exact_result = None;
+        let mut exact_semantic_receipt = None;
+        let mut exact_terminal_receipt = None;
+        for boundary in 0..6 {
+            let assembly = harness.assembly(StewardshipTheoryBindings::default());
+            let mut handle = assembly
+                .handle_factories()
+                .get(AGENT_RECONCILIATION_RUNTIME_ID)
+                .unwrap()
+                .build_handle();
+            handle
+                .start_after_lease(RuntimeLeaseContext {
+                    runtime_id: AGENT_RECONCILIATION_RUNTIME_ID.to_string(),
+                    lease_id: format!("agent-root-proof-boundary-{boundary}"),
+                })
+                .unwrap();
+            let report = handle.tick(WorkBudget { max_items: 1 }).unwrap();
+            assert_eq!(report.actor_id, AGENT_RECONCILIATION_RUNTIME_ID);
+            assert!(
+                report.fatal_errors.is_empty(),
+                "boundary {boundary}: {report:#?}"
+            );
+            assert_eq!(report.input_checkpoint.value, last_position);
+            assert!(
+                report.output_checkpoint.value > report.input_checkpoint.value,
+                "boundary {boundary}: {report:#?}"
+            );
+            last_position = report.output_checkpoint.value;
+
+            if boundary == 1 {
+                let operation = assembly
+                    .stores()
+                    .curation_store
+                    .next_planned_operation(STEWARD_AGENT_ID)
+                    .unwrap()
+                    .unwrap();
+                let mut curation = assembly
+                    .handle_factories()
+                    .get("world_model.standing_curation")
+                    .unwrap()
+                    .build_handle();
+                curation
+                    .start_after_lease(RuntimeLeaseContext {
+                        runtime_id: "world_model.standing_curation".to_string(),
+                        lease_id: "curation-root-proof".to_string(),
+                    })
+                    .unwrap();
+                let curation_report = curation.tick(WorkBudget { max_items: 1 }).unwrap();
+                assert!(curation_report.fatal_errors.is_empty());
+                assert!(curation_report.items_committed > 0);
+                let acceptance = assembly
+                    .stores()
+                    .curation_store
+                    .acceptance_for_planned_operation(&operation.operation_id)
+                    .unwrap()
+                    .unwrap();
+                let result = assembly
+                    .stores()
+                    .curation_store
+                    .result_for_operation(&operation.operation_id)
+                    .unwrap()
+                    .unwrap();
+                let semantic_receipt = assembly
+                    .stores()
+                    .curation_store
+                    .publication_receipt(
+                        &result.result_id,
+                        meld_world_model::CurationPublicationKind::Semantic,
+                    )
+                    .unwrap()
+                    .unwrap();
+                let terminal_receipt = assembly
+                    .stores()
+                    .curation_store
+                    .publication_receipt(
+                        &result.result_id,
+                        meld_world_model::CurationPublicationKind::Terminal,
+                    )
+                    .unwrap()
+                    .unwrap();
+                assert_ne!(
+                    semantic_receipt.event_record_id,
+                    terminal_receipt.event_record_id
+                );
+                assert_eq!(
+                    assembly
+                        .ports()
+                        .event_replay()
+                        .read_after_limit(0, 32)
+                        .unwrap()
+                        .len(),
+                    3
+                );
+                assembly
+                    .graph_runtime()
+                    .catch_up_bounded(GraphCatchUpBudget { max_items: 16 })
+                    .unwrap();
+                exact_operation_id = Some(operation.operation_id);
+                exact_acceptance = Some(acceptance);
+                exact_result = Some(result);
+                exact_semantic_receipt = Some(semantic_receipt);
+                exact_terminal_receipt = Some(terminal_receipt);
+            }
+            assert!(assembly
+                .stores()
+                .goal_store
+                .goal_records()
+                .unwrap()
+                .is_empty());
+            assembly.flush_product_boundary().unwrap();
+            drop(handle);
+            drop(assembly);
+        }
+
         let assembly = harness.assembly(StewardshipTheoryBindings::default());
+        let operation_id = exact_operation_id.unwrap();
+        let result = exact_result.unwrap();
+        assert_eq!(
+            assembly
+                .stores()
+                .curation_store
+                .acceptance_for_planned_operation(&operation_id)
+                .unwrap(),
+            exact_acceptance
+        );
+        assert_eq!(
+            assembly
+                .stores()
+                .curation_store
+                .result_for_operation(&operation_id)
+                .unwrap(),
+            Some(result.clone())
+        );
+        assert_eq!(
+            assembly
+                .stores()
+                .curation_store
+                .publication_receipt(
+                    &result.result_id,
+                    meld_world_model::CurationPublicationKind::Semantic,
+                )
+                .unwrap(),
+            exact_semantic_receipt
+        );
+        assert_eq!(
+            assembly
+                .stores()
+                .curation_store
+                .publication_receipt(
+                    &result.result_id,
+                    meld_world_model::CurationPublicationKind::Terminal,
+                )
+                .unwrap(),
+            exact_terminal_receipt
+        );
+        assert_eq!(
+            assembly
+                .ports()
+                .event_replay()
+                .read_after_limit(0, 32)
+                .unwrap()
+                .len(),
+            3
+        );
         let mut handle = assembly
             .handle_factories()
             .get(AGENT_RECONCILIATION_RUNTIME_ID)
@@ -4197,24 +4332,11 @@ mod tests {
         handle
             .start_after_lease(RuntimeLeaseContext {
                 runtime_id: AGENT_RECONCILIATION_RUNTIME_ID.to_string(),
-                lease_id: "agent-root-proof-reopen".to_string(),
+                lease_id: "agent-root-proof-replay".to_string(),
             })
             .unwrap();
-        let second = handle.tick(WorkBudget { max_items: 8 }).unwrap();
-        assert_eq!(second.input_checkpoint.value, first.output_checkpoint.value);
-        assert!(second.output_checkpoint.value > second.input_checkpoint.value);
-        assert!(
-            second
-                .waiting_on
-                .iter()
-                .any(|waiting| waiting.condition == "future_execution_admission"),
-            "{second:#?}"
-        );
         let replay = handle.tick(WorkBudget { max_items: 8 }).unwrap();
-        assert_eq!(
-            replay.input_checkpoint.value,
-            second.output_checkpoint.value
-        );
+        assert_eq!(replay.input_checkpoint.value, last_position);
         assert_eq!(
             replay.output_checkpoint.value,
             replay.input_checkpoint.value
@@ -4224,6 +4346,10 @@ mod tests {
             .waiting_on
             .iter()
             .all(|wait| wait.subject_key.is_some()));
+        assert!(replay
+            .waiting_on
+            .iter()
+            .any(|waiting| waiting.condition == "future_execution_admission"));
         assembly
             .stores()
             .agent_store
