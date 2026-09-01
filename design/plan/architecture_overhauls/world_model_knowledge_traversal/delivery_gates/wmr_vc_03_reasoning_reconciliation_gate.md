@@ -167,4 +167,4 @@ Acceptance does not authorize `WMR-VC-04`, Execution admission, PDS, Startup, or
 
 ## Current Authority State
 
-Revision 1 remains frozen. The initial acceptance for digest `46bd1e2b3d4435f23dbed3cf9ecaadf0a63b7b1318029f790bdcccfa50e7967a` was reopened by a later audit. The exact bounded successor digest `12285cdf7091486e69a77cc25c8fccba2ab2bea222b183d2e451d24b3adaba2f` is accepted in the [successor receipt](wmr_vc_03_successor_gate_acceptance_receipt.md). No later source slice is active, and no authority is granted to change this gate or activate `WMR-VC-04`.
+Revision 1 remains frozen. The initial acceptance for digest `46bd1e2b3d4435f23dbed3cf9ecaadf0a63b7b1318029f790bdcccfa50e7967a` and bounded successor acceptance for digest `12285cdf7091486e69a77cc25c8fccba2ab2bea222b183d2e451d24b3adaba2f` were reopened by later audits. The exact final bounded successor digest `f29192ea53aebfd31ab5d20f18a366066fce4580f189fc90a61b115b2741e312` is accepted in the [final successor receipt](wmr_vc_03_final_successor_gate_acceptance_receipt.md). No later source slice is active, and no authority is granted to change this gate or activate `WMR-VC-04`.

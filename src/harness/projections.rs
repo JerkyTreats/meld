@@ -660,6 +660,9 @@ mod tests {
             .handoffs
             .iter()
             .all(|handoff| { handoff.from_station_id != "execution_admission" }));
+        assert!(topology.stations.iter().any(|station| {
+            station.station_id == "execution_admission" && station.runtime_ids.is_empty()
+        }));
         assert!(topology
             .stations
             .iter()

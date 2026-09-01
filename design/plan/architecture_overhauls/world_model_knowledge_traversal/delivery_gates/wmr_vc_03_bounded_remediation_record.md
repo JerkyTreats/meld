@@ -12,7 +12,9 @@ Exact manifest: [bounded successor candidate](../reviews/wmr_vc_03_bounded_succe
 
 Initial post-acceptance audit verdict: `not eligible`
 
-Current verification state: `accepted`
+Current verification state: `superseded by fresh review sequence 625814`
+
+Current remediation authority: [final bounded remediation](wmr_vc_03_final_bounded_remediation_record.md)
 
 ## Frozen Violations
 
@@ -57,8 +59,10 @@ git diff --check
 
 Every command passed. No fuzz campaign produced a finding.
 
-## Authorized Exception And Limits
+## Superseded Exception Claim And Limits
 
-The user authorized the bounded compiled-harness correction despite its two-file increase over the original production-file inventory. Those files are diagnostic readers only and create no second authority. No other tripwire is crossed.
+This historical remediation treated the broad implementation authorization as sufficient authority for the two-file diagnostic exception. Fresh review sequence `625814` correctly found that claim insufficient under `C19`.
 
-Fresh Gate Acceptance verified only the two frozen violations, this exception, and correction-caused regressions. The successor was accepted with no frozen finding. This remediation does not authorize `WMR-VC-04`, Execution admission, product migration, PDS, Startup, or any later source slice.
+The user later supplied direct authority for the exact twenty-six-file exception recorded in the [final bounded remediation](wmr_vc_03_final_bounded_remediation_record.md#direct-user-authority-for-c19). That authority applies only to the final successor digest and does not retroactively restore this superseded receipt.
+
+The historical evidence remains intact, but this record is not the current completion authority. The final bounded remediation is limited to the newly frozen C15, C16, C18, and C19 findings. This remediation does not authorize `WMR-VC-04`, Execution admission, product migration, PDS, Startup, or any later source slice.

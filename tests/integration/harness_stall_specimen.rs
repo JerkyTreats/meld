@@ -173,9 +173,8 @@ fn the_anchor_stall_is_recorded_and_the_walk_names_the_dead_end() {
             "the divergence presents the subject-vocabulary mismatch: {divergence}"
         );
 
-        // The current boundary names the unpublished task and stops at the
-        // explicit future Execution admission instead of inventing a retired
-        // Goal-command producer.
+        // The current boundary stops at explicit future Execution admission
+        // without inventing either a retired or current producer.
         let admission_chain = EligibilityWalker::new(&reports)
             .with_traversal(traversal)
             .why_absent(EligibilityQuestion {
@@ -188,13 +187,16 @@ fn the_anchor_stall_is_recorded_and_the_walk_names_the_dead_end() {
             .iter()
             .map(|link| link.runtime_id.as_str())
             .collect();
-        assert!(hops
-            .iter()
-            .all(|runtime_id| { *runtime_id == "world_model.agent_reconciliation" }));
-        assert!(admission_chain.divergences.iter().any(|divergence| {
-            divergence.starts_with("future_execution_admission")
-                || divergence.contains("no preserved tick for world_model.agent_reconciliation")
-        }));
+        assert!(hops.is_empty());
+        assert_eq!(
+            admission_chain.divergences,
+            vec![
+                "future_execution_admission: deferred; no producer runtime exists in this slice, \
+                 so no admission or local-quiescence position can be inferred; eligible Agent \
+                 tasks remain unpublished"
+                    .to_string()
+            ]
+        );
     }
 
     // The manifest records the stalled step schedule as the durable

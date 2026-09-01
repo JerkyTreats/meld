@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -44,6 +45,24 @@ impl CurationTraversalPort for MockTraversal {
             ));
         }
         Ok(self.result.lock().unwrap().clone())
+    }
+}
+
+struct InterruptBeforeTraversal {
+    inner: Arc<MockTraversal>,
+}
+
+impl CurationTraversalPort for InterruptBeforeTraversal {
+    fn cut(&self, request: &TraversalCutRequest) -> Result<TraversalCut, StorageError> {
+        self.inner.cut(request)
+    }
+
+    fn traverse(
+        &self,
+        _cut: &TraversalCut,
+        _request: &BoundedTraversalRequest,
+    ) -> Result<TraversalResult, StorageError> {
+        panic!("injected interruption after Curation acceptance")
     }
 }
 
@@ -124,64 +143,13 @@ fn applied_result_replays_without_reexecuting_or_republishing() {
 }
 
 #[test]
-fn planned_intake_recovers_through_the_same_actor_and_store_authority() {
-    let fixture = Fixture::new(0);
-    let source_cut = fixture.traversal.cut.lock().unwrap().clone();
-    let operation = CurationOperation::reconstruct(
-        authority(),
-        fixture.rule.revision_ref(),
-        source_cut,
-        fixture.rule.rule.traversal_request(),
-    )
-    .unwrap();
-    let authorization = planned_authorization(&operation);
-    let operation = operation.with_planned_authorization(authorization).unwrap();
-    fixture.store.submit_planned(&operation).unwrap();
+fn planned_curation_reopens_after_acceptance_without_duplicate_execution() {
+    assert_planned_curation_recovery(PlannedInterruption::AfterAcceptance);
+}
 
-    let interrupting_events = Arc::new(InterruptingEvents {
-        inner: Arc::clone(&fixture.events),
-        successful_appends: AtomicUsize::new(0),
-        successes_before_failure: 0,
-    });
-    let interrupted_actor = StandingCurationActor::new(
-        "world_model.standing_curation",
-        "session-a",
-        authority(),
-        fixture.rule.clone(),
-        Arc::clone(&fixture.store),
-        Arc::clone(&fixture.traversal) as Arc<dyn CurationTraversalPort>,
-        interrupting_events as Arc<dyn CurationEventPort>,
-    )
-    .unwrap();
-    let interrupted = interrupted_actor.bounded_step(1);
-    assert_eq!(interrupted.operations_attempted, 1);
-    assert_eq!(interrupted.results_persisted, 1);
-    assert!(!interrupted.retryable_errors.is_empty());
-    assert!(fixture
-        .store
-        .acceptance_for_planned_operation(&operation.operation_id)
-        .unwrap()
-        .is_some());
-
-    let reopened_actor = StandingCurationActor::new(
-        "world_model.standing_curation",
-        "session-a",
-        authority(),
-        fixture.rule.clone(),
-        Arc::clone(&fixture.store),
-        Arc::clone(&fixture.traversal) as Arc<dyn CurationTraversalPort>,
-        Arc::clone(&fixture.events) as Arc<dyn CurationEventPort>,
-    )
-    .unwrap();
-    let recovered = reopened_actor.bounded_step(1);
-
-    assert_eq!(recovered.reused_results, 1);
-    assert_eq!(recovered.publications_appended, 2);
-    assert!(fixture
-        .store
-        .result_for_operation(&operation.operation_id)
-        .unwrap()
-        .is_some());
+#[test]
+fn planned_curation_reopens_after_result_before_event_without_duplicate_publication() {
+    assert_planned_curation_recovery(PlannedInterruption::AfterResultBeforeEvent);
 }
 
 #[test]
@@ -862,6 +830,269 @@ proptest::proptest! {
             Some(terminal_receipt)
         );
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PlannedInterruption {
+    AfterAcceptance,
+    AfterResultBeforeEvent,
+}
+
+fn assert_planned_curation_recovery(interruption: PlannedInterruption) {
+    let temp = tempfile::tempdir().unwrap();
+    let store_path = temp.path().join("planned-curation.sled");
+    let source_cut = cut(13);
+    let ledger_id = source_cut.event_position.ledger_id;
+    let traversal = Arc::new(MockTraversal {
+        result: Mutex::new(TraversalResult {
+            result_id: "planned-recovery-traversal".to_string(),
+            cut_id: source_cut.cut_id.clone(),
+            objects: Vec::new(),
+            occurrences: Vec::new(),
+            paths: Vec::new(),
+            receipts: source_cut.receipts.clone(),
+            frontier: Vec::new(),
+            truncation: TraversalTruncation::default(),
+        }),
+        cut: Mutex::new(source_cut.clone()),
+        failures: AtomicUsize::new(0),
+        traversals: AtomicUsize::new(0),
+    });
+    let events = Arc::new(MockEvents {
+        ledger_id,
+        watermark: 13,
+        envelopes: Mutex::new(BTreeMap::new()),
+    });
+    let operation;
+    let authorization;
+    let acceptance;
+    let result_before_reopen;
+
+    {
+        let store = Arc::new(CurationStore::new(sled::open(&store_path).unwrap()).unwrap());
+        let revision = store.install_rule(rule(), 1).unwrap();
+        let semantic_operation = CurationOperation::reconstruct(
+            authority(),
+            revision.revision_ref(),
+            source_cut,
+            revision.rule.traversal_request(),
+        )
+        .unwrap();
+        authorization = planned_authorization(&semantic_operation);
+        operation = semantic_operation
+            .with_planned_authorization(authorization.clone())
+            .unwrap();
+        acceptance = CurationAcceptanceRecord::for_operation(&operation, &revision).unwrap();
+        store.submit_planned(&operation).unwrap();
+
+        match interruption {
+            PlannedInterruption::AfterAcceptance => {
+                let interrupting_traversal = Arc::new(InterruptBeforeTraversal {
+                    inner: Arc::clone(&traversal),
+                });
+                let actor = StandingCurationActor::new(
+                    "world_model.standing_curation",
+                    "session-planned-recovery",
+                    authority(),
+                    revision,
+                    Arc::clone(&store),
+                    interrupting_traversal as Arc<dyn CurationTraversalPort>,
+                    Arc::clone(&events) as Arc<dyn CurationEventPort>,
+                )
+                .unwrap();
+                let interrupted = catch_unwind(AssertUnwindSafe(|| actor.bounded_step(1)));
+                assert!(interrupted.is_err());
+            }
+            PlannedInterruption::AfterResultBeforeEvent => {
+                let interrupting_events = Arc::new(InterruptingEvents {
+                    inner: Arc::clone(&events),
+                    successful_appends: AtomicUsize::new(0),
+                    successes_before_failure: 0,
+                });
+                let actor = StandingCurationActor::new(
+                    "world_model.standing_curation",
+                    "session-planned-recovery",
+                    authority(),
+                    revision,
+                    Arc::clone(&store),
+                    Arc::clone(&traversal) as Arc<dyn CurationTraversalPort>,
+                    interrupting_events as Arc<dyn CurationEventPort>,
+                )
+                .unwrap();
+                let interrupted = actor.bounded_step(1);
+                assert_eq!(interrupted.acceptances_persisted, 1);
+                assert_eq!(interrupted.results_persisted, 1);
+                assert_eq!(interrupted.publications_appended, 0);
+                assert_eq!(interrupted.retryable_errors.len(), 1);
+                assert!(interrupted.fatal_errors.is_empty());
+            }
+        }
+
+        assert_eq!(
+            store
+                .planned_authorization_for_operation(&operation.operation_id)
+                .unwrap(),
+            Some(authorization.clone())
+        );
+        assert_eq!(
+            store
+                .acceptance_for_planned_operation(&operation.operation_id)
+                .unwrap(),
+            Some(acceptance.clone())
+        );
+        result_before_reopen = store.result_for_operation(&operation.operation_id).unwrap();
+        assert_eq!(
+            result_before_reopen.is_some(),
+            interruption == PlannedInterruption::AfterResultBeforeEvent
+        );
+        assert!(events.envelopes.lock().unwrap().is_empty());
+        assert!(result_before_reopen.as_ref().is_none_or(|result| {
+            store
+                .publication_receipt(&result.result_id, CurationPublicationKind::Semantic)
+                .unwrap()
+                .is_none()
+                && store
+                    .publication_receipt(&result.result_id, CurationPublicationKind::Terminal)
+                    .unwrap()
+                    .is_none()
+        }));
+        assert_eq!(
+            traversal.traversals.load(Ordering::SeqCst),
+            usize::from(interruption == PlannedInterruption::AfterResultBeforeEvent)
+        );
+        store.flush().unwrap();
+    }
+
+    let result;
+    let semantic_receipt;
+    let terminal_receipt;
+    {
+        let store = Arc::new(CurationStore::new(sled::open(&store_path).unwrap()).unwrap());
+        let actor = StandingCurationActor::new(
+            "world_model.standing_curation",
+            "session-planned-recovery",
+            authority(),
+            store.active_rule("agent-a").unwrap().unwrap(),
+            Arc::clone(&store),
+            Arc::clone(&traversal) as Arc<dyn CurationTraversalPort>,
+            Arc::clone(&events) as Arc<dyn CurationEventPort>,
+        )
+        .unwrap();
+        let recovered = actor.bounded_step(1);
+
+        assert_eq!(recovered.acceptances_persisted, 0);
+        assert_eq!(
+            recovered.results_persisted,
+            usize::from(interruption == PlannedInterruption::AfterAcceptance)
+        );
+        assert_eq!(
+            recovered.reused_results,
+            usize::from(interruption == PlannedInterruption::AfterResultBeforeEvent)
+        );
+        assert_eq!(recovered.publications_appended, 2);
+        assert!(recovered.retryable_errors.is_empty());
+        assert!(recovered.fatal_errors.is_empty());
+        assert_eq!(traversal.traversals.load(Ordering::SeqCst), 1);
+        assert_eq!(events.envelopes.lock().unwrap().len(), 2);
+        assert_eq!(
+            store
+                .planned_authorization_for_operation(&operation.operation_id)
+                .unwrap(),
+            Some(authorization.clone())
+        );
+        assert_eq!(
+            store
+                .acceptance_for_planned_operation(&operation.operation_id)
+                .unwrap(),
+            Some(acceptance.clone())
+        );
+        result = store
+            .result_for_operation(&operation.operation_id)
+            .unwrap()
+            .unwrap();
+        if let Some(result_before_reopen) = &result_before_reopen {
+            assert_eq!(&result, result_before_reopen);
+        }
+        assert_eq!(result.operation_id, operation.operation_id);
+        semantic_receipt = store
+            .publication_receipt(&result.result_id, CurationPublicationKind::Semantic)
+            .unwrap()
+            .unwrap();
+        terminal_receipt = store
+            .publication_receipt(&result.result_id, CurationPublicationKind::Terminal)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            semantic_receipt.event_record_id,
+            result
+                .semantic_publication
+                .as_ref()
+                .unwrap()
+                .event_record_id()
+        );
+        assert_eq!(terminal_receipt.event_record_id, result.event_record_id());
+        assert_ne!(
+            semantic_receipt.event_record_id,
+            terminal_receipt.event_record_id
+        );
+        assert!(events
+            .envelopes
+            .lock()
+            .unwrap()
+            .contains_key(&semantic_receipt.event_record_id));
+        assert!(events
+            .envelopes
+            .lock()
+            .unwrap()
+            .contains_key(&terminal_receipt.event_record_id));
+        assert!(store.next_planned_operation("agent-a").unwrap().is_none());
+        store.flush().unwrap();
+    }
+
+    let store = Arc::new(CurationStore::new(sled::open(&store_path).unwrap()).unwrap());
+    let actor = StandingCurationActor::new(
+        "world_model.standing_curation",
+        "session-planned-recovery",
+        authority(),
+        store.active_rule("agent-a").unwrap().unwrap(),
+        Arc::clone(&store),
+        Arc::clone(&traversal) as Arc<dyn CurationTraversalPort>,
+        Arc::clone(&events) as Arc<dyn CurationEventPort>,
+    )
+    .unwrap();
+    let replayed = actor.bounded_step(1);
+
+    assert_eq!(replayed.acceptances_persisted, 0);
+    assert_eq!(replayed.results_persisted, 0);
+    assert_eq!(replayed.reused_results, 1);
+    assert_eq!(replayed.publications_appended, 0);
+    assert!(replayed.retryable_errors.is_empty());
+    assert!(replayed.fatal_errors.is_empty());
+    assert_eq!(traversal.traversals.load(Ordering::SeqCst), 1);
+    assert_eq!(events.envelopes.lock().unwrap().len(), 2);
+    assert_eq!(
+        store
+            .acceptance_for_planned_operation(&operation.operation_id)
+            .unwrap(),
+        Some(acceptance)
+    );
+    assert_eq!(
+        store.result_for_operation(&operation.operation_id).unwrap(),
+        Some(result.clone())
+    );
+    assert_eq!(
+        store
+            .publication_receipt(&result.result_id, CurationPublicationKind::Semantic)
+            .unwrap(),
+        Some(semantic_receipt)
+    );
+    assert_eq!(
+        store
+            .publication_receipt(&result.result_id, CurationPublicationKind::Terminal)
+            .unwrap(),
+        Some(terminal_receipt)
+    );
+    assert!(store.next_planned_operation("agent-a").unwrap().is_none());
 }
 
 fn result_events(events: &MockEvents) -> Vec<CurationResult> {

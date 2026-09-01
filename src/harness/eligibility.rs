@@ -9,10 +9,9 @@
 //!
 //! The chain follows the flywheel couplings upstream: an absent task
 //! completion resolves through dispatch to planning, an absent plan to
-//! the goal set, and missing Execution admission to Agent reconciliation.
-//! The current Agent boundary stops truthfully at its explicit future
-//! admission declaration. Belief and evidence questions remain directly
-//! queryable without inventing a retired Agent producer.
+//! the goal set, and missing Execution admission to a terminal future
+//! boundary with no producer runtime. Belief and evidence questions remain
+//! directly queryable without inventing either a retired or future producer.
 
 use std::collections::BTreeSet;
 
@@ -134,7 +133,7 @@ impl<'a> EligibilityWalker<'a> {
             if !visited.insert(kind) {
                 chain
                     .divergences
-                    .push(format!("coupling cycle at {}", producer_runtime_id(kind)));
+                    .push(format!("coupling cycle at {kind:?}"));
                 break;
             }
             if chain.links.len() >= MAX_CHAIN_LINKS {
@@ -143,7 +142,15 @@ impl<'a> EligibilityWalker<'a> {
                     .push("declaration chain exceeded its link bound".to_string());
                 break;
             }
-            let runtime_id = producer_runtime_id(kind);
+            let Some(runtime_id) = producer_runtime_id(kind) else {
+                chain.divergences.push(
+                    "future_execution_admission: deferred; no producer runtime exists in this \
+                     slice, so no admission or local-quiescence position can be inferred; \
+                     eligible Agent tasks remain unpublished"
+                        .to_string(),
+                );
+                break;
+            };
             let action = self
                 .reports
                 .latest_action_for_runtime_since(self.floor, runtime_id)
@@ -233,14 +240,15 @@ impl<'a> EligibilityWalker<'a> {
     }
 }
 
-/// The runtime whose commits would make the absent record exist.
-fn producer_runtime_id(kind: AbsentRecordKind) -> &'static str {
+/// The runtime whose commits would make the absent record exist, when one
+/// exists in the current compiled runtime.
+fn producer_runtime_id(kind: AbsentRecordKind) -> Option<&'static str> {
     match kind {
-        AbsentRecordKind::TaskCompletion => "execution.task_dispatch",
-        AbsentRecordKind::TaskNetworkPlan => "execution.planning",
-        AbsentRecordKind::ExecutionAdmission => "world_model.agent_reconciliation",
-        AbsentRecordKind::BeliefRevision => "world_model.belief_assessment",
-        AbsentRecordKind::Evidence => "world_model.evidence_ingestion",
+        AbsentRecordKind::TaskCompletion => Some("execution.task_dispatch"),
+        AbsentRecordKind::TaskNetworkPlan => Some("execution.planning"),
+        AbsentRecordKind::ExecutionAdmission => None,
+        AbsentRecordKind::BeliefRevision => Some("world_model.belief_assessment"),
+        AbsentRecordKind::Evidence => Some("world_model.evidence_ingestion"),
     }
 }
 
@@ -407,14 +415,37 @@ mod tests {
             .collect();
         assert_eq!(
             runtimes,
-            vec![
-                "execution.task_dispatch",
-                "execution.planning",
-                "world_model.agent_reconciliation",
-            ]
+            vec!["execution.task_dispatch", "execution.planning"]
         );
         assert_eq!(chain.divergences.len(), 1);
-        assert!(chain.divergences[0].starts_with("future_execution_admission"));
+        assert_eq!(
+            chain.divergences[0],
+            "future_execution_admission: deferred; no producer runtime exists in this slice, \
+             so no admission or local-quiescence position can be inferred; eligible Agent tasks \
+             remain unpublished"
+        );
+    }
+
+    #[test]
+    fn future_execution_admission_is_terminal_without_a_producer_runtime() {
+        let (_temp, reports) = store_with_flywheel_stall();
+        let chain = EligibilityWalker::new(&reports)
+            .why_absent(EligibilityQuestion {
+                kind: AbsentRecordKind::ExecutionAdmission,
+                subject_key: Some("workspace_fs::node::docs".to_string()),
+            })
+            .unwrap();
+
+        assert!(chain.links.is_empty());
+        assert_eq!(
+            chain.divergences,
+            vec![
+                "future_execution_admission: deferred; no producer runtime exists in this slice, \
+                 so no admission or local-quiescence position can be inferred; eligible Agent \
+                 tasks remain unpublished"
+                    .to_string()
+            ]
+        );
     }
 
     #[test]

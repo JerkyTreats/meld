@@ -14,7 +14,7 @@ Style Assurance: [WMR-VC-03 Style Assurance](../reviews/wmr_vc_03_style_assuranc
 
 Overall verdict: accepted after one bounded correction cycle and verification pass
 
-Post-acceptance status: superseded by the [accepted successor receipt](wmr_vc_03_successor_gate_acceptance_receipt.md) after a later audit found incomplete `C15` restart proof and stale compiled harness diagnostics.
+Post-acceptance status: superseded. The current authority is the [accepted final successor receipt](wmr_vc_03_final_successor_gate_acceptance_receipt.md) after two bounded audits and corrections.
 
 ## Acceptance Inputs
 

@@ -1,10 +1,10 @@
 # World Model Reconciliation Source Delivery Program Ledger
 
-Date: 2026-08-31
+Date: 2026-09-01
 
 Mode: embedded phased delivery
 
-Readiness: `third vertical accepted through bounded successor`
+Readiness: `third vertical accepted through final bounded successor`
 
 Program state: first three verticals completed, no later source slice active
 
@@ -14,7 +14,7 @@ Canonical pickup rule: this ledger alone selects the next program task
 
 ## New Agent Entry Point
 
-A new agent begins here. The user accepted `WMR-VC-01` on 2026-08-28 and it is committed as `795f9193`. The user formally accepted reconstructed `WMR-VC-02` on 2026-08-29. Its runtime delivery is committed as `138f6c7f` and its accepted evidence correction is committed as `741e1f39`. The user authorized `WMR-VC-03` implementation and its Agent-owned durable reconciliation trees on 2026-08-30. A later audit reopened its initial acceptance under `C14`, `C15`, `C16`, and `C18`. The exact bounded successor passed targeted implementation review, Style Assurance, and fresh Gate Acceptance. No later source slice is active.
+A new agent begins here. The user accepted `WMR-VC-01` on 2026-08-28 and it is committed as `795f9193`. The user formally accepted reconstructed `WMR-VC-02` on 2026-08-29. Its runtime delivery is committed as `138f6c7f` and its accepted evidence correction is committed as `741e1f39`. The user authorized `WMR-VC-03` implementation and its Agent-owned durable reconciliation trees on 2026-08-30. Two later audits reopened its initial and bounded-successor acceptances. The exact final bounded successor passed targeted implementation review, Style Assurance, and fresh Gate Acceptance for digest `f29192ea53aebfd31ab5d20f18a366066fce4580f189fc90a61b115b2741e312`. No later source slice is active.
 
 Read the [single-runtime recovery amendment](world_model_reconciliation_single_runtime_recovery.md), the [Runtime Invariants](../../../../governance/runtime_invariants.md), the [current code ground map](current_code_groundmap.md), and the accepted detailed designs before proposing source work.
 
@@ -22,7 +22,7 @@ The canonical first runtime groundmap is complete in [Source Runtime Groundmap](
 
 The accepted second vertical is recorded in the [WMR-VC-02 Gate Acceptance Receipt](delivery_gates/wmr_vc_02_gate_acceptance_receipt.md). Read the [epistemic Curation source assessment](epistemic_curation_source_assessment.md), its [delivery-design review](reviews/wmr_vc_02_delivery_design_review_receipt.md), the completed [Source Activation Record](delivery_gates/wmr_vc_02_source_activation_record.md), and the accepted [Delivery Gate](delivery_gates/wmr_vc_02_standing_curation_settlement_gate.md).
 
-The third vertical is defined by the [reasoning reconciliation source assessment](reasoning_reconciliation_source_assessment.md), its [delivery-design review](reviews/wmr_vc_03_delivery_design_review_receipt.md), the frozen [Delivery Gate](delivery_gates/wmr_vc_03_reasoning_reconciliation_gate.md), the completed [Source Activation Record](delivery_gates/wmr_vc_03_source_activation_record.md), and the current [bounded remediation](delivery_gates/wmr_vc_03_bounded_remediation_record.md).
+The third vertical is defined by the [reasoning reconciliation source assessment](reasoning_reconciliation_source_assessment.md), its [delivery-design review](reviews/wmr_vc_03_delivery_design_review_receipt.md), the frozen [Delivery Gate](delivery_gates/wmr_vc_03_reasoning_reconciliation_gate.md), the completed [Source Activation Record](delivery_gates/wmr_vc_03_source_activation_record.md), and the accepted [final bounded remediation](delivery_gates/wmr_vc_03_final_bounded_remediation_record.md).
 
 Do not implement prior `WMR-SI-01`, `WMR-SI-02`, or `WMR-SI-03`, restore archived source, or infer later-slice authority from completion. No source slice after accepted `WMR-VC-03` is active.
 
@@ -193,22 +193,22 @@ User closeout: the user formally accepted the implementation on 2026-08-29. Runt
 
 ## Completed Third Slice
 
-Reconstructed `WMR-VC-03` is completed through its bounded successor.
+Reconstructed `WMR-VC-03` is completed through its final bounded successor.
 
 | Field | Current state |
 | --- | --- |
 | task | exact reasoning reconciliation through real planned Curation acceptance and complete Task eligibility |
 | mode | embedded phased delivery |
-| status | complete through bounded successor |
+| status | complete through final bounded successor |
 | source authority | explicit user authorization on 2026-08-30 |
 | source baseline | `4a01416f` |
 | primary evidence | [reasoning reconciliation source assessment](reasoning_reconciliation_source_assessment.md) |
 | delivery-design review | [passed for explicit approval](reviews/wmr_vc_03_delivery_design_review_receipt.md) |
 | activation record | [complete](delivery_gates/wmr_vc_03_source_activation_record.md) |
-| implementation review | [successor passed](reviews/wmr_vc_03_successor_implementation_review_receipt.md) |
-| Style Assurance | [successor satisfied](reviews/wmr_vc_03_successor_style_assurance_receipt.md) |
-| Delivery Gate | [successor accepted](delivery_gates/wmr_vc_03_successor_gate_acceptance_receipt.md) |
-| candidate digest | `12285cdf7091486e69a77cc25c8fccba2ab2bea222b183d2e451d24b3adaba2f` |
+| implementation review | [final successor passed](reviews/wmr_vc_03_final_successor_implementation_review_receipt.md) |
+| Style Assurance | [final successor satisfied](reviews/wmr_vc_03_final_successor_style_assurance_receipt.md) |
+| Delivery Gate | [final successor accepted](delivery_gates/wmr_vc_03_final_successor_gate_acceptance_receipt.md) |
+| candidate digest | `f29192ea53aebfd31ab5d20f18a366066fce4580f189fc90a61b115b2741e312` |
 | approved expansion | Agent-owned durable Goal, Plan, judgment, progression, receipt, and milestone trees inside the existing world-model database |
 | obligation floor | operational durability for incumbent and new reconciliation records |
 
@@ -258,11 +258,11 @@ Style Assurance owner: primary Style Assurance lane over the exact reviewed cand
 
 Gate owner: primary bounded Gate Acceptance lane
 
-Approval state: the exact successor passed fresh Gate Acceptance with one user-authorized diagnostic file-count exception. No later source authority is implied.
+Approval state: the exact final successor passed fresh Gate Acceptance with one direct user-authorized diagnostic file-count exception. The authority is recorded in the [final bounded remediation](delivery_gates/wmr_vc_03_final_bounded_remediation_record.md#direct-user-authority-for-c19). No later source authority is implied.
 
 ## Source Authority State
 
-`WMR-VC-03-DG` revision 1 remains frozen and is accepted for the exact successor recorded above. No later source slice is active.
+`WMR-VC-03-DG` revision 1 remains frozen and is accepted for the exact final successor recorded above. No later source slice is active.
 
 ## Product Trace
 
@@ -340,7 +340,7 @@ Historical source gates cannot be reactivated. The reconstructed program must is
 | --- | --- | --- |
 | `WMR-VC-01` | historical `SI-01` outcome through one canonical workspace and branch-inspection route | completed and accepted |
 | `WMR-VC-02` | standing Curation through Graph visibility and configured Belief settlement | completed and accepted |
-| `WMR-VC-03` | exact reasoning context through mixed Plan, real planned Curation acceptance, and complete Task eligibility | completed and accepted through bounded successor |
+| `WMR-VC-03` | exact reasoning context through mixed Plan, real planned Curation acceptance, and complete Task eligibility | completed and accepted through final bounded successor |
 | Execution route | complete Task admission through independent owner return | backlog |
 | product initialization | PDS through one Agent generation and lifecycle | backlog |
 | Startup proof | complete nonce route | backlog |
@@ -350,7 +350,7 @@ Historical source gates cannot be reactivated. The reconstructed program must is
 
 The recovery amendment identifies six candidate cuts: epistemic knowledge, reconciliation, Execution, product initialization, Startup proof, and product migration.
 
-`WMR-VC-01` and `WMR-VC-02` are completed source cuts. `WMR-VC-03` has an exact bounded successor under fresh Gate Acceptance. Execution, product initialization, Startup proof, and product migration remain assessment horizons without source authority.
+`WMR-VC-01`, `WMR-VC-02`, and the exact final bounded successor for `WMR-VC-03` are completed source cuts. Execution, product initialization, Startup proof, and product migration remain assessment horizons without source authority.
 
 If a candidate cut is too broad, divide it by complete runtime behavior rather than by crate or domain. Every smaller cut must still leave one canonical route for each responsibility it accepts.
 
@@ -406,7 +406,7 @@ Completed runtime-route delta: one root-composed Agent reconciliation participan
 
 Completed direct-proof boundary: exact `PlannerCut`, mixed `StrategyPlan`, durable Agent judgment and product authorization, planned Curation acceptance and milestone reconciliation, and one complete Task eligible but unpublished to Execution
 
-The rejected additive attempt remains recoverable but is outside current source authority. `WMR-VC-03` is active only for its bounded gate correction. No other source slice is active.
+The rejected additive attempt remains recoverable but is outside current source authority. `WMR-VC-03` is completed through its final bounded correction. No other source slice is active.
 
 ## Delivery Gate Definitions
 
@@ -427,11 +427,11 @@ The accepted `WMR-VC-01-DG` includes these criteria and direct production proof 
 
 `WMR-VC-02-DG` revision 1 is accepted. It proves standing Curation composition across Agent authority, exact Traversal input, Curation durability, Event publication, Graph visibility, configured Belief settlement, and restart.
 
-`WMR-VC-03-DG` revision 1 remains frozen. Its bounded successor carries exact close and reopen proof plus corrected compiled harness diagnostics and is accepted.
+`WMR-VC-03-DG` revision 1 remains frozen. Its final bounded successor carries live planned-Curation close and reopen proof plus corrected compiled harness diagnostics and is accepted.
 
 ## Gate Evidence
 
-Current Gate Evidence includes all three accepted verticals: fresh and unchanged real workspace scans, exact owner cuts, standing and planned Curation admission and terminality, durable idempotent append, Event and Graph lag, Graph replay and reopen, configured and unmapped Belief settlement, complete Planner cuts and typed refusals, immutable mixed Plan succession, Agent judgment and authorization, exact milestone reconciliation, unpublished Task eligibility, six-boundary recovery, the complete workspace suite, properties, state machines, strict lint, and focused fuzz.
+Current Gate Evidence includes all three accepted verticals: fresh and unchanged real workspace scans, exact owner cuts, standing and planned Curation admission and terminality, durable idempotent append, Event and Graph lag, Graph replay and reopen, configured and unmapped Belief settlement, complete Planner cuts and typed refusals, immutable mixed Plan succession, Agent judgment and authorization, exact milestone reconciliation, unpublished Task eligibility, live planned-Curation recovery after acceptance and after result persistence, the complete workspace suite, properties, state machines, strict lint, and focused fuzz.
 
 ## Gate Acceptance
 
@@ -439,7 +439,7 @@ Current Gate Evidence includes all three accepted verticals: fresh and unchanged
 
 `WMR-VC-02-DG` is accepted in the [Gate Acceptance Receipt](delivery_gates/wmr_vc_02_gate_acceptance_receipt.md) after one bounded evidence correction. The initial audit verdict was not eligible under `C15`, `E08`, and `C17`. Both frozen evidence violations passed verification with no exception.
 
-The initial `WMR-VC-03-DG` acceptance is superseded. The [bounded successor](delivery_gates/wmr_vc_03_successor_gate_acceptance_receipt.md) passed targeted review, Style Assurance, and fresh Gate Acceptance.
+The initial and first bounded-successor `WMR-VC-03-DG` acceptances are superseded. The [final bounded successor](delivery_gates/wmr_vc_03_final_successor_gate_acceptance_receipt.md) passed targeted review, Style Assurance, and fresh Gate Acceptance.
 
 ## Review State
 
@@ -473,29 +473,29 @@ Delivery-design frozen findings: `WMR-VC-03-DR-F01` through `WMR-VC-03-DR-F04`, 
 
 Delivery-design verdict: passed for explicit user approval
 
-Current third-slice implementation review: [successor passed with no finding](reviews/wmr_vc_03_successor_implementation_review_receipt.md)
+Current third-slice implementation review: [final successor passed with no finding](reviews/wmr_vc_03_final_successor_implementation_review_receipt.md)
 
 ## Style Assurance
 
 Accepted second-slice Style Assurance: [satisfied after one bounded evidence correction](reviews/wmr_vc_02_style_assurance_receipt.md)
 
-Current third-slice Style Assurance: [successor satisfied](reviews/wmr_vc_03_successor_style_assurance_receipt.md)
+Current third-slice Style Assurance: [final successor satisfied](reviews/wmr_vc_03_final_successor_style_assurance_receipt.md)
 
 Style Assurance owner: primary Style Assurance lane
 
-Candidate identity: `12285cdf7091486e69a77cc25c8fccba2ab2bea222b183d2e451d24b3adaba2f`
+Candidate identity: `f29192ea53aebfd31ab5d20f18a366066fce4580f189fc90a61b115b2741e312`
 
 Applicable policy: Contribution Policy comments and domain layout, Rust formatting and lint, six-boundary restart recovery, property and state-machine proof, crate-native fuzz precedent, and complete sequential workspace regression
 
-Current findings: none. The two post-acceptance violations passed bounded verification after the original seven implementation findings.
+Current findings: none. The final three post-acceptance violations passed bounded verification with no correction-caused regression.
 
 ## Last Accepted Complexity Delta
 
 Changed production source files: twenty-six with one user-authorized two-file diagnostic exception
 
-Production source lines added: 4042
+Production source lines added: 4094
 
-Production source lines removed: 4866
+Production source lines removed: 4884
 
 New crates and dependencies: zero
 
@@ -505,15 +505,15 @@ New stores and schemas: one Agent-owned reconciliation tree family in the existi
 
 New background runtimes: one root-composed bounded Agent reconciliation participant replacing two split Agent participants
 
-Direct product behavior proved: exact Planner cut, immutable mixed Plan, durable Agent judgment and product authorization, real planned Curation acceptance and terminal result, exact milestone acceptance, complete unpublished Task eligibility, live authority fencing, replay, and reopen
+Direct product behavior proved: exact Planner cut, immutable mixed Plan, durable Agent judgment and product authorization, real planned Curation acceptance and terminal result, exact milestone acceptance, complete unpublished Task eligibility, live authority fencing, replay, and close and reopen recovery after acceptance and after result persistence
 
 Superseded authority delta: direct projection authority, candidate planning, split Agent curation, and Agent-to-Execution Goal writers are removed from compiled runtime authority
 
 Accepted second-slice Gate Acceptance: accepted
 
-Last accepted Gate Acceptance: [WMR-VC-03 successor accepted](delivery_gates/wmr_vc_03_successor_gate_acceptance_receipt.md)
+Last accepted Gate Acceptance: [WMR-VC-03 final successor accepted](delivery_gates/wmr_vc_03_final_successor_gate_acceptance_receipt.md)
 
-Implementation review, Style Assurance, and fresh Gate Acceptance are complete for successor digest `12285cdf7091486e69a77cc25c8fccba2ab2bea222b183d2e451d24b3adaba2f`. The bounded diagnostic file-count exception creates no successor-slice authority.
+Implementation review, Style Assurance, and fresh Gate Acceptance are complete for final successor digest `f29192ea53aebfd31ab5d20f18a366066fce4580f189fc90a61b115b2741e312`. The direct user-authorized diagnostic file-count exception creates no successor-slice authority.
 
 ## Commit Effects
 
@@ -535,13 +535,15 @@ The `WMR-VC-03` activation effect records explicit implementation authorization,
 
 If applied, this commit replaces split Agent curation and incumbent reasoning authority with one durable Agent reconciliation path over `PlannerCut`, immutable mixed `StrategyPlan`, canonical planned Curation, exact milestone acceptance, and complete unpublished Task eligibility. It records the accepted candidate digest `46bd1e2b3d4435f23dbed3cf9ecaadf0a63b7b1318029f790bdcccfa50e7967a` without authorizing a later slice.
 
+If applied, this commit corrects future Execution admission diagnostics to name no producer runtime, proves live planned-Curation recovery across the acceptance-only and result-before-Event crash windows, and records fresh accepted evidence for final successor digest `f29192ea53aebfd31ab5d20f18a366066fce4580f189fc90a61b115b2741e312` without authorizing a later slice.
+
 ## Risks And Exceptions
 
 The principal risk is rebuilding the same architecture behind cleaner module names while leaving root runtime ownership unchanged. The second risk is treating persisted-record compatibility as authority for a second live writer. The third is making the next cut so broad that review loses causal clarity.
 
 Vertical cutover is allowed to be larger than a horizontal domain addition. That cost is accepted because it exposes integration difficulty before a second runtime becomes established.
 
-There are no authorized exceptions.
+One direct user-authorized exception permits twenty-six production files rather than twenty-four for the exact final successor. It is limited to `src/harness/projections.rs` and `src/harness/eligibility.rs` as diagnostic readers, expires at `WMR-VC-03` closeout, and grants no later-slice authority.
 
 ## Reassessment
 
@@ -561,4 +563,4 @@ Do not activate `WMR-VC-04` or any later source slice from completion of `WMR-VC
 
 ## Final Reconciliation
 
-The semantic architecture remains approved. The prior source delivery strategy remains withdrawn. `WMR-VC-01` completes the reconstructed historical `SI-01` outcome through one canonical workspace publication and production owner-inspection route. `WMR-VC-02` completes the reconstructed historical `SI-02` outcome through standing Curation, Graph visibility, configured Belief settlement, restart recovery, and durable replay assurance. The accepted `WMR-VC-03` successor proves exact reasoning reconciliation through mixed Plan construction, planned Curation, exact milestone acceptance, unpublished Task eligibility, and close and reopen recovery for candidate digest `12285cdf7091486e69a77cc25c8fccba2ab2bea222b183d2e451d24b3adaba2f`. No later source slice is active.
+The semantic architecture remains approved. The prior source delivery strategy remains withdrawn. `WMR-VC-01` completes the reconstructed historical `SI-01` outcome through one canonical workspace publication and production owner-inspection route. `WMR-VC-02` completes the reconstructed historical `SI-02` outcome through standing Curation, Graph visibility, configured Belief settlement, restart recovery, and durable replay assurance. The accepted final `WMR-VC-03` successor proves exact reasoning reconciliation through mixed Plan construction, planned Curation, exact milestone acceptance, unpublished Task eligibility, terminal future Execution admission diagnostics, and live close and reopen recovery for candidate digest `f29192ea53aebfd31ab5d20f18a366066fce4580f189fc90a61b115b2741e312`. No later source slice is active.

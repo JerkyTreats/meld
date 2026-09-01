@@ -170,4 +170,4 @@ Style Assurance: [satisfied](../reviews/wmr_vc_03_style_assurance_receipt.md)
 
 Gate Acceptance: [accepted](wmr_vc_03_gate_acceptance_receipt.md)
 
-The completed candidate changes twenty-four compiled production files and adds 3999 production lines under the frozen rule. It retains one Agent participant, no compiled Agent-to-Execution Goal writer, and no equivalent incumbent reasoning authority. No exception or tripwire crossing occurred. Completion does not activate `WMR-VC-04`.
+This original closeout was later superseded by two bounded audits. The exact final successor is accepted in the [final successor Gate Acceptance receipt](wmr_vc_03_final_successor_gate_acceptance_receipt.md). It changes twenty-six compiled production files under the direct user-authorized exception recorded in the [final bounded remediation](wmr_vc_03_final_bounded_remediation_record.md#direct-user-authority-for-c19), limited to two diagnostic readers. It retains one Agent participant, no compiled Agent-to-Execution Goal writer, and no equivalent incumbent reasoning authority. Completion does not activate `WMR-VC-04`.

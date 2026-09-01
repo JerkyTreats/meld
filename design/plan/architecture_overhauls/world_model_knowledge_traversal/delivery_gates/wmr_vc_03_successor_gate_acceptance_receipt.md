@@ -20,6 +20,10 @@ Style Assurance: [successor Style Assurance](../reviews/wmr_vc_03_successor_styl
 
 Overall verdict: accepted
 
+Current authority state: superseded by fresh review sequence `625814`
+
+Current remediation record: [final bounded remediation](wmr_vc_03_final_bounded_remediation_record.md)
+
 ## Acceptance Inputs
 
 Fresh Gate Acceptance used the unchanged frozen gate, the exact five-file successor manifest, the bounded remediation record, clean targeted implementation review, satisfied successor Style Assurance, focused restart and diagnostic proof, the complete sequential workspace suite, strict changed-crate lint, formatting, diff integrity, fuzz build, and three bounded fuzz campaigns.
@@ -47,14 +51,14 @@ All unchanged frozen criteria retain their prior accepted evidence. Verification
 
 Frozen findings after verification: none
 
-## Authorized Exception
+## Superseded Exception Claim
 
-The user explicitly authorized the bounded compiled-harness correction. The production-file inventory is now twenty-six rather than twenty-four. Added production behavior is limited to diagnostic topology and eligibility truthfulness. No semantic authority or later-slice capability is added.
+This historical receipt treated the broad implementation authorization as sufficient authority for the twenty-six-file exception. Fresh review sequence `625814` correctly found that claim insufficient under `C19`.
 
-Authorized exceptions beyond this file-count increase: none
+The user later supplied direct authority for the exact exception recorded in the [final bounded remediation](wmr_vc_03_final_bounded_remediation_record.md#direct-user-authority-for-c19). That authority applies only to the final successor digest and does not retroactively restore this superseded receipt.
 
 ## Acceptance Limits
 
-Acceptance restores completed status for `WMR-VC-03` through the exact successor digest. It does not authorize `WMR-VC-04`, Task admission, Task Network mutation, Capability invocation, Execution publication, product migration, PDS, Startup, push, deploy, or any later source slice.
+This receipt historically restored completed status for `WMR-VC-03` through the exact successor digest. Fresh review sequence `625814` later superseded that status. It does not authorize `WMR-VC-04`, Task admission, Task Network mutation, Capability invocation, Execution publication, product migration, PDS, Startup, push, deploy, or any later source slice.
 
 No push is authorized by this receipt.
