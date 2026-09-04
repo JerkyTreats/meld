@@ -521,6 +521,7 @@ fn succeeded_outcome(claim: &Claim, artifact_records: Vec<ArtifactRecord>) -> Ou
         error: None,
         artifact_records,
         task_events: vec![],
+        admission: claim.admission.clone(),
     }
 }
 
@@ -535,5 +536,6 @@ fn failed_outcome(claim: &Claim, error: String) -> Outcome {
         error: Some(error),
         artifact_records: vec![],
         task_events: vec![],
+        admission: claim.admission.clone(),
     }
 }

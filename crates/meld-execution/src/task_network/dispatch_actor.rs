@@ -2,19 +2,10 @@
 //!
 //! Owner: the task network dispatch boundary. One actor tick claims and
 //! executes a bounded amount of ready work through injected ports and stops
-//! at recorded task outcomes and durable package progress. The actor never
-//! sequences planning, publication, or evidence.
+//! at recorded task outcomes. The actor never sequences Task admission,
+//! publication, or evidence.
 //!
-//! Two dispatch routes share one tick budget, measured in released bounded
-//! invocations:
-//!
-//! - Package route: planning hands off a [`TaskPackageRoutePlan`]. The
-//!   handoff carries no durable record by design, so dedupe derives from the
-//!   package progress store keyed by a run id derived from the deterministic
-//!   plan identity. A plan already driven to durable completion is never
-//!   restarted; a plan with durable progress resumes the same run. A live
-//!   plan advances by exactly one bounded package step per tick.
-//! - Claim route: ready tasks selected in deterministic ready-set order are
+//! Ready tasks selected in deterministic ready-set order are
 //!   claimed through the existing command boundary under deterministic claim
 //!   identity, invoked through the claimed-task port, and resolved by an
 //!   outcome recorded through the same command boundary before the tick
@@ -27,18 +18,6 @@
 //! outcome moves the task out of `Pending` and the ready-set snapshot is
 //! taken once per tick. Retry, backoff, and terminality policy stay deferred.
 //!
-//! When the actor observes a package run's durable completion — a step report
-//! with `package_complete` or an already-complete durable snapshot — it
-//! idempotently records the run's terminal outcome through the command
-//! boundary via [`crate::task_network::terminal_recording`], the durable
-//! terminal authority aggregate publication requires. Terminal recording is
-//! command-boundary bookkeeping over work the package route already released,
-//! so it consumes no tick budget. The claim route never invokes the terminal
-//! nodes this recording injects: it recognizes them by their deterministic
-//! instance-id prefix and completes their recording from durable state
-//! instead, so a crash window inside recording can never re-execute a
-//! completed package.
-//!
 //! # Example
 //!
 //! ```rust
@@ -47,53 +26,29 @@
 //! let request = DispatchTickRequest {
 //!     sequence: 7,
 //!     max_items: 2,
-//!     package_plans: vec![],
 //! };
 //!
 //! assert_eq!(request.max_items, 2);
 //! ```
 
 use crate::authority::revalidate_action_authority;
-use crate::capability::{
-    BoundCapabilityInstance, CapabilityInvocationPayload, CapabilityInvocationResult,
-};
-use crate::error::ApiError;
-use crate::planning::realization::TaskPackageRoutePlan;
-use crate::task::expansion::{CompiledTaskDelta, TaskExpansionRequest};
-use crate::task::{
-    ArtifactRecord, CompiledTaskRecord, DurablePackageExecution, PackageStepInvoker,
-    TaskArtifactRepo, TaskExecutorSnapshot, TaskInitializationPayload, TaskProgressStore,
-};
+use crate::task::{ArtifactRecord, TaskArtifactRepo, TaskInitializationPayload};
 use crate::task_network::command::{Command, Request as CommandRequest, Response};
 use crate::task_network::dispatch::{Claim, Outcome, OutcomeStatus, Request as DispatchRequest};
 use crate::task_network::initialization::materialize_task_initialization;
 use crate::task_network::mutation::Rejection;
-use crate::task_network::package_step::{PackageStep, PackageStepReport, PackageStepRequest};
 use crate::task_network::readiness::compute_ready_set;
 use crate::task_network::state::ReadinessDiagnosticCode;
-use crate::task_network::state::{NetworkState, TaskLineage, TaskNode, TaskStatus};
-use crate::task_network::store::{InMemoryTaskNetworkStore, SledTaskNetworkStore};
-use crate::task_network::terminal_recording::{
-    load_package_run_artifact_records, package_route_task_lineage,
-    package_run_id_for_task_instance, record_package_run_terminal_outcome, PackageRunRecording,
+use crate::task_network::state::{
+    validate_task_admission_attribution, NetworkState, TaskNode, TaskStatus,
 };
+use crate::task_network::store::{InMemoryTaskNetworkStore, SledTaskNetworkStore};
 use crate::waiting::{conditions, WaitingOnDeclaration};
 use async_trait::async_trait;
 use meld_lang::AuthorityPolicyBinding;
-use std::collections::BTreeSet;
 use std::sync::Arc;
 
 const DISPATCH_ACTOR_ID: &str = "execution.task_network.dispatch.runtime";
-
-/// Derives the durable package run id for one package-route plan handoff.
-///
-/// The handoff itself carries no durable record, so this derivation is the
-/// only bridge between plan identity and durable package progress. Every
-/// consumer of the run's progress or artifacts must derive the same id from
-/// the same deterministic `plan_id`.
-pub fn package_route_run_id(plan_id: &str) -> String {
-    format!("package-route::{plan_id}")
-}
 
 /// Derives the deterministic dispatch claim id for one ready task.
 ///
@@ -149,33 +104,6 @@ impl DispatchPortError {
     }
 }
 
-/// Prepared package run supplied by the package-run preparation port.
-#[derive(Debug, Clone)]
-pub struct PreparedPackageRun {
-    /// Compiled package task lowered by the owning package machinery.
-    pub compiled_task: CompiledTaskRecord,
-    /// Initialization payload for the run. Its run context must carry the
-    /// actor-derived task run id so durable dedupe and progress stay keyed by
-    /// plan identity; the actor rejects a drifted run id before opening.
-    pub init_payload: TaskInitializationPayload,
-}
-
-/// Package-run preparation port for plan handoffs.
-///
-/// Root adapters own how a validated plan resolves into a compiled package
-/// task and initialization payload. The actor owns run identity, durable
-/// dedupe, and bounded stepping. Preparation must be deterministic for one
-/// plan id: the durable execution rejects reopening a run under drifted
-/// compiled-task identity or initialization payload.
-pub trait PackageRunPreparer {
-    /// Resolves one plan handoff into a compiled task and run payload.
-    fn prepare_package_run(
-        &self,
-        plan: &TaskPackageRoutePlan,
-        task_run_id: &str,
-    ) -> Result<PreparedPackageRun, DispatchPortError>;
-}
-
 /// One bounded claimed-task invocation resolution.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ClaimedInvocationOutcome {
@@ -206,6 +134,16 @@ pub trait ClaimedTaskInvoker: Send + Sync {
         claim: &Claim,
         init_payload: &TaskInitializationPayload,
     ) -> Result<ClaimedInvocationOutcome, DispatchPortError>;
+}
+
+/// Read-only observer for the Agent activation generation fencing dispatch.
+///
+/// Implementations live outside Execution and must read the current generation
+/// on every call. The dispatch actor keeps no generation cache when this port
+/// is bound.
+pub trait AdmissionGenerationObserver: Send + Sync {
+    /// Return the currently active generation for one attributed Agent.
+    fn active_generation(&self, agent_id: &str) -> Result<Option<String>, String>;
 }
 
 /// Narrow task-network access port for the dispatch actor.
@@ -249,44 +187,14 @@ pub struct DispatchTickRequest {
     /// Dispatch identities derive from durable plan and claim identity, not
     /// from this sequence, so replayed ticks converge on the same records.
     pub sequence: u64,
-    /// Maximum bounded invocations one tick may release across both routes.
+    /// Maximum bounded claim invocations one tick may release.
     pub max_items: usize,
-    /// Package-route handoffs delivered by the caller for this tick, in the
-    /// caller's deterministic order. Duplicate plan ids dedupe to one run.
-    pub package_plans: Vec<TaskPackageRoutePlan>,
 }
 
 /// Durable progress checkpoint reached by one dispatch actor tick.
 #[derive(Debug, Clone, PartialEq)]
 pub enum DispatchCheckpoint {
-    /// A plan handoff deduped against a durably completed package run.
-    PackageRunAlreadyComplete {
-        /// Deterministic plan identity of the handoff.
-        plan_id: String,
-        /// Durable run id derived from the plan identity.
-        task_run_id: String,
-    },
-    /// One bounded package step advanced a durable package run.
-    PackageStepDriven {
-        /// Deterministic plan identity of the handoff.
-        plan_id: String,
-        /// Durable run id derived from the plan identity.
-        task_run_id: String,
-        /// Bounded step report projected from durable run state.
-        step: PackageStepReport,
-    },
-    /// A package run's terminal outcome was recorded through the command
-    /// boundary. Emitted only when the outcome became durable this tick;
-    /// re-observing an already-recorded run reaches no new checkpoint.
-    PackageTerminalOutcomeRecorded {
-        /// Durable run id derived from the plan identity.
-        task_run_id: String,
-        /// Deterministic task instance recording the run.
-        task_instance_id: String,
-        /// Deterministic outcome id accepted by the command boundary.
-        outcome_id: String,
-    },
-    /// A claim-route task outcome was recorded through the command boundary.
+    /// A claimed task outcome was recorded through the command boundary.
     TaskOutcomeRecorded {
         /// Task instance resolved by the outcome.
         task_instance_id: String,
@@ -304,7 +212,7 @@ pub enum DispatchCheckpoint {
 /// Diagnostic issue emitted by one dispatch actor tick.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DispatchIssue {
-    /// Plan id or task instance id the issue concerns, when known.
+    /// Task instance id the issue concerns, when known.
     pub item_id: Option<String>,
     /// Stable diagnostic code.
     pub code: String,
@@ -323,7 +231,7 @@ pub struct DispatchTickReport {
     pub input_revision: u64,
     /// Task network revision after actor work completed.
     pub output_revision: u64,
-    /// Bounded invocations released by this tick across both routes.
+    /// Bounded claim invocations released by this tick.
     pub items_attempted: usize,
     /// Bounded invocations resolved to durable committed progress. Failed
     /// bounded work is recorded but never counted here.
@@ -397,32 +305,6 @@ pub enum DispatchActorError {
     Storage(String),
 }
 
-/// Shares one package capability invocation port across per-plan runs.
-///
-/// The durable package execution takes its invoker by value, so the actor
-/// hands each opened run a shared handle instead of requiring `Clone` on the
-/// bound port.
-struct SharedPackageInvoker<I>(Arc<I>);
-
-#[async_trait]
-impl<I: PackageStepInvoker> PackageStepInvoker for SharedPackageInvoker<I> {
-    async fn invoke_capability(
-        &self,
-        instance: &BoundCapabilityInstance,
-        payload: &CapabilityInvocationPayload,
-    ) -> Result<CapabilityInvocationResult, ApiError> {
-        self.0.invoke_capability(instance, payload).await
-    }
-
-    fn compile_expansion(
-        &self,
-        compiled_task: &CompiledTaskRecord,
-        request: &TaskExpansionRequest,
-    ) -> Result<CompiledTaskDelta, ApiError> {
-        self.0.compile_expansion(compiled_task, request)
-    }
-}
-
 /// Distinguishes claim-route artifact persistence failures.
 ///
 /// Drift under an existing artifact id is a bounded, recordable failure;
@@ -435,37 +317,30 @@ enum ArtifactPersistFailure {
 
 /// Bounded execution dispatch actor over injected ports.
 ///
-/// The actor owns run and claim identity derivation, durable package-route
-/// dedupe, tick budget accounting, and the persist-before-outcome order. It
-/// does not own package lowering, capability execution, command reduction,
-/// aggregate outcome publication, or retry policy.
-pub struct DispatchRuntimeActor<P, PI, CI> {
+/// The actor owns claim identity derivation, tick budget accounting, and the
+/// persist-before-outcome order. It does not own Task admission, capability
+/// execution, command reduction, publication, or retry policy.
+pub struct DispatchRuntimeActor<CI> {
     actor_id: String,
     worker_id: String,
     db: sled::Db,
-    progress: TaskProgressStore,
-    preparer: P,
-    package_invoker: Arc<PI>,
     claim_invoker: CI,
     authority_policy: Option<AuthorityPolicyBinding>,
+    admission_generation: Option<String>,
+    admission_generation_observer: Option<Arc<dyn AdmissionGenerationObserver>>,
 }
 
-impl<P, PI, CI> DispatchRuntimeActor<P, PI, CI>
+impl<CI> DispatchRuntimeActor<CI>
 where
-    P: PackageRunPreparer,
-    PI: PackageStepInvoker,
     CI: ClaimedTaskInvoker,
 {
     /// Creates a dispatch actor over a caller-owned execution database.
     ///
-    /// The database holds the package progress store, package-run artifact
-    /// repositories, and claim-route artifact repositories, so a fresh actor
-    /// opened over the same database resumes every durable run and claim.
+    /// The database holds claim artifact repositories, so a fresh actor opened
+    /// over the same database resumes every durable claim.
     pub fn new(
         worker_id: impl Into<String>,
         db: sled::Db,
-        preparer: P,
-        package_invoker: PI,
         claim_invoker: CI,
     ) -> Result<Self, DispatchActorError> {
         let worker_id = worker_id.into();
@@ -474,17 +349,14 @@ where
                 "worker id must not be empty".to_string(),
             ));
         }
-        let progress = TaskProgressStore::open(db.clone())
-            .map_err(|error| DispatchActorError::Storage(error.to_string()))?;
         Ok(Self {
             actor_id: DISPATCH_ACTOR_ID.to_string(),
             worker_id,
             db,
-            progress,
-            preparer,
-            package_invoker: Arc::new(package_invoker),
             claim_invoker,
             authority_policy: None,
+            admission_generation: None,
+            admission_generation_observer: None,
         })
     }
 
@@ -492,6 +364,41 @@ where
     pub fn with_authority_policy(mut self, policy: AuthorityPolicyBinding) -> Self {
         self.authority_policy = Some(policy);
         self
+    }
+
+    /// Bind dispatch to the live Agent activation fencing admitted Tasks.
+    pub fn with_admission_generation(mut self, generation: impl Into<String>) -> Self {
+        self.admission_generation = Some(generation.into());
+        self
+    }
+
+    /// Bind a live generation observer used before claims and invocations.
+    pub fn with_admission_generation_observer(
+        mut self,
+        observer: Arc<dyn AdmissionGenerationObserver>,
+    ) -> Self {
+        self.admission_generation_observer = Some(observer);
+        self
+    }
+
+    fn validate_task_authority(&self, state: &NetworkState, node: &TaskNode) -> Result<(), String> {
+        validate_task_admission_attribution(state, node)?;
+        let observed_generation = match (
+            self.admission_generation_observer.as_ref(),
+            node.lineage.admission.as_ref(),
+        ) {
+            (Some(observer), Some(attribution)) => observer
+                .active_generation(&attribution.agent_id)
+                .map_err(|error| {
+                    format!("live activation generation observation failed: {error}")
+                })?,
+            _ => self.admission_generation.clone(),
+        };
+        validate_task_authority(
+            self.authority_policy.as_ref(),
+            observed_generation.as_deref(),
+            node,
+        )
     }
 
     /// Returns the stable actor id used in reports.
@@ -504,13 +411,10 @@ where
         &self.worker_id
     }
 
-    /// Runs one bounded dispatch tick over both routes.
+    /// Runs one bounded dispatch tick over durable Task Network claims.
     ///
-    /// The package route runs first because handoffs are explicit tick input;
-    /// the claim route consumes the remaining budget, resuming this worker's
-    /// interrupted claims before claiming new ready tasks. The tick returns
-    /// only after every attempted item reached a durable resolution: package
-    /// progress persisted by the step contract, or a task outcome recorded
+    /// Interrupted claims resume before new ready tasks are claimed. The tick
+    /// returns only after every resolved item has a task outcome recorded
     /// through the command boundary.
     pub async fn tick<N: TaskNetworkCommandPort>(
         &self,
@@ -521,327 +425,11 @@ where
         let mut report = DispatchTickReport::new(&self.actor_id, request.sequence, input_revision);
         let mut remaining = request.max_items;
 
-        self.drive_package_plans(network, &request.package_plans, &mut remaining, &mut report)
-            .await;
         self.drive_claim_route(network, &mut remaining, &mut report)
             .await;
 
         report.output_revision = network.network_state().revision;
         Ok(report)
-    }
-
-    /// Drives at most one bounded package step per deduped plan handoff.
-    async fn drive_package_plans<N: TaskNetworkCommandPort>(
-        &self,
-        network: &mut N,
-        plans: &[TaskPackageRoutePlan],
-        remaining: &mut usize,
-        report: &mut DispatchTickReport,
-    ) {
-        let mut seen_plan_ids = BTreeSet::new();
-        for plan in plans {
-            if self.authority_policy.is_some() {
-                report.fatal(
-                    Some(plan.plan_id.clone()),
-                    "authority_lineage_missing",
-                    "package-route plan has no exact authority lineage".to_string(),
-                );
-                continue;
-            }
-            // The handoff carries no durable record by design, so in-tick
-            // dedupe keys on the deterministic plan identity and durable
-            // dedupe keys on the derived run id below.
-            if !seen_plan_ids.insert(plan.plan_id.as_str()) {
-                continue;
-            }
-            let task_run_id = package_route_run_id(&plan.plan_id);
-            match self.progress.load(&task_run_id) {
-                Ok(Some(snapshot)) if snapshot_is_complete(&snapshot) => {
-                    // Completed runs are never restarted and consume no budget.
-                    report
-                        .checkpoints
-                        .push(DispatchCheckpoint::PackageRunAlreadyComplete {
-                            plan_id: plan.plan_id.clone(),
-                            task_run_id: task_run_id.clone(),
-                        });
-                    // Re-observation keeps terminal recording idempotently
-                    // converged: a crash window inside a prior recording
-                    // resumes here, and a recorded run is a no-op.
-                    let lineage =
-                        package_route_task_lineage(plan, snapshot.compiled_task.task_version);
-                    self.record_package_run_completion(
-                        network,
-                        &task_run_id,
-                        &snapshot,
-                        Some(lineage),
-                        report,
-                    );
-                    continue;
-                }
-                Ok(_) => {}
-                Err(error) => {
-                    report.retryable(
-                        Some(plan.plan_id.clone()),
-                        "package_progress_unavailable",
-                        error.to_string(),
-                    );
-                    continue;
-                }
-            }
-            if *remaining == 0 {
-                report.budget_exhausted = true;
-                continue;
-            }
-
-            let prepared = match self.preparer.prepare_package_run(plan, &task_run_id) {
-                Ok(prepared) => prepared,
-                Err(error) => {
-                    report.issue(
-                        Some(plan.plan_id.clone()),
-                        "package_run_preparation_failed",
-                        error,
-                    );
-                    continue;
-                }
-            };
-            if prepared.init_payload.task_run_context.task_run_id != task_run_id {
-                // A drifted run id would fork durable dedupe away from the plan
-                // identity, so it is unconstructible rather than tolerated.
-                report.fatal(
-                    Some(plan.plan_id.clone()),
-                    "package_run_identity_drift",
-                    format!(
-                        "prepared run id '{}' does not match derived run id '{}'",
-                        prepared.init_payload.task_run_context.task_run_id, task_run_id
-                    ),
-                );
-                continue;
-            }
-
-            let mut run = match DurablePackageExecution::open(
-                self.db.clone(),
-                prepared.compiled_task,
-                prepared.init_payload,
-                SharedPackageInvoker(Arc::clone(&self.package_invoker)),
-            ) {
-                Ok(run) => run,
-                Err(error) => {
-                    report.fatal(
-                        Some(plan.plan_id.clone()),
-                        "package_run_open_failed",
-                        error.to_string(),
-                    );
-                    continue;
-                }
-            };
-            if run.is_complete() {
-                report
-                    .checkpoints
-                    .push(DispatchCheckpoint::PackageRunAlreadyComplete {
-                        plan_id: plan.plan_id.clone(),
-                        task_run_id: task_run_id.clone(),
-                    });
-                self.record_observed_package_completion(network, plan, &task_run_id, report);
-                continue;
-            }
-
-            let granted = *remaining;
-            match run
-                .step(&PackageStepRequest {
-                    max_ready_invocations: granted,
-                })
-                .await
-            {
-                Ok(step) => {
-                    report.items_attempted += step.items_attempted;
-                    report.items_committed += step.items_committed;
-                    *remaining -= step.items_attempted.min(granted);
-                    if step.budget_exhausted {
-                        report.budget_exhausted = true;
-                    }
-                    let package_complete = step.package_complete;
-                    report
-                        .checkpoints
-                        .push(DispatchCheckpoint::PackageStepDriven {
-                            plan_id: plan.plan_id.clone(),
-                            task_run_id: task_run_id.clone(),
-                            step,
-                        });
-                    if package_complete {
-                        self.record_observed_package_completion(
-                            network,
-                            plan,
-                            &task_run_id,
-                            report,
-                        );
-                    }
-                }
-                Err(error) => {
-                    // The step persisted its recorded failures durably but the
-                    // released count is lost with the report. Treat the whole
-                    // granted wave as spent so a failing plan cannot hot-loop
-                    // this tick's budget; failed work never counts as committed.
-                    report.items_attempted += granted;
-                    *remaining = 0;
-                    report.retryable(
-                        Some(plan.plan_id.clone()),
-                        "package_step_failed",
-                        error.to_string(),
-                    );
-                }
-            }
-        }
-    }
-
-    /// Records terminal outcome for a completion observed with its plan.
-    ///
-    /// Loads the durable snapshot the completion claim rests on; a missing
-    /// snapshot for an observed-complete run is a broken invariant, not a
-    /// retry condition.
-    fn record_observed_package_completion<N: TaskNetworkCommandPort>(
-        &self,
-        network: &mut N,
-        plan: &TaskPackageRoutePlan,
-        task_run_id: &str,
-        report: &mut DispatchTickReport,
-    ) {
-        match self.progress.load(task_run_id) {
-            Ok(Some(snapshot)) => {
-                let lineage = package_route_task_lineage(plan, snapshot.compiled_task.task_version);
-                self.record_package_run_completion(
-                    network,
-                    task_run_id,
-                    &snapshot,
-                    Some(lineage),
-                    report,
-                );
-            }
-            Ok(None) => {
-                report.fatal(
-                    Some(plan.plan_id.clone()),
-                    "terminal_recording_missing_progress",
-                    format!("complete run '{task_run_id}' has no durable progress snapshot"),
-                );
-            }
-            Err(error) => {
-                report.retryable(
-                    Some(plan.plan_id.clone()),
-                    "package_progress_unavailable",
-                    error.to_string(),
-                );
-            }
-        }
-    }
-
-    /// Records one complete package run's terminal outcome idempotently.
-    ///
-    /// Terminal recording is command-boundary bookkeeping over already
-    /// released package work, so it never consumes tick budget and never
-    /// counts as a committed bounded invocation. A checkpoint is emitted only
-    /// when the outcome became durable this tick.
-    fn record_package_run_completion<N: TaskNetworkCommandPort>(
-        &self,
-        network: &mut N,
-        task_run_id: &str,
-        snapshot: &TaskExecutorSnapshot,
-        lineage: Option<TaskLineage>,
-        report: &mut DispatchTickReport,
-    ) {
-        let artifact_records = match load_package_run_artifact_records(self.db.clone(), task_run_id)
-        {
-            Ok(artifact_records) => artifact_records,
-            Err(error) => {
-                report.retryable(
-                    Some(task_run_id.to_string()),
-                    "terminal_recording_artifacts_unavailable",
-                    error.to_string(),
-                );
-                return;
-            }
-        };
-        match record_package_run_terminal_outcome(
-            network,
-            &self.worker_id,
-            snapshot,
-            artifact_records,
-            lineage,
-        ) {
-            Ok(PackageRunRecording::Recorded(recording)) => {
-                if !recording.already_recorded {
-                    report
-                        .checkpoints
-                        .push(DispatchCheckpoint::PackageTerminalOutcomeRecorded {
-                            task_run_id: recording.task_run_id,
-                            task_instance_id: recording.task_instance_id,
-                            outcome_id: recording.outcome.outcome_id,
-                        });
-                }
-            }
-            Ok(PackageRunRecording::Skipped {
-                pending_instance_ids,
-            }) => {
-                // Callers only reach here after observing durable completion,
-                // so a skip means the durable stores contradict each other.
-                report.fatal(
-                    Some(task_run_id.to_string()),
-                    "terminal_recording_incomplete_run",
-                    format!(
-                        "run '{task_run_id}' observed complete but snapshot has {} pending units",
-                        pending_instance_ids.len()
-                    ),
-                );
-            }
-            Err(error) if error.is_retryable() => {
-                report.retryable(
-                    Some(task_run_id.to_string()),
-                    "terminal_recording_failed",
-                    error.to_string(),
-                );
-            }
-            Err(error) => {
-                report.fatal(
-                    Some(task_run_id.to_string()),
-                    "terminal_recording_failed",
-                    error.to_string(),
-                );
-            }
-        }
-    }
-
-    /// Completes recording for a stranded terminal node from durable state.
-    ///
-    /// The claim route routes package-run terminal nodes here instead of
-    /// invoking them: their work already ran through the package route, so
-    /// the only legitimate remaining action is finishing the claim-and-record
-    /// sequence a crash window interrupted. Needs no plan handoff because the
-    /// node, and therefore its lineage, is already durable in network state.
-    fn recover_package_run_terminal<N: TaskNetworkCommandPort>(
-        &self,
-        network: &mut N,
-        task_run_id: &str,
-        report: &mut DispatchTickReport,
-    ) {
-        match self.progress.load(task_run_id) {
-            Ok(Some(snapshot)) => {
-                self.record_package_run_completion(network, task_run_id, &snapshot, None, report);
-            }
-            Ok(None) => {
-                report.fatal(
-                    Some(task_run_id.to_string()),
-                    "terminal_recording_missing_progress",
-                    format!(
-                        "terminal node exists for run '{task_run_id}' with no durable progress"
-                    ),
-                );
-            }
-            Err(error) => {
-                report.retryable(
-                    Some(task_run_id.to_string()),
-                    "package_progress_unavailable",
-                    error.to_string(),
-                );
-            }
-        }
     }
 
     /// Resumes this worker's fenced claims, then claims new ready tasks.
@@ -870,14 +458,6 @@ where
                 .collect()
         };
         for claim in resumable {
-            // A running package-run terminal node is a recording crash
-            // window, never invocable work: complete its recording without
-            // charging bounded-invocation budget.
-            if let Some(task_run_id) = package_run_id_for_task_instance(&claim.task_instance_id) {
-                let task_run_id = task_run_id.to_string();
-                self.recover_package_run_terminal(network, &task_run_id, report);
-                continue;
-            }
             if *remaining == 0 {
                 report.budget_exhausted = true;
                 return;
@@ -889,8 +469,8 @@ where
         }
 
         // One ready-set snapshot per tick: dependents readied by this tick's
-        // outcomes wait for a later tick, mirroring the package-step wave
-        // rule, and a task failed this tick can never re-enter the snapshot.
+        // outcomes wait for a later tick, and a task failed this tick can
+        // never re-enter the snapshot.
         let ready = compute_ready_set(network.network_state());
         // The hardened DBG-016 rule: the readiness diagnostics the snapshot
         // already computed become declarations instead of being discarded,
@@ -909,23 +489,16 @@ where
             ));
         }
         for task_instance_id in &ready.task_instance_ids {
-            // Same protection for a pending terminal node stranded before
-            // its claim: recover the recording instead of dispatching it.
-            if let Some(task_run_id) = package_run_id_for_task_instance(task_instance_id) {
-                let task_run_id = task_run_id.to_string();
-                self.recover_package_run_terminal(network, &task_run_id, report);
-                continue;
-            }
             if *remaining == 0 {
                 report.budget_exhausted = true;
                 return;
             }
-            let authority_check = network
-                .network_state()
+            let state = network.network_state();
+            let authority_check = state
                 .tasks
                 .get(task_instance_id)
                 .ok_or_else(|| format!("ready task '{task_instance_id}' is absent"))
-                .and_then(|node| validate_task_authority(self.authority_policy.as_ref(), node));
+                .and_then(|node| self.validate_task_authority(state, node));
             if let Err(error) = authority_check {
                 report.fatal(
                     Some(task_instance_id.clone()),
@@ -1070,7 +643,7 @@ where
             (node.clone(), init_payload)
         };
 
-        if let Err(error) = validate_task_authority(self.authority_policy.as_ref(), &node) {
+        if let Err(error) = self.validate_task_authority(network.network_state(), &node) {
             report.fatal(
                 Some(claim.task_instance_id.clone()),
                 "effective_authority_denied",
@@ -1195,8 +768,33 @@ where
 
 fn validate_task_authority(
     active_policy: Option<&AuthorityPolicyBinding>,
+    active_generation: Option<&str>,
     node: &TaskNode,
 ) -> Result<(), String> {
+    if node.lineage.authority_decision.is_some() && node.lineage.admission.is_none() {
+        return Err(
+            "Agent Task authority requires a durable Task admission attribution".to_string(),
+        );
+    }
+    if let Some(admission) = &node.lineage.admission {
+        let generation = active_generation.ok_or_else(|| {
+            "admitted Task cannot be checked without a live activation generation".to_string()
+        })?;
+        if generation != admission.activation_generation {
+            return Err(format!(
+                "admitted Task activation generation '{}' is stale against '{}'",
+                admission.activation_generation, generation
+            ));
+        }
+        let policy = active_policy.ok_or_else(|| {
+            "admitted Task authority cannot be checked without an active policy".to_string()
+        })?;
+        if policy.content_hash != admission.authority_policy_content_hash {
+            return Err(
+                "admitted Task authority policy content identity is no longer active".to_string(),
+            );
+        }
+    }
     match (active_policy, &node.lineage.authority_decision) {
         (Some(policy), Some(decision)) => {
             revalidate_action_authority(policy, decision, &node.lineage.capability_type_id)
@@ -1208,18 +806,6 @@ fn validate_task_authority(
         }
         (None, None) => Ok(()),
     }
-}
-
-/// True when every known work unit in the durable snapshot completed.
-///
-/// The snapshot's compiled task already contains every applied expansion, so
-/// this comparison covers expanded units, not only the base graph.
-fn snapshot_is_complete(snapshot: &TaskExecutorSnapshot) -> bool {
-    // Zero instances is never complete — the aggregate sibling's
-    // known-units guard, applied to the durable snapshot.
-    !snapshot.compiled_task.capability_instances.is_empty()
-        && snapshot.completed_instance_ids.len()
-            == snapshot.compiled_task.capability_instances.len()
 }
 
 fn command_request(state: &NetworkState, command_id: String, command: Command) -> CommandRequest {
@@ -1244,6 +830,7 @@ fn succeeded_outcome(claim: &Claim, artifact_records: Vec<ArtifactRecord>) -> Ou
         error: None,
         artifact_records,
         task_events: vec![],
+        admission: claim.admission.clone(),
     }
 }
 
@@ -1258,6 +845,7 @@ fn failed_outcome(claim: &Claim, error: String) -> Outcome {
         error: Some(error),
         artifact_records: vec![],
         task_events: vec![],
+        admission: claim.admission.clone(),
     }
 }
 

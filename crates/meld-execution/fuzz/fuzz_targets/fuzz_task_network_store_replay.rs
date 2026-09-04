@@ -1,6 +1,10 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
+use meld_execution::capability::CapabilityCatalog;
+use meld_execution::task_admission::{
+    ExecutionTask, TaskAdmissionApi, TaskAdmissionLineage, TaskAdmissionRequest,
+};
 use meld_execution::task::{CompiledTaskRecord, TaskRunContext};
 use meld_execution::task_network::{
     command::{Command, Request},
@@ -8,6 +12,7 @@ use meld_execution::task_network::{
     state::{TaskLineage, TaskNode},
     store::InMemoryTaskNetworkStore,
 };
+use meld_lang::{Bindings, Composition};
 
 fn task_node(id: &str) -> TaskNode {
     let task_id = format!("compiled-{id}");
@@ -27,47 +32,118 @@ fn task_node(id: &str) -> TaskNode {
             session_id: None,
             trigger: "fuzz".to_string(),
         },
-        lineage: TaskLineage {
-            composition_id: "composition-fuzz".to_string(),
+        lineage: TaskLineage::unattributed(
+            format!("step-{id}"),
+            format!("operator-{id}"),
+            "docs.write".to_string(),
+            1,
+        ),
+    }
+}
+
+fn admission(index: usize, byte: u8) -> TaskAdmissionRequest {
+    let task_id = format!("admission-task-{index}-{byte}");
+    TaskAdmissionRequest {
+        lineage: TaskAdmissionLineage {
+            agent_id: "agent-fuzz".to_string(),
             goal_id: "goal-fuzz".to_string(),
-            method_id: "method-fuzz".to_string(),
-            step_id: format!("step-{id}"),
-            operator_id: format!("operator-{id}"),
-            world_state_frame_id: "frame-fuzz".to_string(),
-            capability_type_id: "docs.write".to_string(),
-            capability_version: 1,
+            plan_revision_id: "plan-fuzz".to_string(),
+            product_id: task_id.clone(),
+            authorization_id: format!("authorization-{index}-{byte}"),
+            context_id: "context-fuzz".to_string(),
+            authority_scope_id: "scope-fuzz".to_string(),
+            authority_policy_content_hash: String::new(),
+            authority_decision: None,
+            activation_generation: format!("generation-{byte}"),
         },
+        task: ExecutionTask {
+            task_id: task_id.clone(),
+            composition: Composition {
+                steps: Vec::new(),
+                edges: Vec::new(),
+            },
+            bindings: Bindings::empty(),
+            capability_contract_ids: Vec::new(),
+            expected_outcome_contract_id: "outcome-fuzz".to_string(),
+            authority_requirements: Vec::new(),
+            idempotency_key: task_id.clone(),
+        },
+        idempotency_key: if byte % 3 == 1 {
+            format!("rejected-{task_id}")
+        } else {
+            task_id
+        },
+    }
+}
+
+#[derive(Clone)]
+enum Action {
+    Admit {
+        request: TaskAdmissionRequest,
+        live_generation: String,
+    },
+    Command(Request),
+}
+
+fn apply(store: &mut InMemoryTaskNetworkStore, action: &Action) {
+    match action {
+        Action::Admit {
+            request,
+            live_generation,
+        } => {
+            let _ = TaskAdmissionApi::new(
+                store,
+                &CapabilityCatalog::new(),
+                live_generation,
+                "",
+            )
+            .admit(request.clone());
+        }
+        Action::Command(request) => {
+            let _ = store.submit(request.clone());
+        }
     }
 }
 
 fuzz_target!(|data: &[u8]| {
     let mut first = InMemoryTaskNetworkStore::new("network-fuzz");
-    let mut commands = Vec::new();
+    let mut actions = Vec::new();
     for (index, byte) in data.iter().take(8).enumerate() {
-        let id = format!("task-{index}-{byte}");
-        let node = task_node(&id);
-        let set = Set::new(
-            "network-fuzz",
-            "composition-fuzz",
-            format!("once-{index}-{byte}"),
-            vec![Mutation::Inject(Inject::new(node, vec![]))],
-            vec![],
-        );
-        let request = Request {
-            command_id: format!("command-{index}"),
-            network_id: "network-fuzz".to_string(),
-            base_revision: first.state().revision,
-            base_state_hash: first.state().state_hash.clone(),
-            read_preconditions: vec![ReadPrecondition::RevisionIs(first.state().revision)],
-            command: Command::ApplyMutationSet(set),
+        let action = if byte % 2 == 0 {
+            let request = admission(index, *byte);
+            let live_generation = if byte % 3 == 2 {
+                format!("generation-{}", byte.wrapping_add(1))
+            } else {
+                format!("generation-{byte}")
+            };
+            Action::Admit {
+                request,
+                live_generation,
+            }
+        } else {
+            let id = format!("task-{index}-{byte}");
+            let node = task_node(&id);
+            Action::Command(Request {
+                command_id: format!("command-{index}"),
+                network_id: "network-fuzz".to_string(),
+                base_revision: first.state().revision,
+                base_state_hash: first.state().state_hash.clone(),
+                read_preconditions: vec![ReadPrecondition::RevisionIs(first.state().revision)],
+                command: Command::ApplyMutationSet(Set::new(
+                    "network-fuzz",
+                    "composition-fuzz",
+                    format!("once-{index}-{byte}"),
+                    vec![Mutation::Inject(Inject::new(node, vec![]))],
+                )),
+            })
         };
-        let _ = first.submit(request.clone());
-        commands.push(request);
+        apply(&mut first, &action);
+        actions.push(action);
     }
 
     let mut replayed = InMemoryTaskNetworkStore::new("network-fuzz");
-    for command in commands {
-        let _ = replayed.submit(command);
+    for action in &actions {
+        apply(&mut replayed, action);
     }
     assert_eq!(first.state(), replayed.state());
     assert_eq!(first.journal(), replayed.journal());

@@ -75,6 +75,7 @@ fn upstream_state(artifact_records: Vec<ArtifactRecord>) -> NetworkState {
             error: None,
             artifact_records,
             task_events: vec![],
+            admission: None,
         },
     );
     state.set_revision_and_hash(1);

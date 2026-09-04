@@ -1,7 +1,6 @@
 #[path = "support/task_network.rs"]
 mod task_network_support;
 
-use meld_execution::task_network::command::Command;
 use meld_execution::task_network::readiness::compute_ready_set;
 use meld_execution::task_network::state::{
     ArtifactAvailability, DependencyEdge, DependencyEdgeOrigin, DependencyKind, NetworkState,
@@ -277,14 +276,8 @@ fn repeated_input_state_returns_identical_ready_set_ordering() {
 
 #[test]
 fn independent_source_tasks_are_ready_together() {
-    let plan = task_network_support::lower_phase8();
     let mut store = InMemoryTaskNetworkStore::new("network-docs");
-    let request = task_network_support::apply_memory_command(
-        &store,
-        "command-commit-phase8",
-        Command::ApplyMutationSet(plan.mutations),
-    );
-    store.submit(request);
+    task_network_support::admit_and_realize_phase8_in_memory(&mut store);
 
     let ready_steps = compute_ready_set(store.state())
         .task_instance_ids
@@ -312,14 +305,8 @@ fn independent_source_tasks_are_ready_together() {
 
 #[test]
 fn downstream_join_waits_for_all_incoming_artifacts() {
-    let plan = task_network_support::lower_phase8();
     let mut store = InMemoryTaskNetworkStore::new("network-docs");
-    let request = task_network_support::apply_memory_command(
-        &store,
-        "command-commit-phase8",
-        Command::ApplyMutationSet(plan.mutations),
-    );
-    store.submit(request);
+    task_network_support::admit_and_realize_phase8_in_memory(&mut store);
     let mut state = store.state().clone();
     let ids = state
         .tasks

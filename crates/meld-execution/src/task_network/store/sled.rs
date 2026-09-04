@@ -8,6 +8,7 @@ use crate::task_network::{
     store::{
         codec::{decode_error, decode_optional, to_decode, to_storage},
         error::TaskNetworkStoreError,
+        legacy,
         memory::{command_request_hash, duplicate_or_replay, InMemoryTaskNetworkStore},
         records::{
             revision_key, StoredCommandRequest, StoredCommandResponse, StoredJournalRecord,
@@ -31,6 +32,7 @@ pub struct SledTaskNetworkStore {
     command_responses: Tree,
     latest_state: Tree,
     inner: InMemoryTaskNetworkStore,
+    legacy_read_only: bool,
 }
 
 impl SledTaskNetworkStore {
@@ -49,17 +51,22 @@ impl SledTaskNetworkStore {
         for item in journal_by_revision.iter() {
             let (key, value) = item.map_err(to_storage)?;
             let revision = decode_revision_key(&key)?;
-            let stored: StoredJournalRecord = serde_json::from_slice(&value).map_err(to_decode)?;
+            let stored: StoredJournalRecord = legacy::decode(&value)?;
             inner.apply_journal_record_for_replay(revision, &stored)?;
         }
 
         load_command_identity(&mut inner, &command_requests, &command_responses)?;
 
         if let Some(bytes) = latest_state.get(KEY_LATEST_STATE).map_err(to_storage)? {
-            let snapshot: StoredStateSnapshot =
-                serde_json::from_slice(&bytes).map_err(to_decode)?;
+            let snapshot: StoredStateSnapshot = legacy::decode(&bytes)?;
             validate_snapshot(&snapshot, &network_id, inner.state())?;
         }
+
+        let legacy_read_only = inner.state().contains_legacy_planning()
+            || inner.journal().iter().any(|record| match record {
+                JournalRecord::Commit(record) => record.mutation_set.is_legacy_planning(),
+                _ => false,
+            });
 
         Ok(Self {
             db,
@@ -68,6 +75,7 @@ impl SledTaskNetworkStore {
             command_responses,
             latest_state,
             inner,
+            legacy_read_only,
         })
     }
 
@@ -92,6 +100,28 @@ impl SledTaskNetworkStore {
         &mut self,
         request: command::Request,
     ) -> Result<command::Response, TaskNetworkStoreError> {
+        self.submit_command(request, None)
+    }
+
+    /// Persists one region produced by the canonical admitted-Task lowerer.
+    pub(crate) fn submit_validated_task_region(
+        &mut self,
+        request: crate::task_admission::ValidatedTaskRegionWrite,
+    ) -> Result<command::Response, TaskNetworkStoreError> {
+        let command = request.request().clone();
+        self.submit_command(command, Some(request))
+    }
+
+    fn submit_command(
+        &mut self,
+        request: command::Request,
+        validated_region: Option<crate::task_admission::ValidatedTaskRegionWrite>,
+    ) -> Result<command::Response, TaskNetworkStoreError> {
+        if self.legacy_read_only {
+            return Err(decode_error(
+                "Task Network uses retired planning lineage and is read-only",
+            ));
+        }
         let command_id = request.command_id.clone();
         let request_hash = command_request_hash(&request);
 
@@ -110,7 +140,11 @@ impl SledTaskNetworkStore {
             return Ok(duplicate_or_replay(&stored_response.response));
         }
 
-        let response = self.inner.submit(request.clone());
+        let response = if let Some(validated_region) = validated_region {
+            self.inner.submit_validated_task_region(validated_region)
+        } else {
+            self.inner.submit(request.clone())
+        };
         match &response {
             command::Response::Accepted {
                 revision,
@@ -150,6 +184,41 @@ impl SledTaskNetworkStore {
                     response: response.clone(),
                 };
                 self.persist_rejected_command(stored_request, stored_response)?;
+            }
+        }
+        self.flush()?;
+        Ok(response)
+    }
+
+    /// Persists one decision produced by the canonical Task admission facade.
+    pub(crate) fn submit_validated_task_admission(
+        &mut self,
+        request: crate::task_admission::ValidatedTaskAdmissionWrite,
+    ) -> Result<command::Response, TaskNetworkStoreError> {
+        if self.legacy_read_only {
+            return Err(decode_error(
+                "Task Network uses retired planning lineage and is read-only",
+            ));
+        }
+        let response = self.inner.submit_validated_task_admission(request);
+        match &response {
+            command::Response::Accepted { revision, .. } => {
+                let Some(record) = self.inner.journal().last().cloned() else {
+                    return Err(decode_error(
+                        "accepted Task admission did not append journal record",
+                    ));
+                };
+                self.persist_validated_admission(
+                    *revision,
+                    StoredJournalRecord::new(record),
+                    StoredStateSnapshot::new(self.inner.state().clone()),
+                )?;
+            }
+            command::Response::Duplicate { .. } => {}
+            command::Response::Rejected(rejection) => {
+                return Err(decode_error(format!(
+                    "validated Task admission was rejected: {rejection:?}"
+                )));
             }
         }
         self.flush()?;
@@ -198,6 +267,27 @@ impl SledTaskNetworkStore {
                 requests.insert(command_key.clone(), request_value.clone())?;
                 journal_tree.insert(journal_key.clone(), journal_value.clone())?;
                 responses.insert(command_key.clone(), response_value.clone())?;
+                snapshots.insert(snapshot_key.clone(), snapshot_value.clone())?;
+                Ok(())
+            })
+            .map_err(to_transaction)?;
+        Ok(())
+    }
+
+    fn persist_validated_admission(
+        &self,
+        revision: u64,
+        journal: StoredJournalRecord,
+        snapshot: StoredStateSnapshot,
+    ) -> Result<(), TaskNetworkStoreError> {
+        let journal_key = revision_key(revision).to_vec();
+        let journal_value = serde_json::to_vec(&journal).map_err(to_decode)?;
+        let snapshot_value = serde_json::to_vec(&snapshot).map_err(to_decode)?;
+        let snapshot_key = KEY_LATEST_STATE.to_vec();
+
+        (&self.journal_by_revision, &self.latest_state)
+            .transaction(|(journal_tree, snapshots)| {
+                journal_tree.insert(journal_key.clone(), journal_value.clone())?;
                 snapshots.insert(snapshot_key.clone(), snapshot_value.clone())?;
                 Ok(())
             })

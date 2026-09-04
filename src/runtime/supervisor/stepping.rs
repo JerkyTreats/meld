@@ -131,12 +131,12 @@ mod tests {
         let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
         let mut handle = assembly
             .handle_factories()
-            .get("execution.planning")
+            .get("execution.task_admission")
             .unwrap()
             .build_handle();
         handle
             .start_after_lease(RuntimeLeaseContext {
-                runtime_id: "execution.planning".to_string(),
+                runtime_id: "execution.task_admission".to_string(),
                 lease_id: "lease-a".to_string(),
             })
             .unwrap();

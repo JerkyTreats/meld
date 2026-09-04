@@ -80,7 +80,7 @@
       "world_model.belief_assessment",
       "world_model.agent_goal_curation",
       "world_model.agent_satisfaction",
-      "execution.planning",
+      "execution.task_admission",
       "execution.task_dispatch",
       "execution.publication"
     ]
@@ -143,7 +143,7 @@
       "world_model.belief_assessment",
       "world_model.agent_goal_curation",
       "world_model.agent_satisfaction",
-      "execution.planning",
+      "execution.task_admission",
       "execution.task_dispatch",
       "execution.publication"
     ],

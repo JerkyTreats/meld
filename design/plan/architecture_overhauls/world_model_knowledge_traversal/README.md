@@ -8,6 +8,12 @@ Read the [current code ground map](current_code_groundmap.md) for implemented be
 
 The [cognitive architecture alignment assessment](cognitive_architecture_alignment_assessment.md) records the canonicalization boundary and complete domain sweep.
 
+The canonical [source delivery program ledger](world_model_reconciliation_source_delivery_program_ledger.md) records four accepted runtime verticals. The [VC-04-R retirement record](wmr_vc_04_r_execution_retirement.md) preserves the exact Task route while retiring superseded Execution authority. `WMR-VC-04-R1` revision 4 is closed, committed, and pushed for exact candidate `5308f0ba6ce873bd1e00b4ba283d60eefc9df996f9ba261461fc44929c86c430`. No later slice is active.
+
+The [post-VC-04 retirement assessment](post_vc_04_retirement_assessment.md) maps the replacement and move obligations for product initialization, lifecycle, Startup, Docs Freshness, Dependency Security, and legacy Workflow. Every later candidate remains assessment-only until its disposition table is complete.
+
+The delivery-control RCA is recorded in [WMR VC-04 retirement policy dilution](../../incidents/2026-09-02-wmr-vc-04-retirement-policy-dilution.md).
+
 ## Scope Evidence
 
 The [impact assessment](impact_assessment/README.md) maps crate, domain, and entity impact. The [PDS boundary assessment](pds_boundary_assessment/README.md) frames productization through theory, assignment, activation, and Agent genesis. The [runtime, initialization, and lifecycle assessment](runtime_initialization_lifecycle/README.md) maps the durable producer-consumer loop and activation-wide liveness gaps.

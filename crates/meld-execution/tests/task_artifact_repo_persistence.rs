@@ -455,7 +455,6 @@ fn task_artifact_repo_task_network_bridge_accepts_executor_with_durable_repo() {
             node.clone(),
             vec![],
         ))],
-        vec![],
     );
     let commit = task_network_support::apply_sled_command(
         &store,

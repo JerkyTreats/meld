@@ -19,7 +19,6 @@
 use std::collections::{BTreeMap, VecDeque};
 
 use meld_events::DomainObjectRef;
-use meld_execution::goals::PersistentGoalSetStore;
 use meld_execution::task_network::store::{
     network_storage_key, SledTaskNetworkStore, TaskNetworkStoreFactory,
 };
@@ -177,7 +176,6 @@ pub struct ThreadWalker<'a> {
     belief: Option<&'a BeliefStore>,
     agent: Option<&'a AgentStore>,
     traversal: Option<&'a TraversalStore>,
-    goals: Option<&'a PersistentGoalSetStore>,
     task_networks: Option<&'a TaskNetworkStoreFactory>,
     max_nodes: usize,
 }
@@ -191,7 +189,6 @@ impl<'a> ThreadWalker<'a> {
             belief: stores.belief_store.opened().map(|store| store.as_ref()),
             agent: stores.agent_store.opened().map(|store| store.as_ref()),
             traversal: stores.traversal_store.opened().map(|store| store.as_ref()),
-            goals: stores.goal_store.opened().map(|store| store.as_ref()),
             task_networks: stores.task_networks.opened(),
             max_nodes: DEFAULT_MAX_THREAD_NODES,
         }
@@ -207,7 +204,6 @@ impl<'a> ThreadWalker<'a> {
         belief: Option<&'a BeliefStore>,
         agent: Option<&'a AgentStore>,
         traversal: Option<&'a TraversalStore>,
-        goals: Option<&'a PersistentGoalSetStore>,
         task_networks: Option<&'a TaskNetworkStoreFactory>,
     ) -> Self {
         Self {
@@ -215,7 +211,6 @@ impl<'a> ThreadWalker<'a> {
             belief,
             agent,
             traversal,
-            goals,
             task_networks,
             max_nodes: DEFAULT_MAX_THREAD_NODES,
         }
@@ -478,22 +473,9 @@ impl<'a> ThreadWalker<'a> {
                         }),
                 ))
             }
-            ThreadSubject::Goal { goal_id } => {
-                let Some(goals) = self.goals else {
-                    return Ok(Resolution::out_of_scope(None));
-                };
-                Ok(Resolution::from(
-                    goals
-                        .get_goal(goal_id)
-                        .map_err(|error| HarnessError::Storage(error.to_string()))?
-                        .map(|record| {
-                            format!(
-                                "goal {} epoch {}",
-                                record.goal.goal_id, record.lifecycle_epoch
-                            )
-                        }),
-                ))
-            }
+            ThreadSubject::Goal { goal_id } => Ok(Resolution::out_of_scope(Some(format!(
+                "Agent goal {goal_id}"
+            )))),
             ThreadSubject::Task {
                 network_id,
                 task_instance_id,
@@ -511,8 +493,8 @@ impl<'a> ThreadWalker<'a> {
                     NetworkOpen::Open(store) => Ok(Resolution::from(
                         store.state().tasks.get(task_instance_id).map(|task| {
                             format!(
-                                "task {} via method {}",
-                                task.task_instance_id, task.lineage.method_id
+                                "task {} via Capability {}",
+                                task.task_instance_id, task.lineage.capability_type_id
                             )
                         }),
                     )),
@@ -682,54 +664,7 @@ impl<'a> ThreadWalker<'a> {
                     }
                 }
             }
-            ThreadSubject::Goal { goal_id } => {
-                let Some(goals) = self.goals else {
-                    return Ok(refs);
-                };
-                let record = goals
-                    .get_goal(goal_id)
-                    .map_err(|error| HarnessError::Storage(error.to_string()))?;
-                if let Some(record) = record {
-                    // The goal record persists no decision reference; the
-                    // durable edge back to curation is the sink receipt
-                    // recorded for the goal's source command.
-                    if let Some(command_id) = &record.source_command_id {
-                        match self.agent {
-                            Some(agent) => {
-                                let receipts = agent
-                                    .legacy_sink_receipts_by_command(command_id)
-                                    .map_err(storage_error)?;
-                                // A source command with no recorded receipt
-                                // is a dead end, not silence: the receipt is
-                                // written only after execution accepts the
-                                // command, so its absence is evidence.
-                                if receipts.is_empty() {
-                                    refs.push(Reference::Cut {
-                                        reference: format!(
-                                            "sink receipts for command {command_id}"
-                                        ),
-                                        citation: ThreadCitation::CommandReceipt,
-                                        reason: ThreadCutReason::AbsentRecord,
-                                    });
-                                }
-                                for receipt in receipts {
-                                    refs.push(Reference::hop(
-                                        ThreadSubject::Decision {
-                                            decision_id: receipt.decision_id.clone(),
-                                        },
-                                        ThreadCitation::CommandReceipt,
-                                    ));
-                                }
-                            }
-                            None => refs.push(Reference::Cut {
-                                reference: format!("sink receipts for command {command_id}"),
-                                citation: ThreadCitation::CommandReceipt,
-                                reason: ThreadCutReason::SourceOutOfScope,
-                            }),
-                        }
-                    }
-                }
-            }
+            ThreadSubject::Goal { .. } => {}
             ThreadSubject::Task {
                 network_id,
                 task_instance_id,
@@ -746,12 +681,14 @@ impl<'a> ThreadWalker<'a> {
                     NetworkOpen::Missing | NetworkOpen::Locked => return Ok(refs),
                 };
                 if let Some(task) = store.state().tasks.get(task_instance_id) {
-                    refs.push(Reference::hop(
-                        ThreadSubject::Goal {
-                            goal_id: task.lineage.goal_id.clone(),
-                        },
-                        ThreadCitation::TaskGoal,
-                    ));
+                    if let Some(admission) = &task.lineage.admission {
+                        refs.push(Reference::hop(
+                            ThreadSubject::Goal {
+                                goal_id: admission.goal_id.clone(),
+                            },
+                            ThreadCitation::TaskGoal,
+                        ));
+                    }
                     for source in &task.init_sources {
                         if let TaskInitSource::UpstreamArtifact(upstream) = source {
                             refs.push(Reference::hop(
@@ -917,10 +854,6 @@ fn storage_error(error: meld_world_model::error::StorageError) -> HarnessError {
 
 #[cfg(test)]
 mod tests {
-    use meld_execution::goals::{AddGoalCommand, GoalCommandMetadata, PersistentGoalSetStore};
-    use meld_lang::{
-        Condition, Goal, GoalLifecycle, GoalPriority, GoalSource, Literal, Proposition, Term,
-    };
     use meld_world_model::agent::AgentStore;
     use meld_world_model::belief::{
         AssessmentLease, BeliefKey, BeliefProvenanceSummary, BeliefRevision, BeliefStatus,
@@ -938,15 +871,12 @@ mod tests {
     const ANCHOR_ID: &str = "anchor-1";
     const MISSING_ANCHOR_ID: &str = "anchor-missing";
     const DECISION_ID: &str = "decision-1";
-    const GOAL_ID: &str = "goal-1";
-    const COMMAND_ID: &str = "command-1";
 
     struct ChainWorld {
         _dir: tempfile::TempDir,
         traversal: TraversalStore,
         belief: BeliefStore,
         agent: AgentStore,
-        goals: PersistentGoalSetStore,
     }
 
     fn subject() -> DomainObjectRef {
@@ -964,7 +894,7 @@ mod tests {
         }
     }
 
-    /// One durable chain: goal -> decision -> revision -> evidence ->
+    /// One durable chain: decision -> revision -> evidence ->
     /// {fact -> event seq 5, anchor -> fact}, with one absent anchor
     /// reference left dangling on the evidence.
     fn chain_world() -> ChainWorld {
@@ -974,7 +904,6 @@ mod tests {
         let belief = BeliefStore::new(db.clone()).unwrap();
         let agent = AgentStore::new(db.clone()).unwrap();
         let legacy_db = db.clone();
-        let goals = PersistentGoalSetStore::new(db).unwrap();
 
         traversal
             .put_fact(&TraversalFactRecord {
@@ -1100,57 +1029,11 @@ mod tests {
                 .unwrap(),
             )
             .unwrap();
-        legacy_db
-            .open_tree("agent_sink_receipts")
-            .unwrap()
-            .insert(
-                DECISION_ID.as_bytes(),
-                serde_json::to_vec(&serde_json::json!({ "decision_id": DECISION_ID })).unwrap(),
-            )
-            .unwrap();
-        legacy_db
-            .open_tree("agent_sink_receipts_by_command")
-            .unwrap()
-            .insert(
-                format!("{COMMAND_ID}::{DECISION_ID}").as_bytes(),
-                DECISION_ID.as_bytes(),
-            )
-            .unwrap();
-        goals
-            .add_goal(AddGoalCommand {
-                metadata: GoalCommandMetadata {
-                    command_id: COMMAND_ID.to_string(),
-                    source_identity: Some("seed.docs_freshness".to_string()),
-                    seq: 7,
-                },
-                goal: Goal {
-                    goal_id: GOAL_ID.to_string(),
-                    agent_id: "seed.docs_freshness".to_string(),
-                    target: Proposition::Holds {
-                        subject: Term::Object(subject()),
-                        dimension: Term::Dimension("docs_freshness".to_string()),
-                        condition: Condition::Above(Term::Literal(Literal::Number(0.7))),
-                    },
-                    priority: GoalPriority {
-                        urgency: 50,
-                        cost_ceiling: None,
-                    },
-                    source: GoalSource::BeliefDivergence {
-                        dimension: "docs_freshness".to_string(),
-                        observed: "0.9".to_string(),
-                        desired: ">0.7".to_string(),
-                    },
-                    lifecycle: GoalLifecycle::Active,
-                },
-            })
-            .unwrap();
-
         ChainWorld {
             _dir: dir,
             traversal,
             belief,
             agent,
-            goals,
         }
     }
 
@@ -1160,7 +1043,6 @@ mod tests {
             belief: Some(&world.belief),
             agent: Some(&world.agent),
             traversal: Some(&world.traversal),
-            goals: Some(&world.goals),
             task_networks: None,
             max_nodes: DEFAULT_MAX_THREAD_NODES,
         }
@@ -1188,24 +1070,14 @@ mod tests {
     }
 
     #[test]
-    fn goal_thread_resolves_across_domain_boundaries_to_its_facts() {
+    fn decision_thread_resolves_across_domain_boundaries_to_its_facts() {
         let world = chain_world();
         let thread = walker(&world)
-            .walk(ThreadSubject::Goal {
-                goal_id: GOAL_ID.to_string(),
+            .walk(ThreadSubject::Decision {
+                decision_id: DECISION_ID.to_string(),
             })
             .unwrap();
 
-        assert!(edge_exists(
-            &thread,
-            &ThreadSubject::Goal {
-                goal_id: GOAL_ID.to_string()
-            },
-            &ThreadSubject::Decision {
-                decision_id: DECISION_ID.to_string()
-            },
-            ThreadCitation::CommandReceipt,
-        ));
         assert!(edge_exists(
             &thread,
             &ThreadSubject::Decision {
@@ -1278,8 +1150,8 @@ mod tests {
     #[test]
     fn re_deriving_a_thread_yields_the_identical_thread() {
         let world = chain_world();
-        let subject = ThreadSubject::Goal {
-            goal_id: GOAL_ID.to_string(),
+        let subject = ThreadSubject::Decision {
+            decision_id: DECISION_ID.to_string(),
         };
         let first = walker(&world).walk(subject.clone()).unwrap();
         let second = walker(&world).walk(subject).unwrap();
@@ -1294,8 +1166,8 @@ mod tests {
             ..walker(&world)
         };
         let thread = walker
-            .walk(ThreadSubject::Goal {
-                goal_id: GOAL_ID.to_string(),
+            .walk(ThreadSubject::Decision {
+                decision_id: DECISION_ID.to_string(),
             })
             .unwrap();
         assert!(thread.bounded);
@@ -1303,7 +1175,7 @@ mod tests {
     }
 
     #[test]
-    fn walking_an_absent_root_keeps_the_anchor_node_and_records_the_cut() {
+    fn walking_an_out_of_scope_goal_keeps_the_anchor_node_and_records_the_cut() {
         let world = chain_world();
         let thread = walker(&world)
             .walk(ThreadSubject::Goal {
@@ -1313,54 +1185,7 @@ mod tests {
         assert_eq!(thread.nodes.len(), 1);
         assert_eq!(thread.nodes[0].summary, "unresolved");
         assert_eq!(thread.cuts.len(), 1);
-        assert_eq!(thread.cuts[0].reason, ThreadCutReason::AbsentRecord);
-    }
-
-    #[test]
-    fn a_goal_command_without_a_receipt_is_a_recorded_dead_end() {
-        let world = chain_world();
-        world
-            .goals
-            .add_goal(AddGoalCommand {
-                metadata: GoalCommandMetadata {
-                    command_id: "command-unreceipted".to_string(),
-                    source_identity: None,
-                    seq: 9,
-                },
-                goal: Goal {
-                    goal_id: "goal-unreceipted".to_string(),
-                    agent_id: "seed.docs_freshness".to_string(),
-                    target: Proposition::Holds {
-                        subject: Term::Object(subject()),
-                        dimension: Term::Dimension("docs_freshness".to_string()),
-                        condition: Condition::Above(Term::Literal(Literal::Number(0.7))),
-                    },
-                    priority: GoalPriority {
-                        urgency: 50,
-                        cost_ceiling: None,
-                    },
-                    source: GoalSource::BeliefDivergence {
-                        dimension: "docs_freshness".to_string(),
-                        observed: "0.9".to_string(),
-                        desired: ">0.7".to_string(),
-                    },
-                    lifecycle: GoalLifecycle::Active,
-                },
-            })
-            .unwrap();
-
-        let thread = walker(&world)
-            .walk(ThreadSubject::Goal {
-                goal_id: "goal-unreceipted".to_string(),
-            })
-            .unwrap();
-        let cut = thread
-            .cuts
-            .iter()
-            .find(|cut| cut.citation == ThreadCitation::CommandReceipt)
-            .expect("unreceipted command is recorded as a cut");
-        assert_eq!(cut.reason, ThreadCutReason::AbsentRecord);
-        assert!(cut.reference.contains("command-unreceipted"));
+        assert_eq!(thread.cuts[0].reason, ThreadCutReason::SourceOutOfScope);
     }
 
     #[test]

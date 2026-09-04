@@ -52,9 +52,6 @@ pub enum RuntimePortError {
     /// The owning domain rejected or failed a storage operation.
     #[error("port storage error: {0}")]
     Storage(String),
-    /// The owning domain returned a projection error.
-    #[error("planner projection error: {0}")]
-    PlannerProjection(String),
     /// The event append contract failed.
     #[error("event append error: {0}")]
     EventAppend(String),

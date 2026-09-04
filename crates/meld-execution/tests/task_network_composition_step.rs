@@ -1,7 +1,7 @@
-//! Composition-path parity for the bounded package-step contract.
+//! Task-path parity for the bounded package-step contract.
 //!
 //! These tests prove the second consumer of the frozen contract over a
-//! committed task-network graph produced by planning's real lowering: a
+//! committed Task Network graph produced by direct Task admission lowering: a
 //! branching sibling fan-out of three children finalizes before their parent,
 //! matching the package route's dependency-respecting execution shape over an
 //! equivalent logical tree; committed edges carry their recorded Semantic
@@ -18,16 +18,16 @@ use meld_execution::capability::{
     OutputSlotSpec, ScopeContract, SuppliedValueRef,
 };
 use meld_execution::error::ExecutionInvariantError;
-use meld_execution::planning::{
-    CompositionLoweringPlan, CompositionLoweringRequest, ExecutionComposition,
-    ExecutionCompositionLowerer, OperatorResolutionReport, OperatorResolutionStatus,
-    PlanningWorldStateFrameRef,
-};
 use meld_execution::task::{
     ArtifactProducerRef, ArtifactRecord, CompiledTaskDelta, CompiledTaskRecord,
     DurablePackageExecution, PackageStepInvoker, TaskArtifactRepo, TaskCompiler,
     TaskDependencyEdge, TaskDependencyKind, TaskExpansionRequest, TaskInitializationPayload,
     TaskRunContext,
+};
+use meld_execution::task_admission::{
+    ExecutionTask, TaskAdmissionApi, TaskAdmissionLineage, TaskAdmissionLowerer,
+    TaskAdmissionLoweringPlan, TaskAdmissionRecord, TaskAdmissionRequest,
+    TaskAdmissionRuntimeActor, TaskAdmissionRuntimeRequest,
 };
 use meld_execution::task_network::command::{Command, Request as CommandRequest, Response};
 use meld_execution::task_network::composition_step::{
@@ -46,9 +46,8 @@ use meld_execution::task_network::state::{
 };
 use meld_execution::task_network::store::{InMemoryTaskNetworkStore, SledTaskNetworkStore};
 use meld_lang::{
-    Bindings, Composition, CostEstimate, Edge, EdgeKind, Goal, GoalLifecycle, GoalPriority,
-    GoalSource, Operator, Proposition, Resolution, SlotConstraint, Step, StepKind, Term,
-    ValidationResult,
+    Bindings, CapabilityRef, Composition, CostEstimate, Edge, EdgeKind, Operator, Resolution,
+    SlotConstraint, Step, StepKind, Term,
 };
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -68,7 +67,7 @@ fn request(max_ready_invocations: usize) -> PackageStepRequest {
     }
 }
 
-// Composition fixture lowered through planning's real lowering: three sibling
+// Task fixture lowered through direct admission lowering: three sibling
 // children fan out first, child_a feeds the parent through a data flow edge,
 // and child_b and child_c gate the parent through ordering edges, matching
 // the package route's artifact-plus-effect child-before-parent tree.
@@ -143,6 +142,11 @@ fn fanout_catalog() -> CapabilityCatalog {
 }
 
 fn operator_step(step_id: &str, output_artifact_type_id: &str) -> Step {
+    let capability_type_id = if step_id == "parent" {
+        "fanout.parent"
+    } else {
+        "fanout.child"
+    };
     Step {
         step_id: step_id.to_string(),
         kind: StepKind::Op(Operator {
@@ -158,80 +162,52 @@ fn operator_step(step_id: &str, output_artifact_type_id: &str) -> Step {
                 }],
                 scope_kind: Some("node".to_string()),
                 tags: vec![],
-                specific: None,
+                specific: Some(CapabilityRef {
+                    capability_type_id: capability_type_id.to_string(),
+                    capability_version: 1,
+                }),
             },
         }),
     }
 }
 
-fn resolution(operator_id: &str, capability_type_id: &str) -> OperatorResolutionReport {
-    OperatorResolutionReport {
-        operator_id: operator_id.to_string(),
-        status: OperatorResolutionStatus::Resolved,
-        capability_type_id: Some(capability_type_id.to_string()),
-        capability_version: Some(1),
-        tags: vec![],
-        diagnostics: vec![],
-    }
-}
-
-fn fanout_composition(
-    composition_id: &str,
-    steps: Vec<Step>,
-    edges: Vec<Edge>,
-) -> ExecutionComposition {
-    let operator_resolutions = steps
+fn fanout_composition(task_id: &str, steps: Vec<Step>, edges: Vec<Edge>) -> ExecutionTask {
+    let catalog = fanout_catalog();
+    let mut authority_requirements = steps
         .iter()
-        .map(|step| {
-            let capability = if step.step_id == "parent" {
-                "fanout.parent"
-            } else {
-                "fanout.child"
-            };
-            resolution(&step.step_id, capability)
+        .filter_map(|step| match &step.kind {
+            StepKind::Op(operator) => operator
+                .resolution
+                .specific
+                .as_ref()
+                .map(|specific| specific.capability_type_id.clone()),
+            StepKind::Goal(_) => None,
         })
-        .collect();
-    ExecutionComposition {
-        composition_id: composition_id.to_string(),
-        goal: Goal {
-            goal_id: "goal-fanout".to_string(),
-            agent_id: "agent-fanout".to_string(),
-            target: Proposition::Accessible {
-                scope: Term::Dimension("workspace".to_string()),
-            },
-            priority: GoalPriority {
-                urgency: 1,
-                cost_ceiling: None,
-            },
-            source: GoalSource::UserDirected {
-                directive: "fan out".to_string(),
-            },
-            lifecycle: GoalLifecycle::Active,
-        },
-        world_state_frame: PlanningWorldStateFrameRef {
-            frame_id: "frame-fanout".to_string(),
-            projection_version: "world_model.planner.v1".to_string(),
-            perspective_id: "default".to_string(),
-            branch_id: "main".to_string(),
-            source_refs: vec![],
-            warnings: vec![],
-        },
-        method_id: "fan_out_v1".to_string(),
-        bindings: Bindings::empty(),
+        .collect::<Vec<_>>();
+    authority_requirements.sort();
+    authority_requirements.dedup();
+    let mut capability_contract_ids = authority_requirements
+        .iter()
+        .map(|action| catalog.get(action, 1).unwrap().content_identity())
+        .collect::<Vec<_>>();
+    capability_contract_ids.sort();
+    ExecutionTask {
+        task_id: task_id.to_string(),
         composition: Composition { steps, edges },
-        projected_effects: vec![],
-        operator_resolutions,
-        validation: ValidationResult {
-            valid: true,
-            errors: vec![],
-            warnings: vec![],
-        },
-        diagnostics: vec![],
-        authority_decision: None,
+        bindings: Bindings::empty()
+            .bind(
+                "subject".to_string(),
+                Term::Dimension("scope-fanout".to_string()),
+            )
+            .unwrap(),
+        capability_contract_ids,
+        expected_outcome_contract_id: "test.outcome".to_string(),
+        authority_requirements,
+        idempotency_key: format!("{task_id}::once"),
     }
 }
 
-fn branching_fanout_composition() -> ExecutionComposition {
+fn branching_fanout_composition() -> ExecutionTask {
     let steps = vec![
         operator_step("child_a", "branch_note"),
         operator_step("child_b", "branch_note"),
@@ -260,16 +236,29 @@ fn branching_fanout_composition() -> ExecutionComposition {
     fanout_composition("composition-fanout", steps, edges)
 }
 
-fn lower(composition: ExecutionComposition) -> CompositionLoweringPlan {
-    let lowerer = ExecutionCompositionLowerer::new(TaskCompiler::new(), fanout_catalog());
-    lowerer
-        .lower(CompositionLoweringRequest {
-            request_id: "lower-fanout".to_string(),
-            network_id: NETWORK_ID.to_string(),
-            composition,
-            idempotency_key: "lower-once".to_string(),
-        })
-        .unwrap()
+fn admission_request(task: ExecutionTask) -> TaskAdmissionRequest {
+    let task_id = task.task_id.clone();
+    TaskAdmissionRequest {
+        lineage: TaskAdmissionLineage {
+            agent_id: "agent-fanout".to_string(),
+            goal_id: "goal-fanout".to_string(),
+            plan_revision_id: "plan-fanout-v1".to_string(),
+            product_id: task_id.clone(),
+            authorization_id: format!("authorization::{task_id}"),
+            context_id: "context-fanout".to_string(),
+            authority_scope_id: "scope-fanout".to_string(),
+            authority_policy_content_hash: String::new(),
+            authority_decision: None,
+            activation_generation: "generation-fanout".to_string(),
+        },
+        idempotency_key: task.idempotency_key.clone(),
+        task,
+    }
+}
+
+fn lower_record(admission: &TaskAdmissionRecord) -> TaskAdmissionLoweringPlan {
+    let lowerer = TaskAdmissionLowerer::new(TaskCompiler::new(), fanout_catalog());
+    lowerer.lower(NETWORK_ID, admission)
 }
 
 fn command_for_state(state: &NetworkState, command_id: &str, command: Command) -> CommandRequest {
@@ -284,28 +273,51 @@ fn command_for_state(state: &NetworkState, command_id: &str, command: Command) -
 }
 
 fn commit_branching_fanout(store: &mut InMemoryTaskNetworkStore) {
-    let plan = lower(branching_fanout_composition());
-    assert!(plan.diagnostics.is_empty(), "{:?}", plan.diagnostics);
-    let command = command_for_state(
-        store.state(),
-        "command-commit-fanout",
-        Command::ApplyMutationSet(plan.mutations),
+    let admission = TaskAdmissionApi::new(store, &fanout_catalog(), "generation-fanout", "")
+        .admit(admission_request(branching_fanout_composition()))
+        .unwrap();
+    assert_eq!(
+        admission.decision,
+        meld_execution::task_admission::TaskAdmissionDecision::Admitted
     );
-    assert!(matches!(store.submit(command), Response::Accepted { .. }));
+    let actor = TaskAdmissionRuntimeActor::new(TaskAdmissionLowerer::new(
+        TaskCompiler::new(),
+        fanout_catalog(),
+    ));
+    let report = actor
+        .run_once_in_memory(
+            store,
+            TaskAdmissionRuntimeRequest {
+                network_id: NETWORK_ID.to_string(),
+                max_items: 1,
+            },
+        )
+        .unwrap();
+    assert_eq!(report.committed, 1, "{report:#?}");
 }
 
 fn commit_branching_fanout_sled(store: &mut SledTaskNetworkStore) {
-    let plan = lower(branching_fanout_composition());
-    assert!(plan.diagnostics.is_empty(), "{:?}", plan.diagnostics);
-    let command = command_for_state(
-        store.state(),
-        "command-commit-fanout",
-        Command::ApplyMutationSet(plan.mutations),
+    let admission = TaskAdmissionApi::new(store, &fanout_catalog(), "generation-fanout", "")
+        .admit(admission_request(branching_fanout_composition()))
+        .unwrap();
+    assert_eq!(
+        admission.decision,
+        meld_execution::task_admission::TaskAdmissionDecision::Admitted
     );
-    assert!(matches!(
-        store.submit(command).unwrap(),
-        Response::Accepted { .. }
+    let actor = TaskAdmissionRuntimeActor::new(TaskAdmissionLowerer::new(
+        TaskCompiler::new(),
+        fanout_catalog(),
     ));
+    let report = actor
+        .run_once(
+            store,
+            TaskAdmissionRuntimeRequest {
+                network_id: NETWORK_ID.to_string(),
+                max_items: 1,
+            },
+        )
+        .unwrap();
+    assert_eq!(report.committed, 1, "{report:#?}");
 }
 
 fn task_ids_by_step(state: &NetworkState) -> BTreeMap<String, String> {
@@ -971,7 +983,7 @@ fn harness_sees_same_contract_semantics_across_both_implementors() {
 }
 
 #[test]
-fn later_injected_node_extends_known_units_without_expansion_machinery() {
+fn public_mutation_cannot_extend_an_admitted_region() {
     let mut store = InMemoryTaskNetworkStore::new(NETWORK_ID);
     commit_branching_fanout(&mut store);
     let parent_task_id = task_ids_by_step(store.state())["parent"].clone();
@@ -988,14 +1000,19 @@ fn later_injected_node_extends_known_units_without_expansion_machinery() {
     assert_eq!(first.items_committed, 3, "the sibling wave completes first");
     assert_eq!(stepper.progress().known_units, 4);
 
-    // Mid-run growth arrives as a committed mutation set through the public
-    // command boundary, shaped exactly like lowering output, and gated behind
-    // the parent by a Semantic ordering edge.
-    let late_plan = lower(fanout_composition(
+    // A second admitted Task cannot attach executable content through the
+    // generic graph command, even when its lineage and step are authentic.
+    let late_task = fanout_composition(
         "composition-fanout-late",
         vec![operator_step("late", "branch_note")],
         vec![],
-    ));
+    );
+    let mut store = stepper.into_network();
+    let late_admission =
+        TaskAdmissionApi::new(&mut store, &fanout_catalog(), "generation-fanout", "")
+            .admit(admission_request(late_task))
+            .unwrap();
+    let late_plan = lower_record(&late_admission);
     assert!(
         late_plan.diagnostics.is_empty(),
         "{:?}",
@@ -1015,44 +1032,21 @@ fn later_injected_node_extends_known_units_without_expansion_machinery() {
     );
     let mutations = Set::new(
         NETWORK_ID,
-        "composition-fanout-late",
-        "inject-late-once",
+        late_plan.mutations.source_task_id.clone(),
+        late_plan.mutations.idempotency_key.clone(),
         vec![Mutation::Inject(inject)],
-        vec![],
     );
     let command = command_for_state(
-        stepper.network().state(),
+        store.state(),
         "command-commit-late",
         Command::ApplyMutationSet(mutations),
     );
-    // The step contract owns bounded stepping, not graph mutation, so the
-    // planner-side commit goes through the store the stepper rides.
-    let mut store = stepper.into_network();
-    assert!(matches!(store.submit(command), Response::Accepted { .. }));
-    let mut stepper =
-        CompositionNetworkExecution::new(WORKER_ID, open_db(), store, FanOutInvoker { log })
-            .unwrap();
-
-    let progress = stepper.progress();
-    assert_eq!(progress.known_units, 5, "the injected node is a known unit");
-    assert_eq!(progress.completed_units, 3);
-    assert_eq!(progress.applied_expansions, 0, "growth is not an expansion");
-    assert!(!stepper.is_complete());
-
-    let second = block_on(stepper.step(&request(3))).unwrap();
-    assert_eq!(
-        second.items_attempted, 1,
-        "the injected node waits behind the parent"
-    );
-    assert!(!second.package_complete);
-
-    let third = block_on(stepper.step(&request(3))).unwrap();
-    assert_eq!(third.items_attempted, 1);
-    assert!(third.package_complete);
-    let progress = stepper.progress();
-    assert_eq!(progress.known_units, 5);
-    assert_eq!(progress.completed_units, 5);
-    assert_eq!(progress.applied_expansions, 0);
+    assert!(matches!(store.submit(command), Response::Rejected(_)));
+    assert_eq!(store.state().tasks.len(), 4);
+    assert!(!store
+        .state()
+        .tasks
+        .contains_key(&lowered.task_node.task_instance_id));
 }
 
 #[test]

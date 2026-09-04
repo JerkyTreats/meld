@@ -11,7 +11,6 @@ use std::sync::Arc;
 
 use meld_events::remote::LocalEventAuthorityClient;
 use meld_events::LedgerIdentity;
-use meld_execution::goals::PersistentGoalSetStore;
 use meld_execution::task_network::store::TaskNetworkStoreFactory;
 use meld_world_model::agent::AgentStore;
 use meld_world_model::belief::BeliefStore;
@@ -35,7 +34,6 @@ pub struct ServeSources {
     pub(crate) belief: Option<Arc<BeliefStore>>,
     pub(crate) agent: Option<Arc<AgentStore>>,
     pub(crate) traversal: Option<Arc<TraversalStore>>,
-    pub(crate) goals: Option<Arc<PersistentGoalSetStore>>,
     pub(crate) task_networks: Option<TaskNetworkStoreFactory>,
 }
 
@@ -63,7 +61,6 @@ impl ServeSources {
             belief: stores.belief_store.opened().map(Arc::clone),
             agent: stores.agent_store.opened().map(Arc::clone),
             traversal: stores.traversal_store.opened().map(Arc::clone),
-            goals: stores.goal_store.opened().map(Arc::clone),
             task_networks: stores.task_networks.opened().cloned(),
         })
     }
@@ -90,7 +87,6 @@ impl ServeSources {
             self.belief.as_deref(),
             self.agent.as_deref(),
             self.traversal.as_deref(),
-            self.goals.as_deref(),
             self.task_networks.as_ref(),
         )
     }

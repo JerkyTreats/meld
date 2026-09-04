@@ -950,7 +950,7 @@ mod tests {
         for runtime_id in [
             "world_model.graph_replay",
             "event.append",
-            "execution.planning",
+            "execution.task_admission",
         ] {
             store
                 .put_desired_runtime_state(&RuntimeDesiredState {
@@ -970,7 +970,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 "event.append",
-                "execution.planning",
+                "execution.task_admission",
                 "world_model.graph_replay"
             ]
         );

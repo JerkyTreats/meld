@@ -22,6 +22,8 @@ use serde::{Deserialize, Serialize};
 /// One accepted journal record in the task network revision stream.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum JournalRecord {
+    /// Durable consumer decision over one exact Agent-authorized Task.
+    Admission(Box<crate::task_admission::TaskAdmissionRecord>),
     /// Accepted graph mutation commit.
     Commit(CommitRecord),
     /// Accepted dispatch claim.

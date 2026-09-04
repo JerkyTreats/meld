@@ -21,29 +21,8 @@ path = ".."
 path = "../../meld-lang"
 
 [[bin]]
-name = "fuzz_planning_contracts"
-path = "fuzz_targets/fuzz_planning_contracts.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "fuzz_method_library"
-path = "fuzz_targets/fuzz_method_library.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "fuzz_planning_composition"
-path = "fuzz_targets/fuzz_planning_composition.rs"
-test = false
-doc = false
-bench = false
-
-[[bin]]
-name = "fuzz_planning_runtime"
-path = "fuzz_targets/fuzz_planning_runtime.rs"
+name = "fuzz_composition"
+path = "fuzz_targets/fuzz_composition.rs"
 test = false
 doc = false
 bench = false

@@ -45,7 +45,7 @@ pub struct AgentPlanJudgment {
 #[serde(rename_all = "snake_case")]
 pub enum AgentAuthorizedProduct {
     Epistemic(Box<crate::strategy::StrategyEpistemicOperation>),
-    Task(crate::strategy::StrategyTask),
+    Task(Box<crate::strategy::StrategyTask>),
 }
 
 /// Exact currentness evidence retained with one product progression position.
@@ -73,7 +73,8 @@ pub enum AgentProductState {
     ConsumerAccepted { acceptance_id: String },
     Terminal { result_id: String },
     MilestoneAccepted { milestone_id: String },
-    AwaitingExecution,
+    ExecutionAdmitted { admission_id: String },
+    ExecutionTerminal { outcome_id: String },
 }
 
 /// Durable progression and currentness for one exact Plan product.
@@ -102,6 +103,8 @@ pub struct AgentProductAuthorization {
     pub context_id: String,
     pub authority_scope_id: String,
     pub authority_policy_content_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority_decision: Option<meld_lang::AuthorityDecision>,
     pub activation_generation: String,
     pub idempotency_key: String,
     pub product: AgentAuthorizedProduct,
@@ -116,6 +119,38 @@ pub struct AgentConsumerReceipt {
     pub operation_id: String,
     pub acceptance_id: String,
     pub result_id: Option<String>,
+}
+
+/// Exact Execution positions observed by Agent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentExecutionPosition {
+    pub authorization_id: String,
+    pub admission_id: String,
+    pub admission_decision: AgentExecutionAdmissionDecision,
+    pub admission_revision: u64,
+    pub network_commit_revision: Option<u64>,
+    pub outcome_id: Option<String>,
+    pub execution_publication_position_id: Option<String>,
+}
+
+/// Execution consumer decision projected without importing Execution types.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentExecutionAdmissionDecision {
+    Admitted,
+    Rejected { grounds: Vec<String> },
+    StaleFence,
+}
+
+/// Immutable Agent receipt for one distinct Execution return position.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentExecutionReceipt {
+    pub receipt_id: String,
+    pub agent_id: String,
+    pub goal_id: String,
+    pub plan_revision_id: String,
+    pub product_id: String,
+    pub position: AgentExecutionPosition,
 }
 
 /// Exact owner milestone accepted by Agent for one Plan dependency.

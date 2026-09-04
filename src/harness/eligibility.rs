@@ -8,10 +8,8 @@
 //! consumers cannot diverge on the answer.
 //!
 //! The chain follows the flywheel couplings upstream: an absent task
-//! completion resolves through dispatch to planning, an absent plan to
-//! the goal set, and missing Execution admission to a terminal future
-//! boundary with no producer runtime. Belief and evidence questions remain
-//! directly queryable without inventing either a retired or future producer.
+//! completion resolves through dispatch to direct Task admission. Belief and
+//! evidence questions remain directly queryable without inventing a producer.
 
 use std::collections::BTreeSet;
 
@@ -34,10 +32,8 @@ const MAX_CHAIN_LINKS: usize = 32;
 pub enum AbsentRecordKind {
     /// A terminal task outcome from the dispatch route.
     TaskCompletion,
-    /// A committed task-network plan from the planning actor.
-    TaskNetworkPlan,
-    /// Admission of one Agent-authorized task into Execution.
-    ExecutionAdmission,
+    /// A committed operational region from direct Task admission.
+    TaskAdmission,
     /// A committed belief revision from assessment.
     BeliefRevision,
     /// Promoted evidence from ingestion.
@@ -143,12 +139,9 @@ impl<'a> EligibilityWalker<'a> {
                 break;
             }
             let Some(runtime_id) = producer_runtime_id(kind) else {
-                chain.divergences.push(
-                    "future_execution_admission: deferred; no producer runtime exists in this \
-                     slice, so no admission or local-quiescence position can be inferred; \
-                     eligible Agent tasks remain unpublished"
-                        .to_string(),
-                );
+                chain
+                    .divergences
+                    .push("no producer runtime exists for this record kind".to_string());
                 break;
             };
             let action = self
@@ -245,8 +238,7 @@ impl<'a> EligibilityWalker<'a> {
 fn producer_runtime_id(kind: AbsentRecordKind) -> Option<&'static str> {
     match kind {
         AbsentRecordKind::TaskCompletion => Some("execution.task_dispatch"),
-        AbsentRecordKind::TaskNetworkPlan => Some("execution.planning"),
-        AbsentRecordKind::ExecutionAdmission => None,
+        AbsentRecordKind::TaskAdmission => Some("execution.task_admission"),
         AbsentRecordKind::BeliefRevision => Some("world_model.belief_assessment"),
         AbsentRecordKind::Evidence => Some("world_model.evidence_ingestion"),
     }
@@ -261,9 +253,7 @@ fn next_question_kind(condition: &str) -> Option<AbsentRecordKind> {
     if condition == execution_conditions::NO_READY_TASKS
         || condition == execution_conditions::UPSTREAM_ARTIFACT_UNAVAILABLE
     {
-        Some(AbsentRecordKind::TaskNetworkPlan)
-    } else if condition == execution_conditions::NO_ACTIVE_GOALS {
-        Some(AbsentRecordKind::ExecutionAdmission)
+        Some(AbsentRecordKind::TaskAdmission)
     } else if condition == world_model_conditions::NO_UNDELIVERED_REVISIONS
         || condition == world_model_conditions::NO_PENDING_SATISFACTION_REVIEWS
     {
@@ -367,11 +357,11 @@ mod tests {
         );
         publish(
             &mut reports,
-            "execution.planning",
+            "execution.task_admission",
             vec![WaitingOnDeclaration {
-                condition: "no_active_goals".to_string(),
+                condition: "task_admission_available".to_string(),
                 subject_key: None,
-                detail: "no active goal record exists".to_string(),
+                detail: "no admitted unlowered Task at network revision 0".to_string(),
             }],
         );
         publish(
@@ -399,7 +389,7 @@ mod tests {
     }
 
     #[test]
-    fn an_absent_task_completion_stops_at_future_execution_admission() {
+    fn an_absent_task_completion_stops_at_direct_task_admission() {
         let (_temp, reports) = store_with_flywheel_stall();
         let chain = EligibilityWalker::new(&reports)
             .why_absent(EligibilityQuestion {
@@ -415,36 +405,29 @@ mod tests {
             .collect();
         assert_eq!(
             runtimes,
-            vec!["execution.task_dispatch", "execution.planning"]
+            vec!["execution.task_dispatch", "execution.task_admission"]
         );
         assert_eq!(chain.divergences.len(), 1);
         assert_eq!(
             chain.divergences[0],
-            "future_execution_admission: deferred; no producer runtime exists in this slice, \
-             so no admission or local-quiescence position can be inferred; eligible Agent tasks \
-             remain unpublished"
+            "task_admission_available: no admitted unlowered Task at network revision 0"
         );
     }
 
     #[test]
-    fn future_execution_admission_is_terminal_without_a_producer_runtime() {
+    fn direct_task_admission_is_a_real_producer_position() {
         let (_temp, reports) = store_with_flywheel_stall();
         let chain = EligibilityWalker::new(&reports)
             .why_absent(EligibilityQuestion {
-                kind: AbsentRecordKind::ExecutionAdmission,
+                kind: AbsentRecordKind::TaskAdmission,
                 subject_key: Some("workspace_fs::node::docs".to_string()),
             })
             .unwrap();
 
-        assert!(chain.links.is_empty());
+        assert_eq!(chain.links.len(), 1);
         assert_eq!(
             chain.divergences,
-            vec![
-                "future_execution_admission: deferred; no producer runtime exists in this slice, \
-                 so no admission or local-quiescence position can be inferred; eligible Agent \
-                 tasks remain unpublished"
-                    .to_string()
-            ]
+            vec!["task_admission_available: no admitted unlowered Task at network revision 0"]
         );
     }
 
@@ -470,16 +453,16 @@ mod tests {
         let store = SupervisorStore::open(temp.path().join("supervisor.sled")).unwrap();
         let mut reports = SupervisorReportStore::open(&store).unwrap();
         let action = RuntimeActionRecord::from_worker_tick(
-            "action:planning",
-            "execution.planning",
+            "action:task-admission",
+            "execution.task_admission",
             10,
-            report_with("execution.planning", Vec::new()),
+            report_with("execution.task_admission", Vec::new()),
         );
         reports.publish_action(&action).unwrap();
 
         let chain = EligibilityWalker::new(&reports)
             .why_absent(EligibilityQuestion {
-                kind: AbsentRecordKind::TaskNetworkPlan,
+                kind: AbsentRecordKind::TaskAdmission,
                 subject_key: None,
             })
             .unwrap();

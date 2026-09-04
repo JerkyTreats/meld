@@ -424,13 +424,11 @@ fn first_operational_flywheel_topology() -> FlywheelTopology {
                 &["world_model.agent_reconciliation"],
             ),
             station(
-                "execution_admission",
+                "task_admission",
                 "execution",
-                "Future execution admission",
-                &[],
+                "Task admission",
+                &["execution.task_admission"],
             ),
-            station("goals", "execution", "Goals", &["execution.goal_set"]),
-            station("planning", "execution", "Planning", &["execution.planning"]),
             station(
                 "task_network",
                 "execution",
@@ -472,17 +470,16 @@ fn first_operational_flywheel_topology() -> FlywheelTopology {
             ),
             handoff("belief_agent", "belief", "agent", "belief revisions"),
             handoff(
-                "agent_execution_admission",
+                "agent_task_admission",
                 "agent",
-                "execution_admission",
-                "eligible unpublished tasks awaiting future admission",
+                "task_admission",
+                "fresh Agent-authorized Tasks",
             ),
-            handoff("goals_planning", "goals", "planning", "active goals"),
             handoff(
-                "planning_network",
-                "planning",
+                "admission_network",
+                "task_admission",
                 "task_network",
-                "composed task networks",
+                "admitted operational regions",
             ),
             handoff(
                 "network_execution",
@@ -653,15 +650,15 @@ mod tests {
         }));
         assert!(topology.handoffs.iter().any(|handoff| {
             handoff.from_station_id == "agent"
-                && handoff.to_station_id == "execution_admission"
-                && handoff.carries.contains("future admission")
+                && handoff.to_station_id == "task_admission"
+                && handoff.carries.contains("Agent-authorized Tasks")
         }));
-        assert!(topology
-            .handoffs
-            .iter()
-            .all(|handoff| { handoff.from_station_id != "execution_admission" }));
+        assert!(topology.handoffs.iter().any(|handoff| {
+            handoff.from_station_id == "task_admission" && handoff.to_station_id == "task_network"
+        }));
         assert!(topology.stations.iter().any(|station| {
-            station.station_id == "execution_admission" && station.runtime_ids.is_empty()
+            station.station_id == "task_admission"
+                && station.runtime_ids == ["execution.task_admission"]
         }));
         assert!(topology
             .stations

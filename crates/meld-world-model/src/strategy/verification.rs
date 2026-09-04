@@ -31,6 +31,8 @@ pub fn verify_plan(problem: &StrategyProblem, candidate: &StrategyPlan) -> PlanV
     if candidate.tasks.len() != 1
         || candidate.tasks[0].composition != candidate.composition
         || candidate.tasks[0].capability_contract_ids != candidate.capability_contract_ids
+        || candidate.tasks[0].bindings != candidate.bindings
+        || candidate.tasks[0].return_milestone.is_none()
         || candidate.conditions.is_empty()
         || candidate.explanation.trim().is_empty()
         || candidate.frozen_context_id != problem.planner_cut.context.context_id

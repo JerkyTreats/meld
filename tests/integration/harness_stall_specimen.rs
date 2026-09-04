@@ -173,12 +173,11 @@ fn the_anchor_stall_is_recorded_and_the_walk_names_the_dead_end() {
             "the divergence presents the subject-vocabulary mismatch: {divergence}"
         );
 
-        // The current boundary stops at explicit future Execution admission
-        // without inventing either a retired or current producer.
+        // Direct Task admission is a concrete producer position.
         let admission_chain = EligibilityWalker::new(&reports)
             .with_traversal(traversal)
             .why_absent(EligibilityQuestion {
-                kind: AbsentRecordKind::ExecutionAdmission,
+                kind: AbsentRecordKind::TaskAdmission,
                 subject_key: None,
             })
             .unwrap();
@@ -191,9 +190,7 @@ fn the_anchor_stall_is_recorded_and_the_walk_names_the_dead_end() {
         assert_eq!(
             admission_chain.divergences,
             vec![
-                "future_execution_admission: deferred; no producer runtime exists in this slice, \
-                 so no admission or local-quiescence position can be inferred; eligible Agent \
-                 tasks remain unpublished"
+                "no preserved tick for execution.task_admission; the producing actor never ran"
                     .to_string()
             ]
         );

@@ -4,7 +4,10 @@ use libfuzzer_sys::fuzz_target;
 use meld_execution::task::{CompiledTaskRecord, TaskRunContext};
 use meld_execution::task_network::{
     readiness::compute_ready_set,
-    state::{DependencyEdge, DependencyEdgeOrigin, DependencyKind, NetworkState, TaskLineage, TaskNode, TaskStatus},
+    state::{
+        DependencyEdge, DependencyEdgeOrigin, DependencyKind, NetworkState, TaskLineage, TaskNode,
+        TaskStatus,
+    },
 };
 
 fn task_node(id: &str) -> TaskNode {
@@ -25,16 +28,12 @@ fn task_node(id: &str) -> TaskNode {
             session_id: None,
             trigger: "fuzz".to_string(),
         },
-        lineage: TaskLineage {
-            composition_id: "composition-fuzz".to_string(),
-            goal_id: "goal-fuzz".to_string(),
-            method_id: "method-fuzz".to_string(),
-            step_id: format!("step-{id}"),
-            operator_id: format!("operator-{id}"),
-            world_state_frame_id: "frame-fuzz".to_string(),
-            capability_type_id: "docs.write".to_string(),
-            capability_version: 1,
-        },
+        lineage: TaskLineage::unattributed(
+            format!("step-{id}"),
+            format!("operator-{id}"),
+            "docs.write".to_string(),
+            1,
+        ),
     }
 }
 

@@ -1,7 +1,7 @@
 {
   "network_id": "network-docs",
   "revision": 1,
-  "state_hash": "01913b0e0a2771ec1cfc291a7351e78fcfafe3c5f606fe70416995d6e19930a9",
+  "state_hash": "eea79af96697d40e75d4ea30d7a38896000863bbe90a7a0cbad706d96bdd9187",
   "tasks": {
     "task-alpha": {
       "task_instance_id": "task-alpha",
@@ -20,12 +20,8 @@
         "trigger": "task-network.test"
       },
       "lineage": {
-        "composition_id": "composition-fixture",
-        "goal_id": "goal-fixture",
-        "method_id": "method-fixture",
         "step_id": "step-task-alpha",
         "operator_id": "operator-task-alpha",
-        "world_state_frame_id": "frame-fixture",
         "capability_type_id": "docs.write",
         "capability_version": 1
       }

@@ -1,20 +1,20 @@
 {
-  "commit_id": "task-network-commit-91aa5094357f11b7e7738a5a146f2751cb726f8c6146196cdb8f20361b07ea22",
+  "commit_id": "task-network-commit-fef85666dbd9b9041aa7db59869ca4a60408117fa6b215930f826fa4bbbdbd80",
   "command_id": "command-commit-task-alpha",
   "network_id": "network-docs",
   "revision": 1,
   "previous_state_hash": "483bf6cdd16c61e7eea189c483996b3030074135e31b3ebf1e2ebcdc0ba8ba55",
-  "state_hash": "01913b0e0a2771ec1cfc291a7351e78fcfafe3c5f606fe70416995d6e19930a9",
+  "state_hash": "eea79af96697d40e75d4ea30d7a38896000863bbe90a7a0cbad706d96bdd9187",
   "mutation_set": {
     "schema_version": 1,
-    "set_id": "task-network-mutation-set-54146b876597100e2a005a0718134e8ef23f9039cd401f1d5c2e707bc98e9bd2",
+    "set_id": "task-network-mutation-set-3c9830e2a83c339342b131aa10e42ac1c8de439124971f98e7299d3c1496903e",
     "network_id": "network-docs",
-    "source_composition_id": "composition-fixture",
+    "source_task_id": "composition-fixture",
     "idempotency_key": "inject-task-alpha",
     "mutations": [
       {
         "Inject": {
-          "mutation_id": "task-network-inject-45b94a5e3fae687229e2eb4a8ea85d52233418c1c247f8954d4a165498182926",
+          "mutation_id": "task-network-inject-0d531c90bccbf469ba92a6faa94e90106c0c3c6400aefce0cb4ec114e3e1d542",
           "task_node": {
             "task_instance_id": "task-alpha",
             "lifecycle_epoch": 1,
@@ -32,12 +32,8 @@
               "trigger": "task-network.test"
             },
             "lineage": {
-              "composition_id": "composition-fixture",
-              "goal_id": "goal-fixture",
-              "method_id": "method-fixture",
               "step_id": "step-task-alpha",
               "operator_id": "operator-task-alpha",
-              "world_state_frame_id": "frame-fixture",
               "capability_type_id": "docs.write",
               "capability_version": 1
             }
@@ -45,7 +41,6 @@
           "incoming_edges": []
         }
       }
-    ],
-    "diagnostics": []
+    ]
   }
 }

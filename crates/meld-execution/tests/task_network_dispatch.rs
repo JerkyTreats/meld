@@ -108,7 +108,6 @@ fn claim_blocks_when_upstream_outcome_has_no_available_artifact() {
                 }],
             )),
         ],
-        vec![],
     );
     let commit = task_network_support::apply_memory_command(
         &store,
@@ -133,6 +132,7 @@ fn claim_blocks_when_upstream_outcome_has_no_available_artifact() {
         error: None,
         artifact_records: vec![],
         task_events: vec![],
+        admission: upstream_claim.admission,
     };
     let outcome = task_network_support::apply_memory_command(
         &store,
@@ -193,7 +193,13 @@ fn build_executor_for_claim_requires_matching_task_identity() {
         worker_id: "worker-a".to_string(),
         idempotency_key: "claim-alpha-once".to_string(),
     };
-    let mut claim = Claim::accepted("network-docs", &request, node.lifecycle_epoch, 1);
+    let mut claim = Claim::accepted(
+        "network-docs",
+        &request,
+        node.lifecycle_epoch,
+        1,
+        node.lineage.admission.clone(),
+    );
     let payload = TaskInitializationPayload {
         task_id: node.compiled_task.task_id.clone(),
         compiled_task_ref: format!(
@@ -273,6 +279,7 @@ fn failed_outcome_moves_status_to_failed_and_preserves_error_text() {
         error: Some("provider failed".to_string()),
         artifact_records: vec![],
         task_events: vec![],
+        admission: claim.admission,
     };
     let request = task_network_support::apply_memory_command(
         &store,

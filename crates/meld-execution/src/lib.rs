@@ -1,5 +1,5 @@
 //! Execution authority contracts for Meld capability, task, workflow,
-//! generation, planning, goal, traversal, and publish flows.
+//! generation, Task admission, traversal, and publish flows.
 //!
 //! This crate owns execution-facing contracts, orchestration records, runtime
 //! ports, task artifacts, workflow state, capability invocation shapes, and the
@@ -18,8 +18,7 @@
 //!   workspace runtimes.
 //! - [`generation`] carries prompt assembly, provider completion, prompt
 //!   lineage, and generated metadata DTOs.
-//! - [`goals`] stores execution-owned goal sets.
-//! - [`planning`] evaluates goals into execution compositions.
+//! - [`task_admission`] validates and directly lowers Agent-authorized Tasks.
 //! - [`publish`] carries frame head publish templates.
 //! - [`task`] compiles and runs task-local capability graphs.
 //! - [`task_network`] accepts task network commands and reduces graph state.
@@ -45,14 +44,12 @@ pub mod error;
 pub mod execution;
 /// Prompt assembly, provider completion, lineage, and metadata DTOs.
 pub mod generation;
-/// Execution-owned goal set commands, records, stores, and queries.
-pub mod goals;
-/// Goal planning contracts, method libraries, and planning runtime facade.
-pub mod planning;
 /// Frame head publish templates used by expansion paths.
 pub mod publish;
 /// Task definition, compilation, artifact, invocation, and runtime contracts.
 pub mod task;
+/// Durable admission and direct lowering of Agent-authorized Tasks.
+pub mod task_admission;
 /// Task network command, mutation, state, dispatch, and publication contracts.
 pub mod task_network;
 /// Traversal expansion DTOs for workflow-backed task packages.
@@ -65,10 +62,6 @@ pub mod workflow;
 
 pub use execution::*;
 pub use generation::*;
-pub use planning::lowering::{
-    Diagnostic as CompositionLoweringDiagnostic, Lowerer as ExecutionCompositionLowerer,
-    Plan as CompositionLoweringPlan, Request as CompositionLoweringRequest,
-};
 pub use task_network::command::{
     Command as TaskNetworkCommand, Request as TaskNetworkCommandRequest,
     Response as TaskNetworkCommandResponse,

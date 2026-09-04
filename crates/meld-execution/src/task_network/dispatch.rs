@@ -58,6 +58,9 @@ pub struct Claim {
     pub worker_id: String,
     /// Caller supplied idempotency key.
     pub idempotency_key: String,
+    /// Complete Agent Task attribution for canonical WMR claims.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission: Option<crate::task_network::state::TaskAdmissionAttribution>,
 }
 
 impl Claim {
@@ -67,6 +70,7 @@ impl Claim {
         request: &Request,
         lifecycle_epoch: u64,
         claim_revision: u64,
+        admission: Option<crate::task_network::state::TaskAdmissionAttribution>,
     ) -> Self {
         Self {
             claim_id: request.claim_id.clone(),
@@ -76,6 +80,7 @@ impl Claim {
             claim_revision,
             worker_id: request.worker_id.clone(),
             idempotency_key: request.idempotency_key.clone(),
+            admission,
         }
     }
 }
@@ -110,6 +115,9 @@ pub struct Outcome {
     pub artifact_records: Vec<ArtifactRecord>,
     /// Task events emitted by the existing task runtime.
     pub task_events: Vec<TaskEvent>,
+    /// Complete Agent Task attribution copied from the fenced claim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission: Option<crate::task_network::state::TaskAdmissionAttribution>,
 }
 
 /// Creates a task executor for a fenced claim.
@@ -171,6 +179,7 @@ pub fn succeeded_outcome_from_executor(
         error: None,
         artifact_records: emitted_artifact_records(executor),
         task_events: executor.events().to_vec(),
+        admission: claim.admission.clone(),
     }
 }
 
@@ -191,6 +200,7 @@ pub fn failed_outcome_from_executor(
         error: Some(error.into()),
         artifact_records: emitted_artifact_records(executor),
         task_events: executor.events().to_vec(),
+        admission: claim.admission.clone(),
     }
 }
 

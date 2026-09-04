@@ -6,10 +6,10 @@ use std::sync::Arc;
 use sled::{Db, Tree};
 
 use crate::agent::contracts::{
-    AgentActivationRecord, AgentConsumerReceipt, AgentMilestoneAcceptance, AgentPlanJudgment,
-    AgentProductAuthorization, AgentProductProgress, AgentReconciliationGoal, AgentRecord,
-    AgentStatus, AgentSubscriptionRecord, AgentSubscriptionStatus, LegacyAgentDecisionRecord,
-    LegacyAgentSinkReceiptRecord,
+    AgentActivationRecord, AgentConsumerReceipt, AgentExecutionReceipt, AgentMilestoneAcceptance,
+    AgentPlanJudgment, AgentProductAuthorization, AgentProductProgress, AgentReconciliationGoal,
+    AgentRecord, AgentStatus, AgentSubscriptionRecord, AgentSubscriptionStatus,
+    LegacyAgentDecisionRecord, LegacyAgentSinkReceiptRecord,
 };
 use crate::error::StorageError;
 
@@ -214,6 +214,27 @@ impl AgentStore {
         receipt_id: &str,
     ) -> Result<Option<AgentConsumerReceipt>, StorageError> {
         get_immutable(&self.reconciliation_receipts, receipt_id)
+    }
+
+    pub fn put_execution_receipt(
+        &self,
+        record: &AgentExecutionReceipt,
+    ) -> Result<bool, StorageError> {
+        put_immutable(
+            &self.reconciliation_receipts,
+            &format!("execution::{}", record.receipt_id),
+            record,
+        )
+    }
+
+    pub fn execution_receipt(
+        &self,
+        receipt_id: &str,
+    ) -> Result<Option<AgentExecutionReceipt>, StorageError> {
+        get_immutable(
+            &self.reconciliation_receipts,
+            &format!("execution::{receipt_id}"),
+        )
     }
 
     pub fn put_milestone(&self, record: &AgentMilestoneAcceptance) -> Result<bool, StorageError> {

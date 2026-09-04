@@ -1088,7 +1088,7 @@ mod tests {
             "--runtime-id",
             "event.append",
             "--runtime-id",
-            "execution.planning",
+            "execution.task_admission",
             "--format",
             "json",
         ])
@@ -1104,7 +1104,10 @@ mod tests {
                 assert_eq!(format, "json");
                 assert_eq!(
                     runtime_ids,
-                    vec!["event.append".to_string(), "execution.planning".to_string()]
+                    vec![
+                        "event.append".to_string(),
+                        "execution.task_admission".to_string(),
+                    ]
                 );
             }
             _ => panic!("expected runtime status command"),

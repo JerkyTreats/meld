@@ -53,7 +53,7 @@ pub struct Request {
 /// Task network command payload.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Command {
-    /// Applies a graph mutation set produced by planning lowering.
+    /// Applies a graph mutation set produced by Task admission lowering.
     ApplyMutationSet(mutation::Set),
     /// Claims one ready task before task runtime execution.
     ClaimReadyTask(dispatch::Request),

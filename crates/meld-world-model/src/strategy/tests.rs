@@ -410,7 +410,7 @@ fn successor_replay_is_stable_and_keeps_completed_history() {
         completed_history: vec![StrategyCompletedHistoryEntry {
             source_plan_revision_id: predecessor.plan_revision_id.clone(),
             product_id: predecessor.tasks[0].task_id.clone(),
-            accepted_milestone: PlanMilestoneRequirement::FutureExecutionAdmission {
+            accepted_milestone: PlanMilestoneRequirement::ExecutionTerminal {
                 task_id: predecessor.tasks[0].task_id.clone(),
             },
             owner_position_id: "agent-milestone-docs-v1".into(),

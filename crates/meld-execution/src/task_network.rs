@@ -4,7 +4,7 @@
 //! network state, ready task queries, dispatch claims, task outcome handoff, and
 //! publication outbox state.
 //!
-//! Inputs are task network commands from planning, workers, publication
+//! Inputs are task network commands from Task admission, workers, publication
 //! workers, and recovery code. Outputs are accepted journal records, reduced
 //! state snapshots, ready sets, dispatch claims, and publication records.
 //!
@@ -46,8 +46,6 @@ pub mod runtime;
 pub mod state;
 /// In memory and sled-backed command stores.
 pub mod store;
-/// Package-route terminal outcome recording over the command boundary.
-pub mod terminal_recording;
 
 pub use aggregate::{
     AggregatePackageOutcome, AggregatePackageStatus, FolderPublicationResult,
@@ -68,10 +66,9 @@ pub use composition_step::{
 };
 pub use dispatch::{Claim, Outcome, OutcomeStatus, Request as DispatchRequest};
 pub use dispatch_actor::{
-    dispatch_claim_id, dispatch_claim_repo_id, dispatch_outcome_id, package_route_run_id,
-    ClaimedInvocationOutcome, ClaimedTaskInvoker, DispatchActorError, DispatchCheckpoint,
-    DispatchIssue, DispatchPortError, DispatchRuntimeActor, DispatchTickReport,
-    DispatchTickRequest, PackageRunPreparer, PreparedPackageRun, TaskNetworkCommandPort,
+    dispatch_claim_id, dispatch_claim_repo_id, dispatch_outcome_id, ClaimedInvocationOutcome,
+    ClaimedTaskInvoker, DispatchActorError, DispatchCheckpoint, DispatchIssue, DispatchPortError,
+    DispatchRuntimeActor, DispatchTickReport, DispatchTickRequest, TaskNetworkCommandPort,
 };
 pub use initialization::{
     materialize_task_initialization, validate_task_init_graph_sources, validate_task_init_sources,
@@ -90,13 +87,7 @@ pub use publication::{
 pub use readiness::compute_ready_set;
 pub use runtime::{PublicationRuntime, PublicationRuntimeReport};
 pub use state::{
-    NetworkState, ReadySet, StaticSeedInitSource, TaskInitSource, TaskNode, TaskStatus,
-    UpstreamArtifactInitSource,
+    NetworkState, ReadySet, StaticSeedInitSource, TaskAdmissionAttribution, TaskInitSource,
+    TaskNode, TaskStatus, UpstreamArtifactInitSource,
 };
 pub use store::{InMemoryTaskNetworkStore, SledTaskNetworkStore};
-pub use terminal_recording::{
-    load_package_run_artifact_records, package_route_task_lineage,
-    package_run_id_for_task_instance, package_run_task_instance_id, package_run_terminal_outcome,
-    record_package_run_terminal_outcome, PackageRunRecording, PackageRunTerminalOutcome,
-    PackageRunTerminalRecording, TerminalRecordingError, PACKAGE_RUN_TASK_INSTANCE_PREFIX,
-};

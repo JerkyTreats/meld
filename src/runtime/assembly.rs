@@ -20,26 +20,17 @@ use meld_events::EventAuthorityOpenOptions;
 use meld_events::EventConsumerRegistryCapability;
 use meld_events::{DomainObjectRef, DurableConsumerCursor, EventAuthority};
 use meld_execution::capability::CapabilityCatalog;
-use meld_execution::goals::PersistentGoalSetStore;
-use meld_execution::planning::realization::TaskPackageRoutePlan;
-use meld_execution::planning::{
-    AvailableActionSet, ExecutionCompositionLowerer, MethodLibrary, MethodRealizationBinding,
-    PlanningRuntime, PlanningRuntimeActor, PlanningRuntimeActorGoalResult,
-    PlanningRuntimeActorRequest,
-};
-use meld_execution::task::{TaskCompiler, TaskProgressStore};
-use meld_execution::task_network::aggregate_publication::{
-    publish_aggregate_for_run, AggregatePublicationError, AggregatePublicationStore,
-    AggregatePublishResult, AggregateRunBinding, AggregateSkipReason, PublishAggregateRequest,
+use meld_execution::task::TaskCompiler;
+use meld_execution::task_admission::{
+    TaskAdmissionLowerer, TaskAdmissionRuntimeActor, TaskAdmissionRuntimeRequest,
 };
 use meld_execution::task_network::dispatch_actor::{
-    package_route_run_id, DispatchRuntimeActor, DispatchTickReport, DispatchTickRequest,
+    DispatchRuntimeActor, DispatchTickReport, DispatchTickRequest,
 };
-use meld_execution::task_network::terminal_recording::package_run_terminal_outcome;
 use meld_execution::task_network::{
     PublicationRuntime, PublishPendingPublicationsRequest, SledTaskNetworkStore,
 };
-use meld_lang::{AuthorityPolicyBinding, Method};
+use meld_lang::AuthorityPolicyBinding;
 use meld_lang::{Goal, GoalLifecycle, GoalSource};
 use meld_world_model::agent::{
     AgentActivationStatus, AgentAuthorizationFence, AgentReconciliationActor,
@@ -79,10 +70,10 @@ use crate::runtime::lifecycle::{
     STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID,
 };
 use crate::runtime::ports::{
-    ExactKeyPlanningProjectionPort, ProductAgentAuthorityPort, ProductAgentPlannerPort,
-    ProductCurationTraversalPort, ProductEventAppendPort, ProductEventReplayPort,
-    ProductPlannedCurationPort, ProductRuntimePorts, ProviderPortConfig, SharedClaimedTaskInvoker,
-    SharedPackageRunPreparer, SharedPackageStepInvoker,
+    ProductAdmissionGenerationObserver, ProductAgentAuthorityPort, ProductAgentExecutionPort,
+    ProductAgentPlannerPort, ProductCurationTraversalPort, ProductEventAppendPort,
+    ProductEventReplayPort, ProductPlannedCurationPort, ProductRuntimePorts, ProviderPortConfig,
+    SharedClaimedTaskInvoker,
 };
 use crate::runtime::registration::{RegistrationKind, RegistrationSet, RuntimeRegistration};
 use crate::runtime::storage::{
@@ -208,12 +199,6 @@ pub enum RuntimeResource {
     EventReplay,
     /// Event authority durable consumer cursor registry.
     EventConsumerRegistry,
-    /// Execution goal command port.
-    GoalCommand,
-    /// Execution goal mutation port.
-    GoalMutation,
-    /// Planner projection port.
-    PlannerProjection,
     /// Task artifact repository factory.
     TaskArtifactFactory,
     /// Task network store factory.
@@ -239,16 +224,12 @@ fn resource_store_scope(resource: &RuntimeResource) -> StoreScope {
             workspace: true,
             ..StoreScope::none()
         },
-        RuntimeResource::WorldModel | RuntimeResource::PlannerProjection => StoreScope {
+        RuntimeResource::WorldModel => StoreScope {
             world_model: true,
             ..StoreScope::none()
         },
         RuntimeResource::Theory => StoreScope {
             theory: true,
-            ..StoreScope::none()
-        },
-        RuntimeResource::GoalCommand | RuntimeResource::GoalMutation => StoreScope {
-            execution_goals: true,
             ..StoreScope::none()
         },
         RuntimeResource::TaskArtifactFactory | RuntimeResource::TaskNetworkFactory => StoreScope {
@@ -297,18 +278,17 @@ pub fn scope_for_registration_set(
 
 /// Runtime ids classified as passive services in the stewardship-derived set.
 ///
-/// The event append and replay capabilities and the goal-set and
-/// task-network command services are called by actors; they are never
+/// The event append and replay capabilities and the task-network command
+/// service are called by actors; they are never
 /// leased, never ticked, and receive no actor health. This includes the
 /// former `event.append` diagnostics observer: its ledger-health facts now
 /// live on the passive append capability's health surface
 /// (`ProductEventAppendPort::health`) and the existing self-observation
 /// watcher, so the actor-shaped diagnostics handle survives only as a
 /// compatibility body for explicit legacy compositions.
-const STEWARDSHIP_PASSIVE_SERVICE_IDS: [&str; 4] = [
+const STEWARDSHIP_PASSIVE_SERVICE_IDS: [&str; 3] = [
     "event.append",
     "event.replay",
-    "execution.goal_set",
     "execution.task_network_command",
 ];
 
@@ -386,12 +366,6 @@ pub struct StewardshipActorBindings {
     pub network_id: String,
     /// Event ledger session partition for aggregate publication.
     pub session_id: String,
-    /// Durable capability type ids whose package work units carry
-    /// per-folder work, derived from the selected package document.
-    pub folder_unit_capability_types: Vec<String>,
-    /// Package-declared yield source as artifact type and array field,
-    /// derived from the selected package document.
-    pub semantic_yield_source: Option<(String, String)>,
 }
 
 impl StewardshipActorBindings {
@@ -416,8 +390,6 @@ impl StewardshipActorBindings {
             anchor_perspective_id: format!("context-{}", binding.agent_id),
             network_id: format!("stewardship.{expression}"),
             session_id: format!("stewardship::{expression}"),
-            folder_unit_capability_types: Vec::new(),
-            semantic_yield_source: None,
             expression,
         })
     }
@@ -457,44 +429,23 @@ pub struct StewardshipTheoryBindings {
     pub capability_runtime: Option<ProductCapabilityRuntime>,
     /// Exact effective-authority policy shared by judgment and execution.
     pub authority_policy: Option<AuthorityPolicyBinding>,
-    /// Planning theory: methods, catalog, afforded actions, realizations.
-    pub planning: Option<PlanningTheoryBinding>,
     /// Real execution route bindings for the dispatch actor.
     pub dispatch: Option<DispatchRouteBindings>,
 }
 
-/// Product-neutral capability runtime shared by Strategy, planning, and
+/// Product-neutral capability runtime shared by Strategy, Task admission, and
 /// dispatch for one stewardship composition.
 #[derive(Clone)]
 pub struct ProductCapabilityRuntime {
-    /// Exact contracts visible to planning and lowering.
+    /// Exact contracts visible to Task admission and lowering.
     pub catalog: CapabilityCatalog,
     /// Matching executable invokers visible to dispatch.
     pub registry: crate::capability::CapabilityExecutorRegistry,
 }
 
-/// Planning theory injected until a durable method registry exists.
-#[derive(Clone)]
-pub struct PlanningTheoryBinding {
-    /// Planning methods for the stewarded domain.
-    pub methods: Vec<Method>,
-    /// Capability catalog the methods and lowering resolve against.
-    pub capability_catalog: CapabilityCatalog,
-    /// Actions the stewarded domain affords, in the frozen affordance shape.
-    pub available_actions: AvailableActionSet,
-    /// Data-driven method-to-action associations.
-    pub method_realizations: Vec<MethodRealizationBinding>,
-    /// Dimensions the projection port should prioritize for each goal.
-    pub requested_dimensions: Vec<String>,
-}
-
 /// Execution route ports injected for the dispatch actor.
 #[derive(Clone)]
 pub struct DispatchRouteBindings {
-    /// Resolves plan handoffs into compiled package runs.
-    pub preparer: SharedPackageRunPreparer,
-    /// Executes package capability invocations over the real route.
-    pub package_invoker: SharedPackageStepInvoker,
     /// Executes claimed task invocations over the real route.
     pub claim_invoker: SharedClaimedTaskInvoker,
 }
@@ -502,17 +453,11 @@ pub struct DispatchRouteBindings {
 impl DispatchRouteBindings {
     /// Compose the production execution routes over the real machinery.
     ///
-    /// The preparer resolves plans through the registered workflow package
-    /// surface, capability invocations execute through the workflow
-    /// task-path capability set, and providers resolve through the provider
-    /// registry the api facade carries — mirroring the registered workflow
-    /// route, sourced from product config and stewardship bindings.
+    /// Admitted compiled Tasks execute through the product Capability set and
+    /// provider registry carried by the root api facade.
     pub fn production(context: crate::runtime::ports::ProductionDispatchRouteContext) -> Self {
-        let (preparer, package_invoker, claim_invoker) = context.into_route_ports();
         Self {
-            preparer,
-            package_invoker,
-            claim_invoker,
+            claim_invoker: context.into_claim_port(),
         }
     }
 }
@@ -570,23 +515,9 @@ impl DispatchRouteSlot {
     }
 }
 
-/// Physical identities a route composer needs to build the production
-/// dispatch routes for one stewardship composition.
-///
-/// Everything here is identity or physical scope copied from the validated
-/// physical binding — never theory bodies and never open resources.
+/// Identity a route composer needs to bind production claim dispatch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DispatchRouteSeed {
-    /// Canonical workspace root the stewarded subject lives in.
-    pub workspace_root: PathBuf,
-    /// Workspace-relative subject path the package route triggers on.
-    pub subject_path: PathBuf,
-    /// Durable agent identity that stewards the subject.
-    pub agent_id: String,
-    /// Belief family selected by the stewardship declaration.
-    pub belief_family_id: String,
-    /// Provider key guaranteed present in the root provider map.
-    pub provider_id: String,
     /// Event ledger session partition shared with the composed actors.
     pub session_id: String,
 }
@@ -683,19 +614,6 @@ fn hydrate_stewardship_theory(
     strategy = strategy.with_authority_policy(authority_policy.clone());
     theory.outcome_mapping = Some(resolved.outcome_mapping.config.clone());
     theory.strategy = Some(strategy);
-    theory.planning = Some(PlanningTheoryBinding {
-        methods: Vec::new(),
-        capability_catalog: capability_runtime.catalog.clone(),
-        available_actions: AvailableActionSet {
-            actions: Vec::new(),
-        },
-        method_realizations: Vec::new(),
-        requested_dimensions: resolved
-            .strategy_theory
-            .package
-            .requested_dimensions
-            .clone(),
-    });
     theory.capability_runtime = Some(capability_runtime);
     theory.authority_policy = Some(authority_policy);
     theory.resolved = Some(resolved);
@@ -769,51 +687,10 @@ fn activate_exact_capabilities(
     })
 }
 
-/// In-process package-route plan handoffs between planning and dispatch.
-///
-/// The handoff carries no durable record by design: durable dedupe lives in
-/// the package progress store keyed by the run id derived from the
-/// deterministic plan identity. This registry only carries plans across
-/// bounded ticks inside one process; a restart reconstructs it from the
-/// next planning tick, and dispatch converges on the same durable run via
-/// [`package_route_run_id`].
-#[derive(Default)]
-pub struct PackageRouteHandoffs {
-    plans: Mutex<BTreeMap<String, TaskPackageRoutePlan>>,
-}
-
-impl PackageRouteHandoffs {
-    /// Record one plan handoff, deduped on its deterministic plan identity.
-    pub fn record(&self, plan: TaskPackageRoutePlan) {
-        let mut plans = self.plans.lock().unwrap_or_else(|e| e.into_inner());
-        plans.entry(plan.plan_id.clone()).or_insert(plan);
-    }
-
-    /// Current plan handoffs in deterministic plan id order.
-    pub fn plans(&self) -> Vec<TaskPackageRoutePlan> {
-        let plans = self.plans.lock().unwrap_or_else(|e| e.into_inner());
-        plans.values().cloned().collect()
-    }
-
-    /// Durable run bindings for the recorded plans.
-    ///
-    /// Every consumer derives the run id through the exported
-    /// [`package_route_run_id`] so plan identity and durable package
-    /// progress can never fork.
-    pub fn run_bindings(&self) -> Vec<(String, String)> {
-        let plans = self.plans.lock().unwrap_or_else(|e| e.into_inner());
-        plans
-            .keys()
-            .map(|plan_id| (plan_id.clone(), package_route_run_id(plan_id)))
-            .collect()
-    }
-}
-
 /// Stewardship values shared by the composed actor factories.
 struct ComposedStewardship {
     bindings: StewardshipActorBindings,
     theory: StewardshipTheoryBindings,
-    handoffs: Arc<PackageRouteHandoffs>,
     network: Option<Arc<Mutex<SledTaskNetworkStore>>>,
     cursor_registry: EventConsumerRegistryCapability,
     worker_id: String,
@@ -823,15 +700,10 @@ struct ComposedStewardship {
 
 /// Derive the production route seed from one validated physical binding.
 fn dispatch_route_seed(
-    binding: &PhysicalBinding,
+    _binding: &PhysicalBinding,
     bindings: &StewardshipActorBindings,
 ) -> DispatchRouteSeed {
     DispatchRouteSeed {
-        workspace_root: binding.workspace_root.clone(),
-        subject_path: PathBuf::from(&binding.subject),
-        agent_id: binding.agent_id.clone(),
-        belief_family_id: binding.package.belief_family_id.clone(),
-        provider_id: binding.provider_id.clone(),
         session_id: bindings.session_id.clone(),
     }
 }
@@ -949,6 +821,7 @@ struct AgentActorFactory {
     authority_port: Arc<dyn meld_world_model::AgentAuthorityPort>,
     frozen_authority: AgentAuthorizationFence,
     curation: Arc<dyn meld_world_model::AgentCurationPort>,
+    execution: Arc<dyn meld_world_model::AgentExecutionPort>,
     strategy: meld_world_model::AgentStrategyRuntimeConfig,
     authority: CurationAuthority,
     rule: StandingCurationRuleRevision,
@@ -957,16 +830,10 @@ struct AgentActorFactory {
 }
 
 #[derive(Clone)]
-struct PlanningFactory {
-    theory: PlanningTheoryBinding,
-    goal_store: Arc<PersistentGoalSetStore>,
+struct TaskAdmissionFactory {
+    catalog: CapabilityCatalog,
     network: Arc<Mutex<SledTaskNetworkStore>>,
-    belief_store: Arc<BeliefStore>,
-    traversal_store: Arc<TraversalStore>,
-    registry: Arc<BeliefFamilyRegistryStore>,
     bindings: StewardshipActorBindings,
-    handoffs: Arc<PackageRouteHandoffs>,
-    authority_policy: Option<AuthorityPolicyBinding>,
 }
 
 #[derive(Clone)]
@@ -975,16 +842,15 @@ struct DispatchFactory {
     routes: DispatchRouteSlot,
     execution_db: sled::Db,
     network: Arc<Mutex<SledTaskNetworkStore>>,
-    handoffs: Arc<PackageRouteHandoffs>,
     worker_id: String,
     authority_policy: Option<AuthorityPolicyBinding>,
+    admission_generation_observer:
+        Option<Arc<dyn meld_execution::task_network::dispatch_actor::AdmissionGenerationObserver>>,
 }
 
 #[derive(Clone)]
 struct PublicationFactory {
-    execution_db: sled::Db,
     event_append: ProductEventAppendPort,
-    handoffs: Arc<PackageRouteHandoffs>,
     bindings: StewardshipActorBindings,
     worker_id: String,
     network: Option<Arc<Mutex<SledTaskNetworkStore>>>,
@@ -1000,7 +866,7 @@ enum RuntimeSemanticHandleFactory {
     EvidenceIngestion(Box<EvidenceIngestionFactory>),
     StandingCuration(Box<StandingCurationFactory>),
     AgentActor(Box<AgentActorFactory>),
-    Planning(Box<PlanningFactory>),
+    TaskAdmission(Box<TaskAdmissionFactory>),
     Dispatch(Box<DispatchFactory>),
     AggregatePublication(Box<PublicationFactory>),
 }
@@ -1014,7 +880,7 @@ enum RuntimeSemanticHandle {
     EvidenceIngestion(Box<EvidenceIngestionHandle>),
     StandingCuration(Box<StandingCurationHandle>),
     AgentActor(Box<AgentActorHandle>),
-    Planning(Box<PlanningHandle>),
+    TaskAdmission(Box<TaskAdmissionHandle>),
     Dispatch(Box<DispatchHandle>),
     AggregatePublication(Box<PublicationHandle>),
 }
@@ -1066,44 +932,22 @@ struct AgentActorHandle {
     actor: AgentReconciliationActor,
 }
 
-struct PlanningHandle {
-    actor: PlanningRuntimeActor<TaskCompiler>,
-    goal_store: PersistentGoalSetStore,
+struct TaskAdmissionHandle {
+    actor: TaskAdmissionRuntimeActor<TaskCompiler>,
     network: Arc<Mutex<SledTaskNetworkStore>>,
-    projection: ExactKeyPlanningProjectionPort,
-    request_seed: PlanningRequestSeed,
-    handoffs: Arc<PackageRouteHandoffs>,
-}
-
-#[derive(Clone)]
-struct PlanningRequestSeed {
     network_id: String,
-    perspective_id: String,
-    branch_id: String,
-    requested_dimensions: Vec<String>,
-    available_actions: AvailableActionSet,
-    method_realizations: Vec<MethodRealizationBinding>,
 }
 
 struct DispatchHandle {
-    actor: Option<
-        DispatchRuntimeActor<
-            SharedPackageRunPreparer,
-            SharedPackageStepInvoker,
-            SharedClaimedTaskInvoker,
-        >,
-    >,
+    actor: Option<DispatchRuntimeActor<SharedClaimedTaskInvoker>>,
     construction_error: Option<String>,
     tokio_runtime: Option<tokio::runtime::Runtime>,
     network: Arc<Mutex<SledTaskNetworkStore>>,
-    handoffs: Arc<PackageRouteHandoffs>,
     sequence: u64,
 }
 
 struct PublicationHandle {
-    stores: Result<(TaskProgressStore, AggregatePublicationStore), String>,
     event_append: ProductEventAppendPort,
-    handoffs: Arc<PackageRouteHandoffs>,
     bindings: StewardshipActorBindings,
     worker_id: String,
     network: Option<Arc<Mutex<SledTaskNetworkStore>>>,
@@ -1446,7 +1290,6 @@ impl ProductRuntimeAssembly {
                     dispatch_slot: DispatchRouteSlot::preloaded(
                         composition.theory.dispatch.clone(),
                     ),
-                    handoffs: Arc::new(PackageRouteHandoffs::default()),
                     network,
                     cursor_registry: event_authority.consumer_registry_capability(),
                     // Worker identity derives from the durable ledger
@@ -1704,24 +1547,12 @@ impl RuntimeFactoryRegistry {
                 vec![EventAppend, WorldModel],
             )?,
             RuntimeFactoryDescriptor::new("world_model.belief_assessment", vec![WorldModel])?,
-            RuntimeFactoryDescriptor::new(
-                AGENT_RECONCILIATION_RUNTIME_ID,
-                vec![PlannerProjection, WorldModel],
-            )?,
+            RuntimeFactoryDescriptor::new(AGENT_RECONCILIATION_RUNTIME_ID, vec![WorldModel])?,
             RuntimeFactoryDescriptor::new(
                 "world_model.evidence_ingestion",
                 vec![EventReplay, EventConsumerRegistry, WorldModel],
             )?,
-            RuntimeFactoryDescriptor::new("execution.goal_set", vec![GoalCommand])?,
-            RuntimeFactoryDescriptor::new(
-                "execution.planning",
-                vec![
-                    GoalCommand,
-                    PlannerProjection,
-                    TaskNetworkFactory,
-                    WorldModel,
-                ],
-            )?,
+            RuntimeFactoryDescriptor::new("execution.task_admission", vec![TaskNetworkFactory])?,
             RuntimeFactoryDescriptor::new(
                 "execution.task_network_command",
                 vec![TaskNetworkFactory],
@@ -1739,7 +1570,7 @@ impl RuntimeFactoryRegistry {
             )?,
             RuntimeFactoryDescriptor::new(
                 "execution.publication",
-                vec![TaskNetworkFactory, TaskArtifactFactory, EventAppend],
+                vec![TaskNetworkFactory, EventAppend],
             )?,
             RuntimeFactoryDescriptor::new(STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID, vec![Theory])?,
         ])
@@ -2282,6 +2113,22 @@ impl RuntimeSemanticHandleFactory {
                         "Agent reconciliation requires installed Strategy theory".to_string(),
                     );
                 };
+                let Some(network) = composed.network.as_ref() else {
+                    return unresolved(
+                        diagnostics,
+                        "agent_execution_network_unresolved",
+                        "Agent reconciliation requires the shared Execution Task Network"
+                            .to_string(),
+                    );
+                };
+                let Some(capability_runtime) = composed.theory.capability_runtime.as_ref() else {
+                    return unresolved(
+                        diagnostics,
+                        "agent_execution_capabilities_unresolved",
+                        "Agent reconciliation requires the exact executable Capability set"
+                            .to_string(),
+                    );
+                };
                 let activation = agent_store
                     .activations_for_agent(&agent_id)
                     .map_err(|error| {
@@ -2480,7 +2327,7 @@ impl RuntimeSemanticHandleFactory {
                     agent_id: agent_id.clone(),
                     perspective: agent.perspective_key,
                     branch_scope: agent.branch_scope,
-                    activation_generation: activation.activation_id,
+                    activation_generation: activation.activation_id.clone(),
                     subject: agent.subject,
                 };
                 let frozen_authority = AgentAuthorizationFence {
@@ -2508,8 +2355,14 @@ impl RuntimeSemanticHandleFactory {
                         resolved.receipt.selection.clone(),
                         agent_id,
                     )),
-                    frozen_authority,
+                    frozen_authority: frozen_authority.clone(),
                     curation: Arc::new(ProductPlannedCurationPort::new(Arc::clone(curation_store))),
+                    execution: Arc::new(ProductAgentExecutionPort::new(
+                        Arc::clone(network),
+                        capability_runtime.catalog.clone(),
+                        activation.activation_id,
+                        frozen_authority.authority_policy_content_hash.clone(),
+                    )),
                     strategy,
                     authority,
                     rule,
@@ -2517,39 +2370,25 @@ impl RuntimeSemanticHandleFactory {
                     planner_source_positions,
                 })))
             }
-            "execution.planning" => {
+            "execution.task_admission" => {
                 let Some(composed) = stewardship else {
                     return Ok(Self::None);
                 };
-                let Some(theory) = composed.theory.planning.clone() else {
+                let Some(capability_runtime) = composed.theory.capability_runtime.as_ref() else {
                     return unresolved(
                         diagnostics,
-                        "planning_theory_unresolved",
-                        "no planning theory is installed; execution planning stays unresolved"
+                        "task_admission_catalog_unresolved",
+                        "no exact Capability catalog is installed; Task admission stays unresolved"
                             .to_string(),
                     );
-                };
-                let (Some(belief), Some(traversal), Some(registry), Some(goal_store)) = (
-                    stores.belief_store.opened(),
-                    stores.traversal_store.opened(),
-                    stores.belief_family_registry.opened(),
-                    stores.goal_store.opened(),
-                ) else {
-                    return Ok(Self::None);
                 };
                 let Some(network) = composed.network.as_ref() else {
                     return Ok(Self::None);
                 };
-                Ok(Self::Planning(Box::new(PlanningFactory {
-                    theory,
-                    goal_store: Arc::clone(goal_store),
+                Ok(Self::TaskAdmission(Box::new(TaskAdmissionFactory {
+                    catalog: capability_runtime.catalog.clone(),
                     network: Arc::clone(network),
-                    belief_store: Arc::clone(belief),
-                    traversal_store: Arc::clone(traversal),
-                    registry: Arc::clone(registry),
                     bindings: composed.bindings.clone(),
-                    handoffs: Arc::clone(&composed.handoffs),
-                    authority_policy: composed.theory.authority_policy.clone(),
                 })))
             }
             "execution.task_dispatch" => {
@@ -2573,26 +2412,27 @@ impl RuntimeSemanticHandleFactory {
                             .to_string(),
                     });
                 }
+                let admission_generation_observer = stores.agent_store.opened().map(|store| {
+                    Arc::new(ProductAdmissionGenerationObserver::new(Arc::clone(store)))
+                        as Arc<
+                            dyn meld_execution::task_network::dispatch_actor::AdmissionGenerationObserver,
+                        >
+                });
                 Ok(Self::Dispatch(Box::new(DispatchFactory {
                     routes: composed.dispatch_slot.clone(),
                     execution_db: execution_db.clone(),
                     network: Arc::clone(network),
-                    handoffs: Arc::clone(&composed.handoffs),
                     worker_id: composed.worker_id.clone(),
                     authority_policy: composed.theory.authority_policy.clone(),
+                    admission_generation_observer,
                 })))
             }
             "execution.publication" => {
                 let Some(composed) = stewardship else {
                     return Ok(Self::None);
                 };
-                let Some(execution_db) = stores.execution_db.opened() else {
-                    return Ok(Self::None);
-                };
                 Ok(Self::AggregatePublication(Box::new(PublicationFactory {
-                    execution_db: execution_db.clone(),
                     event_append: ports.event_append().clone(),
-                    handoffs: Arc::clone(&composed.handoffs),
                     bindings: composed.bindings.clone(),
                     worker_id: composed.worker_id.clone(),
                     network: composed.network.clone(),
@@ -2715,6 +2555,7 @@ impl RuntimeSemanticHandleFactory {
                     Arc::clone(&factory.authority_port),
                     factory.frozen_authority.clone(),
                     Arc::clone(&factory.curation),
+                    Arc::clone(&factory.execution),
                     factory.strategy.clone(),
                     factory.authority.clone(),
                     factory.rule.clone(),
@@ -2726,47 +2567,16 @@ impl RuntimeSemanticHandleFactory {
                     actor,
                 }))
             }
-            Self::Planning(factory) => RuntimeSemanticHandle::Planning(Box::new(PlanningHandle {
-                actor: PlanningRuntimeActor::new(
-                    {
-                        let runtime = PlanningRuntime::new(
-                            MethodLibrary::from_methods(
-                                factory.theory.methods.clone(),
-                                &factory.theory.capability_catalog,
-                            ),
-                            factory.theory.capability_catalog.clone(),
-                        );
-                        match &factory.authority_policy {
-                            Some(policy) => runtime.with_authority_policy(policy.clone()),
-                            None => runtime,
-                        }
-                    },
-                    ExecutionCompositionLowerer::new(
+            Self::TaskAdmission(factory) => {
+                RuntimeSemanticHandle::TaskAdmission(Box::new(TaskAdmissionHandle {
+                    actor: TaskAdmissionRuntimeActor::new(TaskAdmissionLowerer::new(
                         TaskCompiler::new(),
-                        factory.theory.capability_catalog.clone(),
-                    ),
-                ),
-                goal_store: factory.goal_store.as_ref().clone(),
-                network: Arc::clone(&factory.network),
-                projection: ExactKeyPlanningProjectionPort::new(
-                    Arc::clone(&factory.belief_store),
-                    Arc::clone(&factory.traversal_store),
-                    Arc::clone(&factory.registry),
-                    factory.bindings.belief_family_id.clone(),
-                    factory.bindings.subject.clone(),
-                    factory.bindings.perspective.clone(),
-                    factory.bindings.branch_scope.clone(),
-                ),
-                request_seed: PlanningRequestSeed {
+                        factory.catalog.clone(),
+                    )),
+                    network: Arc::clone(&factory.network),
                     network_id: factory.bindings.network_id.clone(),
-                    perspective_id: factory.bindings.perspective.perspective_id.clone(),
-                    branch_id: factory.bindings.branch_scope.branch_id.clone(),
-                    requested_dimensions: factory.theory.requested_dimensions.clone(),
-                    available_actions: factory.theory.available_actions.clone(),
-                    method_realizations: factory.theory.method_realizations.clone(),
-                },
-                handoffs: Arc::clone(&factory.handoffs),
-            })),
+                }))
+            }
             Self::Dispatch(factory) => {
                 // Body-less when routes are unbound: the supervisor projects
                 // an unresolved required binding, never a healthy placeholder.
@@ -2776,13 +2586,19 @@ impl RuntimeSemanticHandleFactory {
                 let actor_result = DispatchRuntimeActor::new(
                     factory.worker_id.clone(),
                     factory.execution_db.clone(),
-                    routes.preparer,
-                    routes.package_invoker,
                     routes.claim_invoker,
                 )
-                .map(|actor| match &factory.authority_policy {
-                    Some(policy) => actor.with_authority_policy(policy.clone()),
-                    None => actor,
+                .map(|actor| {
+                    let actor = match &factory.authority_policy {
+                        Some(policy) => actor.with_authority_policy(policy.clone()),
+                        None => actor,
+                    };
+                    match &factory.admission_generation_observer {
+                        Some(observer) => {
+                            actor.with_admission_generation_observer(Arc::clone(observer))
+                        }
+                        None => actor,
+                    }
                 });
                 let (actor, construction_error) = match actor_result {
                     Ok(actor) => (Some(actor), None),
@@ -2794,22 +2610,12 @@ impl RuntimeSemanticHandleFactory {
                     construction_error,
                     tokio_runtime,
                     network: Arc::clone(&factory.network),
-                    handoffs: Arc::clone(&factory.handoffs),
                     sequence: 0,
                 }))
             }
             Self::AggregatePublication(factory) => {
-                let stores = TaskProgressStore::open(factory.execution_db.clone())
-                    .map_err(|error| error.to_string())
-                    .and_then(|progress| {
-                        AggregatePublicationStore::open(factory.execution_db.clone())
-                            .map(|outbox| (progress, outbox))
-                            .map_err(|error| error.to_string())
-                    });
                 RuntimeSemanticHandle::AggregatePublication(Box::new(PublicationHandle {
-                    stores,
                     event_append: factory.event_append.clone(),
-                    handoffs: Arc::clone(&factory.handoffs),
                     bindings: factory.bindings.clone(),
                     worker_id: factory.worker_id.clone(),
                     network: factory.network.clone(),
@@ -2859,7 +2665,7 @@ impl RuntimeSemanticHandle {
             Self::EvidenceIngestion(handle) => Some(handle.tick(budget)),
             Self::StandingCuration(handle) => Some(handle.tick(budget)),
             Self::AgentActor(handle) => Some(handle.tick(budget)),
-            Self::Planning(handle) => Some(handle.tick(budget)),
+            Self::TaskAdmission(handle) => Some(handle.tick(budget)),
             Self::Dispatch(handle) => Some(handle.tick(budget)),
             Self::AggregatePublication(handle) => Some(handle.tick(budget)),
         }
@@ -3052,25 +2858,15 @@ impl AgentActorHandle {
     }
 }
 
-impl PlanningHandle {
+impl TaskAdmissionHandle {
     fn tick(&mut self, budget: WorkBudget) -> WorkerTickReport {
-        let request = PlanningRuntimeActorRequest {
-            network_id: self.request_seed.network_id.clone(),
-            perspective_id: self.request_seed.perspective_id.clone(),
-            branch_id: self.request_seed.branch_id.clone(),
-            requested_dimensions: self.request_seed.requested_dimensions.clone(),
-            required_preconditions: Vec::new(),
-            available_actions: self.request_seed.available_actions.clone(),
-            method_realizations: self.request_seed.method_realizations.clone(),
-            limit: Some(budget.max_items),
-        };
         let mut network = match self.network.lock() {
             Ok(network) => network,
             Err(_) => {
                 return WorkerTickReport::fatal(
-                    "execution.planning",
+                    "execution.task_admission",
                     "execution",
-                    Some("planning"),
+                    Some("task_admission"),
                     "task_network_revision",
                     "network_lock_poisoned",
                     "shared task network mutex is poisoned".to_string(),
@@ -3078,30 +2874,19 @@ impl PlanningHandle {
             }
         };
         match self.actor.run_once(
-            &mut self.goal_store,
             &mut network,
-            &mut self.projection,
-            request,
+            TaskAdmissionRuntimeRequest {
+                network_id: self.network_id.clone(),
+                max_items: budget.max_items,
+            },
         ) {
-            Ok(report) => {
-                // Package-route handoffs are in-process by design; durable
-                // dedupe happens in dispatch keyed by the run id derived
-                // from the deterministic plan identity.
-                for result in &report.results {
-                    if let PlanningRuntimeActorGoalResult::PackageRouteSelected { plan, .. } =
-                        result
-                    {
-                        self.handoffs.record(plan.clone());
-                    }
-                }
-                WorkerTickReport::from(report)
-            }
+            Ok(report) => WorkerTickReport::from(report),
             Err(error) => WorkerTickReport::fatal(
-                "execution.planning",
+                "execution.task_admission",
                 "execution",
-                Some("planning"),
+                Some("task_admission"),
                 "task_network_revision",
-                "planning_actor_failed",
+                "task_admission_actor_failed",
                 error.to_string(),
             ),
         }
@@ -3139,7 +2924,6 @@ impl DispatchHandle {
         let request = DispatchTickRequest {
             sequence: self.sequence,
             max_items: budget.max_items,
-            package_plans: self.handoffs.plans(),
         };
         let mut network = match self.network.lock() {
             Ok(network) => network,
@@ -3160,33 +2944,20 @@ impl DispatchHandle {
 impl PublicationHandle {
     fn tick(&mut self, budget: WorkBudget) -> WorkerTickReport {
         let actor_id = "execution.publication";
-        let (progress, outbox) = match &self.stores {
-            Ok(stores) => stores,
-            Err(error) => {
-                return WorkerTickReport::fatal(
-                    actor_id,
-                    "execution",
-                    Some("aggregate_publication"),
-                    "aggregate_publications",
-                    "publication_store_unavailable",
-                    error.clone(),
-                )
-            }
-        };
         let mut report = WorkerTickReport {
             actor_id: actor_id.to_string(),
             scope: worker_scope(
                 "execution",
-                Some("aggregate_publication"),
+                Some("task_publication"),
                 None,
                 Some(self.bindings.subject.index_key()),
             ),
             input_checkpoint: WorkerCheckpoint {
-                name: "aggregate_publications".to_string(),
+                name: "task_network_revision".to_string(),
                 value: 0,
             },
             output_checkpoint: WorkerCheckpoint {
-                name: "aggregate_publications".to_string(),
+                name: "task_network_revision".to_string(),
                 value: 0,
             },
             items_attempted: 0,
@@ -3196,14 +2967,13 @@ impl PublicationHandle {
             budget_exhausted: false,
             waiting_on: Vec::new(),
         };
-        // Per-task publications drain first: the durable outbox the task
+        // The durable outbox the task
         // network reducer fills on every recorded outcome, appended to the
         // ledger through the NAG-2 bridge under deterministic record ids so
-        // retry is idempotent. Aggregate publication reads reduced state
-        // only, so ordering within the tick carries no semantic coupling.
-        let mut drained_pending = None;
+        // retry is idempotent.
         if let Some(network) = &self.network {
             let mut store = network.lock().unwrap_or_else(|e| e.into_inner());
+            report.input_checkpoint.value = store.state().revision;
             match PublicationRuntime::new().publish_pending(
                 &mut store,
                 &self.event_append,
@@ -3217,7 +2987,7 @@ impl PublicationHandle {
                     report.items_attempted += bridge.attempted;
                     report.items_committed += bridge.committed;
                     report.budget_exhausted |= bridge.budget_exhausted;
-                    drained_pending = Some(bridge.attempted);
+                    report.output_checkpoint.value = store.state().revision;
                     for issue in bridge.retryable_errors {
                         report.retryable_errors.push(WorkerTickIssue {
                             item_id: issue.publication_id.clone(),
@@ -3242,85 +3012,6 @@ impl PublicationHandle {
                 }
             }
         }
-        let request = PublishAggregateRequest {
-            session_id: self.bindings.session_id.clone(),
-            worker_id: self.worker_id.clone(),
-        };
-        for (plan_id, run_id) in self.handoffs.run_bindings() {
-            report.items_attempted += 1;
-            let binding = AggregateRunBinding {
-                package_run_id: run_id,
-                network_id: self.bindings.network_id.clone(),
-                selected_scope: self.bindings.subject.clone(),
-                // Folder classification comes from the stewardship-derived
-                // configuration (the selected package's stage chain), never
-                // from runtime inventory.
-                folder_unit_capability_types: self.bindings.folder_unit_capability_types.clone(),
-                semantic_yield_source: self.bindings.semantic_yield_source.clone(),
-            };
-            // The dispatch actor records the run's terminal outcome through
-            // the task-network command boundary; publication reads it back
-            // from reduced state. A run without a recorded terminal outcome
-            // stays truthfully skipped rather than publishing from a
-            // synthesized one.
-            let terminal = self.network.as_ref().and_then(|network| {
-                let store = network.lock().unwrap_or_else(|e| e.into_inner());
-                package_run_terminal_outcome(store.state(), &binding.package_run_id)
-            });
-            match publish_aggregate_for_run(
-                progress,
-                terminal.as_ref().map(|record| &record.outcome),
-                &binding,
-                outbox,
-                &self.event_append,
-                &request,
-            ) {
-                Ok(AggregatePublishResult::Published { .. }) => {
-                    report.items_committed += 1;
-                    report.output_checkpoint.value += 1;
-                }
-                Ok(AggregatePublishResult::AlreadyPublished { .. }) => {}
-                Ok(AggregatePublishResult::Skipped(reason)) => {
-                    // The awaited facts travel as a waiting-on declaration
-                    // instead of being dropped: the skip reason carries
-                    // exactly what would have to exist for the aggregate to
-                    // publish.
-                    let detail = match reason {
-                        AggregateSkipReason::RunProgressNotFound => {
-                            "no durable progress exists for the package run".to_string()
-                        }
-                        AggregateSkipReason::RunNotTerminal {
-                            pending_instance_ids,
-                        } => format!(
-                            "run has no terminal outcome; pending work units: {}",
-                            pending_instance_ids.join(", ")
-                        ),
-                    };
-                    report.waiting_on.extend(execution_waiting(vec![
-                        meld_execution::WaitingOnDeclaration::about(
-                            meld_execution::waiting::conditions::AGGREGATE_RUN_NOT_TERMINAL,
-                            binding.package_run_id.clone(),
-                            detail,
-                        ),
-                    ]));
-                }
-                Ok(AggregatePublishResult::AppendFailed { error, .. }) => {
-                    report.retryable_errors.push(WorkerTickIssue {
-                        item_id: Some(plan_id.clone()),
-                        code: "aggregate_append_failed".to_string(),
-                        message: error,
-                    });
-                }
-                Err(error) => {
-                    let issue = aggregate_publish_issue(&plan_id, error);
-                    if issue.0 {
-                        report.fatal_errors.push(issue.1);
-                    } else {
-                        report.retryable_errors.push(issue.1);
-                    }
-                }
-            }
-        }
         // The hardened DBG-016 rule: a tick that absorbed nothing states
         // what would change that. An empty outbox and an empty work list
         // wait on the next recorded task outcome.
@@ -3331,9 +3022,10 @@ impl PublicationHandle {
             && report.retryable_errors.is_empty()
             && report.fatal_errors.is_empty()
         {
-            let detail = match drained_pending {
-                Some(_) => "no pending task publications and no package-route runs to aggregate",
-                None => "no task network is composed; nothing records outcomes to publish",
+            let detail = if self.network.is_some() {
+                "no pending Task Network publications"
+            } else {
+                "no Task Network is composed; nothing records outcomes to publish"
             };
             report.waiting_on.extend(execution_waiting(vec![
                 meld_execution::WaitingOnDeclaration::broad(
@@ -3344,39 +3036,6 @@ impl PublicationHandle {
         }
         report
     }
-}
-
-/// Classify one aggregate publication error for the tick report.
-///
-/// A completed run rejected with the no-folder-work signal is a
-/// classification mismatch between the stewardship-derived folder types and
-/// the compiled package graph — fatal, never retryable.
-fn aggregate_publish_issue(
-    plan_id: &str,
-    error: AggregatePublicationError,
-) -> (bool, WorkerTickIssue) {
-    let fatal = matches!(
-        error,
-        AggregatePublicationError::NoFolderWorkUnits { .. }
-            | AggregatePublicationError::InvalidRequest(_)
-            | AggregatePublicationError::IdentityDrift { .. }
-            | AggregatePublicationError::LedgerIdentityMismatch { .. }
-    );
-    let code = if matches!(error, AggregatePublicationError::NoFolderWorkUnits { .. }) {
-        "aggregate_classification_mismatch"
-    } else if fatal {
-        "aggregate_publication_invalid"
-    } else {
-        "aggregate_publication_failed"
-    };
-    (
-        fatal,
-        WorkerTickIssue {
-            item_id: Some(plan_id.to_string()),
-            code: code.to_string(),
-            message: error.to_string(),
-        },
-    )
 }
 
 fn worker_scope(
@@ -3745,7 +3404,7 @@ mod tests {
             assembly.supervisor_store().path(),
             temp.path().join("supervisor.sled")
         );
-        assert_eq!(assembly.registry().len(), 13);
+        assert_eq!(assembly.registry().len(), 12);
         assert!(assembly
             .registry()
             .contains(AGENT_RECONCILIATION_RUNTIME_ID));
@@ -3779,7 +3438,7 @@ mod tests {
             description.supervisor_store_path,
             expected_root.join("supervisor.sled")
         );
-        assert_eq!(description.desired_runtime_state.len(), 13);
+        assert_eq!(description.desired_runtime_state.len(), 12);
         assert!(!description.product_root.exists());
         assert!(!description.supervisor_store_path.exists());
     }
@@ -3796,7 +3455,7 @@ mod tests {
 
         assert_eq!(second.product_root(), temp.path());
         assert!(second.registry().contains("execution.publication"));
-        assert_eq!(second.desired_runtime_state().len(), 13);
+        assert_eq!(second.desired_runtime_state().len(), 12);
     }
 
     #[test]
@@ -3821,7 +3480,7 @@ mod tests {
                 .iter()
                 .filter(|state| state.enabled)
                 .count(),
-            11
+            10
         );
     }
 
@@ -4026,24 +3685,24 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(agent_ids, vec![AGENT_RECONCILIATION_RUNTIME_ID]);
+        assert_eq!(
+            registry
+                .descriptors()
+                .filter(|descriptor| descriptor.runtime_id == "execution.task_admission")
+                .count(),
+            1
+        );
+        assert!(registry.get("execution.planning").is_none());
+        assert!(registry.get("execution.goal_set").is_none());
         let descriptor = registry.get(AGENT_RECONCILIATION_RUNTIME_ID).unwrap();
         assert_eq!(
             descriptor.required_resources,
-            vec![
-                RuntimeResource::PlannerProjection,
-                RuntimeResource::WorldModel
-            ]
+            vec![RuntimeResource::WorldModel]
         );
-        assert!(!descriptor
-            .required_resources
-            .contains(&RuntimeResource::GoalCommand));
-        assert!(!descriptor
-            .required_resources
-            .contains(&RuntimeResource::GoalMutation));
     }
 
     #[test]
-    fn root_handle_drives_mixed_plan_through_curation_to_unpublished_task_eligibility() {
+    fn root_handle_drives_agent_task_through_execution_terminal_absorption() {
         use meld_world_model::agent::AgentActivationRecord;
 
         let harness = StewardshipHarness::new();
@@ -4108,6 +3767,7 @@ mod tests {
         else {
             panic!("production Agent descriptor did not resolve its Agent participant");
         };
+        let goal_id = agent_semantic.goal.goal_id.clone();
         let capability_source = agent_semantic
             .planner_source_positions
             .iter()
@@ -4263,12 +3923,6 @@ mod tests {
                 exact_semantic_receipt = Some(semantic_receipt);
                 exact_terminal_receipt = Some(terminal_receipt);
             }
-            assert!(assembly
-                .stores()
-                .goal_store
-                .goal_records()
-                .unwrap()
-                .is_empty());
             assembly.flush_product_boundary().unwrap();
             drop(handle);
             drop(assembly);
@@ -4346,10 +4000,304 @@ mod tests {
             .waiting_on
             .iter()
             .all(|wait| wait.subject_key.is_some()));
-        assert!(replay
-            .waiting_on
+        assert!(
+            replay
+                .waiting_on
+                .iter()
+                .any(|waiting| waiting.condition == "execution_terminal_outcome"),
+            "{replay:#?}"
+        );
+        let authorizations = assembly
+            .stores()
+            .agent_store
+            .product_authorizations_for_goal(&goal_id)
+            .unwrap();
+        let task_authorization = authorizations
             .iter()
-            .any(|waiting| waiting.condition == "future_execution_admission"));
+            .find(|authorization| {
+                matches!(
+                    authorization.product,
+                    meld_world_model::AgentAuthorizedProduct::Task(_)
+                )
+            })
+            .unwrap();
+        assert!(task_authorization.authority_decision.is_some());
+        let meld_world_model::AgentAuthorizedProduct::Task(task) = &task_authorization.product
+        else {
+            unreachable!("selected authorization must retain its exact Task body");
+        };
+        let mut capability_type_ids = task
+            .composition
+            .steps
+            .iter()
+            .map(|step| {
+                let meld_lang::StepKind::Op(operator) = &step.kind else {
+                    panic!("the accepted docs Task must contain only operational steps");
+                };
+                operator
+                    .resolution
+                    .specific
+                    .as_ref()
+                    .unwrap()
+                    .capability_type_id
+                    .as_str()
+            })
+            .collect::<Vec<_>>();
+        capability_type_ids.sort_unstable();
+        assert_eq!(
+            capability_type_ids,
+            vec![
+                "docs.assess_published_scope",
+                "docs.draft_patch_set",
+                "docs.inspect_scope",
+                "docs.publish_patch_set",
+                "docs.validate_patch_set",
+            ]
+        );
+
+        let route_storage = harness._external.path().join("claimed-route");
+        std::fs::create_dir_all(&route_storage).unwrap();
+        let api = Arc::new(crate::api::ContextApi::with_workspace_root(
+            Arc::new(crate::store::SledNodeRecordStore::new(route_storage.join("nodes")).unwrap()),
+            Arc::new(
+                crate::context::frame::FrameStorage::new(route_storage.join("frames")).unwrap(),
+            ),
+            Arc::new(parking_lot::RwLock::new(crate::heads::HeadIndex::new())),
+            Arc::new(
+                crate::prompt_context::PromptContextArtifactStorage::new(
+                    route_storage.join("prompt-artifacts"),
+                )
+                .unwrap(),
+            ),
+            Arc::new(parking_lot::RwLock::new(crate::agent::AgentRegistry::new())),
+            Arc::new(parking_lot::RwLock::new(
+                crate::provider::ProviderRegistry::new(),
+            )),
+            Arc::new(crate::concurrency::NodeLockManager::new()),
+            harness.binding.workspace_root.clone(),
+        ));
+        let seed = assembly.dispatch_route_seed().unwrap().clone();
+        let capability_runtime = assembly.capability_runtime().unwrap().clone();
+        assert!(capability_runtime
+            .catalog
+            .get("workspace_scan", 1)
+            .is_none());
+        for capability_type_id in &capability_type_ids {
+            assert!(capability_runtime
+                .catalog
+                .get(capability_type_id, 1)
+                .is_some());
+        }
+        let routes = DispatchRouteBindings::production(
+            crate::runtime::ports::ProductionDispatchRouteContext {
+                api,
+                session_id: Some(seed.session_id),
+                catalog: capability_runtime.catalog,
+                registry: capability_runtime.registry,
+            },
+        );
+        assert!(assembly.bind_dispatch_routes(routes));
+
+        let mut planning = assembly
+            .handle_factories()
+            .get("execution.task_admission")
+            .unwrap()
+            .build_handle();
+        planning
+            .start_after_lease(RuntimeLeaseContext {
+                runtime_id: "execution.task_admission".to_string(),
+                lease_id: "planning-root-proof".to_string(),
+            })
+            .unwrap();
+        let planning_report = planning.tick(WorkBudget { max_items: 8 }).unwrap();
+        assert!(
+            planning_report.fatal_errors.is_empty(),
+            "{planning_report:#?}"
+        );
+        assert_eq!(planning_report.items_committed, 1, "{planning_report:#?}");
+        {
+            let planning_factory = assembly
+                .handle_factories()
+                .get("execution.task_admission")
+                .unwrap();
+            let RuntimeSemanticHandleFactory::TaskAdmission(planning_semantic) =
+                &planning_factory.semantic
+            else {
+                panic!("production Task admission descriptor must resolve direct Task admission");
+            };
+            let network = planning_semantic.network.lock().unwrap();
+            let admitted_nodes = network
+                .state()
+                .tasks
+                .values()
+                .filter(|node| {
+                    node.lineage.admission.as_ref().is_some_and(|admission| {
+                        admission.authorization_id == task_authorization.authorization_id
+                    })
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(admitted_nodes.len(), 5);
+            let init_sources = admitted_nodes
+                .iter()
+                .flat_map(|node| &node.init_sources)
+                .collect::<Vec<_>>();
+            assert_eq!(init_sources.len(), 5);
+            assert!(init_sources.iter().all(|source| matches!(
+                source,
+                meld_execution::task_network::TaskInitSource::UpstreamArtifact(_)
+            )));
+        }
+
+        let mut dispatch = assembly
+            .handle_factories()
+            .get("execution.task_dispatch")
+            .unwrap()
+            .build_handle();
+        dispatch
+            .start_after_lease(RuntimeLeaseContext {
+                runtime_id: "execution.task_dispatch".to_string(),
+                lease_id: "dispatch-root-proof".to_string(),
+            })
+            .unwrap();
+        let mut dispatch_commits = 0;
+        let mut dispatch_reports = Vec::new();
+        for _ in 0..8 {
+            let dispatch_report = dispatch.tick(WorkBudget { max_items: 8 }).unwrap();
+            assert!(
+                dispatch_report.fatal_errors.is_empty(),
+                "{dispatch_report:#?}"
+            );
+            dispatch_commits += dispatch_report.items_committed;
+            let idle = dispatch_report.items_attempted == 0;
+            dispatch_reports.push(dispatch_report);
+            if idle {
+                break;
+            }
+        }
+        assert_eq!(dispatch_commits, 3, "{dispatch_reports:#?}");
+        assert_eq!(
+            dispatch_reports
+                .iter()
+                .map(|report| report.items_attempted)
+                .sum::<usize>(),
+            4,
+            "{dispatch_reports:#?}"
+        );
+
+        let mut publication = assembly
+            .handle_factories()
+            .get("execution.publication")
+            .unwrap()
+            .build_handle();
+        publication
+            .start_after_lease(RuntimeLeaseContext {
+                runtime_id: "execution.publication".to_string(),
+                lease_id: "publication-root-proof".to_string(),
+            })
+            .unwrap();
+        let publication_report = publication.tick(WorkBudget { max_items: 8 }).unwrap();
+        assert!(
+            publication_report.fatal_errors.is_empty(),
+            "{publication_report:#?}"
+        );
+        assert!(
+            publication_report.items_committed > 0,
+            "{publication_report:#?}"
+        );
+
+        let graph_report = assembly
+            .graph_runtime()
+            .catch_up_bounded(GraphCatchUpBudget { max_items: 32 })
+            .unwrap();
+        assert!(graph_report.events_attempted > 0);
+        assert!(
+            graph_report.retryable_errors.is_empty(),
+            "{graph_report:#?}"
+        );
+        assert!(graph_report.fatal_errors.is_empty(), "{graph_report:#?}");
+        assert!(graph_report.output_event_seq > graph_report.input_event_seq);
+        let terminal_return = handle.tick(WorkBudget { max_items: 8 }).unwrap();
+        assert!(
+            terminal_return.fatal_errors.is_empty(),
+            "{terminal_return:#?}"
+        );
+        assert!(terminal_return.items_committed > 0, "{terminal_return:#?}");
+        assert!(
+            !terminal_return
+                .waiting_on
+                .iter()
+                .any(|waiting| waiting.condition == "execution_terminal_outcome"),
+            "{terminal_return:#?}"
+        );
+        let planning_factory = assembly
+            .handle_factories()
+            .get("execution.task_admission")
+            .unwrap();
+        let RuntimeSemanticHandleFactory::TaskAdmission(planning_semantic) =
+            &planning_factory.semantic
+        else {
+            panic!("production Task admission descriptor must resolve direct Task admission");
+        };
+        let terminal_outcome_id = {
+            let network = planning_semantic.network.lock().unwrap();
+            let terminal_outcome = network
+                .state()
+                .outcomes
+                .values()
+                .find(|outcome| {
+                    outcome.admission.as_ref().is_some_and(|admission| {
+                        admission.authorization_id == task_authorization.authorization_id
+                    }) && outcome.status
+                        == meld_execution::task_network::dispatch::OutcomeStatus::Failed
+                })
+                .unwrap();
+            let publication = network
+                .state()
+                .publications
+                .values()
+                .find(|publication| publication.outcome.outcome_id == terminal_outcome.outcome_id)
+                .unwrap();
+            assert!(matches!(
+                publication.state,
+                meld_execution::task_network::outcome::PublicationState::Published {
+                    receipt: Some(_),
+                    ..
+                }
+            ));
+            terminal_outcome.outcome_id.clone()
+        };
+        let requirement = task.return_milestone.as_ref().unwrap();
+        assert_eq!(
+            requirement,
+            &meld_world_model::PlanMilestoneRequirement::ExecutionTerminal {
+                task_id: task.task_id.clone(),
+            }
+        );
+        let milestone_id = {
+            let bytes = serde_json::to_vec(&(
+                &task_authorization.agent_id,
+                &task_authorization.goal_id,
+                &task_authorization.plan_revision_id,
+                &task.task_id,
+                requirement,
+                &terminal_outcome_id,
+                &task_authorization.activation_generation,
+            ))
+            .unwrap();
+            format!(
+                "agent-task-milestone-acceptance-v1::{}",
+                blake3::hash(&bytes).to_hex()
+            )
+        };
+        let milestone = assembly
+            .stores()
+            .agent_store
+            .milestone(&milestone_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(milestone.requirement, requirement.clone());
+        assert_eq!(milestone.owner_position_id, terminal_outcome_id);
+
         assembly
             .stores()
             .agent_store
@@ -4367,27 +4315,6 @@ mod tests {
             .waiting_on
             .iter()
             .any(|wait| wait.condition == "agent_authority_changed"));
-        assert!(assembly
-            .stores()
-            .goal_store
-            .goal_records()
-            .unwrap()
-            .is_empty());
-    }
-
-    #[test]
-    fn planner_projection_port_is_wired_to_world_model_stores() {
-        let temp = tempfile::tempdir().unwrap();
-        let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
-        let subject = subject();
-
-        let projection = assembly
-            .ports()
-            .planner_projection()
-            .project_current_world_state(&subject, "docs_freshness", None, None)
-            .unwrap();
-
-        assert_eq!(projection.projection_version, "world_model.planner.v1");
     }
 
     #[test]
@@ -4427,7 +4354,7 @@ mod tests {
         let package = assembly.supervisor_startup_package();
 
         assert_eq!(package.product_root, temp.path());
-        assert_eq!(package.handle_factories.len(), 13);
+        assert_eq!(package.handle_factories.len(), 12);
         assert_eq!(package.default_work_budget.max_items, 64);
         assert_eq!(package.lifecycle_config.heartbeat_interval_ms, 1_000);
         assert_eq!(package.lifecycle_config.lease_duration_ms, 15 * 60 * 1_000);
@@ -4461,9 +4388,11 @@ mod tests {
 
     #[test]
     fn duplicate_runtime_ids_fail_registry_construction() {
-        let descriptor =
-            RuntimeFactoryDescriptor::new("execution.planning", vec![RuntimeResource::Provider])
-                .unwrap();
+        let descriptor = RuntimeFactoryDescriptor::new(
+            "execution.task_admission",
+            vec![RuntimeResource::Provider],
+        )
+        .unwrap();
 
         let error =
             RuntimeFactoryRegistry::from_descriptors([descriptor.clone(), descriptor]).unwrap_err();
@@ -4532,10 +4461,6 @@ mod tests {
             disabled_error,
             RuntimeAssemblyError::RuntimeRegistry(RuntimeRegistryError::DuplicateRuntimeId(_))
         ));
-    }
-
-    fn subject() -> meld_events::DomainObjectRef {
-        meld_events::DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap()
     }
 
     #[test]
@@ -4991,7 +4916,7 @@ mod tests {
 
         let set = derive_stewardship_registrations(&harness.binding).unwrap();
 
-        assert_eq!(set.registrations.len(), 13);
+        assert_eq!(set.registrations.len(), 12);
         for passive in STEWARDSHIP_PASSIVE_SERVICE_IDS {
             assert_eq!(
                 set.kind_of(passive),
@@ -5005,7 +4930,7 @@ mod tests {
             "world_model.evidence_ingestion",
             "world_model.standing_curation",
             AGENT_RECONCILIATION_RUNTIME_ID,
-            "execution.planning",
+            "execution.task_admission",
             "execution.task_dispatch",
             "execution.publication",
             STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID,
@@ -5041,7 +4966,7 @@ mod tests {
             "world_model.evidence_ingestion",
             "world_model.standing_curation",
             AGENT_RECONCILIATION_RUNTIME_ID,
-            "execution.planning",
+            "execution.task_admission",
         ] {
             assert_eq!(
                 lifecycle_of(&status, unresolved),
@@ -5093,12 +5018,6 @@ mod tests {
             .ports()
             .event_replay()
             .read_after_limit(0, 10)
-            .unwrap()
-            .is_empty());
-        assert!(assembly
-            .stores()
-            .goal_store
-            .goal_records()
             .unwrap()
             .is_empty());
         assert!(assembly
@@ -5155,7 +5074,7 @@ mod tests {
         // Planning theory has no durable registry yet, so it stays a
         // truthful unresolved binding until a composition injects it.
         assert_eq!(
-            lifecycle_of(&status, "execution.planning"),
+            lifecycle_of(&status, "execution.task_admission"),
             Some(RegistrationLifecycle::UnresolvedRequiredBinding)
         );
         // One bounded invocation per bound actor per maintenance pass.
@@ -5499,54 +5418,12 @@ mod tests {
     /// Route stubs shaped like production bindings; never invoked because
     /// these tests exercise resolution, not execution.
     fn stub_routes() -> DispatchRouteBindings {
-        use meld_execution::capability::{
-            BoundCapabilityInstance, CapabilityInvocationPayload, CapabilityInvocationResult,
-        };
-        use meld_execution::task::expansion::{CompiledTaskDelta, TaskExpansionRequest};
-        use meld_execution::task::{
-            CompiledTaskRecord, PackageStepInvoker, TaskInitializationPayload,
-        };
+        use meld_execution::task::TaskInitializationPayload;
         use meld_execution::task_network::dispatch::Claim;
         use meld_execution::task_network::dispatch_actor::{
-            ClaimedInvocationOutcome, ClaimedTaskInvoker, DispatchPortError, PackageRunPreparer,
-            PreparedPackageRun,
+            ClaimedInvocationOutcome, ClaimedTaskInvoker, DispatchPortError,
         };
         use meld_execution::task_network::state::TaskNode;
-
-        struct StubPreparer;
-        impl PackageRunPreparer for StubPreparer {
-            fn prepare_package_run(
-                &self,
-                _plan: &TaskPackageRoutePlan,
-                _task_run_id: &str,
-            ) -> Result<PreparedPackageRun, DispatchPortError> {
-                Err(DispatchPortError::retryable("stub preparer"))
-            }
-        }
-
-        struct StubStepInvoker;
-        #[async_trait::async_trait]
-        impl PackageStepInvoker for StubStepInvoker {
-            async fn invoke_capability(
-                &self,
-                _instance: &BoundCapabilityInstance,
-                _payload: &CapabilityInvocationPayload,
-            ) -> Result<CapabilityInvocationResult, meld_execution::error::ApiError> {
-                Err(meld_execution::error::ExecutionInvariantError::ConfigError(
-                    "stub step invoker".to_string(),
-                ))
-            }
-
-            fn compile_expansion(
-                &self,
-                _compiled_task: &CompiledTaskRecord,
-                _request: &TaskExpansionRequest,
-            ) -> Result<CompiledTaskDelta, meld_execution::error::ApiError> {
-                Err(meld_execution::error::ExecutionInvariantError::ConfigError(
-                    "stub step invoker".to_string(),
-                ))
-            }
-        }
 
         struct StubClaimInvoker;
         #[async_trait::async_trait]
@@ -5562,8 +5439,6 @@ mod tests {
         }
 
         DispatchRouteBindings {
-            preparer: SharedPackageRunPreparer(Arc::new(StubPreparer)),
-            package_invoker: SharedPackageStepInvoker(Arc::new(StubStepInvoker)),
             claim_invoker: SharedClaimedTaskInvoker(Arc::new(StubClaimInvoker)),
         }
     }
@@ -5582,12 +5457,7 @@ mod tests {
         assert!(!factory.has_semantic_body());
         assert!(!assembly.dispatch_routes_bound());
         let seed = assembly.dispatch_route_seed().unwrap();
-        assert_eq!(seed.subject_path, PathBuf::from("docs"));
-        assert_eq!(seed.agent_id, STEWARD_AGENT_ID);
-        assert_eq!(seed.belief_family_id, FAMILY_ID);
-        assert_eq!(seed.provider_id, "main-provider");
         assert_eq!(seed.session_id, "stewardship::docs_freshness");
-        assert_eq!(seed.workspace_root, harness.binding.workspace_root);
 
         // Binding production-shaped routes resolves the actor; the first
         // binding wins and later binds are no-ops.
@@ -5664,75 +5534,13 @@ mod tests {
         let layout = assembly.layout();
         assert!(layout.world_model_db.exists());
         assert!(!layout.workspace_db.exists());
-        assert!(!layout.execution_goals_db.exists());
         assert!(!layout.task_artifacts_db.exists());
         assert!(!layout.task_networks_root.exists());
         assert!(!layout.frame_blob_root.exists());
         assert!(!layout.prompt_artifact_root.exists());
         assert!(assembly.stores().belief_store.is_open());
-        assert!(!assembly.stores().goal_store.is_open());
         assert!(!assembly.stores().node_store.is_open());
         assert!(assembly.try_graph_runtime().is_some());
-    }
-
-    #[test]
-    fn package_route_handoffs_derive_run_ids_through_the_exported_derivation() {
-        let handoffs = PackageRouteHandoffs::default();
-        handoffs.record(route_plan("plan-a"));
-        // Duplicate plan ids dedupe to one recorded handoff.
-        handoffs.record(route_plan("plan-a"));
-
-        let bindings = handoffs.run_bindings();
-
-        assert_eq!(
-            bindings,
-            vec![("plan-a".to_string(), package_route_run_id("plan-a"))]
-        );
-    }
-
-    fn route_plan(plan_id: &str) -> TaskPackageRoutePlan {
-        TaskPackageRoutePlan {
-            plan_id: plan_id.to_string(),
-            network_id: "stewardship.docs_freshness".to_string(),
-            composition_id: "composition-a".to_string(),
-            goal_id: "goal-a".to_string(),
-            method_id: "method-a".to_string(),
-            action_id: "action-a".to_string(),
-            package_id: "docs_writer".to_string(),
-            workflow_id: "docs_writer_thread_v1".to_string(),
-            outcome_contract_id: "execution.package.aggregate.v1".to_string(),
-            artifact: meld_execution::planning::ActionArtifactMeaning {
-                artifact_type_id: "docs_patch".to_string(),
-                schema_version: 1,
-            },
-            world_state_frame: meld_execution::planning::PlanningWorldStateFrameRef {
-                frame_id: "frame-1".to_string(),
-                projection_version: "world_model.planner.v1".to_string(),
-                perspective_id: "default".to_string(),
-                branch_id: "main".to_string(),
-                source_refs: Vec::new(),
-                warnings: Vec::new(),
-            },
-        }
-    }
-
-    #[test]
-    fn no_folder_work_units_is_a_fatal_classification_mismatch() {
-        let (fatal, issue) = aggregate_publish_issue(
-            "plan-a",
-            AggregatePublicationError::NoFolderWorkUnits {
-                package_run_id: "package-route::plan-a".to_string(),
-            },
-        );
-        assert!(fatal);
-        assert_eq!(issue.code, "aggregate_classification_mismatch");
-
-        let (retryable_fatal, retryable_issue) = aggregate_publish_issue(
-            "plan-a",
-            AggregatePublicationError::Storage("io".to_string()),
-        );
-        assert!(!retryable_fatal);
-        assert_eq!(retryable_issue.code, "aggregate_publication_failed");
     }
 
     #[test]
@@ -5755,19 +5563,11 @@ mod tests {
         let bindings = StewardshipActorBindings::derive(&harness.binding).unwrap();
         let store_dir = tempfile::tempdir().unwrap();
         let execution_db = sled::open(store_dir.path().join("execution")).unwrap();
-        let progress = meld_execution::task::TaskProgressStore::open(execution_db.clone()).unwrap();
-        let outbox =
-            meld_execution::task_network::aggregate_publication::AggregatePublicationStore::open(
-                execution_db.clone(),
-            )
-            .unwrap();
         let network =
             SledTaskNetworkStore::open(execution_db, bindings.network_id.clone()).unwrap();
 
         let mut handle = PublicationHandle {
-            stores: Ok((progress, outbox)),
             event_append: crate::runtime::ports::ProductEventAppendPort::new(&harness.authority),
-            handoffs: Arc::new(PackageRouteHandoffs::default()),
             bindings,
             worker_id: "worker-test".to_string(),
             network: Some(Arc::new(Mutex::new(network))),
@@ -5779,7 +5579,7 @@ mod tests {
         assert_eq!(report.waiting_on[0].condition, "no_pending_publications");
         assert!(report.waiting_on[0]
             .detail
-            .contains("no pending task publications"));
+            .contains("no pending Task Network publications"));
 
         // Without a composed network the declaration carries the
         // no-network detail instead of claiming a confirmed empty outbox.
@@ -5787,6 +5587,6 @@ mod tests {
         let report = handle.tick(WorkBudget { max_items: 8 });
         assert_eq!(report.waiting_on.len(), 1, "{report:?}");
         assert_eq!(report.waiting_on[0].condition, "no_pending_publications");
-        assert!(report.waiting_on[0].detail.contains("no task network"));
+        assert!(report.waiting_on[0].detail.contains("no Task Network"));
     }
 }

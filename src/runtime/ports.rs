@@ -1,63 +1,53 @@
 //! Thin direct handoff ports built by product runtime assembly.
 
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use meld_events::error::EventAuthorityError;
 use meld_events::{
-    AppendMode, AppendReceipt, DomainObjectRef, EventAppendCapability, EventAuthority,
+    AppendMode, AppendReceipt, EventAppendCapability, EventAuthority,
     EventConsumerRegistryCapability, EventEnvelope, EventObservabilityCapability, EventPage,
     EventRecord, EventReplayCapability, EventWatermark, EventWatermarkCapability, LedgerCursor,
     LedgerIdentity, ReplayRequest,
 };
-use meld_execution::capability::{
-    BoundCapabilityInstance, CapabilityInvocationPayload, CapabilityInvocationResult,
-};
-use meld_execution::planning::realization::TaskPackageRoutePlan;
-use meld_execution::planning::{
-    PlanningProjectionError as ExecutionPlanningProjectionError, PlanningProjectionPort,
-    PlanningWorldStateFrameRef, PlanningWorldStateProjection, PlanningWorldStateRequest,
-};
-use meld_execution::task::expansion::{CompiledTaskDelta, TaskExpansionRequest};
-use meld_execution::task::{
-    CompiledTaskRecord, PackageStepInvoker, TaskArtifactRepoFactory, TaskInitializationPayload,
+use meld_execution::task::{TaskArtifactRepoFactory, TaskInitializationPayload};
+use meld_execution::task_admission::{
+    ExecutionTask, TaskAdmissionApi, TaskAdmissionDecision, TaskAdmissionLineage,
+    TaskAdmissionRecord, TaskAdmissionRequest,
 };
 use meld_execution::task_network::dispatch::Claim;
 use meld_execution::task_network::dispatch_actor::{
-    ClaimedInvocationOutcome, ClaimedTaskInvoker, DispatchPortError, PackageRunPreparer,
-    PreparedPackageRun,
+    AdmissionGenerationObserver, ClaimedInvocationOutcome, ClaimedTaskInvoker, DispatchPortError,
 };
-use meld_execution::task_network::state::TaskNode;
+use meld_execution::task_network::state::{admission_region_terminal_outcome_id, TaskNode};
 use meld_execution::task_network::store::TaskNetworkStoreFactory;
-use meld_execution::task_network::EventAppendSink;
-use meld_world_model::belief::{
-    configured_belief_key, BeliefFamilyRegistry, BeliefFamilyRegistryStore,
-    EvidenceEventReplaySource,
+use meld_execution::task_network::{
+    EventAppendSink, JournalRecord, PublicationState, SledTaskNetworkStore,
 };
+use meld_world_model::belief::EvidenceEventReplaySource;
 use meld_world_model::planner::{
-    PlannerAssemblyOutcome, PlannerCurrentAssemblyRequest, PlannerProjectionError, PlannerQuery,
-    PlannerSourceRef, WorldModelView,
+    PlannerAssemblyOutcome, PlannerCurrentAssemblyRequest, PlannerQuery,
 };
 use meld_world_model::world_state::graph::contracts::{
     BoundedTraversalRequest, TraversalCut, TraversalCutRequest, TraversalResult,
 };
 use meld_world_model::world_state::graph::store::TraversalStore;
 use meld_world_model::world_state::graph::{
-    GraphConsumerCursorReporter, GraphDerivedEventSink, GraphEventReplaySource, PerspectiveKey,
+    GraphConsumerCursorReporter, GraphDerivedEventSink, GraphEventReplaySource,
 };
+use meld_world_model::TraversalQuery;
 use meld_world_model::{
-    AgentActivationStatus, AgentAuthorityPort, AgentAuthorizationFence, AgentCurationPort,
-    AgentPlannerPort, AgentStatus, AgentStore, BeliefQuery, BeliefStore, CurationAcceptanceRecord,
-    CurationEventPort, CurationOperation, CurationResult, CurationStore, CurationTraversalPort,
+    AgentActivationStatus, AgentAuthorityPort, AgentAuthorizationFence, AgentAuthorizedProduct,
+    AgentCurationPort, AgentExecutionAdmissionDecision, AgentExecutionPort, AgentExecutionPosition,
+    AgentPlannerPort, AgentProductAuthorization, AgentStatus, AgentStore, BeliefQuery, BeliefStore,
+    CurationAcceptanceRecord, CurationEventPort, CurationOperation, CurationResult, CurationStore,
+    CurationTraversalPort,
 };
-use meld_world_model::{BranchScope, TraversalQuery};
 
 use crate::config::SelectedStewardshipPackage;
 use crate::context::frame::FrameStorage;
 use crate::control::projection::ExecutionProjectionReplaySource;
 use crate::prompt_context::PromptContextArtifactStorage;
-use crate::provider::ProviderExecutionBinding;
 use crate::runtime::error::{RuntimeAssemblyError, RuntimePortError};
 use crate::runtime::storage::{OpenProductStores, ScopedResource};
 use crate::runtime::theory::{TheoryInstallationReceiptStore, TheoryReceiptError};
@@ -77,7 +67,6 @@ pub struct ProductRuntimePorts {
     event_append: ProductEventAppendPort,
     event_replay: ProductEventReplayPort,
     graph_cursor: ProductGraphCursorPort,
-    planner_projection: ScopedResource<PlannerProjectionPort>,
     adapters: RuntimeAdapterPorts,
 }
 
@@ -136,13 +125,6 @@ pub struct ProductGraphCursorPort {
     registry: EventConsumerRegistryCapability,
 }
 
-/// Planner projection query port backed by world model stores.
-#[derive(Clone)]
-pub struct PlannerProjectionPort {
-    belief_store: Arc<BeliefStore>,
-    traversal_store: Arc<TraversalStore>,
-}
-
 /// Exact current Planner assembly boundary used by Agent reconciliation.
 #[derive(Clone)]
 pub struct ProductAgentPlannerPort {
@@ -162,10 +144,25 @@ pub struct ProductAgentAuthorityPort {
     agent_id: String,
 }
 
+/// Read-only root adapter from the Agent activation store to dispatch fencing.
+#[derive(Clone)]
+pub struct ProductAdmissionGenerationObserver {
+    agent_store: Arc<AgentStore>,
+}
+
 /// Planned Curation intake over the canonical Curation store and actor authority.
 #[derive(Clone)]
 pub struct ProductPlannedCurationPort {
     store: Arc<CurationStore>,
+}
+
+/// Root adapter from exact Agent Task authority to Execution positions.
+#[derive(Clone)]
+pub struct ProductAgentExecutionPort {
+    network: Arc<Mutex<SledTaskNetworkStore>>,
+    catalog: meld_execution::capability::CapabilityCatalog,
+    live_generation: String,
+    authority_policy_content_hash: String,
 }
 
 /// Context frame adapter port.
@@ -218,22 +215,10 @@ impl ProductRuntimePorts {
         let event_append = ProductEventAppendPort::new(authority);
         let event_replay = ProductEventReplayPort::new(authority.replay_capability());
 
-        let world_model = stores
-            .belief_store
-            .opened()
-            .zip(stores.traversal_store.opened());
-        let planner_projection = match world_model {
-            Some((belief, traversal)) => ScopedResource::open(
-                "planner_projection_port",
-                PlannerProjectionPort::new(Arc::clone(belief), Arc::clone(traversal)),
-            ),
-            None => ScopedResource::closed("planner_projection_port"),
-        };
         Ok(Self {
             event_append,
             event_replay: event_replay.clone(),
             graph_cursor: ProductGraphCursorPort::new(authority.consumer_registry_capability()),
-            planner_projection,
             adapters: RuntimeAdapterPorts {
                 context: match stores.frame_storage.opened() {
                     Some(storage) => ScopedResource::open(
@@ -288,16 +273,6 @@ impl ProductRuntimePorts {
     /// Return the graph consumer cursor reporter.
     pub fn graph_cursor(&self) -> &ProductGraphCursorPort {
         &self.graph_cursor
-    }
-
-    /// Return the planner projection query port.
-    pub fn planner_projection(&self) -> &PlannerProjectionPort {
-        &self.planner_projection
-    }
-
-    /// Return the planner projection port when its stores are in scope.
-    pub fn try_planner_projection(&self) -> Option<&PlannerProjectionPort> {
-        self.planner_projection.opened()
     }
 
     /// Return passive adapter ports.
@@ -527,37 +502,6 @@ impl GraphConsumerCursorReporter for ProductGraphCursorPort {
     }
 }
 
-impl PlannerProjectionPort {
-    /// Bind the port to opened world model graph and belief stores.
-    pub fn new(belief_store: Arc<BeliefStore>, traversal_store: Arc<TraversalStore>) -> Self {
-        Self {
-            belief_store,
-            traversal_store,
-        }
-    }
-
-    /// Return the view subordinate to one compatibility Planner cut.
-    ///
-    /// This adapter remains for Execution planning and can be removed when its
-    /// projection contract accepts `PlannerCut` directly.
-    pub fn project_current_world_state(
-        &self,
-        subject: &DomainObjectRef,
-        dimension_id: &str,
-        perspective: Option<PerspectiveKey>,
-        branch_scope: Option<BranchScope>,
-    ) -> Result<WorldModelView, RuntimePortError> {
-        let query = PlannerQuery::new(
-            BeliefQuery::new(self.belief_store.as_ref()),
-            TraversalQuery::new(self.traversal_store.as_ref()),
-        );
-        query
-            .compatibility_cut_current_world_state(subject, dimension_id, perspective, branch_scope)
-            .map(|cut| cut.world_model_view)
-            .map_err(map_projection_error)
-    }
-}
-
 impl ProductAgentPlannerPort {
     pub fn new(
         belief_store: Arc<BeliefStore>,
@@ -604,6 +548,193 @@ impl AgentPlannerPort for ProductAgentPlannerPort {
 impl ProductPlannedCurationPort {
     pub fn new(store: Arc<CurationStore>) -> Self {
         Self { store }
+    }
+}
+
+impl ProductAgentExecutionPort {
+    /// Bind one exact live Agent fence to the shared Execution network.
+    pub fn new(
+        network: Arc<Mutex<SledTaskNetworkStore>>,
+        catalog: meld_execution::capability::CapabilityCatalog,
+        live_generation: String,
+        authority_policy_content_hash: String,
+    ) -> Self {
+        Self {
+            network,
+            catalog,
+            live_generation,
+            authority_policy_content_hash,
+        }
+    }
+
+    fn position(
+        &self,
+        authorization: &AgentProductAuthorization,
+    ) -> Result<AgentExecutionPosition, meld_world_model::error::StorageError> {
+        let AgentAuthorizedProduct::Task(task) = &authorization.product else {
+            return Err(meld_world_model::error::StorageError::InvalidPath(
+                "Execution port accepts only Agent-authorized Tasks".to_string(),
+            ));
+        };
+        let request = TaskAdmissionRequest {
+            lineage: TaskAdmissionLineage {
+                agent_id: authorization.agent_id.clone(),
+                goal_id: authorization.goal_id.clone(),
+                plan_revision_id: authorization.plan_revision_id.clone(),
+                product_id: authorization.product_id.clone(),
+                authorization_id: authorization.authorization_id.clone(),
+                context_id: authorization.context_id.clone(),
+                authority_scope_id: authorization.authority_scope_id.clone(),
+                authority_policy_content_hash: authorization.authority_policy_content_hash.clone(),
+                authority_decision: authorization.authority_decision.clone(),
+                activation_generation: authorization.activation_generation.clone(),
+            },
+            task: ExecutionTask {
+                task_id: task.task_id.clone(),
+                composition: task.composition.clone(),
+                bindings: task.bindings.clone(),
+                capability_contract_ids: task.capability_contract_ids.clone(),
+                expected_outcome_contract_id: task.expected_outcome_contract_id.clone(),
+                authority_requirements: task.authority_requirements.clone(),
+                idempotency_key: task.idempotency_key.clone(),
+            },
+            idempotency_key: authorization.idempotency_key.clone(),
+        };
+        let admission_id = TaskAdmissionRecord::admission_id_for(&request);
+        let snapshot = {
+            let mut network = self.network.lock().map_err(|_| {
+                meld_world_model::error::StorageError::InvalidPath(
+                    "shared Task Network lock is poisoned".to_string(),
+                )
+            })?;
+            let admission = match network.state().admissions.get(&admission_id) {
+                Some(existing) if existing.request == request => existing.clone(),
+                Some(_) => {
+                    return Err(meld_world_model::error::StorageError::InvalidPath(
+                        "durable admission identity contains a different Task offer".to_string(),
+                    ))
+                }
+                None => TaskAdmissionApi::new(
+                    &mut *network,
+                    &self.catalog,
+                    &self.live_generation,
+                    &self.authority_policy_content_hash,
+                )
+                .admit(request)
+                .map_err(meld_world_model::error::StorageError::InvalidPath)?,
+            };
+            let network_commit_revision = network.journal().iter().find_map(|record| {
+                let JournalRecord::Commit(commit) = record else {
+                    return None;
+                };
+                commit
+                    .mutation_set
+                    .mutations
+                    .iter()
+                    .any(|mutation| match mutation {
+                        meld_execution::task_network::Mutation::Inject(inject) => inject
+                            .task_node
+                            .lineage
+                            .admission
+                            .as_ref()
+                            .is_some_and(|lineage| lineage.admission_id == admission.admission_id),
+                    })
+                    .then_some(commit.revision)
+            });
+            let outcome_id =
+                admission_region_terminal_outcome_id(network.state(), &admission.admission_id)
+                    .map(str::to_string);
+            let execution_publication_position_id = outcome_id.as_ref().and_then(|outcome_id| {
+                network
+                    .state()
+                    .publications
+                    .values()
+                    .find_map(|publication| {
+                        if &publication.outcome.outcome_id != outcome_id {
+                            return None;
+                        }
+                        match &publication.state {
+                            PublicationState::Published {
+                                receipt: Some(receipt),
+                                ..
+                            } => Some(format!("{}::{}", receipt.ledger_id, receipt.seq)),
+                            _ => None,
+                        }
+                    })
+            });
+            (
+                admission,
+                network_commit_revision,
+                outcome_id,
+                execution_publication_position_id,
+            )
+        };
+        let (admission, network_commit_revision, outcome_id, execution_publication_position_id) =
+            snapshot;
+        let decision = match admission.decision {
+            TaskAdmissionDecision::Admitted => AgentExecutionAdmissionDecision::Admitted,
+            TaskAdmissionDecision::Rejected { grounds } => {
+                AgentExecutionAdmissionDecision::Rejected { grounds }
+            }
+            TaskAdmissionDecision::StaleFence { .. } => AgentExecutionAdmissionDecision::StaleFence,
+        };
+        Ok(AgentExecutionPosition {
+            authorization_id: authorization.authorization_id.clone(),
+            admission_id: admission.admission_id,
+            admission_decision: decision,
+            admission_revision: admission.recorded_revision,
+            network_commit_revision,
+            outcome_id,
+            execution_publication_position_id,
+        })
+    }
+}
+
+impl ProductAdmissionGenerationObserver {
+    /// Bind live dispatch fencing to the canonical Agent activation store.
+    pub fn new(agent_store: Arc<AgentStore>) -> Self {
+        Self { agent_store }
+    }
+}
+
+impl AdmissionGenerationObserver for ProductAdmissionGenerationObserver {
+    fn active_generation(&self, agent_id: &str) -> Result<Option<String>, String> {
+        let Some(agent) = self
+            .agent_store
+            .get_agent(agent_id)
+            .map_err(|error| error.to_string())?
+        else {
+            return Ok(None);
+        };
+        if agent.status != AgentStatus::Operational {
+            return Ok(None);
+        }
+        self.agent_store
+            .activations_for_agent(agent_id)
+            .map_err(|error| error.to_string())
+            .map(|activations| {
+                activations
+                    .into_iter()
+                    .next_back()
+                    .filter(|activation| activation.status == AgentActivationStatus::Activated)
+                    .map(|activation| activation.activation_id)
+            })
+    }
+}
+
+impl AgentExecutionPort for ProductAgentExecutionPort {
+    fn submit(
+        &self,
+        authorization: &AgentProductAuthorization,
+    ) -> Result<AgentExecutionPosition, meld_world_model::error::StorageError> {
+        self.position(authorization)
+    }
+
+    fn advance(
+        &self,
+        authorization: &AgentProductAuthorization,
+    ) -> Result<AgentExecutionPosition, meld_world_model::error::StorageError> {
+        self.position(authorization)
     }
 }
 
@@ -825,316 +956,26 @@ impl EvidenceEventReplaySource for ProductEventReplayPort {
     }
 }
 
-/// Exact-key planner projection port for the execution planning actor.
+/// Shared composition core for production Task Network claim dispatch.
 ///
-/// Owner: root translation. The port resolves the configured belief
-/// family's current theory revision per projection, derives the exact
-/// configured belief key, and assembles the compatibility Planner cut, so
-/// the subordinate view's revision and theory lineage are the identities
-/// the belief store holds for that key — never a same-subject neighbor.
-pub struct ExactKeyPlanningProjectionPort {
-    belief_store: Arc<BeliefStore>,
-    traversal_store: Arc<TraversalStore>,
-    registry: Arc<BeliefFamilyRegistryStore>,
-    family_id: String,
-    subject: DomainObjectRef,
-    perspective: PerspectiveKey,
-    branch_scope: BranchScope,
-}
-
-impl ExactKeyPlanningProjectionPort {
-    /// Bind the port to world-model stores and the configured scope.
-    pub fn new(
-        belief_store: Arc<BeliefStore>,
-        traversal_store: Arc<TraversalStore>,
-        registry: Arc<BeliefFamilyRegistryStore>,
-        family_id: impl Into<String>,
-        subject: DomainObjectRef,
-        perspective: PerspectiveKey,
-        branch_scope: BranchScope,
-    ) -> Self {
-        Self {
-            belief_store,
-            traversal_store,
-            registry,
-            family_id: family_id.into(),
-            subject,
-            perspective,
-            branch_scope,
-        }
-    }
-}
-
-impl PlanningProjectionPort for ExactKeyPlanningProjectionPort {
-    fn project(
-        &mut self,
-        request: PlanningWorldStateRequest,
-    ) -> Result<PlanningWorldStateProjection, ExecutionPlanningProjectionError> {
-        // Theory resolves per projection, mirroring the belief actors, so
-        // planning always consumes the currently installed revision and a
-        // not-yet-installed family stays retryable rather than fatal.
-        let revision = self
-            .registry
-            .current(&self.family_id)
-            .map_err(|error| ExecutionPlanningProjectionError::fatal(error.to_string()))?
-            .ok_or_else(|| {
-                ExecutionPlanningProjectionError::retryable(format!(
-                    "belief family '{}' has no installed registry revision",
-                    self.family_id
-                ))
-            })?;
-        let key = configured_belief_key(
-            &revision,
-            &self.subject,
-            &self.perspective,
-            &self.branch_scope,
-        );
-        let query = PlannerQuery::new(
-            BeliefQuery::new(self.belief_store.as_ref()),
-            TraversalQuery::new(self.traversal_store.as_ref()),
-        );
-        // The family's anchor declaration decides scope semantics on the
-        // planner side exactly as it does on the assessment side: an
-        // unanchored family's maintained scope is declared accessible.
-        let unanchored = revision.config.anchor_requirement
-            == meld_world_model::belief::AnchorRequirement::Unanchored;
-        let cut = query
-            .compatibility_cut_for_key(&key, unanchored)
-            .map_err(|error| ExecutionPlanningProjectionError::retryable(error.to_string()))?;
-        let output = cut.world_model_view;
-
-        let source_refs: Vec<String> = output.source_refs.iter().map(render_source_ref).collect();
-        // Frame identity is deterministic from the consumed belief revision
-        // so identical projections carry identical causality and a revised
-        // belief produces a causally distinct frame.
-        let frame_id = output
-            .source_refs
-            .iter()
-            .find_map(|source| match source {
-                PlannerSourceRef::BeliefRevision { revision_id } => {
-                    Some(format!("belief-revision::{revision_id}"))
-                }
-                _ => None,
-            })
-            .unwrap_or_else(|| format!("unassessed::{}", key.index_key()));
-        Ok(PlanningWorldStateProjection {
-            world_state: output.world_state,
-            frame: PlanningWorldStateFrameRef {
-                frame_id,
-                projection_version: output.projection_version,
-                perspective_id: request.perspective_id,
-                branch_id: request.branch_id,
-                source_refs,
-                warnings: output
-                    .warnings
-                    .iter()
-                    .map(|warning| format!("{warning:?}"))
-                    .collect(),
-            },
-        })
-    }
-}
-
-fn render_source_ref(source: &PlannerSourceRef) -> String {
-    match source {
-        PlannerSourceRef::BeliefRevision { revision_id } => {
-            format!("belief_revision::{revision_id}")
-        }
-        PlannerSourceRef::Evidence { evidence_id } => format!("evidence::{evidence_id}"),
-        PlannerSourceRef::SourceFact { source_fact_id } => {
-            format!("source_fact::{source_fact_id}")
-        }
-        PlannerSourceRef::GraphAnchor { anchor_id } => format!("graph_anchor::{anchor_id:?}"),
-        PlannerSourceRef::ProjectionRule { rule_id } => format!("projection_rule::{rule_id}"),
-    }
-}
-
-/// Shared composition core for the production dispatch route ports.
-///
-/// Owner: root runtime composition. The three production ports execute plan
-/// handoffs over the same machinery the registered workflow route uses: the
-/// root api facade, the registered workflow package surface, the workflow
-/// task-path capability set, and the provider registry the api carries. The
-/// ports never invent execution semantics — they delegate to the public
-/// preparation, capability, and task execution surfaces.
+/// Owner: root runtime composition. The port executes admitted compiled Tasks
+/// through the production Capability catalog and invoker registry.
 pub struct ProductionDispatchRouteContext {
     /// Root api facade the workflow task path executes through.
     pub api: Arc<crate::api::ContextApi>,
-    /// Registered workflow profiles resolving each plan's workflow id.
-    pub workflow_registry: Arc<parking_lot::RwLock<crate::workflow::WorkflowRegistry>>,
-    /// Canonical workspace root of the stewarded subject.
-    pub workspace_root: PathBuf,
-    /// Workspace-relative subject path the package route triggers on.
-    pub subject_path: PathBuf,
-    /// Durable agent identity driving the workflow.
-    pub agent_id: String,
-    /// Belief family selected by the stewardship declaration.
-    pub belief_family_id: String,
-    /// Validated provider binding from the stewardship selection.
-    pub provider: ProviderExecutionBinding,
-    /// Frame type the docs route publishes under.
-    pub frame_type: String,
     /// Ledger session partition recorded on prepared runs.
     pub session_id: Option<String>,
-    /// Production capability catalog: the workflow task-path set.
+    /// Production Capability catalog used by admitted Tasks.
     pub catalog: crate::capability::CapabilityCatalog,
-    /// Production capability executor registry matching the catalog.
+    /// Production Capability executor registry matching the catalog.
     pub registry: crate::capability::CapabilityExecutorRegistry,
 }
 
 impl ProductionDispatchRouteContext {
-    /// Build the three shared production route ports over one core.
-    pub fn into_route_ports(
-        self,
-    ) -> (
-        SharedPackageRunPreparer,
-        SharedPackageStepInvoker,
-        SharedClaimedTaskInvoker,
-    ) {
+    /// Build the shared production claim invoker over one core.
+    pub fn into_claim_port(self) -> SharedClaimedTaskInvoker {
         let core = Arc::new(self);
-        (
-            SharedPackageRunPreparer(Arc::new(WorkflowPackageRunPreparer {
-                core: Arc::clone(&core),
-            })),
-            SharedPackageStepInvoker(Arc::new(RootCapabilityStepInvoker {
-                core: Arc::clone(&core),
-            })),
-            SharedClaimedTaskInvoker(Arc::new(CompiledTaskClaimInvoker { core })),
-        )
-    }
-}
-
-/// Production package-run preparer over the registered workflow surface.
-///
-/// One plan handoff resolves through `prepare_registered_workflow_task_run`
-/// — the same preparation the registered workflow route runs — so the
-/// compiled task, seeds, and prompts are the production artifacts, not a
-/// parallel formula. The prepared run context carries the actor-derived
-/// task run id so durable dedupe and progress stay keyed by plan identity.
-struct WorkflowPackageRunPreparer {
-    core: Arc<ProductionDispatchRouteContext>,
-}
-
-impl PackageRunPreparer for WorkflowPackageRunPreparer {
-    fn prepare_package_run(
-        &self,
-        plan: &TaskPackageRoutePlan,
-        task_run_id: &str,
-    ) -> Result<PreparedPackageRun, DispatchPortError> {
-        // A plan naming an unregistered workflow cannot succeed without
-        // operator action: fatal, recorded through the command boundary.
-        let registered_profile = self
-            .core
-            .workflow_registry
-            .read()
-            .get(&plan.workflow_id)
-            .cloned()
-            .ok_or_else(|| {
-                DispatchPortError::fatal(format!(
-                    "plan '{}' names unregistered workflow '{}'",
-                    plan.plan_id, plan.workflow_id
-                ))
-            })?;
-        let request = crate::task::WorkflowPackageTriggerRequest {
-            package_id: plan.package_id.clone(),
-            workflow_id: plan.workflow_id.clone(),
-            node_id: None,
-            path: Some(self.core.subject_path.clone()),
-            agent_id: self.core.agent_id.clone(),
-            provider: self.core.provider.clone(),
-            frame_type: self.core.frame_type.clone(),
-            belief_family_id: Some(self.core.belief_family_id.clone()),
-            // Incremental by identity: node ids are content-addressed, so a
-            // node holding a current frame is fresh by construction and only
-            // changed subtrees expand into work. Forcing here would
-            // regenerate the whole scope on every flywheel turn.
-            force: false,
-            session_id: self.core.session_id.clone(),
-        };
-        let prepared = crate::task::prepare_registered_workflow_task_run(
-            self.core.api.as_ref(),
-            &self.core.workspace_root,
-            &registered_profile,
-            &request,
-            &self.core.catalog,
-        )
-        // Preparation reads mutable workspace state (scanned nodes, belief
-        // context); a later tick may succeed once that state exists.
-        .map_err(|error| DispatchPortError::retryable(error.to_string()))?;
-        let mut init_payload = prepared.init_payload;
-        // The actor rejects a drifted run id before opening durable
-        // progress, so the prepared context binds the actor-derived id.
-        init_payload.task_run_context.task_run_id = task_run_id.to_string();
-        Ok(PreparedPackageRun {
-            compiled_task: prepared.compiled_task,
-            init_payload,
-        })
-    }
-}
-
-/// Production package-step invoker over the root capability registry.
-///
-/// Released invocations execute through the registered capability invokers
-/// (the workflow task-path set) against the root api facade; expansion
-/// requests compile through the public expansion compiler registry.
-struct RootCapabilityStepInvoker {
-    core: Arc<ProductionDispatchRouteContext>,
-}
-
-#[async_trait]
-impl PackageStepInvoker for RootCapabilityStepInvoker {
-    async fn invoke_capability(
-        &self,
-        instance: &BoundCapabilityInstance,
-        payload: &CapabilityInvocationPayload,
-    ) -> Result<CapabilityInvocationResult, meld_execution::error::ApiError> {
-        let runtime_init = self.core.registry.runtime_init_for(instance)?;
-        let invoker = self
-            .core
-            .registry
-            .get(&instance.capability_type_id, instance.capability_version)
-            .cloned()
-            .ok_or_else(|| {
-                meld_execution::error::ExecutionInvariantError::ConfigError(format!(
-                    "dispatch route is missing invoker for '{}' version '{}'",
-                    instance.capability_type_id, instance.capability_version
-                ))
-            })?;
-        // Same event-context rule as the claimed route: capability
-        // invocations on the package route publish their task lifecycle
-        // events under the composed session partition.
-        let event_context = self.core.session_id.as_ref().map(|session_id| {
-            crate::execution::ExecutionEventContext {
-                session_id: session_id.clone(),
-            }
-        });
-        invoker
-            .invoke(
-                self.core.api.as_ref(),
-                &runtime_init,
-                payload,
-                event_context.as_ref(),
-            )
-            .await
-            .map_err(|error| {
-                meld_execution::error::ExecutionInvariantError::GenerationFailed(error.to_string())
-            })
-    }
-
-    fn compile_expansion(
-        &self,
-        compiled_task: &CompiledTaskRecord,
-        request: &TaskExpansionRequest,
-    ) -> Result<CompiledTaskDelta, meld_execution::error::ApiError> {
-        crate::task::expansion::compile_task_expansion_request(
-            self.core.api.as_ref(),
-            compiled_task,
-            request,
-            &self.core.catalog,
-        )
-        .map_err(|error| {
-            meld_execution::error::ExecutionInvariantError::ConfigError(error.to_string())
-        })
+        SharedClaimedTaskInvoker(Arc::new(CompiledTaskClaimInvoker { core }))
     }
 }
 
@@ -1210,43 +1051,6 @@ fn is_terminal_claimed_failure(message: &str) -> bool {
         || message.contains(crate::workspace::capability::MISSING_HEAD_MARKER)
 }
 
-/// Shared handle adapter for an injected package-run preparation port.
-#[derive(Clone)]
-pub struct SharedPackageRunPreparer(pub Arc<dyn PackageRunPreparer + Send + Sync>);
-
-impl PackageRunPreparer for SharedPackageRunPreparer {
-    fn prepare_package_run(
-        &self,
-        plan: &TaskPackageRoutePlan,
-        task_run_id: &str,
-    ) -> Result<PreparedPackageRun, DispatchPortError> {
-        self.0.prepare_package_run(plan, task_run_id)
-    }
-}
-
-/// Shared handle adapter for an injected package capability invoker.
-#[derive(Clone)]
-pub struct SharedPackageStepInvoker(pub Arc<dyn PackageStepInvoker>);
-
-#[async_trait]
-impl PackageStepInvoker for SharedPackageStepInvoker {
-    async fn invoke_capability(
-        &self,
-        instance: &BoundCapabilityInstance,
-        payload: &CapabilityInvocationPayload,
-    ) -> Result<CapabilityInvocationResult, meld_execution::error::ApiError> {
-        self.0.invoke_capability(instance, payload).await
-    }
-
-    fn compile_expansion(
-        &self,
-        compiled_task: &CompiledTaskRecord,
-        request: &TaskExpansionRequest,
-    ) -> Result<CompiledTaskDelta, meld_execution::error::ApiError> {
-        self.0.compile_expansion(compiled_task, request)
-    }
-}
-
 /// Shared handle adapter for an injected claimed-task invoker.
 #[derive(Clone)]
 pub struct SharedClaimedTaskInvoker(pub Arc<dyn ClaimedTaskInvoker>);
@@ -1261,8 +1065,4 @@ impl ClaimedTaskInvoker for SharedClaimedTaskInvoker {
     ) -> Result<ClaimedInvocationOutcome, DispatchPortError> {
         self.0.invoke_claimed_task(node, claim, init_payload).await
     }
-}
-
-fn map_projection_error(error: PlannerProjectionError) -> RuntimePortError {
-    RuntimePortError::PlannerProjection(error.to_string())
 }

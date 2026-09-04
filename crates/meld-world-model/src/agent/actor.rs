@@ -2,10 +2,11 @@
 
 use std::sync::Arc;
 
-use meld_lang::Goal;
+use meld_lang::{evaluate_authority, Goal};
 
 use crate::agent::{
     AgentAuthorizationFence, AgentAuthorizedProduct, AgentConsumerReceipt, AgentCurrentnessCheck,
+    AgentExecutionAdmissionDecision, AgentExecutionPosition, AgentExecutionReceipt,
     AgentMilestoneAcceptance, AgentPlanJudgment, AgentPlanJudgmentKind, AgentProductAuthorization,
     AgentProductProgress, AgentProductState, AgentReconciliationGoal, AgentStore,
     AgentStrategyRuntimeConfig,
@@ -42,6 +43,19 @@ pub trait AgentCurationPort: Send + Sync {
     fn result(&self, operation_id: &str) -> Result<Option<CurationResult>, StorageError>;
 }
 
+/// Execution consumer and owner-return boundary used by Agent progression.
+pub trait AgentExecutionPort: Send + Sync {
+    fn submit(
+        &self,
+        authorization: &AgentProductAuthorization,
+    ) -> Result<AgentExecutionPosition, StorageError>;
+
+    fn advance(
+        &self,
+        authorization: &AgentProductAuthorization,
+    ) -> Result<AgentExecutionPosition, StorageError>;
+}
+
 /// Truthful bounded transition report for one reconciliation tick.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AgentReconciliationReport {
@@ -67,6 +81,7 @@ pub struct AgentReconciliationActor {
     authority: Arc<dyn AgentAuthorityPort>,
     frozen_authority: AgentAuthorizationFence,
     curation: Arc<dyn AgentCurationPort>,
+    execution: Arc<dyn AgentExecutionPort>,
     strategy: AgentStrategyRuntimeConfig,
     curation_authority: CurationAuthority,
     curation_rule: StandingCurationRuleRevision,
@@ -82,6 +97,7 @@ impl AgentReconciliationActor {
         authority: Arc<dyn AgentAuthorityPort>,
         frozen_authority: AgentAuthorizationFence,
         curation: Arc<dyn AgentCurationPort>,
+        execution: Arc<dyn AgentExecutionPort>,
         strategy: AgentStrategyRuntimeConfig,
         curation_authority: CurationAuthority,
         curation_rule: StandingCurationRuleRevision,
@@ -115,6 +131,7 @@ impl AgentReconciliationActor {
             authority,
             frozen_authority,
             curation,
+            execution,
             strategy,
             curation_authority,
             curation_rule,
@@ -158,16 +175,20 @@ impl AgentReconciliationActor {
                 return report;
             }
         };
-        if let Some(authorization) = match self
+        let authorizations = match self
             .store
             .product_authorizations_for_goal(&self.goal.goal_id)
         {
-            Ok(records) => records.into_iter().next_back(),
+            Ok(records) => records,
             Err(error) => {
                 report.fatal_errors.push(error.to_string());
                 return report;
             }
-        } {
+        };
+        if let Some(authorization) = authorizations
+            .iter()
+            .find(|record| matches!(record.product, AgentAuthorizedProduct::Task(_)))
+        {
             let Some(plan) = (match self
                 .store
                 .reconciliation_plan(&authorization.plan_revision_id)
@@ -183,11 +204,32 @@ impl AgentReconciliationActor {
                     .push("authorized Agent product has no durable Plan".to_string());
                 return report;
             };
-            let AgentAuthorizedProduct::Epistemic(epistemic) = authorization.product else {
+            if let Err(error) = self.reconcile_execution(&cut, &plan, authorization, &mut report) {
+                report.retryable_errors.push(error.to_string());
+            }
+            return report;
+        }
+        if let Some(authorization) = authorizations
+            .iter()
+            .find(|record| matches!(record.product, AgentAuthorizedProduct::Epistemic(_)))
+        {
+            let Some(plan) = (match self
+                .store
+                .reconciliation_plan(&authorization.plan_revision_id)
+            {
+                Ok(plan) => plan,
+                Err(error) => {
+                    report.fatal_errors.push(error.to_string());
+                    return report;
+                }
+            }) else {
                 report
                     .fatal_errors
-                    .push("WMR-VC-03 authorization is not epistemic".to_string());
+                    .push("authorized Agent product has no durable Plan".to_string());
                 return report;
+            };
+            let AgentAuthorizedProduct::Epistemic(epistemic) = &authorization.product else {
+                unreachable!("authorization selection fixes the product variant");
             };
             if goal_inserted && max_items == 1 {
                 report.budget_exhausted = true;
@@ -196,7 +238,7 @@ impl AgentReconciliationActor {
             if let Err(error) = self.reconcile_curation(
                 &cut,
                 &plan,
-                &epistemic,
+                epistemic,
                 max_items - usize::from(goal_inserted),
                 &mut report,
             ) {
@@ -439,6 +481,7 @@ impl AgentReconciliationActor {
                     .frozen_authority
                     .authority_policy_content_hash
                     .clone(),
+                authority_decision: None,
                 activation_generation: cut.context.activation_generation.clone(),
                 idempotency_key: epistemic.idempotency_key.clone(),
                 product: AgentAuthorizedProduct::Epistemic(Box::new(epistemic.clone())),
@@ -626,16 +669,314 @@ impl AgentReconciliationActor {
                     AgentProductState::Eligible,
                 )?;
                 report.eligible_task_ids.push(task.task_id.clone());
-                report.waiting_on.push(waiting(
-                    "future_execution_admission",
-                    &progress_id,
-                    format!(
-                        "Task '{}' is eligible and intentionally unpublished",
-                        task.task_id
-                    ),
-                ));
+                self.authorize_task(cut, plan, task, &progress_id, report)?;
             }
         }
+        Ok(())
+    }
+
+    fn authorize_task(
+        &self,
+        cut: &PlannerCut,
+        plan: &StrategyPlan,
+        task: &crate::strategy::StrategyTask,
+        eligible_progress_id: &str,
+        report: &mut AgentReconciliationReport,
+    ) -> Result<(), StorageError> {
+        if task.return_milestone.is_none() {
+            report.waiting_on.push(waiting(
+                "task_return_milestone_missing",
+                eligible_progress_id,
+                "Task requires a successor Plan with an exact return milestone",
+            ));
+            return Ok(());
+        }
+        let observed = match self.planner.assemble() {
+            PlannerAssemblyOutcome::Complete(current) => Some(current.cut_id),
+            PlannerAssemblyOutcome::Refused(refusal) => {
+                let (_, progress_id) = self.put_progress(
+                    cut,
+                    plan,
+                    &task.task_id,
+                    AgentCurrentnessCheck {
+                        frozen_cut_id: cut.cut_id.clone(),
+                        observed_cut_id: None,
+                        refusal: Some(refusal),
+                    },
+                    AgentProductState::Blocked {
+                        reason: "Planner currentness refused before Task authorization".to_string(),
+                    },
+                )?;
+                report.waiting_on.push(waiting(
+                    "planner_currentness_refused",
+                    progress_id,
+                    "wake requires the complete frozen Planner cut",
+                ));
+                return Ok(());
+            }
+        };
+        let currentness = AgentCurrentnessCheck {
+            frozen_cut_id: cut.cut_id.clone(),
+            observed_cut_id: observed.clone(),
+            refusal: None,
+        };
+        if observed.as_deref() != Some(cut.cut_id.as_str()) {
+            let (_, progress_id) = self.put_progress(
+                cut,
+                plan,
+                &task.task_id,
+                currentness,
+                AgentProductState::Blocked {
+                    reason: "Planner cut changed before Task authorization".to_string(),
+                },
+            )?;
+            report.waiting_on.push(waiting(
+                "planner_cut_changed",
+                progress_id,
+                "wake requires a successor Plan for the observed cut",
+            ));
+            return Ok(());
+        }
+        if self.authority.observe()?.as_ref() != Some(&self.frozen_authority) {
+            let (_, progress_id) = self.put_progress(
+                cut,
+                plan,
+                &task.task_id,
+                currentness,
+                AgentProductState::Blocked {
+                    reason: "Agent activation or authority policy changed".to_string(),
+                },
+            )?;
+            report.waiting_on.push(waiting(
+                "agent_authority_changed",
+                progress_id,
+                "wake requires reconstruction under the live Agent fence",
+            ));
+            return Ok(());
+        }
+        let authorization_id = stable_id(
+            "agent-task-authorization-v1",
+            &(
+                &cut.context.agent_id,
+                &self.goal.goal_id,
+                &plan.plan_revision_id,
+                &task.task_id,
+                &cut.context.context_id,
+                &cut.context.authority_scope_id,
+                &cut.context.activation_generation,
+                &task.idempotency_key,
+            ),
+        );
+        let authority_decision = self
+            .strategy
+            .authority_policy
+            .as_ref()
+            .map(|policy| {
+                evaluate_authority(
+                    policy,
+                    &self.strategy.package.requested_authority,
+                    &task.composition,
+                    &self.strategy.subject,
+                )
+                .map_err(|error| {
+                    StorageError::InvalidPath(format!(
+                        "Task authority evaluation was denied: {error}"
+                    ))
+                })
+            })
+            .transpose()?;
+        let authorization = AgentProductAuthorization {
+            authorization_id: authorization_id.clone(),
+            agent_id: cut.context.agent_id.clone(),
+            goal_id: self.goal.goal_id.clone(),
+            plan_revision_id: plan.plan_revision_id.clone(),
+            product_id: task.task_id.clone(),
+            context_id: cut.context.context_id.clone(),
+            authority_scope_id: cut.context.authority_scope_id.clone(),
+            authority_policy_content_hash: self
+                .frozen_authority
+                .authority_policy_content_hash
+                .clone(),
+            authority_decision,
+            activation_generation: cut.context.activation_generation.clone(),
+            idempotency_key: task.idempotency_key.clone(),
+            product: AgentAuthorizedProduct::Task(Box::new(task.clone())),
+            curation_authorization: None,
+        };
+        let inserted = self.store.put_product_authorization(&authorization)?;
+        self.put_progress(
+            cut,
+            plan,
+            &task.task_id,
+            currentness,
+            AgentProductState::Authorized {
+                authorization_id: authorization_id.clone(),
+            },
+        )?;
+        report.products_authorized += usize::from(inserted);
+        let position = self.execution.submit(&authorization)?;
+        self.persist_execution_position(&authorization, &position)?;
+        self.project_execution_wait(cut, plan, task, &position, report)?;
+        Ok(())
+    }
+
+    fn reconcile_execution(
+        &self,
+        cut: &PlannerCut,
+        plan: &StrategyPlan,
+        authorization: &AgentProductAuthorization,
+        report: &mut AgentReconciliationReport,
+    ) -> Result<(), StorageError> {
+        let AgentAuthorizedProduct::Task(task) = &authorization.product else {
+            return Err(StorageError::InvalidPath(
+                "Execution reconciliation requires one Task authorization".to_string(),
+            ));
+        };
+        if self.authority.observe()?.as_ref() != Some(&self.frozen_authority) {
+            report.waiting_on.push(waiting(
+                "agent_authority_changed",
+                &authorization.authorization_id,
+                "wake requires a successor Task authorization under the live fence",
+            ));
+            return Ok(());
+        }
+        let position = self.execution.advance(authorization)?;
+        self.persist_execution_position(authorization, &position)?;
+        self.project_execution_wait(cut, plan, task, &position, report)
+    }
+
+    fn persist_execution_position(
+        &self,
+        authorization: &AgentProductAuthorization,
+        position: &AgentExecutionPosition,
+    ) -> Result<bool, StorageError> {
+        if position.authorization_id != authorization.authorization_id {
+            return Err(StorageError::InvalidPath(
+                "Execution position belongs to another Agent authorization".to_string(),
+            ));
+        }
+        let receipt_id = stable_id(
+            "agent-execution-receipt-v1",
+            &(
+                &authorization.authorization_id,
+                position,
+                &authorization.activation_generation,
+            ),
+        );
+        self.store.put_execution_receipt(&AgentExecutionReceipt {
+            receipt_id,
+            agent_id: authorization.agent_id.clone(),
+            goal_id: authorization.goal_id.clone(),
+            plan_revision_id: authorization.plan_revision_id.clone(),
+            product_id: authorization.product_id.clone(),
+            position: position.clone(),
+        })
+    }
+
+    fn project_execution_wait(
+        &self,
+        cut: &PlannerCut,
+        plan: &StrategyPlan,
+        task: &crate::strategy::StrategyTask,
+        position: &AgentExecutionPosition,
+        report: &mut AgentReconciliationReport,
+    ) -> Result<(), StorageError> {
+        match &position.admission_decision {
+            AgentExecutionAdmissionDecision::Rejected { grounds } => {
+                report.waiting_on.push(waiting(
+                    "execution_admission_rejected",
+                    &position.admission_id,
+                    grounds.join("; "),
+                ));
+                return Ok(());
+            }
+            AgentExecutionAdmissionDecision::StaleFence => {
+                report.waiting_on.push(waiting(
+                    "execution_admission_stale_fence",
+                    &position.admission_id,
+                    "wake requires a successor Task authorization under the live generation",
+                ));
+                return Ok(());
+            }
+            AgentExecutionAdmissionDecision::Admitted => {}
+        }
+        let state = if let Some(outcome_id) = &position.outcome_id {
+            AgentProductState::ExecutionTerminal {
+                outcome_id: outcome_id.clone(),
+            }
+        } else {
+            AgentProductState::ExecutionAdmitted {
+                admission_id: position.admission_id.clone(),
+            }
+        };
+        let (_, progress_id) = self.put_progress(
+            cut,
+            plan,
+            &task.task_id,
+            AgentCurrentnessCheck {
+                frozen_cut_id: cut.cut_id.clone(),
+                observed_cut_id: Some(cut.cut_id.clone()),
+                refusal: None,
+            },
+            state,
+        )?;
+        let Some(requirement) = task.return_milestone.as_ref() else {
+            report.waiting_on.push(waiting(
+                "task_return_milestone_missing",
+                progress_id,
+                "wake requires a successor Plan with an exact return milestone",
+            ));
+            return Ok(());
+        };
+        let return_position = match requirement {
+            PlanMilestoneRequirement::ExecutionTerminal { task_id } if task_id == &task.task_id => {
+                position.outcome_id.as_ref()
+            }
+            _ => None,
+        };
+        let Some(return_position_id) = return_position else {
+            report.waiting_on.push(waiting(
+                "execution_terminal_outcome",
+                progress_id,
+                "awaiting the exact Plan-declared Task return position",
+            ));
+            return Ok(());
+        };
+        let milestone_id = stable_id(
+            "agent-task-milestone-acceptance-v1",
+            &(
+                &cut.context.agent_id,
+                &self.goal.goal_id,
+                &plan.plan_revision_id,
+                &task.task_id,
+                requirement,
+                return_position_id,
+                &cut.context.activation_generation,
+            ),
+        );
+        let inserted = self.store.put_milestone(&AgentMilestoneAcceptance {
+            milestone_id: milestone_id.clone(),
+            agent_id: cut.context.agent_id.clone(),
+            goal_id: self.goal.goal_id.clone(),
+            plan_revision_id: plan.plan_revision_id.clone(),
+            product_id: task.task_id.clone(),
+            requirement: requirement.clone(),
+            owner_position_id: return_position_id.clone(),
+            context_id: cut.context.context_id.clone(),
+            activation_generation: cut.context.activation_generation.clone(),
+        })?;
+        self.put_progress(
+            cut,
+            plan,
+            &task.task_id,
+            AgentCurrentnessCheck {
+                frozen_cut_id: cut.cut_id.clone(),
+                observed_cut_id: Some(cut.cut_id.clone()),
+                refusal: None,
+            },
+            AgentProductState::MilestoneAccepted { milestone_id },
+        )?;
+        report.milestones_accepted += usize::from(inserted);
         Ok(())
     }
 
@@ -745,6 +1086,45 @@ mod tests {
     impl AgentAuthorityPort for FixedAuthority {
         fn observe(&self) -> Result<Option<AgentAuthorizationFence>, StorageError> {
             Ok(Some(self.0.clone()))
+        }
+    }
+
+    struct PendingExecution;
+
+    impl PendingExecution {
+        fn position(
+            authorization: &AgentProductAuthorization,
+        ) -> Result<AgentExecutionPosition, StorageError> {
+            if !matches!(authorization.product, AgentAuthorizedProduct::Task(_)) {
+                return Err(StorageError::InvalidPath(
+                    "Execution test port accepts only Task products".to_string(),
+                ));
+            }
+            Ok(AgentExecutionPosition {
+                authorization_id: authorization.authorization_id.clone(),
+                admission_id: format!("admission::{}", authorization.authorization_id),
+                admission_decision: AgentExecutionAdmissionDecision::Admitted,
+                admission_revision: 1,
+                network_commit_revision: None,
+                outcome_id: None,
+                execution_publication_position_id: None,
+            })
+        }
+    }
+
+    impl AgentExecutionPort for PendingExecution {
+        fn submit(
+            &self,
+            authorization: &AgentProductAuthorization,
+        ) -> Result<AgentExecutionPosition, StorageError> {
+            Self::position(authorization)
+        }
+
+        fn advance(
+            &self,
+            authorization: &AgentProductAuthorization,
+        ) -> Result<AgentExecutionPosition, StorageError> {
+            Self::position(authorization)
         }
     }
 
@@ -913,6 +1293,7 @@ mod tests {
                     authority_policy_content_hash: "authority-docs-v1".to_string(),
                 },
                 Arc::clone(&curation) as Arc<dyn AgentCurationPort>,
+                Arc::new(PendingExecution),
                 self.strategy.clone(),
                 self.authority.clone(),
                 self.rule.clone(),
@@ -942,7 +1323,7 @@ mod tests {
     }
 
     #[test]
-    fn reconciliation_persists_distinct_judgment_authorization_and_unpublished_task() {
+    fn reconciliation_authorizes_task_and_persists_execution_admission() {
         let fixture = Fixture::new();
         let plan = fixture.expected_plan();
         let (actor, _) = fixture.actor(
@@ -956,7 +1337,7 @@ mod tests {
         let report = actor.bounded_step(8);
 
         assert!(report.fatal_errors.is_empty(), "{:?}", report.fatal_errors);
-        assert_eq!(report.products_authorized, 1);
+        assert_eq!(report.products_authorized, 2);
         assert_eq!(report.milestones_accepted, 1, "{report:?}");
         assert_eq!(
             report.eligible_task_ids,
@@ -964,7 +1345,7 @@ mod tests {
         );
         assert_eq!(
             report.waiting_on.last().unwrap().condition,
-            "future_execution_admission"
+            "execution_terminal_outcome"
         );
         assert!(fixture
             .store
@@ -1210,6 +1591,7 @@ mod tests {
                     Arc::new(DurableCuration {
                         store: Arc::clone(&curation_store),
                     }),
+                    Arc::new(PendingExecution),
                     strategy.clone(),
                     authority.clone(),
                     rule.clone(),
@@ -1254,6 +1636,7 @@ mod tests {
             Arc::new(DurableCuration {
                 store: Arc::clone(&curation_store),
             }),
+            Arc::new(PendingExecution),
             strategy,
             authority,
             rule,
@@ -1303,7 +1686,7 @@ mod tests {
                 .product_authorizations_for_goal(&goal.goal_id)
                 .unwrap()
                 .len(),
-            1
+            2
         );
         let milestone_id = stable_id(
             "agent-milestone-acceptance-v1",
@@ -1368,6 +1751,7 @@ mod tests {
                 authority_policy_content_hash: "authority-docs-v1".to_string(),
             },
             curation,
+            Arc::new(PendingExecution),
             fixture.strategy.clone(),
             fixture.authority.clone(),
             fixture.rule.clone(),

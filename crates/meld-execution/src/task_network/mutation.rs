@@ -1,7 +1,7 @@
 //! Task network mutation and commit contracts.
 //!
 //! Owner: task network.
-//! Inputs: graph mutation proposals produced by planning lowering.
+//! Inputs: graph mutation proposals produced by Task admission lowering.
 //! Outputs: append-only commit records and typed rejection results.
 //! Does not own: this module does not run task executors or invoke
 //! capabilities.
@@ -16,7 +16,6 @@
 //! assert!(set.set_id.starts_with("task-network-mutation-set-"));
 //! ```
 
-use crate::planning::PlanningDiagnostic;
 use crate::task_network::{
     contracts::{stable_id, TASK_NETWORK_SCHEMA_VERSION},
     state,
@@ -32,62 +31,55 @@ pub struct Set {
     pub set_id: String,
     /// Stable task network identifier.
     pub network_id: String,
-    /// Execution composition that produced this set.
-    pub source_composition_id: String,
+    /// Agent Task that produced this set.
+    #[serde(alias = "source_composition_id")]
+    pub source_task_id: String,
     /// Caller supplied idempotency key.
     pub idempotency_key: String,
     /// Proposed mutations.
     pub mutations: Vec<Mutation>,
-    /// Planning diagnostics preserved with the proposal.
-    pub diagnostics: Vec<PlanningDiagnostic>,
+    /// Historical planning diagnostics retained only while decoding old journals.
+    #[serde(default, rename = "diagnostics", skip_serializing_if = "Vec::is_empty")]
+    legacy_planning_diagnostics: Vec<serde_json::Value>,
 }
 
 impl Set {
     /// Creates an empty mutation set.
     pub fn empty(
         network_id: impl Into<String>,
-        source_composition_id: impl Into<String>,
+        source_task_id: impl Into<String>,
         idempotency_key: impl Into<String>,
     ) -> Self {
-        Self::new(
-            network_id,
-            source_composition_id,
-            idempotency_key,
-            Vec::new(),
-            Vec::new(),
-        )
+        Self::new(network_id, source_task_id, idempotency_key, Vec::new())
     }
 
     /// Creates a mutation set and derives its stable id.
     pub fn new(
         network_id: impl Into<String>,
-        source_composition_id: impl Into<String>,
+        source_task_id: impl Into<String>,
         idempotency_key: impl Into<String>,
         mutations: Vec<Mutation>,
-        diagnostics: Vec<PlanningDiagnostic>,
     ) -> Self {
         #[derive(Serialize)]
         struct Identity<'a> {
             schema_version: u32,
             network_id: &'a str,
-            source_composition_id: &'a str,
+            source_task_id: &'a str,
             idempotency_key: &'a str,
             mutations: &'a [Mutation],
-            diagnostics: &'a [PlanningDiagnostic],
         }
 
         let network_id = network_id.into();
-        let source_composition_id = source_composition_id.into();
+        let source_task_id = source_task_id.into();
         let idempotency_key = idempotency_key.into();
         let set_id = stable_id(
             "task-network-mutation-set",
             &Identity {
                 schema_version: TASK_NETWORK_SCHEMA_VERSION,
                 network_id: &network_id,
-                source_composition_id: &source_composition_id,
+                source_task_id: &source_task_id,
                 idempotency_key: &idempotency_key,
                 mutations: &mutations,
-                diagnostics: &diagnostics,
             },
         );
 
@@ -95,11 +87,16 @@ impl Set {
             schema_version: TASK_NETWORK_SCHEMA_VERSION,
             set_id,
             network_id,
-            source_composition_id,
+            source_task_id,
             idempotency_key,
             mutations,
-            diagnostics,
+            legacy_planning_diagnostics: Vec::new(),
         }
+    }
+
+    /// True when this set came from the retired Goal-planning format.
+    pub(crate) fn is_legacy_planning(&self) -> bool {
+        !self.legacy_planning_diagnostics.is_empty()
     }
 }
 

@@ -6,13 +6,14 @@ use meld_execution::capability::{
     CapabilityTypeContract, ExecutionClass, ExecutionContract, InputCardinality, InputSlotSpec,
     OutputSlotSpec, ScopeContract,
 };
-use meld_execution::planning::{
-    CompositionLoweringDiagnosticCode, ExecutionCompositionLowerer, OperatorResolutionReport,
-    OperatorResolutionStatus, PlanningWorldStateFrameRef,
-};
 use meld_execution::task::{
     ArtifactProducerRef, ArtifactRecord, CompiledTaskRecord, TaskCompiler, TaskInitSlotSpec,
     TaskRunContext,
+};
+use meld_execution::task_admission::{
+    ExecutionTask, TaskAdmissionApi, TaskAdmissionLineage, TaskAdmissionLowerer,
+    TaskAdmissionLoweringPlan, TaskAdmissionRecord, TaskAdmissionRequest,
+    TaskAdmissionRuntimeActor, TaskAdmissionRuntimeRequest,
 };
 use meld_execution::task_network::command::{Command, Request as CommandRequest};
 use meld_execution::task_network::dispatch::{
@@ -26,9 +27,8 @@ use meld_execution::task_network::state::{
 };
 use meld_execution::task_network::store::{InMemoryTaskNetworkStore, SledTaskNetworkStore};
 use meld_lang::{
-    Bindings, Composition, CostEstimate, Edge, EdgeKind, Effect, Goal, GoalLifecycle, GoalPriority,
-    GoalSource, Operator, Proposition, Resolution, SlotConstraint, Step, StepKind, Term,
-    ValidationResult,
+    AuthorityDecision, Bindings, CapabilityRef, Composition, CostEstimate, Edge, EdgeKind, Effect,
+    Operator, Proposition, Resolution, SlotConstraint, Step, StepKind, Term,
 };
 use serde_json::json;
 
@@ -76,12 +76,20 @@ pub fn catalog_with_required_node_binding() -> CapabilityCatalog {
                 scope_ref_kind: "node_id".to_string(),
                 allow_fan_out: false,
             },
-            binding_contract: vec![BindingSpec {
-                binding_id: "node".to_string(),
-                value_kind: BindingValueKind::Literal,
-                required: true,
-                affects_deterministic_identity: true,
-            }],
+            binding_contract: vec![
+                BindingSpec {
+                    binding_id: "node".to_string(),
+                    value_kind: BindingValueKind::Literal,
+                    required: true,
+                    affects_deterministic_identity: true,
+                },
+                BindingSpec {
+                    binding_id: "mode".to_string(),
+                    value_kind: BindingValueKind::Literal,
+                    required: false,
+                    affects_deterministic_identity: true,
+                },
+            ],
             input_contract: vec![],
             output_contract: vec![OutputSlotSpec {
                 slot_id: "patch".to_string(),
@@ -276,6 +284,33 @@ pub fn optional_input_dataflow_catalog() -> CapabilityCatalog {
         .unwrap();
     catalog
         .register(CapabilityTypeContract {
+            capability_type_id: "docs.produce_other_note".to_string(),
+            capability_version: 1,
+            owning_domain: "docs".to_string(),
+            scope_contract: ScopeContract {
+                scope_kind: "filesystem".to_string(),
+                scope_ref_kind: "node_id".to_string(),
+                allow_fan_out: false,
+            },
+            binding_contract: vec![],
+            input_contract: vec![],
+            output_contract: vec![OutputSlotSpec {
+                slot_id: "other_note".to_string(),
+                artifact_type_id: "other_note".to_string(),
+                schema_version: 2,
+                guaranteed: true,
+            }],
+            effect_contract: vec![],
+            execution_contract: ExecutionContract {
+                execution_class: ExecutionClass::Queued,
+                completion_semantics: "result_or_failure".to_string(),
+                retry_class: "provider_io".to_string(),
+                cancellation_supported: true,
+            },
+        })
+        .unwrap();
+    catalog
+        .register(CapabilityTypeContract {
             capability_type_id: "docs.consume_optional_note".to_string(),
             capability_version: 1,
             owning_domain: "docs".to_string(),
@@ -313,43 +348,10 @@ pub fn optional_input_dataflow_catalog() -> CapabilityCatalog {
     catalog
 }
 
-pub fn goal() -> Goal {
-    Goal {
-        goal_id: "goal-docs".to_string(),
-        agent_id: "agent-docs".to_string(),
-        target: Proposition::Accessible {
-            scope: Term::Object(DomainObjectRef::new("workspace", "node", "readme").unwrap()),
-        },
-        priority: GoalPriority {
-            urgency: 1,
-            cost_ceiling: None,
-        },
-        source: GoalSource::UserDirected {
-            directive: "refresh docs".to_string(),
-        },
-        lifecycle: GoalLifecycle::Active,
-    }
-}
-
-pub fn frame() -> PlanningWorldStateFrameRef {
-    PlanningWorldStateFrameRef {
-        frame_id: "frame-docs".to_string(),
-        projection_version: "world_model.planner.v1".to_string(),
-        perspective_id: "default".to_string(),
-        branch_id: "main".to_string(),
-        source_refs: vec!["source".to_string()],
-        warnings: vec![],
-    }
-}
-
-pub fn composition() -> meld_execution::planning::ExecutionComposition {
-    meld_execution::planning::ExecutionComposition {
-        composition_id: "composition-docs".to_string(),
-        goal: goal(),
-        world_state_frame: frame(),
-        method_id: "refresh_docs_v1".to_string(),
-        bindings: Bindings::empty(),
-        composition: Composition {
+pub fn composition() -> ExecutionTask {
+    task(
+        "task-docs",
+        Composition {
             steps: vec![Step {
                 step_id: "write".to_string(),
                 kind: StepKind::Op(Operator {
@@ -373,37 +375,26 @@ pub fn composition() -> meld_execution::planning::ExecutionComposition {
                         }],
                         scope_kind: Some("filesystem".to_string()),
                         tags: vec![],
-                        specific: None,
+                        specific: Some(CapabilityRef {
+                            capability_type_id: "docs.write".to_string(),
+                            capability_version: 1,
+                        }),
                     },
                 }),
             }],
             edges: vec![],
         },
-        projected_effects: vec![],
-        operator_resolutions: vec![OperatorResolutionReport {
-            operator_id: "write".to_string(),
-            status: OperatorResolutionStatus::Resolved,
-            capability_type_id: Some("docs.write".to_string()),
-            capability_version: Some(1),
-            tags: vec![],
-            diagnostics: vec![],
-        }],
-        validation: ValidationResult {
-            valid: true,
-            errors: vec![],
-            warnings: vec![],
-        },
-        diagnostics: vec![],
-        authority_decision: None,
-    }
+        catalog(),
+        vec!["docs.write"],
+    )
 }
 
-pub fn phase8_composition() -> meld_execution::planning::ExecutionComposition {
+pub fn phase8_composition() -> ExecutionTask {
     let mut composition = composition();
     composition.composition.steps = vec![
-        operator_step("prepare_metadata", "metadata_doc"),
-        operator_step("collect_context", "context_bundle"),
-        operator_step("write_summary", "summary_doc"),
+        operator_step("prepare_metadata", "metadata_doc", "docs.prepare_metadata"),
+        operator_step("collect_context", "context_bundle", "docs.collect_context"),
+        operator_step("write_summary", "summary_doc", "docs.write_summary"),
     ];
     composition.composition.edges = vec![
         Edge {
@@ -421,19 +412,23 @@ pub fn phase8_composition() -> meld_execution::planning::ExecutionComposition {
             },
         },
     ];
-    composition.operator_resolutions = vec![
-        phase8_resolution("prepare_metadata", "docs.prepare_metadata"),
-        phase8_resolution("collect_context", "docs.collect_context"),
-        phase8_resolution("write_summary", "docs.write_summary"),
-    ];
-    composition
+    task(
+        "task-phase8",
+        composition.composition,
+        phase8_catalog(),
+        vec![
+            "docs.prepare_metadata",
+            "docs.collect_context",
+            "docs.write_summary",
+        ],
+    )
 }
 
-pub fn single_input_dataflow_composition() -> meld_execution::planning::ExecutionComposition {
+pub fn single_input_dataflow_composition() -> ExecutionTask {
     let mut composition = composition();
     composition.composition.steps = vec![
-        operator_step("prepare_metadata", "metadata_doc"),
-        operator_step("write_metadata", "summary_doc"),
+        operator_step("prepare_metadata", "metadata_doc", "docs.prepare_metadata"),
+        operator_step("write_metadata", "summary_doc", "docs.write_metadata"),
     ];
     composition.composition.edges = vec![Edge {
         from: "prepare_metadata".to_string(),
@@ -442,18 +437,27 @@ pub fn single_input_dataflow_composition() -> meld_execution::planning::Executio
             artifact_type: Term::ArtifactType("metadata_doc".to_string()),
         },
     }];
-    composition.operator_resolutions = vec![
-        phase8_resolution("prepare_metadata", "docs.prepare_metadata"),
-        phase8_resolution("write_metadata", "docs.write_metadata"),
-    ];
-    composition
+    task(
+        "task-dataflow",
+        composition.composition,
+        single_input_dataflow_catalog(),
+        vec!["docs.prepare_metadata", "docs.write_metadata"],
+    )
 }
 
-pub fn optional_input_dataflow_composition() -> meld_execution::planning::ExecutionComposition {
+pub fn optional_input_dataflow_composition() -> ExecutionTask {
     let mut composition = composition();
     composition.composition.steps = vec![
-        operator_step("produce_optional_note", "optional_note"),
-        operator_step("consume_optional_note", "summary_doc"),
+        operator_step(
+            "produce_optional_note",
+            "optional_note",
+            "docs.produce_optional_note",
+        ),
+        operator_step(
+            "consume_optional_note",
+            "summary_doc",
+            "docs.consume_optional_note",
+        ),
     ];
     composition.composition.edges = vec![Edge {
         from: "produce_optional_note".to_string(),
@@ -462,26 +466,106 @@ pub fn optional_input_dataflow_composition() -> meld_execution::planning::Execut
             artifact_type: Term::ArtifactType("optional_note".to_string()),
         },
     }];
-    composition.operator_resolutions = vec![
-        phase8_resolution("produce_optional_note", "docs.produce_optional_note"),
-        phase8_resolution("consume_optional_note", "docs.consume_optional_note"),
-    ];
-    composition
+    task(
+        "task-optional-dataflow",
+        composition.composition,
+        optional_input_dataflow_catalog(),
+        vec!["docs.produce_optional_note", "docs.consume_optional_note"],
+    )
 }
 
-pub fn lower_phase8() -> meld_execution::planning::CompositionLoweringPlan {
-    let lowerer = ExecutionCompositionLowerer::new(TaskCompiler::new(), phase8_catalog());
-    lowerer
-        .lower(meld_execution::planning::CompositionLoweringRequest {
-            request_id: "lower-docs".to_string(),
-            network_id: "network-docs".to_string(),
-            composition: phase8_composition(),
-            idempotency_key: "lower-once".to_string(),
-        })
-        .unwrap()
+pub fn duplicate_optional_input_dataflow_composition() -> ExecutionTask {
+    let mut composition = optional_input_dataflow_composition();
+    composition.composition.steps.insert(
+        1,
+        operator_step(
+            "produce_other_note",
+            "other_note",
+            "docs.produce_other_note",
+        ),
+    );
+    composition.composition.edges.push(Edge {
+        from: "produce_other_note".to_string(),
+        to: "consume_optional_note".to_string(),
+        kind: EdgeKind::DataFlow {
+            artifact_type: Term::ArtifactType("other_note".to_string()),
+        },
+    });
+    task(
+        "task-duplicate-optional-dataflow",
+        composition.composition,
+        optional_input_dataflow_catalog(),
+        vec![
+            "docs.produce_optional_note",
+            "docs.produce_other_note",
+            "docs.consume_optional_note",
+        ],
+    )
 }
 
-fn operator_step(step_id: &str, output_artifact_type_id: &str) -> Step {
+pub fn lower_phase8() -> TaskAdmissionLoweringPlan {
+    let catalog = phase8_catalog();
+    let record = admitted(phase8_composition(), &catalog);
+    TaskAdmissionLowerer::new(TaskCompiler::new(), catalog).lower("network-docs", &record)
+}
+
+pub fn admit_and_lower_phase8(store: &mut SledTaskNetworkStore) -> TaskAdmissionLoweringPlan {
+    let catalog = phase8_catalog();
+    let record = TaskAdmissionApi::new(store, &catalog, "generation-v1", "policy-content-docs-v1")
+        .admit(admission_request(phase8_composition()))
+        .unwrap();
+    TaskAdmissionLowerer::new(TaskCompiler::new(), catalog).lower("network-docs", &record)
+}
+
+pub fn admit_and_lower_phase8_in_memory(
+    store: &mut InMemoryTaskNetworkStore,
+) -> TaskAdmissionLoweringPlan {
+    let catalog = phase8_catalog();
+    let record = TaskAdmissionApi::new(store, &catalog, "generation-v1", "policy-content-docs-v1")
+        .admit(admission_request(phase8_composition()))
+        .unwrap();
+    TaskAdmissionLowerer::new(TaskCompiler::new(), catalog).lower("network-docs", &record)
+}
+
+pub fn admit_and_realize_phase8(store: &mut SledTaskNetworkStore) {
+    let catalog = phase8_catalog();
+    TaskAdmissionApi::new(store, &catalog, "generation-v1", "policy-content-docs-v1")
+        .admit(admission_request(phase8_composition()))
+        .unwrap();
+    let actor =
+        TaskAdmissionRuntimeActor::new(TaskAdmissionLowerer::new(TaskCompiler::new(), catalog));
+    let report = actor
+        .run_once(
+            store,
+            TaskAdmissionRuntimeRequest {
+                network_id: "network-docs".to_string(),
+                max_items: 1,
+            },
+        )
+        .unwrap();
+    assert_eq!(report.committed, 1, "{report:#?}");
+}
+
+pub fn admit_and_realize_phase8_in_memory(store: &mut InMemoryTaskNetworkStore) {
+    let catalog = phase8_catalog();
+    TaskAdmissionApi::new(store, &catalog, "generation-v1", "policy-content-docs-v1")
+        .admit(admission_request(phase8_composition()))
+        .unwrap();
+    let actor =
+        TaskAdmissionRuntimeActor::new(TaskAdmissionLowerer::new(TaskCompiler::new(), catalog));
+    let report = actor
+        .run_once_in_memory(
+            store,
+            TaskAdmissionRuntimeRequest {
+                network_id: "network-docs".to_string(),
+                max_items: 1,
+            },
+        )
+        .unwrap();
+    assert_eq!(report.committed, 1, "{report:#?}");
+}
+
+fn operator_step(step_id: &str, output_artifact_type_id: &str, capability_type_id: &str) -> Step {
     Step {
         step_id: step_id.to_string(),
         kind: StepKind::Op(Operator {
@@ -501,51 +585,95 @@ fn operator_step(step_id: &str, output_artifact_type_id: &str) -> Step {
                 }],
                 scope_kind: Some("filesystem".to_string()),
                 tags: vec![],
-                specific: None,
+                specific: Some(CapabilityRef {
+                    capability_type_id: capability_type_id.to_string(),
+                    capability_version: 1,
+                }),
             },
         }),
     }
 }
 
-fn phase8_resolution(operator_id: &str, capability_type_id: &str) -> OperatorResolutionReport {
-    OperatorResolutionReport {
-        operator_id: operator_id.to_string(),
-        status: OperatorResolutionStatus::Resolved,
-        capability_type_id: Some(capability_type_id.to_string()),
-        capability_version: Some(1),
-        tags: vec![],
-        diagnostics: vec![],
-    }
-}
-
-pub fn unresolved_composition() -> meld_execution::planning::ExecutionComposition {
+pub fn unresolved_composition() -> ExecutionTask {
     let mut composition = composition();
-    composition.operator_resolutions[0].status = OperatorResolutionStatus::Unresolved;
+    let StepKind::Op(operator) = &mut composition.composition.steps[0].kind else {
+        unreachable!();
+    };
+    operator.resolution.specific = None;
     composition
 }
 
-pub fn lower() -> meld_execution::planning::CompositionLoweringPlan {
-    let lowerer = ExecutionCompositionLowerer::new(TaskCompiler::new(), catalog());
-    lowerer
-        .lower(meld_execution::planning::CompositionLoweringRequest {
-            request_id: "lower-docs".to_string(),
-            network_id: "network-docs".to_string(),
-            composition: composition(),
-            idempotency_key: "lower-once".to_string(),
-        })
-        .unwrap()
+pub fn lower() -> TaskAdmissionLoweringPlan {
+    let catalog = catalog();
+    let record = admitted(composition(), &catalog);
+    TaskAdmissionLowerer::new(TaskCompiler::new(), catalog).lower("network-docs", &record)
 }
 
-pub fn lower_unresolved() -> meld_execution::planning::CompositionLoweringPlan {
-    let lowerer = ExecutionCompositionLowerer::new(TaskCompiler::new(), catalog());
-    lowerer
-        .lower(meld_execution::planning::CompositionLoweringRequest {
-            request_id: "lower-docs".to_string(),
-            network_id: "network-docs".to_string(),
-            composition: unresolved_composition(),
-            idempotency_key: "lower-once".to_string(),
-        })
-        .unwrap()
+pub fn lower_unresolved() -> TaskAdmissionLoweringPlan {
+    let catalog = catalog();
+    let record = admitted(unresolved_composition(), &catalog);
+    TaskAdmissionLowerer::new(TaskCompiler::new(), catalog).lower("network-docs", &record)
+}
+
+fn task(
+    task_id: &str,
+    composition: Composition,
+    catalog: CapabilityCatalog,
+    actions: Vec<&str>,
+) -> ExecutionTask {
+    let mut capability_contract_ids = actions
+        .iter()
+        .map(|action| catalog.get(action, 1).unwrap().content_identity())
+        .collect::<Vec<_>>();
+    capability_contract_ids.sort();
+    ExecutionTask {
+        task_id: task_id.to_string(),
+        composition,
+        bindings: Bindings::empty(),
+        capability_contract_ids,
+        expected_outcome_contract_id: "docs-output-v1".to_string(),
+        authority_requirements: actions.into_iter().map(str::to_string).collect(),
+        idempotency_key: task_id.to_string(),
+    }
+}
+
+fn admission_request(task: ExecutionTask) -> TaskAdmissionRequest {
+    let actions = task.authority_requirements.clone();
+    TaskAdmissionRequest {
+        lineage: TaskAdmissionLineage {
+            agent_id: "agent-docs".to_string(),
+            goal_id: "goal-docs".to_string(),
+            plan_revision_id: "plan-docs-v1".to_string(),
+            product_id: task.task_id.clone(),
+            authorization_id: format!("authorization::{}", task.task_id),
+            context_id: "context-docs-v1".to_string(),
+            authority_scope_id: "policy-docs".to_string(),
+            authority_policy_content_hash: "policy-content-docs-v1".to_string(),
+            authority_decision: Some(AuthorityDecision {
+                policy_id: "policy-docs".to_string(),
+                policy_content_hash: "policy-content-docs-v1".to_string(),
+                principal_id: "agent-docs".to_string(),
+                subject: DomainObjectRef::new("workspace", "node", "readme").unwrap(),
+                requested_action_ids: actions.clone(),
+                authorized_action_ids: actions,
+            }),
+            activation_generation: "generation-v1".to_string(),
+        },
+        idempotency_key: task.idempotency_key.clone(),
+        task,
+    }
+}
+
+fn admitted(task: ExecutionTask, catalog: &CapabilityCatalog) -> TaskAdmissionRecord {
+    let mut store = InMemoryTaskNetworkStore::new("network-docs");
+    TaskAdmissionApi::new(
+        &mut store,
+        catalog,
+        "generation-v1",
+        "policy-content-docs-v1",
+    )
+    .admit(admission_request(task))
+    .unwrap()
 }
 
 pub fn command_for_state(
@@ -611,17 +739,12 @@ pub fn single_task_node(task_instance_id: &str) -> TaskNode {
             session_id: Some("session-task-network".to_string()),
             trigger: "task-network.test".to_string(),
         },
-        lineage: TaskLineage {
-            composition_id: "composition-fixture".to_string(),
-            goal_id: "goal-fixture".to_string(),
-            method_id: "method-fixture".to_string(),
-            step_id: format!("step-{task_instance_id}"),
-            operator_id: format!("operator-{task_instance_id}"),
-            world_state_frame_id: "frame-fixture".to_string(),
-            capability_type_id: "docs.write".to_string(),
-            capability_version: 1,
-            authority_decision: None,
-        },
+        lineage: TaskLineage::unattributed(
+            format!("step-{task_instance_id}"),
+            format!("operator-{task_instance_id}"),
+            "docs.write".to_string(),
+            1,
+        ),
     }
 }
 
@@ -688,7 +811,6 @@ pub fn single_task_mutation_set(task_instance_id: &str) -> Set {
             single_task_node(task_instance_id),
             vec![],
         ))],
-        vec![],
     )
 }
 
@@ -710,7 +832,6 @@ pub fn two_task_ordering_set(upstream: &str, downstream: &str) -> Set {
                 }],
             )),
         ],
-        vec![],
     )
 }
 
@@ -758,6 +879,7 @@ pub fn outcome_for_claim(outcome_id: &str, task_instance_id: &str, claim: &Claim
             },
         }],
         task_events: vec![],
+        admission: claim.admission.clone(),
     }
 }
 
@@ -820,11 +942,9 @@ pub fn sled_store_with_one_committed_task(tempdir: &tempfile::TempDir) -> SledTa
     store
 }
 
-pub fn assert_unresolved_operator_diagnostic(
-    plan: &meld_execution::planning::CompositionLoweringPlan,
-) {
-    assert_eq!(
-        plan.diagnostics[0].code,
-        CompositionLoweringDiagnosticCode::OperatorUnresolved
-    );
+pub fn assert_unresolved_operator_diagnostic(plan: &TaskAdmissionLoweringPlan) {
+    assert!(plan
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.contains("no exact Capability reference")));
 }

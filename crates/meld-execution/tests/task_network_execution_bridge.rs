@@ -192,19 +192,10 @@ fn claim_execute_and_record(
 
 #[test]
 fn phase8_task_network_slice_runs_and_survives_reopen() {
-    let plan = task_network_support::lower_phase8();
     let tempdir = tempfile::tempdir().unwrap();
     let db = sled::open(tempdir.path()).unwrap();
     let mut store = SledTaskNetworkStore::open(db, "network-docs").unwrap();
-    let commit = task_network_support::apply_sled_command(
-        &store,
-        "command-commit",
-        Command::ApplyMutationSet(plan.mutations),
-    );
-    assert!(matches!(
-        store.submit(commit).unwrap(),
-        Response::Accepted { .. }
-    ));
+    task_network_support::admit_and_realize_phase8(&mut store);
     let ids = step_ids(store.state());
 
     assert_eq!(
@@ -290,16 +281,10 @@ fn phase8_task_network_slice_runs_and_survives_reopen() {
 
 #[test]
 fn task_runtime_failure_converts_to_failed_network_outcome() {
-    let plan = task_network_support::lower_phase8();
     let tempdir = tempfile::tempdir().unwrap();
     let db = sled::open(tempdir.path()).unwrap();
     let mut store = SledTaskNetworkStore::open(db, "network-docs").unwrap();
-    let commit = task_network_support::apply_sled_command(
-        &store,
-        "command-commit",
-        Command::ApplyMutationSet(plan.mutations),
-    );
-    store.submit(commit).unwrap();
+    task_network_support::admit_and_realize_phase8(&mut store);
     let ids = step_ids(store.state());
     let task_instance_id = &ids["prepare_metadata"];
     let claim_request = DispatchRequest {

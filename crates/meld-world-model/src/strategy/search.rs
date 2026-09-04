@@ -472,29 +472,48 @@ fn finish_candidate(
     }
     contract_ids.sort();
     contract_ids.dedup();
+    let mut authority_requirements = composition
+        .steps
+        .iter()
+        .filter_map(|step| match &step.kind {
+            StepKind::Op(operator) => operator
+                .resolution
+                .specific
+                .as_ref()
+                .map(|specific| specific.capability_type_id.clone()),
+            StepKind::Goal(_) => None,
+        })
+        .collect::<Vec<_>>();
+    authority_requirements.sort();
+    authority_requirements.dedup();
     let evaluation = evaluate_candidate(&composition);
+    let return_milestone = PlanMilestoneRequirement::ExecutionTerminal {
+        task_id: "pending".to_string(),
+    };
     let task_id = stable_id(
         "strategy-task-v1",
         &(
             &request.problem.goal.goal_id,
             &request.problem.planner_cut.cut_id,
             &composition,
+            &bindings,
             &contract_ids,
             &rule.evidence_route.outcome_contract_id,
+            &return_milestone,
         ),
     );
+    let return_milestone = PlanMilestoneRequirement::ExecutionTerminal {
+        task_id: task_id.clone(),
+    };
     let task = StrategyTask {
         task_id: task_id.clone(),
         composition: composition.clone(),
+        bindings: bindings.clone(),
         capability_contract_ids: contract_ids.clone(),
         expected_outcome_contract_id: rule.evidence_route.outcome_contract_id.clone(),
-        authority_requirements: request
-            .problem
-            .capabilities
-            .iter()
-            .map(|item| item.contract_id.clone())
-            .collect(),
+        authority_requirements,
         idempotency_key: format!("task::{task_id}"),
+        return_milestone: Some(return_milestone),
     };
     let epistemic_operations = request
         .problem

@@ -304,7 +304,6 @@ fn invalid_graph_rejects_before_state_mutation() {
                 origin: DependencyEdgeOrigin::Unrecorded,
             }],
         ))],
-        vec![],
     );
     let request = task_network_support::apply_memory_command(
         &store,
@@ -337,7 +336,6 @@ fn missing_required_init_source_rejects_before_state_mutation() {
             node,
             vec![],
         ))],
-        vec![],
     );
     let request = task_network_support::apply_memory_command(
         &store,
@@ -370,7 +368,6 @@ fn duplicate_init_source_rejects_before_state_mutation() {
             node,
             vec![],
         ))],
-        vec![],
     );
     let request = task_network_support::apply_memory_command(
         &store,
@@ -408,7 +405,6 @@ fn contract_mismatched_init_source_rejects_before_state_mutation() {
             node,
             vec![],
         ))],
-        vec![],
     );
     let request = task_network_support::apply_memory_command(
         &store,
@@ -454,7 +450,6 @@ fn data_flow_edge_without_matching_upstream_source_rejects_before_state_mutation
                 }],
             )),
         ],
-        vec![],
     );
     let request = task_network_support::apply_memory_command(
         &store,
@@ -493,7 +488,6 @@ fn upstream_source_without_matching_data_flow_edge_rejects_before_state_mutation
                 vec![],
             )),
         ],
-        vec![],
     );
     let request = task_network_support::apply_memory_command(
         &store,
@@ -538,7 +532,6 @@ fn cycle_validation_rejects_before_state_mutation() {
                 }],
             )),
         ],
-        vec![],
     );
     let request = task_network_support::apply_memory_command(
         &store,
@@ -577,7 +570,6 @@ fn duplicate_edges_are_deduped_on_commit() {
                 vec![duplicate_edge.clone(), duplicate_edge.clone()],
             )),
         ],
-        vec![],
     );
     let request = task_network_support::apply_memory_command(
         &store,
@@ -616,7 +608,6 @@ fn mixed_origin_duplicate_edges_dedupe_to_recorded_origin() {
                 vec![unrecorded, semantic.clone()],
             )),
         ],
-        vec![],
     );
     let request = task_network_support::apply_memory_command(
         &store,
@@ -651,7 +642,6 @@ fn pre_origin_snapshot_keeps_serialized_form_and_state_hash() {
                 vec![edge],
             )),
         ],
-        vec![],
     );
     let request = task_network_support::apply_memory_command(
         &store,
@@ -794,7 +784,6 @@ fn no_path_precondition_distinguishes_reachable_and_unreachable_nodes() {
                 }],
             )),
         ],
-        vec![],
     );
     let commit = task_network_support::apply_memory_command(
         &store,

@@ -34,7 +34,6 @@ fn commit_single_task_for_store(store: &mut SledTaskNetworkStore, task_instance_
             task_network_support::single_task_node(task_instance_id),
             vec![],
         ))],
-        vec![],
     );
     let request = task_network_support::apply_sled_command(
         store,

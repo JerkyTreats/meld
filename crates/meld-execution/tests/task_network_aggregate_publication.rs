@@ -188,6 +188,7 @@ fn terminal_outcome(status: OutcomeStatus, artifact_records: Vec<ArtifactRecord>
         },
         artifact_records,
         task_events: vec![],
+        admission: None,
     }
 }
 

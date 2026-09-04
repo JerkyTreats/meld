@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use meld_execution::planning::PlanningRuntimeActorReport;
+use meld_execution::task_admission::TaskAdmissionRuntimeReport;
 use meld_execution::task_network::{PublicationBridgeReport, PublicationRuntimeReport};
 use meld_world_model::world_state::graph::runtime::GraphCatchUpReport;
 use serde::{Deserialize, Serialize};
@@ -1180,14 +1180,46 @@ impl From<PublicationRuntimeReport> for WorkerTickReport {
     }
 }
 
-impl From<PlanningRuntimeActorReport> for WorkerTickReport {
-    fn from(report: PlanningRuntimeActorReport) -> Self {
+impl From<TaskAdmissionRuntimeReport> for WorkerTickReport {
+    fn from(report: TaskAdmissionRuntimeReport) -> Self {
+        let mut retryable_errors = Vec::new();
+        let mut fatal_errors = Vec::new();
+        let mut waiting_on = Vec::new();
+        for item in report.items {
+            match item.result {
+                Ok(meld_execution::task_network::Response::Rejected(rejection)) => {
+                    retryable_errors.push(WorkerTickIssue {
+                        item_id: Some(item.admission_id),
+                        code: "task_admission_commit_rejected".to_string(),
+                        message: format!("{rejection:?}"),
+                    });
+                }
+                Ok(_) => {}
+                Err(diagnostics) => {
+                    fatal_errors.push(WorkerTickIssue {
+                        item_id: Some(item.admission_id),
+                        code: "task_admission_lowering_failed".to_string(),
+                        message: diagnostics.join("; "),
+                    });
+                }
+            }
+        }
+        if report.attempted == 0 {
+            waiting_on.push(WaitingOnDeclaration {
+                condition: "task_admission_available".to_string(),
+                subject_key: None,
+                detail: format!(
+                    "no admitted unlowered Task at network revision {}",
+                    report.output_revision
+                ),
+            });
+        }
         Self {
-            actor_id: report.actor_id,
+            actor_id: "execution.task_admission.runtime".to_string(),
             scope: WorkerScope {
                 domain_id: "execution".to_string(),
                 stream_id: None,
-                work_key: Some("planning".to_string()),
+                work_key: Some("task_admission".to_string()),
                 agent_id: None,
                 perspective_key: None,
                 branch_id: None,
@@ -1203,34 +1235,10 @@ impl From<PlanningRuntimeActorReport> for WorkerTickReport {
             },
             items_attempted: report.attempted,
             items_committed: report.committed,
-            retryable_errors: report
-                .retryable_errors
-                .into_iter()
-                .map(|issue| WorkerTickIssue {
-                    item_id: issue.goal_id,
-                    code: issue.code,
-                    message: issue.message,
-                })
-                .collect(),
-            fatal_errors: report
-                .fatal_errors
-                .into_iter()
-                .map(|issue| WorkerTickIssue {
-                    item_id: issue.goal_id,
-                    code: issue.code,
-                    message: issue.message,
-                })
-                .collect(),
+            retryable_errors,
+            fatal_errors,
             budget_exhausted: report.budget_exhausted,
-            waiting_on: report
-                .waiting_on
-                .into_iter()
-                .map(|declaration| WaitingOnDeclaration {
-                    condition: declaration.condition,
-                    subject_key: declaration.subject_key,
-                    detail: declaration.detail,
-                })
-                .collect(),
+            waiting_on,
         }
     }
 }
@@ -1238,7 +1246,6 @@ impl From<PlanningRuntimeActorReport> for WorkerTickReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use meld_execution::planning::PlanningRuntimeActorIssue;
     use meld_execution::task_network::publication::{
         PublicationBridgeIssue, PublicationBridgeScope,
     };
@@ -1343,46 +1350,6 @@ mod tests {
     }
 
     #[test]
-    fn planning_runtime_report_maps_to_worker_report() {
-        let report = PlanningRuntimeActorReport {
-            actor_id: "execution.planning".to_string(),
-            active_goal_count: 3,
-            input_revision: 10,
-            output_revision: 11,
-            attempted: 1,
-            committed: 1,
-            retryable_errors: vec![PlanningRuntimeActorIssue {
-                goal_id: Some("goal-a".to_string()),
-                code: "projection_unavailable".to_string(),
-                message: "projection unavailable".to_string(),
-            }],
-            fatal_errors: Vec::new(),
-            budget_exhausted: false,
-            results: Vec::new(),
-            waiting_on: vec![meld_execution::WaitingOnDeclaration::broad(
-                "no_active_goals",
-                "no active goal record exists in execution-owned storage",
-            )],
-        };
-
-        let worker: WorkerTickReport = report.into();
-
-        assert_eq!(worker.waiting_on.len(), 1);
-        assert_eq!(worker.waiting_on[0].condition, "no_active_goals");
-
-        assert_eq!(worker.actor_id, "execution.planning");
-        assert_eq!(worker.scope.work_key.as_deref(), Some("planning"));
-        assert_eq!(worker.input_checkpoint.name, "task_network_revision");
-        assert_eq!(worker.output_checkpoint.value, 11);
-        assert_eq!(worker.items_attempted, 1);
-        assert_eq!(worker.items_committed, 1);
-        assert_eq!(
-            worker.retryable_errors[0].item_id.as_deref(),
-            Some("goal-a")
-        );
-    }
-
-    #[test]
     fn worker_report_maps_to_runtime_action_record() {
         let report = WorkerTickReport {
             actor_id: "world_state.graph.reducer".to_string(),
@@ -1442,11 +1409,11 @@ mod tests {
     #[test]
     fn worker_report_action_classification_covers_issue_paths() {
         let mut report = WorkerTickReport {
-            actor_id: "execution.planning".to_string(),
+            actor_id: "execution.task_admission".to_string(),
             scope: WorkerScope {
                 domain_id: "execution".to_string(),
                 stream_id: None,
-                work_key: Some("planning".to_string()),
+                work_key: Some("task_admission".to_string()),
                 agent_id: None,
                 perspective_key: None,
                 branch_id: None,
@@ -1470,7 +1437,7 @@ mod tests {
 
         let no_work = RuntimeActionRecord::from_worker_tick(
             "action-no-work",
-            "execution.planning",
+            "execution.task_admission",
             3,
             report.clone(),
         );
@@ -1485,7 +1452,7 @@ mod tests {
         });
         let retryable = RuntimeActionRecord::from_worker_tick(
             "action-retryable",
-            "execution.planning",
+            "execution.task_admission",
             4,
             report.clone(),
         );
@@ -1498,11 +1465,15 @@ mod tests {
 
         report.fatal_errors.push(WorkerTickIssue {
             item_id: Some("goal-a".to_string()),
-            code: "planning_failed".to_string(),
-            message: "planning failed".to_string(),
+            code: "task_admission_failed".to_string(),
+            message: "Task admission failed".to_string(),
         });
-        let fatal =
-            RuntimeActionRecord::from_worker_tick("action-fatal", "execution.planning", 5, report);
+        let fatal = RuntimeActionRecord::from_worker_tick(
+            "action-fatal",
+            "execution.task_admission",
+            5,
+            report,
+        );
         assert_eq!(fatal.outcome, RuntimeActionOutcome::FatalFailure);
         assert_eq!(fatal.metrics.fatal_issue_count, 1);
         assert_eq!(fatal.issues[1].severity, RuntimeActionIssueSeverity::Fatal);

@@ -425,7 +425,7 @@ mod tests {
 
         assert_eq!(latest.action_id, "action-2");
         assert!(reports
-            .latest_action_for_runtime("execution.planning")
+            .latest_action_for_runtime("execution.task_admission")
             .unwrap()
             .is_none());
     }
@@ -498,7 +498,7 @@ mod tests {
     #[test]
     fn fatal_report_is_preserved_with_full_issue_detail() {
         let (_temp, mut reports) = open_report_store();
-        let mut report = worker_report("execution.planning", 3, 3);
+        let mut report = worker_report("execution.task_admission", 3, 3);
         report.fatal_errors.push(WorkerTickIssue {
             item_id: Some("goal-a".to_string()),
             code: "planning_failed".to_string(),
@@ -507,14 +507,14 @@ mod tests {
         reports
             .publish_action(&RuntimeActionRecord::from_worker_tick(
                 "action-fatal",
-                "execution.planning",
+                "execution.task_admission",
                 30,
                 report,
             ))
             .unwrap();
 
         let latest = reports
-            .latest_action_for_runtime("execution.planning")
+            .latest_action_for_runtime("execution.task_admission")
             .unwrap()
             .unwrap();
 

@@ -12,7 +12,10 @@ use crate::task_network::{
     mutation::{self, CommitRecord, Rejection},
     outcome::{Publication, PublicationState},
     readiness::{compute_ready_set, validate_active_graph},
-    state::{DependencyEdge, DependencyEdgeOrigin, DependencyKind, NetworkState, TaskStatus},
+    state::{
+        validate_task_admission_attribution, validate_task_admission_attribution_for_lowering,
+        DependencyEdge, DependencyEdgeOrigin, DependencyKind, NetworkState, TaskStatus,
+    },
     store::{codec::decode_error, error::TaskNetworkStoreError, records::StoredJournalRecord},
 };
 use serde::{Deserialize, Serialize};
@@ -50,6 +53,22 @@ impl InMemoryTaskNetworkStore {
 
     /// Submits one command through the single writer reducer.
     pub fn submit(&mut self, request: command::Request) -> command::Response {
+        self.submit_with_admitted_regions(request, false)
+    }
+
+    /// Records one region produced by the canonical admitted-Task lowerer.
+    pub(crate) fn submit_validated_task_region(
+        &mut self,
+        request: crate::task_admission::ValidatedTaskRegionWrite,
+    ) -> command::Response {
+        self.submit_with_admitted_regions(request.into_request(), true)
+    }
+
+    fn submit_with_admitted_regions(
+        &mut self,
+        request: command::Request,
+        allow_admitted_region: bool,
+    ) -> command::Response {
         let request_hash = command_request_hash(&request);
         let command_id = request.command_id.clone();
         if let Some(stored_hash) = self.command_requests.get(&command_id) {
@@ -108,7 +127,22 @@ impl InMemoryTaskNetworkStore {
 
         match request.command {
             command::Command::ApplyMutationSet(set) => {
-                self.apply_mutation_set(request.command_id, request_hash, set)
+                if !allow_admitted_region && mutation_set_has_admission_attribution(&set) {
+                    return self.record_response(
+                        request.command_id,
+                        request_hash,
+                        command::Response::Rejected(Rejection::InvalidGraph(
+                            "admitted Task regions require the canonical lowering route"
+                                .to_string(),
+                        )),
+                    );
+                }
+                self.apply_mutation_set(
+                    request.command_id,
+                    request_hash,
+                    set,
+                    allow_admitted_region,
+                )
             }
             command::Command::ClaimReadyTask(claim_request) => {
                 self.claim_ready_task(request.command_id, request_hash, claim_request)
@@ -120,6 +154,99 @@ impl InMemoryTaskNetworkStore {
                 self.mark_publication(request.command_id, request_hash, publication)
             }
         }
+    }
+
+    /// Records one decision that the canonical Task admission facade validated.
+    pub(crate) fn submit_validated_task_admission(
+        &mut self,
+        request: crate::task_admission::ValidatedTaskAdmissionWrite,
+    ) -> command::Response {
+        let request_hash = stable_hash(&request);
+        let command_id = request.command_id.clone();
+        if let Some(stored_hash) = self.command_requests.get(&command_id) {
+            if stored_hash == &request_hash {
+                return self
+                    .command_responses
+                    .get(&command_id)
+                    .map(duplicate_or_replay)
+                    .unwrap_or_else(|| {
+                        command::Response::Rejected(Rejection::DuplicateCommand(command_id))
+                    });
+            }
+            return command::Response::Rejected(Rejection::DuplicateCommand(command_id));
+        }
+        if request.network_id != self.state.network_id {
+            return self.record_response(
+                command_id,
+                request_hash,
+                command::Response::Rejected(Rejection::InvalidGraph(format!(
+                    "Task admission targeted network '{}' but store owns '{}'",
+                    request.network_id, self.state.network_id
+                ))),
+            );
+        }
+        if request.base_revision != self.state.revision {
+            return self.record_response(
+                command_id,
+                request_hash,
+                command::Response::Rejected(Rejection::StaleBase {
+                    expected: request.base_revision,
+                    actual: self.state.revision,
+                }),
+            );
+        }
+        if request.base_state_hash != self.state.state_hash {
+            return self.record_response(
+                command_id,
+                request_hash,
+                command::Response::Rejected(Rejection::StateHashMismatch {
+                    expected: request.base_state_hash,
+                    actual: self.state.state_hash.clone(),
+                }),
+            );
+        }
+        self.record_task_admission(command_id, request_hash, request.admission)
+    }
+
+    fn record_task_admission(
+        &mut self,
+        command_id: String,
+        request_hash: String,
+        mut admission: crate::task_admission::TaskAdmissionRecord,
+    ) -> command::Response {
+        if let Some(existing) = self.state.admissions.get(&admission.admission_id) {
+            if existing.request == admission.request && existing.decision == admission.decision {
+                return self.record_response(
+                    command_id,
+                    request_hash,
+                    command::Response::Duplicate {
+                        revision: existing.recorded_revision,
+                        state_hash: self.state.state_hash.clone(),
+                    },
+                );
+            }
+            return self.record_response(
+                command_id,
+                request_hash,
+                command::Response::Rejected(Rejection::DuplicateCommand(admission.admission_id)),
+            );
+        }
+        let revision = self.state.revision + 1;
+        admission.recorded_revision = revision;
+        self.state
+            .admissions
+            .insert(admission.admission_id.clone(), admission.clone());
+        self.state.set_revision_and_hash(revision);
+        self.journal
+            .push(JournalRecord::Admission(Box::new(admission)));
+        self.record_response(
+            command_id,
+            request_hash,
+            command::Response::Accepted {
+                revision: self.state.revision,
+                state_hash: self.state.state_hash.clone(),
+            },
+        )
     }
 
     fn record_response(
@@ -139,7 +266,21 @@ impl InMemoryTaskNetworkStore {
         command_id: String,
         request_hash: String,
         set: mutation::Set,
+        allow_admitted_region: bool,
     ) -> command::Response {
+        if set.is_legacy_planning()
+            || set.mutations.iter().any(|mutation| match mutation {
+                mutation::Mutation::Inject(inject) => inject.task_node.lineage.is_legacy_planning(),
+            })
+        {
+            return self.record_response(
+                command_id,
+                request_hash,
+                command::Response::Rejected(Rejection::InvalidGraph(
+                    "retired planning lineage is read-only".to_string(),
+                )),
+            );
+        }
         if set.network_id != self.state.network_id {
             return self.record_response(
                 command_id,
@@ -148,6 +289,14 @@ impl InMemoryTaskNetworkStore {
                     "mutation set targeted network '{}' but store owns '{}'",
                     set.network_id, self.state.network_id
                 ))),
+            );
+        }
+
+        if let Err(error) = validate_admitted_mutation_set(&self.state, &set) {
+            return self.record_response(
+                command_id,
+                request_hash,
+                command::Response::Rejected(Rejection::InvalidGraph(error)),
             );
         }
 
@@ -189,6 +338,10 @@ impl InMemoryTaskNetworkStore {
                     proposed.edges.extend(inject.incoming_edges.clone());
                 }
             }
+        }
+
+        if allow_admitted_region {
+            seal_admitted_region_node_hashes(&mut proposed, &set);
         }
 
         dedupe_edges(&mut proposed.edges);
@@ -260,6 +413,14 @@ impl InMemoryTaskNetworkStore {
             );
         };
 
+        if let Err(error) = validate_task_admission_attribution(&self.state, node) {
+            return self.record_response(
+                command_id,
+                request_hash,
+                command::Response::Rejected(Rejection::InvalidGraph(error)),
+            );
+        }
+
         if self.state.statuses.get(&request.task_instance_id) != Some(&TaskStatus::Pending) {
             return self.record_response(
                 command_id,
@@ -309,6 +470,7 @@ impl InMemoryTaskNetworkStore {
             &request,
             node.lifecycle_epoch,
             revision,
+            node.lineage.admission.clone(),
         );
         self.state.statuses.insert(
             request.task_instance_id.clone(),
@@ -350,6 +512,7 @@ impl InMemoryTaskNetworkStore {
         if claim.task_instance_id != outcome.task_instance_id
             || claim.lifecycle_epoch != outcome.lifecycle_epoch
             || claim.claim_revision != outcome.claim_revision
+            || claim.admission != outcome.admission
         {
             return self.record_response(
                 command_id,
@@ -653,6 +816,14 @@ impl InMemoryTaskNetworkStore {
         }
 
         match &stored.record {
+            JournalRecord::Admission(admission) => {
+                if admission.recorded_revision != revision {
+                    return Err(decode_error("Task admission journal revision mismatch"));
+                }
+                self.state
+                    .admissions
+                    .insert(admission.admission_id.clone(), admission.as_ref().clone());
+            }
             JournalRecord::Commit(record) => {
                 if record.network_id != self.state.network_id
                     || record.revision != revision
@@ -660,6 +831,8 @@ impl InMemoryTaskNetworkStore {
                 {
                     return Err(decode_error("commit journal record metadata mismatch"));
                 }
+                validate_admitted_mutation_set(&self.state, &record.mutation_set)
+                    .map_err(decode_error)?;
                 for mutation in &record.mutation_set.mutations {
                     match mutation {
                         mutation::Mutation::Inject(inject) => {
@@ -674,6 +847,7 @@ impl InMemoryTaskNetworkStore {
                         }
                     }
                 }
+                seal_admitted_region_node_hashes(&mut self.state, &record.mutation_set);
                 dedupe_edges(&mut self.state.edges);
             }
             JournalRecord::Claim(claim) => {
@@ -776,6 +950,95 @@ impl InMemoryTaskNetworkStore {
     }
 }
 
+fn validate_admitted_mutation_set(state: &NetworkState, set: &mutation::Set) -> Result<(), String> {
+    let mut attributed_steps = BTreeMap::<String, BTreeSet<String>>::new();
+    let mut attributed_node_count = 0;
+    let mut contains_unattributed = false;
+    for mutation in &set.mutations {
+        let mutation::Mutation::Inject(inject) = mutation;
+        validate_task_admission_attribution_for_lowering(state, &inject.task_node)?;
+        let Some(attribution) = &inject.task_node.lineage.admission else {
+            contains_unattributed = true;
+            continue;
+        };
+        attributed_node_count += 1;
+        let record = state
+            .admissions
+            .get(&attribution.admission_id)
+            .expect("validated attribution has a durable record");
+        if set.source_task_id != record.request.task.task_id {
+            return Err(format!(
+                "mutation set source Task differs from admission '{}'",
+                attribution.admission_id
+            ));
+        }
+        if set.idempotency_key != format!("lower::{}", attribution.admission_id) {
+            return Err(format!(
+                "mutation set idempotency key differs from admission '{}'",
+                attribution.admission_id
+            ));
+        }
+        attributed_steps
+            .entry(attribution.admission_id.clone())
+            .or_default()
+            .insert(inject.task_node.lineage.step_id.clone());
+    }
+    if attributed_steps.is_empty() {
+        return Ok(());
+    }
+    if contains_unattributed || attributed_steps.len() != 1 {
+        return Err(
+            "one admitted mutation set must contain exactly one attributed Task region".to_string(),
+        );
+    }
+    let (admission_id, actual_steps) = attributed_steps
+        .into_iter()
+        .next()
+        .expect("non-empty attributed set was checked");
+    let record = state
+        .admissions
+        .get(&admission_id)
+        .expect("validated attribution has a durable record");
+    let expected_steps = record
+        .request
+        .task
+        .composition
+        .steps
+        .iter()
+        .map(|step| step.step_id.clone())
+        .collect::<BTreeSet<_>>();
+    if actual_steps != expected_steps || attributed_node_count != expected_steps.len() {
+        return Err(format!(
+            "mutation set does not contain the exact admitted Task region '{}'",
+            admission_id
+        ));
+    }
+    Ok(())
+}
+
+fn mutation_set_has_admission_attribution(set: &mutation::Set) -> bool {
+    set.mutations.iter().any(|mutation| match mutation {
+        mutation::Mutation::Inject(inject) => inject.task_node.lineage.admission.is_some(),
+    })
+}
+
+fn seal_admitted_region_node_hashes(state: &mut NetworkState, set: &mutation::Set) {
+    for mutation in &set.mutations {
+        let mutation::Mutation::Inject(inject) = mutation;
+        let Some(attribution) = &inject.task_node.lineage.admission else {
+            continue;
+        };
+        state
+            .admitted_region_node_hashes
+            .entry(attribution.admission_id.clone())
+            .or_default()
+            .insert(
+                inject.task_node.lineage.step_id.clone(),
+                stable_hash(&inject.task_node),
+            );
+    }
+}
+
 pub(super) fn command_request_hash(request: &command::Request) -> String {
     stable_hash(request)
 }
@@ -870,6 +1133,7 @@ mod tests {
             claim_revision: 1,
             worker_id: "worker-alpha".to_string(),
             idempotency_key: "claim-once".to_string(),
+            admission: None,
         };
         let mut mutated_state = NetworkState::empty("network-docs");
         mutated_state.statuses.insert(

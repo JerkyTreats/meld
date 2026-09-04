@@ -17,12 +17,14 @@ pub use waiting::WaitingOnDeclaration;
 pub use agent::{
     AgentActivationRecord, AgentActivationStatus, AgentAuthorityPort, AgentAuthorizationFence,
     AgentAuthorizedProduct, AgentConsumerReceipt, AgentCurationPort, AgentCurationRuleConfig,
-    AgentCurrentnessCheck, AgentMaintainedCondition, AgentMaintainedConditionBinding,
-    AgentMaintainedConditionRegistryStore, AgentMilestoneAcceptance, AgentPlanJudgment,
-    AgentPlanJudgmentKind, AgentPlannerPort, AgentProductAuthorization, AgentProductProgress,
-    AgentProductState, AgentReconciliationActor, AgentReconciliationGoal,
-    AgentReconciliationReport, AgentRecord, AgentRegistration, AgentStatus, AgentStore,
-    AgentStrategyRuntimeConfig, SeedAgentRegistration, AGENT_RECONCILIATION_RUNTIME_ID,
+    AgentCurrentnessCheck, AgentExecutionAdmissionDecision, AgentExecutionPort,
+    AgentExecutionPosition, AgentExecutionReceipt, AgentMaintainedCondition,
+    AgentMaintainedConditionBinding, AgentMaintainedConditionRegistryStore,
+    AgentMilestoneAcceptance, AgentPlanJudgment, AgentPlanJudgmentKind, AgentPlannerPort,
+    AgentProductAuthorization, AgentProductProgress, AgentProductState, AgentReconciliationActor,
+    AgentReconciliationGoal, AgentReconciliationReport, AgentRecord, AgentRegistration,
+    AgentStatus, AgentStore, AgentStrategyRuntimeConfig, SeedAgentRegistration,
+    AGENT_RECONCILIATION_RUNTIME_ID,
 };
 pub use belief::{
     configured_belief_key, ingest_promoted_evidence, AssessmentLease, BayesianComparator,

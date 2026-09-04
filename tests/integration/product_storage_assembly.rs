@@ -8,9 +8,7 @@ use meld_events::{
     AppendMode, DomainObjectRef, EventAuthority, EventAuthorityOpenOptions, EventEnvelope,
     LedgerCursor, ReplayRequest,
 };
-use meld_execution::goals::{AddGoalCommand, GoalCommandMetadata};
 use meld_execution::task::{ArtifactProducerRef, ArtifactRecord};
-use meld_lang::{Goal, GoalLifecycle, GoalPriority, GoalSource, Proposition, Term};
 use meld_world_model::{AgentRecord, AgentStatus, BranchScope, PerspectiveKey};
 use serde_json::json;
 
@@ -24,10 +22,6 @@ fn product_storage_layout_derives_required_paths() {
     assert_eq!(layout.workspace_db, layout.root.join("workspace.sled"));
     assert_eq!(layout.world_model_db, layout.root.join("world_model.sled"));
     assert_eq!(layout.theory_db, layout.root.join("theory.sled"));
-    assert_eq!(
-        layout.execution_goals_db,
-        layout.root.join("execution").join("goals.sled")
-    );
     assert_eq!(
         layout.task_artifacts_db,
         layout.root.join("execution").join("task_artifacts.sled")
@@ -70,11 +64,11 @@ fn product_storage_open_creates_dirs_and_opens_stores() {
     assert!(layout.workspace_db.exists());
     assert!(layout.world_model_db.exists());
     assert!(layout.theory_db.exists());
-    assert!(layout.execution_goals_db.exists());
     assert!(layout.task_artifacts_db.exists());
     assert!(layout.task_networks_root.exists());
     assert!(layout.frame_blob_root.exists());
     assert!(layout.prompt_artifact_root.exists());
+    assert!(!layout.root.join("execution").join("goals.sled").exists());
 }
 
 #[test]
@@ -111,17 +105,6 @@ fn product_storage_persists_and_reopens_runtime_stores() {
         stores
             .agent_store
             .put_agent(&agent_record(&subject))
-            .unwrap();
-        stores
-            .goal_store
-            .add_goal(AddGoalCommand {
-                metadata: GoalCommandMetadata {
-                    command_id: "command-goal".to_string(),
-                    source_identity: Some("agent-a:node-a".to_string()),
-                    seq: 7,
-                },
-                goal: goal(&subject),
-            })
             .unwrap();
         let mut repo = stores.task_artifacts.open_repo("repo-docs").unwrap();
         repo.append_artifact(artifact("artifact-a")).unwrap();
@@ -182,7 +165,6 @@ fn product_storage_persists_and_reopens_runtime_stores() {
         Some("{\"ok\":true}")
     );
     assert!(reopened.agent_store.get_agent("agent-a").unwrap().is_some());
-    assert!(reopened.goal_store.get_goal("goal-a").unwrap().is_some());
     assert!(reopened
         .task_artifacts
         .open_repo("repo-docs")
@@ -250,24 +232,6 @@ fn agent_record(subject: &DomainObjectRef) -> AgentRecord {
         maintained_condition_revision: None,
         created_at_seq: 1,
         updated_at_seq: 1,
-    }
-}
-
-fn goal(subject: &DomainObjectRef) -> Goal {
-    Goal {
-        goal_id: "goal-a".to_string(),
-        agent_id: "agent-a".to_string(),
-        target: Proposition::Accessible {
-            scope: Term::Object(subject.clone()),
-        },
-        priority: GoalPriority {
-            urgency: 1,
-            cost_ceiling: None,
-        },
-        source: GoalSource::UserDirected {
-            directive: "refresh docs".to_string(),
-        },
-        lifecycle: GoalLifecycle::Active,
     }
 }
 

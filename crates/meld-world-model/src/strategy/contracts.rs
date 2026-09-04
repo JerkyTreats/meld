@@ -151,7 +151,7 @@ pub enum PlanMilestoneRequirement {
     AgentAccepted {
         product_id: String,
     },
-    FutureExecutionAdmission {
+    ExecutionTerminal {
         task_id: String,
     },
 }
@@ -161,10 +161,18 @@ pub enum PlanMilestoneRequirement {
 pub struct StrategyTask {
     pub task_id: String,
     pub composition: Composition,
+    #[serde(default = "empty_bindings")]
+    pub bindings: Bindings,
     pub capability_contract_ids: Vec<String>,
     pub expected_outcome_contract_id: String,
     pub authority_requirements: Vec<String>,
     pub idempotency_key: String,
+    #[serde(default)]
+    pub return_milestone: Option<PlanMilestoneRequirement>,
+}
+
+fn empty_bindings() -> Bindings {
+    Bindings::empty()
 }
 
 /// One bounded epistemic product grounded from the Curation catalog.

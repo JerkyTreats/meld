@@ -18,6 +18,7 @@
 mod codec;
 mod error;
 mod factory;
+mod legacy;
 mod memory;
 mod records;
 mod sled;

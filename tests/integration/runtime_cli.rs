@@ -474,13 +474,6 @@ fn stewardship_receipts_activate_routes_and_preserve_a_b_lineage() {
         }
         assert!(!capability_runtime.catalog.contains("merkle_traversal", 1));
 
-        assert!(product
-            .stores()
-            .goal_store
-            .goal_records()
-            .unwrap()
-            .is_empty());
-
         let curation_a = product
             .stores()
             .curation_rule_registry

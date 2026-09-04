@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 use meld_execution::authority::AuthorityPolicyRegistryStore;
 use meld_execution::capability::CapabilityContractRegistryStore;
-use meld_execution::goals::PersistentGoalSetStore;
 use meld_execution::task::TaskArtifactRepoFactory;
 use meld_execution::task_network::store::TaskNetworkStoreFactory;
 use meld_world_model::agent::{
@@ -51,8 +50,6 @@ pub struct ProductStorageLayout {
     pub world_model_db: PathBuf,
     /// Shared physical database for execution, docs, and root theory records.
     pub theory_db: PathBuf,
-    /// Execution goal set database owned by `meld-execution`.
-    pub execution_goals_db: PathBuf,
     /// Shared task artifact database opened through execution-owned repo factories.
     pub task_artifacts_db: PathBuf,
     /// Directory containing one task network database per network storage key.
@@ -79,8 +76,6 @@ pub struct StoreScope {
     pub world_model: bool,
     /// Shared theory database and its typed owner stores.
     pub theory: bool,
-    /// Execution goal set database.
-    pub execution_goals: bool,
     /// Task execution databases: artifacts, package progress, task networks.
     pub task_execution: bool,
     /// Context frame blob storage.
@@ -96,7 +91,6 @@ impl StoreScope {
             workspace: true,
             world_model: true,
             theory: true,
-            execution_goals: true,
             task_execution: true,
             context_frames: true,
             prompt_artifacts: true,
@@ -114,7 +108,6 @@ impl StoreScope {
             workspace: self.workspace || other.workspace,
             world_model: self.world_model || other.world_model,
             theory: self.theory || other.theory,
-            execution_goals: self.execution_goals || other.execution_goals,
             task_execution: self.task_execution || other.task_execution,
             context_frames: self.context_frames || other.context_frames,
             prompt_artifacts: self.prompt_artifacts || other.prompt_artifacts,
@@ -198,8 +191,6 @@ pub struct OpenProductStores {
     pub agent_store: ScopedResource<Arc<AgentStore>>,
     /// Compatibility store for legacy world state claims while migration remains active.
     pub legacy_world_state_store: ScopedResource<Arc<WorldStateStore>>,
-    /// Execution-owned goal set store.
-    pub goal_store: ScopedResource<Arc<PersistentGoalSetStore>>,
     /// Execution-owned factory for per-network task network stores.
     pub task_networks: ScopedResource<TaskNetworkStoreFactory>,
     /// Execution-owned factory for task-scoped artifact repositories.
@@ -262,7 +253,6 @@ impl ProductStorageLayout {
             workspace_db: root.join("workspace.sled"),
             world_model_db: root.join("world_model.sled"),
             theory_db: root.join("theory.sled"),
-            execution_goals_db: root.join("execution").join("goals.sled"),
             task_artifacts_db: root.join("execution").join("task_artifacts.sled"),
             task_networks_root: root.join("execution").join("task_networks"),
             frame_blob_root: root.join("context").join("frames"),
@@ -279,7 +269,7 @@ impl ProductStorageLayout {
     /// Create only the parent directories the scoped store groups need.
     pub fn create_dirs_scoped(&self, scope: &StoreScope) -> Result<(), ProductStorageError> {
         create_dir_all(&self.root)?;
-        if scope.execution_goals || scope.task_execution {
+        if scope.task_execution {
             create_dir_all(self.execution_root())?;
         }
         if scope.task_execution {
@@ -298,9 +288,9 @@ impl ProductStorageLayout {
     }
 
     fn execution_root(&self) -> &Path {
-        self.execution_goals_db
+        self.task_artifacts_db
             .parent()
-            .expect("execution goals path has a parent")
+            .expect("task artifacts path has a parent")
     }
 
     fn context_root(&self) -> &Path {
@@ -476,16 +466,6 @@ impl OpenProductStores {
             )
         };
 
-        let goal_store = if scope.execution_goals {
-            let execution_goals_db = open_db(&layout.execution_goals_db)?;
-            ScopedResource::open(
-                "goal_store",
-                Arc::new(PersistentGoalSetStore::new(execution_goals_db).map_err(to_execution)?),
-            )
-        } else {
-            ScopedResource::closed("goal_store")
-        };
-
         let (task_networks, task_artifacts, execution_db) = if scope.task_execution {
             let task_artifacts_db = open_db(&layout.task_artifacts_db)?;
             (
@@ -540,7 +520,6 @@ impl OpenProductStores {
             strategy_theory_registry: strategy_registry,
             agent_store: agent,
             legacy_world_state_store: legacy,
-            goal_store,
             task_networks,
             task_artifacts,
             execution_db,
@@ -580,9 +559,6 @@ impl OpenProductStores {
         }
         if let Some(store) = self.legacy_world_state_store.opened() {
             store.flush().map_err(to_world_model)?;
-        }
-        if let Some(store) = self.goal_store.opened() {
-            store.flush().map_err(to_execution)?;
         }
         if let Some(db) = self.theory_db.opened() {
             db.flush().map_err(to_sled)?;
@@ -653,10 +629,6 @@ mod tests {
             PathBuf::from("/tmp/meld-runtime/theory.sled")
         );
         assert_eq!(
-            layout.execution_goals_db,
-            PathBuf::from("/tmp/meld-runtime/execution/goals.sled")
-        );
-        assert_eq!(
             layout.task_artifacts_db,
             PathBuf::from("/tmp/meld-runtime/execution/task_artifacts.sled")
         );
@@ -688,7 +660,6 @@ mod tests {
         assert!(stores.belief_store.is_open());
         assert!(stores.belief_family_registry.is_open());
         assert!(stores.traversal_store.is_open());
-        assert!(!stores.goal_store.is_open());
         assert!(!stores.node_store.is_open());
         assert!(!stores.task_networks.is_open());
         assert!(!stores.frame_storage.is_open());
@@ -696,7 +667,6 @@ mod tests {
         assert!(layout.world_model_db.exists());
         assert!(!layout.workspace_db.exists());
         assert!(!layout.theory_db.exists());
-        assert!(!layout.execution_goals_db.exists());
         assert!(!layout.task_artifacts_db.exists());
         assert!(!layout.task_networks_root.exists());
         assert!(!layout.frame_blob_root.exists());

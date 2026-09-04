@@ -8,6 +8,10 @@ This directory contains active delivery evidence and requirements work. It does 
 
 Superseded and refused plans are removed rather than retained as live navigation. Git history preserves their provenance.
 
+## Delivery Incidents
+
+[Delivery Incidents](incidents/README.md) records failures in design and delivery control that can invalidate acceptance claims without replacing the active program ledger.
+
 ## Other Active Plans
 
 Other folders in this directory retain authority only for their bounded delivery concern. If a plan conflicts with cognitive architecture, cognitive architecture wins and the plan must be revised or removed.

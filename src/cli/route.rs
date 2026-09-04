@@ -85,7 +85,6 @@ impl RunContext {
     /// assembly diagnostic naming the gap — instead of failing the run.
     /// An injected route binding wins: the slot binds first-come only.
     fn bind_production_dispatch_routes(&self) {
-        use crate::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
         use crate::runtime::assembly::DispatchRouteBindings;
         use crate::runtime::ports::ProductionDispatchRouteContext;
 
@@ -100,28 +99,8 @@ impl RunContext {
             warn!("dispatch route composition skipped: capability runtime unavailable");
             return;
         };
-        let provider = match ProviderExecutionBinding::new(
-            seed.provider_id.clone(),
-            ProviderRuntimeOverrides::default(),
-        ) {
-            Ok(provider) => provider,
-            Err(error) => {
-                warn!(error = %error, "dispatch route composition skipped: provider binding invalid");
-                return;
-            }
-        };
         let routes = DispatchRouteBindings::production(ProductionDispatchRouteContext {
             api: Arc::clone(self.assembly.api()),
-            workflow_registry: self.workflow_registry(),
-            workspace_root: seed.workspace_root.clone(),
-            subject_path: seed.subject_path.clone(),
-            agent_id: seed.agent_id.clone(),
-            belief_family_id: seed.belief_family_id.clone(),
-            provider,
-            // The registered workflow route derives its default frame type
-            // from the agent identity; the dispatch route follows the same
-            // convention so published frames share one lineage vocabulary.
-            frame_type: format!("context-{}", seed.agent_id),
             session_id: Some(seed.session_id.clone()),
             catalog: capability_runtime.catalog,
             registry: capability_runtime.registry,
