@@ -35,7 +35,7 @@ pub use stewardship::activation::{
     AdapterPlacement, OperationalLimits, PhysicalBindingRef, RuntimeIsolationRequirements,
     StewardshipActivationV1,
 };
-pub use stewardship::assignment::StewardshipAssignmentV1;
+pub use stewardship::assignment::{AssignedAgentPositionV1, StewardshipAssignmentV1};
 pub use stewardship::binding::{PhysicalBinding, SelectedStewardshipPackage};
 pub use stewardship::selection::{
     DocsFreshnessSelection, NamedStewardshipDeclaration, SelectionFieldError, SelectionOrigins,

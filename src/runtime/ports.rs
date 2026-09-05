@@ -44,15 +44,12 @@ use meld_world_model::{
     CurationTraversalPort,
 };
 
-use crate::config::SelectedStewardshipPackage;
 use crate::context::frame::FrameStorage;
 use crate::control::projection::ExecutionProjectionReplaySource;
 use crate::prompt_context::PromptContextArtifactStorage;
 use crate::runtime::error::{RuntimeAssemblyError, RuntimePortError};
 use crate::runtime::storage::{OpenProductStores, ScopedResource};
-use crate::runtime::theory::{TheoryInstallationReceiptStore, TheoryReceiptError};
 use crate::store::SledNodeRecordStore;
-use crate::theory::PdsPackageStore;
 
 /// Maximum events returned by one root-assembled replay port call.
 pub const MAX_EVENT_REPLAY_LIMIT: usize = 1024;
@@ -136,12 +133,10 @@ pub struct ProductAgentPlannerPort {
 
 /// Read-only live activation and authority-policy observer for Agent.
 #[derive(Clone)]
-pub struct ProductAgentAuthorityPort {
+pub(crate) struct ProductAgentAuthorityPort {
     agent_store: Arc<AgentStore>,
-    receipts: Arc<TheoryInstallationReceiptStore>,
-    pds_packages: Arc<PdsPackageStore>,
-    selection: SelectedStewardshipPackage,
     agent_id: String,
+    authority_policy_content_hash: String,
 }
 
 /// Read-only root adapter from the Agent activation store to dispatch fencing.
@@ -739,19 +734,15 @@ impl AgentExecutionPort for ProductAgentExecutionPort {
 }
 
 impl ProductAgentAuthorityPort {
-    pub fn new(
+    pub(crate) fn new(
         agent_store: Arc<AgentStore>,
-        receipts: Arc<TheoryInstallationReceiptStore>,
-        pds_packages: Arc<PdsPackageStore>,
-        selection: SelectedStewardshipPackage,
         agent_id: String,
+        authority_policy_content_hash: String,
     ) -> Self {
         Self {
             agent_store,
-            receipts,
-            pds_packages,
-            selection,
             agent_id,
+            authority_policy_content_hash,
         }
     }
 }
@@ -777,59 +768,10 @@ impl AgentAuthorityPort for ProductAgentAuthorityPort {
         if activation.status != AgentActivationStatus::Activated {
             return Ok(None);
         }
-        let authority_policy_content_hash = match self.receipts.current(&self.selection) {
-            Ok(receipt) => Some(receipt.authority_policy.content_hash),
-            Err(TheoryReceiptError::NotInstalled) => self.routed_authority_policy_content_hash()?,
-            Err(error) => {
-                return Err(meld_world_model::error::StorageError::InvalidPath(
-                    error.to_string(),
-                ))
-            }
-        };
-        let Some(authority_policy_content_hash) = authority_policy_content_hash else {
-            return Ok(None);
-        };
         Ok(Some(AgentAuthorizationFence {
             activation_generation: activation.activation_id,
-            authority_policy_content_hash,
+            authority_policy_content_hash: self.authority_policy_content_hash.clone(),
         }))
-    }
-}
-
-impl ProductAgentAuthorityPort {
-    fn routed_authority_policy_content_hash(
-        &self,
-    ) -> Result<Option<String>, meld_world_model::error::StorageError> {
-        let heads = self.pds_packages.heads().map_err(|error| {
-            meld_world_model::error::StorageError::InvalidPath(error.to_string())
-        })?;
-        let [head] = heads.as_slice() else {
-            return Ok(None);
-        };
-        let receipt = self
-            .pds_packages
-            .resolve_receipt(&head.receipt_id)
-            .map_err(|error| meld_world_model::error::StorageError::InvalidPath(error.to_string()))?
-            .ok_or_else(|| {
-                meld_world_model::error::StorageError::InvalidPath(
-                    "active routed package head references a missing receipt".to_string(),
-                )
-            })?;
-        let mut policies = receipt.components.iter().filter(|component| {
-            component.route.owner_domain == "execution"
-                && component.route.component_kind == "authority-policy"
-                && component.route.route_version == 1
-                && component.owner_revision.id == self.selection.authority_policy_id
-        });
-        let Some(policy) = policies.next() else {
-            return Ok(None);
-        };
-        if policies.next().is_some() {
-            return Err(meld_world_model::error::StorageError::InvalidPath(
-                "active routed package has ambiguous authority-policy revisions".to_string(),
-            ));
-        }
-        Ok(Some(policy.owner_revision.content_hash.clone()))
     }
 }
 

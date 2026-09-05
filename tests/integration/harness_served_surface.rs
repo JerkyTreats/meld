@@ -15,7 +15,9 @@ use meld::harness::walk::CausalThread;
 use meld::runtime::contracts::RuntimeActionRecord;
 use meld::serve::listener::serve;
 use meld::serve::sources::ServeSources;
-use meld_events::{EventPage, EventWatermark, LedgerCursor, ReplayRequest};
+use meld_events::{
+    AppendMode, EventEnvelope, EventPage, EventWatermark, LedgerCursor, ReplayRequest,
+};
 use serde_json::json;
 
 fn post(addr: std::net::SocketAddr, path: &str, body: serde_json::Value) -> ureq::Response {
@@ -46,16 +48,6 @@ fn the_substrate_serves_contract_types_over_loopback_for_a_live_session() {
         session.path().join("root"),
     );
 
-    // Two-boot survey structure: init, then a bound composition.
-    drop(
-        HarnessRun::boot(survey_boot_request(
-            session.path(),
-            &binding,
-            "served-init",
-            500,
-        ))
-        .unwrap(),
-    );
     let mut run = HarnessRun::boot(survey_boot_request(
         session.path(),
         &binding,
@@ -71,6 +63,20 @@ fn the_substrate_serves_contract_types_over_loopback_for_a_live_session() {
 
     // Drive the run while the surface is up: the stall emerges live.
     let mut driver = run.driver().unwrap();
+    driver
+        .append_stimulus(
+            EventEnvelope::new_domain(
+                "2026-07-25T00:00:00Z".to_string(),
+                "served-surface",
+                "harness",
+                "survey",
+                "harness.survey.stimulus",
+                None,
+                json!({"subject": SUBJECT_ID}),
+            ),
+            AppendMode::Plain,
+        )
+        .unwrap();
     for now_ms in [1_100, 1_200, 1_300] {
         driver.step(now_ms).unwrap();
     }
@@ -107,7 +113,7 @@ fn the_substrate_serves_contract_types_over_loopback_for_a_live_session() {
     assert!(page
         .records
         .iter()
-        .any(|record| record.event_type == "world_model.unobserved_scope"));
+        .any(|record| record.event_type == "harness.survey.stimulus"));
 
     // The report reader serves the per-tick declarations live.
     let actions: Vec<RuntimeActionRecord> =
@@ -212,9 +218,7 @@ fn the_substrate_serves_contract_types_over_loopback_for_a_live_session() {
 
     // Playback: the sealed root boots through the same staged path (no
     // init requested, nothing driven) and mounts the identical handlers.
-    let mut playback_request =
-        survey_boot_request(session.path(), &binding, "served-playback", 2_000);
-    playback_request.world_init = None;
+    let playback_request = survey_boot_request(session.path(), &binding, "served-playback", 2_000);
     let playback = HarnessRun::boot(playback_request).unwrap();
     // A sealed session root's whole retained history IS the session, so
     // the playback mount lifts the live boot fence explicitly.

@@ -75,6 +75,7 @@ pub mod registry_store;
 pub mod runtime;
 pub mod selection;
 pub mod store;
+mod subscription;
 
 pub use assessment::{
     BeliefAssessmentActor, BeliefAssessmentIssue, BeliefAssessmentReport, BeliefAssessmentRequest,
@@ -113,3 +114,4 @@ pub use selection::{
     BeliefWorkSelection, BeliefWorkSelector,
 };
 pub use store::BeliefStore;
+pub use subscription::{BeliefSubscriptionAcceptanceProof, BeliefSubscriptionAuthority};

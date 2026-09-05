@@ -12,7 +12,7 @@ use crate::error::{ApiError, StorageError};
 use crate::events::binding::{resolve_product_event_authority, ProductEventBindingError};
 use crate::heads::HeadIndex;
 use crate::runtime::assembly::{
-    ProductRuntimeAssembly, ProductRuntimeConfig, StewardshipComposition, StewardshipTheoryBindings,
+    ProductRuntimeAssembly, ProductRuntimeConfig, StewardshipComposition,
 };
 use crate::runtime::storage::ProductStorageLayout;
 use crate::session::{SessionRuntime, SessionStore};
@@ -53,11 +53,8 @@ impl CliRuntimeAssembly {
         // physical binding contract, then selects by the addressed target.
         // A declaration for another workspace does not activate here, while
         // ambiguous ownership of this target fails truthfully.
-        let stewardship =
-            PhysicalBinding::resolve_for_target(config, workspace_root)?.map(|binding| {
-                let theory = compose_stewardship_theory(&binding);
-                StewardshipComposition { binding, theory }
-            });
+        let stewardship = PhysicalBinding::resolve_for_target(config, workspace_root)?
+            .map(|binding| StewardshipComposition { binding });
         // Operator runtime enablement opens the default valve: each named
         // runtime leaves the default-disabled set. Naming a runtime that is
         // not disabled by default is an error rather than a silent no-op.
@@ -220,11 +217,6 @@ impl CliRuntimeAssembly {
     pub fn graph_runtime(&self) -> Arc<crate::world_state::graph::runtime::GraphRuntime> {
         self.product_runtime.graph_runtime()
     }
-}
-
-/// Defer semantic hydration to receipt-aware product assembly.
-fn compose_stewardship_theory(_binding: &PhysicalBinding) -> StewardshipTheoryBindings {
-    StewardshipTheoryBindings::default()
 }
 
 fn binding_error(error: ProductEventBindingError) -> ApiError {

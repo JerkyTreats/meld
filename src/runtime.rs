@@ -1,7 +1,5 @@
 //! Runtime assembly diagnostics and supervisor-facing contracts.
 
-/// Assignment-local PDS startup activation and durable generation heads.
-pub mod activation;
 /// Product runtime assembly entrypoint.
 pub mod assembly;
 /// Supervisor-facing worker report contracts.

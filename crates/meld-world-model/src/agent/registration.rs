@@ -22,6 +22,22 @@ impl<'a> AgentRegistration<'a> {
     ) -> Result<AgentRecord, StorageError> {
         request.validate()?;
         if let Some(existing) = self.store.get_agent(&request.agent_id)? {
+            if existing.perspective_key != request.perspective_key
+                || existing.subject != request.subject
+                || existing.branch_scope != request.branch_scope
+                || existing.observation_scope != request.observation_scope
+                || existing.directive != request.directive
+                || existing.seed_provenance != request.seed_provenance
+                || existing.curation_rule != request.curation_rule
+                || existing.curation_rule_revision != request.curation_rule_revision
+                || existing.maintained_condition != request.maintained_condition
+                || existing.maintained_condition_revision != request.maintained_condition_revision
+            {
+                return Err(StorageError::InvalidPath(format!(
+                    "Agent '{}' already exists with a different immutable genesis identity",
+                    request.agent_id
+                )));
+            }
             return Ok(existing);
         }
         let record = AgentRecord {
@@ -40,56 +56,6 @@ impl<'a> AgentRegistration<'a> {
             created_at_seq: request.created_at_seq,
             updated_at_seq: request.created_at_seq,
         };
-        self.store.put_agent(&record)?;
-        Ok(record)
-    }
-
-    /// Migrate or bind one record to an exact curation-rule revision.
-    pub fn bind_curation_rule_revision(
-        &self,
-        agent_id: &str,
-        revision: crate::belief::TheoryRevisionRef,
-        updated_at_seq: u64,
-    ) -> Result<AgentRecord, StorageError> {
-        revision.validate_for_registry("agent_curation_rule")?;
-        let Some(mut record) = self.store.get_agent(agent_id)? else {
-            return Err(StorageError::InvalidPath(format!(
-                "unknown agent '{agent_id}'"
-            )));
-        };
-        if record.curation_rule_revision.as_ref() == Some(&revision)
-            && record.curation_rule.is_none()
-        {
-            return Ok(record);
-        }
-        record.curation_rule_revision = Some(revision);
-        record.curation_rule = None;
-        record.updated_at_seq = updated_at_seq;
-        self.store.put_agent(&record)?;
-        Ok(record)
-    }
-
-    /// Bind one record to an exact standing maintained condition.
-    pub fn bind_maintained_condition_revision(
-        &self,
-        agent_id: &str,
-        binding: crate::agent::AgentMaintainedConditionBinding,
-        updated_at_seq: u64,
-    ) -> Result<AgentRecord, StorageError> {
-        binding.validate()?;
-        let Some(mut record) = self.store.get_agent(agent_id)? else {
-            return Err(StorageError::InvalidPath(format!(
-                "unknown agent '{agent_id}'"
-            )));
-        };
-        if record.maintained_condition.as_ref() == Some(&binding)
-            && record.maintained_condition_revision.as_ref() == Some(&binding.revision)
-        {
-            return Ok(record);
-        }
-        record.maintained_condition_revision = Some(binding.revision.clone());
-        record.maintained_condition = Some(binding);
-        record.updated_at_seq = updated_at_seq;
         self.store.put_agent(&record)?;
         Ok(record)
     }

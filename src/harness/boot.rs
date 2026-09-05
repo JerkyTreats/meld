@@ -1,13 +1,12 @@
 //! Boot one harness run through the product staged pipeline into an
 //! isolated root, and drive it with injected time.
 //!
-//! Owner: harness. A run boots exactly the way the product boots — the
-//! product event binding, the composed assembly scoped to the registration
-//! subset, and the world-initialization command pipeline — because a
-//! harness that initializes differently from the product debugs a system
-//! that does not exist. The default root is temporary and owned by the
-//! run; pointing a run at an existing product data root requires the
-//! explicit unsafe flag (DBG-011).
+//! Owner: harness. A run resolves the product event binding and loads the
+//! composed assembly scoped to the requested registration subset. Product
+//! initialization remains outside the harness and must already be durable
+//! when a stewarded workspace is opened. The default root is temporary and
+//! owned by the run; pointing a run at an existing product data root
+//! requires the explicit unsafe flag (DBG-011).
 //!
 //! Discipline: stimuli enter only through the canonical append capability
 //! (DBG-003), steps take injected time against the supervisor's bounded
@@ -20,20 +19,14 @@ use meld_events::error::EventAuthorityError;
 use meld_events::{
     AppendDisposition, AppendMode, AppendReceipt, EventAppendCapability, EventEnvelope,
 };
-use meld_world_model::agent::AgentStore;
-use meld_world_model::belief::BeliefFamilyRegistryStore;
 use thiserror::Error;
 
 use crate::branches::{BranchKind, ResolvedBranch};
 use crate::events::binding::{resolve_product_event_authority, ProductEventBindingError};
 use crate::harness::manifest::{
     HarnessBootRecord, HarnessClosingRecord, HarnessDesiredRuntimeRecord, HarnessManifest,
-    HarnessManifestError, HarnessRootRecord, HarnessStageRecord, HarnessStepRecord,
-    HarnessStimulusRecord, HARNESS_MANIFEST_SCHEMA_VERSION,
-};
-use crate::init::world::pipeline::{WorldInitContent, WorldInitError, WorldInitPipeline};
-use crate::init::world::{
-    StageDisposition, WorldInitRequest, WorldInitStage, WorldInitStageReport,
+    HarnessManifestError, HarnessRootRecord, HarnessStepRecord, HarnessStimulusRecord,
+    HARNESS_MANIFEST_SCHEMA_VERSION,
 };
 use crate::runtime::assembly::{
     ProductRuntimeAssembly, ProductRuntimeConfig, StewardshipComposition,
@@ -71,14 +64,7 @@ pub enum HarnessError {
     /// Product runtime assembly failed.
     #[error("runtime assembly failed: {0}")]
     Assembly(#[from] RuntimeAssemblyError),
-    /// World initialization was requested but the composed registration
-    /// subset did not open the stores its stages write through.
-    #[error("world init requested outside the composed store scope: {0}")]
-    WorldInitScope(String),
-    /// A world-initialization stage failed.
-    #[error("world init failed: {0}")]
-    WorldInit(#[from] WorldInitError),
-    /// A domain store surface failed while binding the pipeline.
+    /// A harness-owned store or read model failed.
     #[error("harness storage failure: {0}")]
     Storage(String),
     /// The supervisor rejected a lifecycle command.
@@ -112,16 +98,6 @@ pub enum HarnessRootSelection {
     },
 }
 
-/// World-initialization stages and injected stage-0 content for one boot.
-#[derive(Debug, Clone)]
-pub struct HarnessWorldInit {
-    /// Stage subset to run, normalized to pipeline order.
-    pub request: WorldInitRequest,
-    /// Injected semantic content; the pipeline resolves nothing from the
-    /// environment, which is what lets isolate boots stay hermetic.
-    pub content: WorldInitContent,
-}
-
 /// One harness boot command.
 ///
 /// Not `Clone`/`Debug`: the stewardship composition carries live theory
@@ -150,8 +126,6 @@ pub struct HarnessBootRequest {
     pub default_work_budget: Option<WorkBudget>,
     /// Stewardship composition when the run debugs a stewarded workspace.
     pub stewardship: Option<StewardshipComposition>,
-    /// World-initialization stages to run at boot.
-    pub world_init: Option<HarnessWorldInit>,
 }
 
 impl HarnessBootRequest {
@@ -168,7 +142,6 @@ impl HarnessBootRequest {
             disabled_runtime_ids: None,
             default_work_budget: None,
             stewardship: None,
-            world_init: None,
         }
     }
 }
@@ -195,11 +168,9 @@ pub struct HarnessDriveOutcome {
 }
 
 impl HarnessRun {
-    /// Boot a run through the product staged pipeline.
+    /// Boot a run through product binding resolution and runtime assembly.
     ///
-    /// Sequencing mirrors the product: binding resolution, scoped assembly,
-    /// then the world-initialization command pipeline. The manifest is
-    /// built here and persisted at [`HarnessRun::seal`].
+    /// The manifest is built here and persisted at [`HarnessRun::seal`].
     pub fn boot(request: HarnessBootRequest) -> Result<Self, HarnessError> {
         let (paths, temp_root, existing) = resolve_root(&request)?;
         fs::create_dir_all(&paths.product_root)?;
@@ -227,11 +198,6 @@ impl HarnessRun {
         }
         let assembly =
             ProductRuntimeAssembly::load_composed(config, resolved.authority, request.stewardship)?;
-
-        let world_init = match request.world_init {
-            Some(init) => run_scoped_world_init(&assembly, &init)?,
-            None => Vec::new(),
-        };
 
         let manifest = HarnessManifest {
             schema_version: HARNESS_MANIFEST_SCHEMA_VERSION,
@@ -264,7 +230,7 @@ impl HarnessRun {
                         factory_available: state.factory_available,
                     })
                     .collect(),
-                world_init: world_init.iter().map(stage_record).collect(),
+                world_init: Vec::new(),
                 default_budget_max_items: assembly.default_work_budget().max_items,
             },
             stimuli: Vec::new(),
@@ -466,54 +432,6 @@ fn resolve_root(
                 true,
             ))
         }
-    }
-}
-
-/// Run the world-initialization pipeline over the composed assembly.
-///
-/// The pipeline binds the same domain command surfaces the product init
-/// command binds; a registration subset that did not open those stores is
-/// an explicit scope error rather than a silent skip, so a manifest never
-/// claims an initialization that could not have happened.
-fn run_scoped_world_init(
-    assembly: &ProductRuntimeAssembly,
-    init: &HarnessWorldInit,
-) -> Result<Vec<WorldInitStageReport>, HarnessError> {
-    let stores = assembly.stores();
-    let traversal = stores.traversal_store.opened().ok_or_else(|| {
-        HarnessError::WorldInitScope(
-            "world-model stores are not open under the composed registration subset".to_string(),
-        )
-    })?;
-    let agent_store: &AgentStore = stores.agent_store.opened().ok_or_else(|| {
-        HarnessError::WorldInitScope(
-            "agent store is not open under the composed registration subset".to_string(),
-        )
-    })?;
-    let mut registry = BeliefFamilyRegistryStore::new(traversal.db().clone())
-        .map_err(|error| HarnessError::Storage(error.to_string()))?;
-    let authority = assembly.event_authority();
-    let append = authority.append_capability();
-    let report = WorldInitPipeline::new(&mut registry, agent_store, &append)
-        .run(&init.request, &init.content)?;
-    Ok(report.stage_reports)
-}
-
-/// Map one stage report onto the manifest's stable vocabulary.
-fn stage_record(report: &WorldInitStageReport) -> HarnessStageRecord {
-    HarnessStageRecord {
-        stage: match report.stage {
-            WorldInitStage::InstallTheory => "install-theory",
-            WorldInitStage::GenesisIdentities => "genesis-identities",
-            WorldInitStage::SeedEpistemicFacts => "seed-epistemic-facts",
-        }
-        .to_string(),
-        disposition: match report.disposition {
-            StageDisposition::Applied => "applied",
-            StageDisposition::Unchanged => "unchanged",
-        }
-        .to_string(),
-        record_ids: report.record_ids.clone(),
     }
 }
 

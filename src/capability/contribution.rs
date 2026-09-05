@@ -4,6 +4,7 @@ use std::sync::Arc;
 use meld_execution::capability::{
     CapabilityContractRevision, CapabilityContractRevisionRef, CapabilityInvoker,
 };
+use serde::{Deserialize, Serialize};
 
 use crate::error::ApiError;
 use crate::execution::ExecutionRuntimeContext;
@@ -38,6 +39,7 @@ pub struct ExactCapabilityActivationRequest {
     pub activation_id: String,
     pub selected_contracts: Vec<CapabilityContractRevisionRef>,
     pub selected_implementations: BTreeMap<CapabilityContractRevisionRef, String>,
+    pub compatibility_policy_revision: String,
 }
 
 pub struct CapabilityFactoryRequest<'a> {
@@ -69,11 +71,44 @@ pub trait ProductCapabilityContributor: Send + Sync {
     fn implementation_offers(&self) -> Vec<CapabilityImplementationOffer>;
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CapabilityContributionReceipt {
     pub owner_domain: String,
     pub contract_ref: CapabilityContractRevisionRef,
     pub implementation_ref: String,
+}
+
+/// Inert proof that exact Capability realization inputs are compatible.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapabilityPreparationReceiptV1 {
+    pub preparation_receipt_id: String,
+    pub assignment_id: String,
+    pub activation_id: String,
+    pub selected_contracts: Vec<CapabilityContractRevisionRef>,
+    pub contribution_receipts: Vec<CapabilityContributionReceipt>,
+    pub binding_revision_refs: Vec<(String, String)>,
+    pub compatibility_policy_revision: String,
+}
+
+impl CapabilityPreparationReceiptV1 {
+    pub fn verify_identity(&self) -> Result<(), CapabilityContributionDiagnostic> {
+        let expected = capability_preparation_identity(
+            &self.assignment_id,
+            &self.activation_id,
+            &self.selected_contracts,
+            &self.contribution_receipts,
+            &self.binding_revision_refs,
+            &self.compatibility_policy_revision,
+        )?;
+        if expected != self.preparation_receipt_id {
+            return Err(CapabilityContributionDiagnostic::new(
+                "capability_preparation_corrupt",
+                "Capability preparation receipt identity differs",
+            ));
+        }
+        Ok(())
+    }
 }
 
 pub struct PreparedCapabilityClosure {
@@ -82,6 +117,7 @@ pub struct PreparedCapabilityClosure {
     pub contracts: CapabilityCatalog,
     pub invokers: CapabilityExecutorRegistry,
     pub contribution_receipts: Vec<CapabilityContributionReceipt>,
+    pub preparation_receipt: CapabilityPreparationReceiptV1,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -250,6 +286,16 @@ impl ProductCapabilityInventory {
     ) -> Result<PreparedCapabilityClosure, CapabilityContributionDiagnostic> {
         request.selected_contracts.sort();
         request.selected_contracts.dedup();
+        if request.assignment_id.trim().is_empty()
+            || request.activation_id.trim().is_empty()
+            || request.compatibility_policy_revision.trim().is_empty()
+        {
+            return Err(diagnostic_for(
+                "capability_preparation_invalid",
+                "assignment, activation, and compatibility policy identities are required",
+                &request,
+            ));
+        }
         let selected: BTreeSet<_> = request.selected_contracts.iter().cloned().collect();
         if request
             .selected_implementations
@@ -340,14 +386,81 @@ impl ProductCapabilityInventory {
                 implementation_ref: implementation_ref.clone(),
             });
         }
+        let binding_revision_refs = bindings.revision_refs();
+        let preparation_receipt_id =
+            preparation_identity(&request, &receipts, &binding_revision_refs)?;
+        let preparation_receipt = CapabilityPreparationReceiptV1 {
+            preparation_receipt_id,
+            assignment_id: request.assignment_id.clone(),
+            activation_id: request.activation_id.clone(),
+            selected_contracts: request.selected_contracts.clone(),
+            contribution_receipts: receipts.clone(),
+            binding_revision_refs,
+            compatibility_policy_revision: request.compatibility_policy_revision.clone(),
+        };
         Ok(PreparedCapabilityClosure {
             assignment_id: request.assignment_id,
             activation_id: request.activation_id,
             contracts: catalog,
             invokers,
             contribution_receipts: receipts,
+            preparation_receipt,
         })
     }
+}
+
+impl OwnerBindingView {
+    fn revision_refs(&self) -> Vec<(String, String)> {
+        self.values
+            .iter()
+            .map(|(binding_id, value)| {
+                (
+                    binding_id.clone(),
+                    blake3::hash(value.as_bytes()).to_hex().to_string(),
+                )
+            })
+            .collect()
+    }
+}
+
+fn preparation_identity(
+    request: &ExactCapabilityActivationRequest,
+    receipts: &[CapabilityContributionReceipt],
+    binding_revision_refs: &[(String, String)],
+) -> Result<String, CapabilityContributionDiagnostic> {
+    capability_preparation_identity(
+        &request.assignment_id,
+        &request.activation_id,
+        &request.selected_contracts,
+        receipts,
+        binding_revision_refs,
+        &request.compatibility_policy_revision,
+    )
+}
+
+fn capability_preparation_identity(
+    assignment_id: &str,
+    activation_id: &str,
+    selected_contracts: &[CapabilityContractRevisionRef],
+    receipts: &[CapabilityContributionReceipt],
+    binding_revision_refs: &[(String, String)],
+    compatibility_policy_revision: &str,
+) -> Result<String, CapabilityContributionDiagnostic> {
+    serde_json::to_vec(&(
+        assignment_id,
+        activation_id,
+        selected_contracts,
+        receipts,
+        binding_revision_refs,
+        compatibility_policy_revision,
+    ))
+    .map(|bytes| blake3::hash(&bytes).to_hex().to_string())
+    .map_err(|failure| {
+        CapabilityContributionDiagnostic::new(
+            "capability_preparation_identity_failed",
+            failure.to_string(),
+        )
+    })
 }
 
 impl crate::theory::PublishedComponentResolver for ProductCapabilityInventory {

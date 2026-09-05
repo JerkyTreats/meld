@@ -25,6 +25,7 @@ use crate::belief::contracts::{
     DirtyKeyState, DirtyReason, EvidenceAssignment, EvidenceItem, EvidenceRejection,
     FreshnessReason, HydrationRefs, LeaseStatus, ObservationOpportunity, ObservationReason,
 };
+use crate::belief::subscription::SourceSubscriptionAcceptanceV1;
 use crate::error::StorageError;
 use crate::events::DomainObjectRef;
 use crate::world_state::graph::{PerspectiveKey, TraversalQuery};
@@ -41,6 +42,7 @@ const TREE_REJECTIONS: &str = "belief_rejections";
 const TREE_CONFIG_SNAPSHOTS: &str = "belief_config_snapshots";
 const TREE_DIRTY_KEYS: &str = "belief_dirty_keys";
 const TREE_RUNTIME_META: &str = "belief_runtime_meta";
+const TREE_SUBSCRIPTION_ACCEPTANCES: &str = "belief_subscription_acceptances_v1";
 
 /// Sled-backed store for belief evidence, revisions, views, and leases.
 #[derive(Clone)]
@@ -58,6 +60,7 @@ pub struct BeliefStore {
     config_snapshots: Tree,
     dirty_keys: Tree,
     runtime_meta: Tree,
+    subscription_acceptances: Tree,
 }
 
 impl BeliefStore {
@@ -76,8 +79,48 @@ impl BeliefStore {
             config_snapshots: db.open_tree(TREE_CONFIG_SNAPSHOTS).map_err(to_storage_io)?,
             dirty_keys: db.open_tree(TREE_DIRTY_KEYS).map_err(to_storage_io)?,
             runtime_meta: db.open_tree(TREE_RUNTIME_META).map_err(to_storage_io)?,
+            subscription_acceptances: db
+                .open_tree(TREE_SUBSCRIPTION_ACCEPTANCES)
+                .map_err(to_storage_io)?,
             db,
         })
+    }
+
+    pub(super) fn put_subscription_acceptance(
+        &self,
+        acceptance: &SourceSubscriptionAcceptanceV1,
+    ) -> Result<bool, StorageError> {
+        let bytes = serde_json::to_vec(acceptance).map_err(to_storage_data)?;
+        let changed = match self
+            .subscription_acceptances
+            .compare_and_swap(
+                acceptance.request_id.as_bytes(),
+                None as Option<&[u8]>,
+                Some(bytes.as_slice()),
+            )
+            .map_err(to_storage_io)?
+        {
+            Ok(()) => true,
+            Err(conflict) if conflict.current.as_deref() == Some(bytes.as_slice()) => false,
+            Err(_) => {
+                return Err(StorageError::InvalidPath(
+                    "Belief subscription acceptance conflicts with its request".to_string(),
+                ))
+            }
+        };
+        self.db.flush().map_err(to_storage_io)?;
+        Ok(changed)
+    }
+
+    pub(super) fn subscription_acceptance(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<SourceSubscriptionAcceptanceV1>, StorageError> {
+        decode_optional(
+            self.subscription_acceptances
+                .get(request_id.as_bytes())
+                .map_err(to_storage_io)?,
+        )
     }
 
     /// Open the store behind an `Arc` for runtime assembly.

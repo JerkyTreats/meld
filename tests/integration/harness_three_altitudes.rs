@@ -65,16 +65,7 @@ fn the_stall_presents_at_three_altitudes_to_a_separate_process() {
     fs::create_dir_all(&workspace_root).unwrap();
     let binding = survey_binding(workspace_root.canonicalize().unwrap(), product_root.clone());
 
-    // The survey session: init boot, bound boot, three stalled ticks.
-    drop(
-        HarnessRun::boot(survey_boot_request(
-            session.path(),
-            &binding,
-            "gate-init",
-            500,
-        ))
-        .unwrap(),
-    );
+    // The survey session: one bound boot and three stalled ticks.
     let mut run = HarnessRun::boot(survey_boot_request(
         session.path(),
         &binding,

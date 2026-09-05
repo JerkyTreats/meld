@@ -613,7 +613,7 @@ impl SeedAgentRegistration {
 
 /// Command to bind an agent to one belief stream.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SubscribeAgentCommand {
+pub(crate) struct SubscribeAgentCommand {
     /// Agent that owns the subscription.
     pub agent_id: AgentId,
     /// Belief stream to deliver.
@@ -627,29 +627,6 @@ impl SubscribeAgentCommand {
     pub fn validate(&self) -> Result<(), StorageError> {
         require_non_empty("agent id", &self.agent_id)?;
         self.belief_key.validate()?;
-        Ok(())
-    }
-}
-
-/// Command to advance a subscription delivery cursor.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AdvanceSubscriptionCommand {
-    /// Agent that owns the subscription.
-    pub agent_id: AgentId,
-    /// Subscription whose cursor is advanced.
-    pub subscription_id: AgentSubscriptionId,
-    /// Delivered belief revision persisted after the decision.
-    pub delivered_revision_id: String,
-    /// Delivered sequence persisted as the cursor.
-    pub delivered_seq: u64,
-}
-
-impl AdvanceSubscriptionCommand {
-    /// Validate identifiers required for cursor advancement.
-    pub fn validate(&self) -> Result<(), StorageError> {
-        require_non_empty("agent id", &self.agent_id)?;
-        require_non_empty("subscription id", &self.subscription_id)?;
-        require_non_empty("delivered revision id", &self.delivered_revision_id)?;
         Ok(())
     }
 }

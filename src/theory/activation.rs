@@ -43,9 +43,18 @@ impl ActivationParticipantPlanV1 {
     ) -> Result<Self, TheoryRouterError> {
         participants.sort_by(|left, right| left.participant_id.cmp(&right.participant_id));
         if participants.is_empty()
-            || participants
+            || participants.iter().any(|participant| {
+                [
+                    participant.participant_id.as_str(),
+                    participant.owner_domain.as_str(),
+                    participant.readiness_contract_ref.as_str(),
+                    participant.wake_contract_ref.as_str(),
+                    participant.safe_point_contract_ref.as_str(),
+                    participant.stop_contract_ref.as_str(),
+                ]
                 .iter()
-                .any(|participant| participant.participant_id.trim().is_empty())
+                .any(|value| value.trim().is_empty())
+            })
             || !participants
                 .windows(2)
                 .all(|pair| pair[0].participant_id != pair[1].participant_id)
@@ -83,6 +92,17 @@ impl ActivationParticipantPlanV1 {
             plan_id,
             participants,
         })
+    }
+
+    pub fn verify_identity(&self) -> Result<(), TheoryRouterError> {
+        let rebuilt = Self::new(self.participants.clone())?;
+        if rebuilt != *self {
+            return Err(error(
+                "activation_plan_corrupt",
+                "participant plan identity or canonical ordering differs",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -133,26 +153,30 @@ pub struct PreparedActivationClosureV1 {
     pub prepared_id: String,
     pub assignment: StewardshipAssignmentV1,
     pub activation: StewardshipActivationV1,
-    pub package_receipt_id: String,
-    pub package_content_hash: String,
+    pub product_compilation_receipt_id: String,
+    pub product_revision_id: String,
+    pub agent_topology_receipt_id: String,
     pub owner_receipts: Vec<PreparedDomainActivationRef>,
-    pub capability_closure_ref: String,
+    pub capability_preparation_receipt_id: String,
     pub participant_plan: ActivationParticipantPlanV1,
     pub binding_revision_refs: Vec<OwnerBindingRevisionRef>,
     pub effective_authority_inputs: EffectiveAuthorityInputRefs,
+    pub expected_prior_prepared_id: Option<String>,
 }
 
 #[derive(Serialize)]
 struct PreparedIdentity<'a> {
     assignment: &'a StewardshipAssignmentV1,
     activation: &'a StewardshipActivationV1,
-    package_receipt_id: &'a str,
-    package_content_hash: &'a str,
+    product_compilation_receipt_id: &'a str,
+    product_revision_id: &'a str,
+    agent_topology_receipt_id: &'a str,
     owner_receipts: &'a [PreparedDomainActivationRef],
-    capability_closure_ref: &'a str,
+    capability_preparation_receipt_id: &'a str,
     participant_plan: &'a ActivationParticipantPlanV1,
     binding_revision_refs: &'a [OwnerBindingRevisionRef],
     effective_authority_inputs: &'a EffectiveAuthorityInputRefs,
+    expected_prior_prepared_id: &'a Option<String>,
 }
 
 impl PreparedActivationClosureV1 {
@@ -160,12 +184,13 @@ impl PreparedActivationClosureV1 {
     pub fn new(
         assignment: StewardshipAssignmentV1,
         activation: StewardshipActivationV1,
-        package_content_hash: String,
+        agent_topology_receipt_id: String,
         mut owner_receipts: Vec<PreparedDomainActivationRef>,
-        capability_closure_ref: String,
+        capability_preparation_receipt_id: String,
         participant_plan: ActivationParticipantPlanV1,
         mut binding_revision_refs: Vec<OwnerBindingRevisionRef>,
         effective_authority_inputs: EffectiveAuthorityInputRefs,
+        expected_prior_prepared_id: Option<String>,
     ) -> Result<Self, TheoryRouterError> {
         assignment
             .verify_identity()
@@ -173,13 +198,30 @@ impl PreparedActivationClosureV1 {
         activation
             .verify_identity()
             .map_err(|failure| error("activation_invalid", failure.to_string()))?;
+        participant_plan.verify_identity()?;
         if activation.assignment_id != assignment.assignment_id {
             return Err(error(
                 "activation_assignment_mismatch",
                 "activation cites another assignment",
             ));
         }
-        if owner_receipts.is_empty() || capability_closure_ref.trim().is_empty() {
+        if owner_receipts.is_empty()
+            || agent_topology_receipt_id.trim().is_empty()
+            || capability_preparation_receipt_id.trim().is_empty()
+            || owner_receipts.iter().any(|receipt| {
+                receipt.owner_domain.trim().is_empty() || receipt.receipt_ref.trim().is_empty()
+            })
+            || binding_revision_refs.iter().any(|binding| {
+                binding.binding_id.trim().is_empty() || binding.revision_ref.trim().is_empty()
+            })
+            || [
+                effective_authority_inputs.requested_authority_ref.as_str(),
+                effective_authority_inputs.principal_grant_ref.as_str(),
+                effective_authority_inputs.current_judgment_ref.as_str(),
+            ]
+            .iter()
+            .any(|value| value.trim().is_empty())
+        {
             return Err(error(
                 "prepared_closure_incomplete",
                 "owner and capability receipts are required",
@@ -187,31 +229,69 @@ impl PreparedActivationClosureV1 {
         }
         owner_receipts.sort_by(|left, right| left.owner_domain.cmp(&right.owner_domain));
         binding_revision_refs.sort_by(|left, right| left.binding_id.cmp(&right.binding_id));
-        let package_receipt_id = assignment.package_receipt_id.clone();
+        if !owner_receipts
+            .windows(2)
+            .all(|pair| pair[0].owner_domain != pair[1].owner_domain)
+            || !binding_revision_refs
+                .windows(2)
+                .all(|pair| pair[0].binding_id != pair[1].binding_id)
+        {
+            return Err(error(
+                "prepared_closure_incomplete",
+                "owner receipts and binding revisions must have unique identities",
+            ));
+        }
+        let product_compilation_receipt_id = assignment.product_compilation_receipt_id.clone();
+        let product_revision_id = assignment.product_revision_id.clone();
         let identity = PreparedIdentity {
             assignment: &assignment,
             activation: &activation,
-            package_receipt_id: &package_receipt_id,
-            package_content_hash: &package_content_hash,
+            product_compilation_receipt_id: &product_compilation_receipt_id,
+            product_revision_id: &product_revision_id,
+            agent_topology_receipt_id: &agent_topology_receipt_id,
             owner_receipts: &owner_receipts,
-            capability_closure_ref: &capability_closure_ref,
+            capability_preparation_receipt_id: &capability_preparation_receipt_id,
             participant_plan: &participant_plan,
             binding_revision_refs: &binding_revision_refs,
             effective_authority_inputs: &effective_authority_inputs,
+            expected_prior_prepared_id: &expected_prior_prepared_id,
         };
         let prepared_id = hash(&identity)?;
         Ok(Self {
             prepared_id,
             assignment,
             activation,
-            package_receipt_id,
-            package_content_hash,
+            product_compilation_receipt_id,
+            product_revision_id,
+            agent_topology_receipt_id,
             owner_receipts,
-            capability_closure_ref,
+            capability_preparation_receipt_id,
             participant_plan,
             binding_revision_refs,
             effective_authority_inputs,
+            expected_prior_prepared_id,
         })
+    }
+
+    pub fn verify_identity(&self) -> Result<(), TheoryRouterError> {
+        let rebuilt = Self::new(
+            self.assignment.clone(),
+            self.activation.clone(),
+            self.agent_topology_receipt_id.clone(),
+            self.owner_receipts.clone(),
+            self.capability_preparation_receipt_id.clone(),
+            self.participant_plan.clone(),
+            self.binding_revision_refs.clone(),
+            self.effective_authority_inputs.clone(),
+            self.expected_prior_prepared_id.clone(),
+        )?;
+        if rebuilt != *self {
+            return Err(error(
+                "prepared_closure_corrupt",
+                "prepared closure identity or canonical ordering differs",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -224,17 +304,24 @@ fn hash(value: &impl Serialize) -> Result<String, TheoryRouterError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{AdapterPlacement, OperationalLimits, RuntimeIsolationRequirements};
+    use crate::config::{
+        AdapterPlacement, AssignedAgentPositionV1, OperationalLimits, RuntimeIsolationRequirements,
+    };
     use meld_events::DomainObjectRef;
 
     fn assignment() -> StewardshipAssignmentV1 {
         StewardshipAssignmentV1::new(
-            "package".into(),
+            "compilation".into(),
+            "product-revision".into(),
             "principal".into(),
-            "agent".into(),
             DomainObjectRef::new("workspace_fs", "node", "docs").unwrap(),
             "perspective".into(),
             "main".into(),
+            "topology".into(),
+            vec![AssignedAgentPositionV1 {
+                position_id: "steward".into(),
+                agent_id: "agent".into(),
+            }],
             "authority".into(),
             "grant".into(),
         )
@@ -284,6 +371,7 @@ mod tests {
                 principal_grant_ref: "grant".into(),
                 current_judgment_ref: "judgment".into(),
             },
+            None,
         )
         .unwrap();
         assert_eq!(prepared.prepared_id.len(), 64);
@@ -314,6 +402,7 @@ mod tests {
                 principal_grant_ref: "grant".into(),
                 current_judgment_ref: "judgment".into()
             },
+            None,
         )
         .is_err());
     }

@@ -115,6 +115,11 @@ fn key(reference: &TheoryRevisionRef) -> String {
 #[cfg(test)]
 mod tests {
     use crate::runtime::storage::{OpenProductStores, ProductStorageLayout};
+    use crate::theory::{
+        ActivationParticipantPlanV1, ActivationParticipantSpec, ParticipantKind,
+        ProductAgentPositionV1, ProductAgentSubscriptionV1, ProductCompilationReceiptV1,
+        ProductDeclarationV1, ProductPackageSelectionV1,
+    };
     #[test]
     fn shipped_source_hashes_are_visible_for_manifest_review() {
         for name in [
@@ -158,5 +163,67 @@ mod tests {
         );
         let repeated = super::install_package(&stores, &package_root, 99).unwrap();
         assert_eq!(receipt.receipt_id, repeated.receipt_id);
+    }
+
+    #[test]
+    fn security_product_compiles_with_its_own_topology_and_source_contract() {
+        let root = tempfile::tempdir().unwrap();
+        let stores =
+            OpenProductStores::open(&ProductStorageLayout::from_root(root.path())).unwrap();
+        let package_root =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/dependency_security");
+        let receipt = super::install_package(&stores, &package_root, 1).unwrap();
+        let participant_plan = ActivationParticipantPlanV1::new(vec![ActivationParticipantSpec {
+            participant_id: "world_model.security_reconciliation".to_string(),
+            owner_domain: "world-model".to_string(),
+            kind: ParticipantKind::BoundedActor,
+            required: true,
+            depends_on: std::collections::BTreeSet::new(),
+            readiness_contract_ref: "world-model.readiness.v1".to_string(),
+            wake_contract_ref: "world-model.wake.v1".to_string(),
+            safe_point_contract_ref: "world-model.safe-point.v1".to_string(),
+            stop_contract_ref: "world-model.stop.v1".to_string(),
+        }])
+        .unwrap();
+        let declaration = ProductDeclarationV1::new(
+            "dependency_security".to_string(),
+            "workspace-owner".to_string(),
+            vec![ProductPackageSelectionV1 {
+                package_id: receipt.package_id.clone(),
+                package_version: receipt.package_version.clone(),
+                package_content_hash: receipt.package_content_hash.clone(),
+            }],
+            vec![ProductAgentPositionV1 {
+                position_id: "security-steward".to_string(),
+                directive: "maintain dependency security".to_string(),
+                required_owner_routes: receipt
+                    .components
+                    .iter()
+                    .map(|component| component.route.clone())
+                    .collect(),
+                observation_scope_component_id: "security-coverage-belief".to_string(),
+                required_subscriptions: vec![ProductAgentSubscriptionV1 {
+                    source_owner: "belief".to_string(),
+                    source_contract_component_id: "security-coverage-belief".to_string(),
+                    initial_cursor_policy: "from_genesis".to_string(),
+                }],
+                participant_ref: "world_model.security_reconciliation".to_string(),
+            }],
+            participant_plan,
+            "security-read-only".to_string(),
+            "principal-grant::workspace-owner".to_string(),
+            "pds-product-compilation.v1".to_string(),
+        )
+        .unwrap();
+        let compilation =
+            ProductCompilationReceiptV1::compile(&declaration, vec![receipt], 2).unwrap();
+        assert_eq!(
+            compilation.product_revision_id,
+            declaration.product_revision_id
+        );
+        assert!(compilation
+            .installed_owner_revisions
+            .iter()
+            .any(|component| component.component_id == "security-policy"));
     }
 }

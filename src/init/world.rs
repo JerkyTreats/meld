@@ -1,5 +1,5 @@
-//! World initialization: theory installation, identity genesis, and
-//! epistemic seeding.
+//! Product initialization: compilation, Agent genesis, inert preparation,
+//! and epistemic seeding behind the retained world-init adapter.
 //!
 //! Owner: root. The staged initialization contract in
 //! `design/plan/integration/runtime_initialization.md` splits initialization
@@ -8,12 +8,14 @@
 //! after them — while world initialization creates the first durable
 //! meaning, once per world. "World" is that contract's term for the
 //! runtime's initialized epistemic state, not the world-model domain
-//! crate. Its three stages, numbered 2 through 4 in the contract:
+//! crate. Its four stages, numbered 2 through 5 in the contract:
 //!
 //! - install theory: belief families and curation rules into their
 //!   domain registries
 //! - genesis identities: the seed agent, its rule binding, and its
 //!   subscriptions
+//! - prepare activation: exact owner and physical inputs into one inert
+//!   product closure
 //! - seed epistemic facts: the unobserved-scope genesis fact appended to
 //!   the ledger
 //!
@@ -49,7 +51,9 @@ pub enum WorldInitStage {
     /// Stage 3: create seed agent identity, perspective, and
     /// subscriptions with recorded provenance.
     GenesisIdentities,
-    /// Stage 4: append the epistemic genesis facts for the selected
+    /// Stage 4: bind exact physical inputs and prepare one inert activation closure.
+    PrepareActivation,
+    /// Stage 5: append the epistemic genesis facts for the selected
     /// scope through the canonical append capability.
     SeedEpistemicFacts,
 }

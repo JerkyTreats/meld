@@ -6,7 +6,7 @@ Slice: `WMR-DD-05`
 
 Status: accepted design product
 
-Implementation authorization: none
+Implementation authorization: direct program-owner authority on 2026-09-04
 
 ## Decision
 

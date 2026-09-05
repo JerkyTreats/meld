@@ -40,7 +40,6 @@ struct RoutedGmailEvidence {
     gmail_source_root: String,
     package_id: &'static str,
     package_receipt_id: String,
-    fixed_receipt_present: bool,
     enabled_runtime_ids: Vec<String>,
     cold_tick_count: u64,
     reopen_tick_count: u64,
@@ -72,7 +71,6 @@ struct LiveRoutedGmailEvidence {
     provider_model: String,
     package_id: &'static str,
     package_receipt_id: String,
-    fixed_receipt_present: bool,
     enabled_runtime_ids: Vec<String>,
     runtime_invocations: usize,
     tick_count: u64,
@@ -119,16 +117,13 @@ fn routed_docs_pds_generates_gmail_operator_and_reopens_without_work() {
             .head(DOCS_PACKAGE_ID)
             .unwrap()
             .expect("routed docs package head");
-        let fixed_receipt_present = stores.theory_receipts.current(&selection).is_ok();
-        assert!(
-            !fixed_receipt_present,
-            "routed world initialization must not write the fixed receipt"
-        );
         let subject = DomainObjectRef::new("workspace_fs", "node", SUBJECT_PATH).unwrap();
-        let resolved = ResolvedStewardshipTheory::resolve(stores, &selection, &subject).unwrap();
-        assert_eq!(resolved.package_receipt_id, package_head.receipt_id);
+        let resolved =
+            ResolvedStewardshipTheory::resolve_prepared_product(stores, &selection, &subject)
+                .unwrap();
+        assert_eq!(resolved.package_receipt_ids, vec![package_head.receipt_id]);
         assert_eq!(resolved.executable_contracts.len(), 5);
-        let package_receipt_id = resolved.package_receipt_id;
+        let package_receipt_id = resolved.package_receipt_ids[0].clone();
         drop(initial);
 
         let enabled_runtime_ids = vec!["execution.task_dispatch".to_string()];
@@ -159,13 +154,16 @@ fn routed_docs_pds_generates_gmail_operator_and_reopens_without_work() {
         let reopened =
             RunContext::with_runtime_enablement(workspace_root.clone(), None, &enabled_runtime_ids)
                 .unwrap();
-        let reopened_resolved = ResolvedStewardshipTheory::resolve(
+        let reopened_resolved = ResolvedStewardshipTheory::resolve_prepared_product(
             reopened.product_runtime().stores(),
             &selection,
             &subject,
         )
         .unwrap();
-        assert_eq!(reopened_resolved.package_receipt_id, package_receipt_id);
+        assert_eq!(
+            reopened_resolved.package_receipt_ids,
+            vec![package_receipt_id.clone()]
+        );
         let reopen_summary: serde_json::Value = serde_json::from_str(
             &reopened
                 .execute(&runtime_run("gmail-operator-routed-reopen", 300))
@@ -197,7 +195,6 @@ fn routed_docs_pds_generates_gmail_operator_and_reopens_without_work() {
                 gmail_source_root: gmail_root.display().to_string(),
                 package_id: DOCS_PACKAGE_ID,
                 package_receipt_id,
-                fixed_receipt_present,
                 enabled_runtime_ids,
                 cold_tick_count: cold_summary["tick_count"].as_u64().unwrap(),
                 reopen_tick_count: reopen_summary["tick_count"].as_u64().unwrap(),
@@ -311,13 +308,13 @@ fn routed_docs_pds_generates_gmail_operator_with_live_provider() {
             .head(DOCS_PACKAGE_ID)
             .unwrap()
             .expect("routed docs package head");
-        let fixed_receipt_present = stores.theory_receipts.current(&selection).is_ok();
-        assert!(!fixed_receipt_present);
         let subject = DomainObjectRef::new("workspace_fs", "node", SUBJECT_PATH).unwrap();
-        let resolved = ResolvedStewardshipTheory::resolve(stores, &selection, &subject).unwrap();
-        assert_eq!(resolved.package_receipt_id, package_head.receipt_id);
+        let resolved =
+            ResolvedStewardshipTheory::resolve_prepared_product(stores, &selection, &subject)
+                .unwrap();
+        assert_eq!(resolved.package_receipt_ids, vec![package_head.receipt_id]);
         assert_eq!(resolved.executable_contracts.len(), 5);
-        let package_receipt_id = resolved.package_receipt_id;
+        let package_receipt_id = resolved.package_receipt_ids[0].clone();
         drop(initial);
 
         let enabled_runtime_ids = vec!["execution.task_dispatch".to_string()];
@@ -366,7 +363,6 @@ fn routed_docs_pds_generates_gmail_operator_with_live_provider() {
             provider_model: model,
             package_id: DOCS_PACKAGE_ID,
             package_receipt_id,
-            fixed_receipt_present,
             enabled_runtime_ids,
             runtime_invocations,
             tick_count,

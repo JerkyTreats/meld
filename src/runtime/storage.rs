@@ -24,7 +24,7 @@ use crate::docs::claim_validation::DocsClaimPolicyRegistryStore;
 use crate::prompt_context::PromptContextArtifactStorage;
 use crate::runtime::theory::TheoryInstallationReceiptStore;
 use crate::store::SledNodeRecordStore;
-use crate::theory::PdsPackageStore;
+use crate::theory::{PdsPackageStore, PdsProductStore};
 
 /// Product storage root for durable runtime state.
 ///
@@ -205,10 +205,12 @@ pub struct OpenProductStores {
     pub authority_policy_registry: ScopedResource<Arc<AuthorityPolicyRegistryStore>>,
     /// Docs-owned exact claim-policy registry.
     pub claim_policy_registry: ScopedResource<Arc<DocsClaimPolicyRegistryStore>>,
-    /// Root-owned complete installation receipt store.
+    /// Read-only historical root installation receipts resolved by exact id.
     pub theory_receipts: ScopedResource<Arc<TheoryInstallationReceiptStore>>,
     /// Generic append-only PDS package receipts and selection heads.
     pub pds_packages: ScopedResource<Arc<PdsPackageStore>>,
+    /// Canonical PDS product declarations, compilations, and inert closures.
+    pub pds_products: ScopedResource<Arc<PdsProductStore>>,
     /// Shared physical theory database for checkpoint flushing only.
     pub theory_db: ScopedResource<sled::Db>,
     /// Context frame blob storage.
@@ -418,6 +420,7 @@ impl OpenProductStores {
             claim_policy_registry,
             theory_receipts,
             pds_packages,
+            pds_products,
             theory_db,
         ) = if scope.theory {
             let theory_db = open_db(&layout.theory_db)?;
@@ -453,6 +456,10 @@ impl OpenProductStores {
                     "pds_packages",
                     Arc::new(PdsPackageStore::new(theory_db.clone()).map_err(to_context)?),
                 ),
+                ScopedResource::open(
+                    "pds_products",
+                    Arc::new(PdsProductStore::new(theory_db.clone()).map_err(to_context)?),
+                ),
                 ScopedResource::open("theory_db", theory_db),
             )
         } else {
@@ -462,6 +469,7 @@ impl OpenProductStores {
                 ScopedResource::closed("claim_policy_registry"),
                 ScopedResource::closed("theory_receipts"),
                 ScopedResource::closed("pds_packages"),
+                ScopedResource::closed("pds_products"),
                 ScopedResource::closed("theory_db"),
             )
         };
@@ -528,6 +536,7 @@ impl OpenProductStores {
             claim_policy_registry,
             theory_receipts,
             pds_packages,
+            pds_products,
             theory_db,
             frame_storage,
             prompt_artifacts,

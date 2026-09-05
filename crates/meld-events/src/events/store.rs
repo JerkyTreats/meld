@@ -399,6 +399,15 @@ impl EventStore {
         Ok(out)
     }
 
+    /// Resolves one exact durable sequence for an authority-owned append proof.
+    pub(crate) fn event_at(&self, seq: u64) -> Result<Option<EventRecord>, StorageError> {
+        self.spine_events
+            .get(encode_record_key(seq).as_bytes())
+            .map_err(to_storage_io)?
+            .map(|raw| decode_event(&raw))
+            .transpose()
+    }
+
     /// Reads at most `limit` retained events ending at `through_seq`.
     ///
     /// Selection is by record count rather than sequence distance, so sparse

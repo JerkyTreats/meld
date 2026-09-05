@@ -45,10 +45,45 @@ pub struct StewardshipActivationV1 {
     pub activation_id: String,
     pub assignment_id: String,
     pub bindings: BTreeMap<String, PhysicalBindingRef>,
+    #[serde(with = "selected_implementation_map")]
     pub selected_implementations: BTreeMap<CapabilityContractRevisionRef, String>,
     pub placement: AdapterPlacement,
     pub isolation_requirements: RuntimeIsolationRequirements,
     pub operational_limits: OperationalLimits,
+}
+
+mod selected_implementation_map {
+    use std::collections::BTreeMap;
+
+    use meld_execution::capability::CapabilityContractRevisionRef;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(
+        value: &BTreeMap<CapabilityContractRevisionRef, String>,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        value.iter().collect::<Vec<_>>().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(
+        deserializer: D,
+    ) -> Result<BTreeMap<CapabilityContractRevisionRef, String>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let entries = Vec::<(CapabilityContractRevisionRef, String)>::deserialize(deserializer)?;
+        let expected = entries.len();
+        let map = entries.into_iter().collect::<BTreeMap<_, _>>();
+        if map.len() != expected {
+            return Err(serde::de::Error::custom(
+                "duplicate exact capability implementation selection",
+            ));
+        }
+        Ok(map)
+    }
 }
 
 #[derive(Serialize)]

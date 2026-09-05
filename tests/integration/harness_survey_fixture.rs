@@ -1,18 +1,14 @@
-//! Shared survey-configuration fixture: the stewardship composition,
-//! frozen specimen theory body, and staged boot the stall specimen and
-//! the served-surface tests reproduce the live survey with.
+//! Shared survey-configuration fixture: the stewardship composition and
+//! frozen specimen theory body that the stall and served-surface tests use
+//! to reproduce the live survey.
 
 use std::path::Path;
 
 use meld::config::{PhysicalBinding, SelectedStewardshipPackage};
-use meld::harness::boot::{HarnessBootRequest, HarnessRootSelection, HarnessWorldInit};
-use meld::init::world::pipeline::WorldInitContent;
-use meld::init::world::{WorldInitRequest, WorldInitStage};
-use meld::runtime::assembly::{StewardshipComposition, StewardshipTheoryBindings};
-use meld_events::DomainObjectRef;
-use meld_world_model::agent::AgentCurationRuleConfig;
-use meld_world_model::belief::BranchScope;
-use meld_world_model::PerspectiveKey;
+use meld::harness::boot::{HarnessBootRequest, HarnessRootSelection};
+use meld::runtime::assembly::StewardshipComposition;
+use meld::runtime::storage::{OpenProductStores, ProductStorageLayout};
+use meld_world_model::belief::{BeliefFamilyRegistry, BeliefFamilyRegistryStore};
 
 pub const SUBJECT_ID: &str = "docs";
 pub const AGENT_ID: &str = "seed.docs_freshness";
@@ -119,48 +115,25 @@ pub fn survey_binding(
     }
 }
 
-pub fn world_init() -> HarnessWorldInit {
-    HarnessWorldInit {
-        request: WorldInitRequest {
-            stages: vec![
-                WorldInitStage::InstallTheory,
-                WorldInitStage::GenesisIdentities,
-                WorldInitStage::SeedEpistemicFacts,
-            ],
-        },
-        content: WorldInitContent {
-            family_config: serde_json::from_str(specimen_family_json()).unwrap(),
-            curation_rule: AgentCurationRuleConfig {
-                maintained_condition_id: None,
-                dimension_id: FAMILY_ID.to_string(),
-                threshold: 0.7,
-                priority_urgency: 50,
-                desired_summary: "confidence>0.7".to_string(),
-                source_kind: "belief_divergence".to_string(),
-            },
-            agent_id: AGENT_ID.to_string(),
-            subject: DomainObjectRef::new("workspace_fs", "node", SUBJECT_ID).unwrap(),
-            perspective: PerspectiveKey::new("default", "default").unwrap(),
-            branch_scope: BranchScope::main(),
-            observation_scope: FAMILY_ID.to_string(),
-            directive: format!("steward 'docs_freshness' for subject '{SUBJECT_ID}'"),
-            provenance: "meld world init".to_string(),
-            session_id: "stall-specimen".to_string(),
-            observed_seq: 0,
-        },
-    }
-}
-
 /// Build one survey boot request over an explicit session directory.
 ///
-/// The two-boot structure mirrors the product: the first boot installs
-/// the world after assembly, a later boot binds the actors against it.
+/// The fixture installs its historical Belief body through the owning
+/// registry before runtime assembly. Production initialization is not
+/// reproduced by this test helper.
 pub fn survey_boot_request(
     session_dir: &Path,
     binding: &PhysicalBinding,
     manifest_id: &str,
     booted_at_ms: u64,
 ) -> HarnessBootRequest {
+    let layout = ProductStorageLayout::from_root(session_dir.join("root"));
+    let stores = OpenProductStores::open(&layout).unwrap();
+    let mut registry = BeliefFamilyRegistryStore::new(stores.traversal_store.db().clone()).unwrap();
+    registry
+        .install(serde_json::from_str(specimen_family_json()).unwrap(), 0)
+        .unwrap();
+    drop(stores);
+
     let mut request = HarnessBootRequest::temporary(manifest_id, booted_at_ms);
     request.root = HarnessRootSelection::ExistingDataRoot {
         product_root: session_dir.join("root"),
@@ -171,8 +144,6 @@ pub fn survey_boot_request(
     request.unsafe_existing_root = true;
     request.stewardship = Some(StewardshipComposition {
         binding: binding.clone(),
-        theory: StewardshipTheoryBindings::default(),
     });
-    request.world_init = Some(world_init());
     request
 }

@@ -76,7 +76,7 @@ pub(crate) mod writer;
 
 pub use authority::{
     AppendDisposition, AppendMode, AppendReceipt, BestEffortAppendReceipt, ConsumerCursorPosition,
-    EventAppendCapability, EventAuthority, EventAuthorityOpenOptions,
+    EventAppendCapability, EventAppendProof, EventAuthority, EventAuthorityOpenOptions,
     EventConsumerRegistryCapability, EventObservabilityCapability, EventPage,
     EventReplayCapability, EventSubscriptionCapability, EventWatermark, EventWatermarkCapability,
     LedgerCursor, ReplayRequest, SubscriptionPollRequest, MAX_REPLAY_LIMIT,

@@ -78,7 +78,7 @@ Disposition must cover `StewardshipDeclaration`, `TheorySelection`, `WorldInitPi
 
 The successor is one product declaration, complete package and compilation receipts, assignment, Agent-owned genesis and subscription receipts, Capability preparation receipt, participant plan, and inert prepared closure.
 
-VC-05 remains assessment-only until it identifies which current selection and installation contracts survive, which callers migrate, and which source and records retire.
+This prerequisite was satisfied by the [WMR-VC-05 source assessment](product_compilation_and_agent_genesis_source_assessment.md). Direct program-owner authority on 2026-09-04 activated the implementation candidate, and the exact style successor subsequently passed Gate Acceptance.
 
 ### WMR-VC-06 Activation Generation And Lifecycle Closure
 
@@ -130,4 +130,4 @@ Workflow classification is a prerequisite for the two product migrations. VC-04-
 
 ## Authorization State
 
-This assessment authorizes no later implementation. Separate program-owner authority committed and pushed the accepted `WMR-VC-04-R1` candidate. `WMR-VC-05` through `WMR-VC-09`, Workflow disposition source changes, and deployment remain unauthorized.
+This assessment did not authorize later implementation. Separate direct program-owner authority on 2026-09-04 activated `WMR-VC-05`. `WMR-VC-06` through `WMR-VC-09`, Workflow disposition source changes, commit, push, and deployment remain unauthorized.

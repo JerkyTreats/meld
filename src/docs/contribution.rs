@@ -183,6 +183,7 @@ mod tests {
                     activation_id: "activation-a".to_string(),
                     selected_contracts: vec![contract.clone()],
                     selected_implementations: BTreeMap::from([(contract, implementation)]),
+                    compatibility_policy_revision: "capability-compatibility.v1".into(),
                 },
                 &OwnerBindingView::new(BTreeMap::from([
                     (WORKSPACE_BINDING.to_string(), "/tmp".to_string()),
@@ -217,6 +218,7 @@ mod tests {
                         contract,
                         format!("docs.in-process.v1::{DRAFT_PATCH_SET}"),
                     )]),
+                    compatibility_policy_revision: "capability-compatibility.v1".into(),
                 },
                 &OwnerBindingView::new(BTreeMap::from([
                     (WORKSPACE_BINDING.to_string(), "/tmp".to_string()),

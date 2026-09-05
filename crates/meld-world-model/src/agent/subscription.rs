@@ -1,8 +1,7 @@
 //! Agent subscription commands and cursor rules.
 
 use crate::agent::contracts::{
-    deterministic_id, AdvanceSubscriptionCommand, AgentSubscriptionRecord, AgentSubscriptionStatus,
-    SubscribeAgentCommand,
+    deterministic_id, AgentSubscriptionRecord, AgentSubscriptionStatus, SubscribeAgentCommand,
 };
 use crate::agent::store::AgentStore;
 use crate::error::StorageError;
@@ -50,52 +49,5 @@ impl<'a> AgentSubscription<'a> {
         };
         self.store.put_subscription(&record)?;
         Ok(record)
-    }
-
-    /// Return whether a revision sequence is beyond the stored cursor.
-    pub fn should_deliver(
-        &self,
-        subscription_id: &str,
-        revision_seq: u64,
-    ) -> Result<bool, StorageError> {
-        let Some(subscription) = self.store.get_subscription(subscription_id)? else {
-            return Err(StorageError::InvalidPath(format!(
-                "unknown subscription '{subscription_id}'"
-            )));
-        };
-        Ok(revision_seq > subscription.last_delivered_seq)
-    }
-
-    /// Advance a subscription cursor without allowing regression.
-    pub fn advance_subscription(
-        &self,
-        command: AdvanceSubscriptionCommand,
-    ) -> Result<AgentSubscriptionRecord, StorageError> {
-        command.validate()?;
-        let Some(mut subscription) = self.store.get_subscription(&command.subscription_id)? else {
-            return Err(StorageError::InvalidPath(format!(
-                "unknown subscription '{}'",
-                command.subscription_id
-            )));
-        };
-        if subscription.agent_id != command.agent_id {
-            return Err(StorageError::InvalidPath(format!(
-                "subscription '{}' does not belong to agent '{}'",
-                command.subscription_id, command.agent_id
-            )));
-        }
-        if command.delivered_seq < subscription.last_delivered_seq {
-            return Err(StorageError::InvalidPath(
-                "subscription cursor regression".to_string(),
-            ));
-        }
-        if command.delivered_seq == subscription.last_delivered_seq {
-            return Ok(subscription);
-        }
-        subscription.last_delivered_revision_id = Some(command.delivered_revision_id);
-        subscription.last_delivered_seq = command.delivered_seq;
-        subscription.updated_at_seq = command.delivered_seq;
-        self.store.put_subscription(&subscription)?;
-        Ok(subscription)
     }
 }

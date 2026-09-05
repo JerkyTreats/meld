@@ -22,9 +22,8 @@ pub use agent::{
     AgentMaintainedConditionBinding, AgentMaintainedConditionRegistryStore,
     AgentMilestoneAcceptance, AgentPlanJudgment, AgentPlanJudgmentKind, AgentPlannerPort,
     AgentProductAuthorization, AgentProductProgress, AgentProductState, AgentReconciliationActor,
-    AgentReconciliationGoal, AgentReconciliationReport, AgentRecord, AgentRegistration,
-    AgentStatus, AgentStore, AgentStrategyRuntimeConfig, SeedAgentRegistration,
-    AGENT_RECONCILIATION_RUNTIME_ID,
+    AgentReconciliationGoal, AgentReconciliationReport, AgentRecord, AgentStatus, AgentStore,
+    AgentStrategyRuntimeConfig, SeedAgentRegistration, AGENT_RECONCILIATION_RUNTIME_ID,
 };
 pub use belief::{
     configured_belief_key, ingest_promoted_evidence, AssessmentLease, BayesianComparator,

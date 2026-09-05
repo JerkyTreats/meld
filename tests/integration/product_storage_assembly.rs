@@ -9,7 +9,14 @@ use meld_events::{
     LedgerCursor, ReplayRequest,
 };
 use meld_execution::task::{ArtifactProducerRef, ArtifactRecord};
-use meld_world_model::{AgentRecord, AgentStatus, BranchScope, PerspectiveKey};
+use meld_world_model::agent::{
+    AgentGenesis, AgentGenesisIntentV1, AgentSubscriptionRequestV1, SeedAgentRegistration,
+};
+use meld_world_model::belief::{
+    BeliefFamilyConfig, BeliefFamilyRegistry, BeliefFamilyRegistryStore,
+    BeliefSubscriptionAuthority,
+};
+use meld_world_model::{BranchScope, PerspectiveKey};
 use serde_json::json;
 
 #[test]
@@ -102,10 +109,7 @@ fn product_storage_persists_and_reopens_runtime_stores() {
             .belief_store
             .put_config_snapshot("config-a", "{\"ok\":true}")
             .unwrap();
-        stores
-            .agent_store
-            .put_agent(&agent_record(&subject))
-            .unwrap();
+        genesis_agent(&stores, &authority, &subject);
         let mut repo = stores.task_artifacts.open_repo("repo-docs").unwrap();
         repo.append_artifact(artifact("artifact-a")).unwrap();
         let mut network = stores.task_networks.open_network("network-docs").unwrap();
@@ -216,23 +220,66 @@ fn product_storage_rejects_invalid_task_network_storage_key() {
         .exists());
 }
 
-fn agent_record(subject: &DomainObjectRef) -> AgentRecord {
-    AgentRecord {
-        agent_id: "agent-a".to_string(),
-        perspective_key: PerspectiveKey::new("agent", "agent-a").unwrap(),
-        subject: subject.clone(),
-        branch_scope: BranchScope::main(),
-        observation_scope: "workspace".to_string(),
-        directive: "watch docs".to_string(),
-        seed_provenance: "test".to_string(),
-        status: AgentStatus::Operational,
-        curation_rule: None,
-        curation_rule_revision: None,
-        maintained_condition: None,
-        maintained_condition_revision: None,
-        created_at_seq: 1,
-        updated_at_seq: 1,
-    }
+fn genesis_agent(
+    stores: &OpenProductStores,
+    authority: &EventAuthority,
+    subject: &DomainObjectRef,
+) {
+    let mut registry = BeliefFamilyRegistryStore::new(stores.traversal_store.db().clone()).unwrap();
+    let mut family: BeliefFamilyConfig = serde_json::from_str(include_str!(
+        "../../theory/docs_freshness/belief_family.docs_freshness.json"
+    ))
+    .unwrap();
+    family.family_id = "storage-test".to_string();
+    family.dimension_id = "storage-test".to_string();
+    let revision = registry.install(family, 1).unwrap().1;
+    let perspective = PerspectiveKey::new("agent", "agent-a").unwrap();
+    let request = AgentSubscriptionRequestV1::new(
+        "agent-a".to_string(),
+        "belief".to_string(),
+        revision.revision_ref(),
+        meld_world_model::belief::BeliefKey {
+            subject: subject.clone(),
+            dimension_id: "storage-test".to_string(),
+            predicate_id: revision.config.predicate_id.clone(),
+            perspective: perspective.clone(),
+            branch_scope: BranchScope::main(),
+            evidence_policy_id: revision.config.evidence_policy_id.clone(),
+        },
+        "from_genesis".to_string(),
+    )
+    .unwrap();
+    let intent = AgentGenesisIntentV1::new(
+        "storage-test-assignment".to_string(),
+        "storage-test-compilation".to_string(),
+        "storage-test-position".to_string(),
+        vec![revision.revision_ref()],
+        SeedAgentRegistration {
+            agent_id: "agent-a".to_string(),
+            perspective_key: perspective,
+            subject: subject.clone(),
+            branch_scope: BranchScope::main(),
+            observation_scope: "workspace".to_string(),
+            directive: "watch docs".to_string(),
+            seed_provenance: "test".to_string(),
+            curation_rule: None,
+            curation_rule_revision: None,
+            maintained_condition: None,
+            maintained_condition_revision: None,
+            created_at_seq: 1,
+        },
+        vec![request.clone()],
+    )
+    .unwrap();
+    let append = authority.append_capability();
+    let genesis = AgentGenesis::new(stores.agent_store.as_ref(), &append);
+    let pending = genesis.prepare(intent).unwrap();
+    let acceptance = BeliefSubscriptionAuthority::new(stores.belief_store.as_ref())
+        .accept(&request, &revision)
+        .unwrap();
+    genesis
+        .complete(pending, vec![acceptance], "storage-test")
+        .unwrap();
 }
 
 fn artifact(artifact_id: &str) -> ArtifactRecord {

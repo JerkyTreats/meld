@@ -451,7 +451,7 @@ pub enum WorldCommands {
         path: PathBuf,
 
         /// Stage subset to run: install-theory, genesis-identities,
-        /// seed-epistemic-facts. Defaults to all stages. Selection is
+        /// prepare-activation, seed-epistemic-facts. Defaults to all stages. Selection is
         /// normalized to pipeline order without duplicates.
         #[arg(long = "stage", value_name = "STAGE")]
         stages: Vec<String>,

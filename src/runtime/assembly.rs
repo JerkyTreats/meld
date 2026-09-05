@@ -395,42 +395,14 @@ impl StewardshipActorBindings {
     }
 }
 
-/// Injected theory and route bindings for one stewardship composition.
-///
-/// Production assembly hydrates every semantic body from one complete exact
-/// receipt snapshot. The loose fields below remain only for compatibility
-/// fixtures while they migrate to installed receipts.
-// TODO compat-shim: remove loose fields after every harness fixture builds a
-// complete receipt-resolved snapshot and compatibility parity remains green.
+/// Exact theory bindings hydrated internally from one prepared product.
 #[derive(Default)]
-pub struct StewardshipTheoryBindings {
-    /// Complete exact semantic image injected by receipt-aware harness callers.
-    ///
-    /// Production assembly resolves this value from the active receipt.
-    pub resolved: Option<Arc<ResolvedStewardshipTheory>>,
-    /// Installed outcome-to-evidence mapping set configuration.
-    ///
-    /// The installed unit is the mapping set: one selected identity whose
-    /// rules interpret every canonical outcome shape the expression's theory
-    /// recognizes — per-task publications plus package aggregates — so the
-    /// assembled ingestion actor never binds a narrower vocabulary than the
-    /// installed theory declares.
-    ///
-    /// Seam: when the world model gains its durable mapping registry
-    /// (Runtime Initialization stage 2), assembly hydrates from it and this
-    /// injection becomes harness-only.
-    pub outcome_mapping: Option<OutcomeMappingSetConfig>,
-    /// Activated world-model Strategy problem template for Goal curation.
-    ///
-    /// `None` deliberately retains compatibility curation until root assembly
-    /// can supply an authored, content-identified theory snapshot.
-    pub strategy: Option<meld_world_model::AgentStrategyRuntimeConfig>,
-    /// Live atomic contracts and matching invokers shared across execution.
-    pub capability_runtime: Option<ProductCapabilityRuntime>,
-    /// Exact effective-authority policy shared by judgment and execution.
-    pub authority_policy: Option<AuthorityPolicyBinding>,
-    /// Real execution route bindings for the dispatch actor.
-    pub dispatch: Option<DispatchRouteBindings>,
+struct HydratedStewardshipTheory {
+    resolved: Option<Arc<ResolvedStewardshipTheory>>,
+    outcome_mapping: Option<OutcomeMappingSetConfig>,
+    strategy: Option<meld_world_model::AgentStrategyRuntimeConfig>,
+    capability_runtime: Option<ProductCapabilityRuntime>,
+    authority_policy: Option<AuthorityPolicyBinding>,
 }
 
 /// Product-neutral capability runtime shared by Strategy, Task admission, and
@@ -472,8 +444,7 @@ impl DispatchRouteBindings {
 ///
 /// Invariants:
 ///
-/// - The first binding wins; an injected `StewardshipTheoryBindings::dispatch`
-///   preloads the slot and later bind calls are no-ops.
+/// - The first production binding wins and later bind calls are no-ops.
 /// - An unbound slot leaves the dispatch handle body-less, so a boot that
 ///   never binds routes still projects a truthful
 ///   `UnresolvedRequiredBinding` — the slot never manufactures behavior.
@@ -483,12 +454,6 @@ pub struct DispatchRouteSlot {
 }
 
 impl DispatchRouteSlot {
-    fn preloaded(routes: Option<DispatchRouteBindings>) -> Self {
-        Self {
-            routes: Arc::new(Mutex::new(routes)),
-        }
-    }
-
     /// Bind execution routes once; returns whether this call installed them.
     pub fn bind(&self, routes: DispatchRouteBindings) -> bool {
         let mut slot = self.routes.lock().unwrap_or_else(|e| e.into_inner());
@@ -526,16 +491,14 @@ pub struct DispatchRouteSeed {
 pub struct StewardshipComposition {
     /// Validated physical binding resolved from configuration (stage 0).
     pub binding: PhysicalBinding,
-    /// Injected theory and route bindings.
-    pub theory: StewardshipTheoryBindings,
 }
 
 fn hydrate_stewardship_theory(
     stores: &OpenProductStores,
     binding: &PhysicalBinding,
-    theory: &mut StewardshipTheoryBindings,
     diagnostics: &mut Vec<AssemblyDiagnostic>,
-) {
+) -> HydratedStewardshipTheory {
+    let mut theory = HydratedStewardshipTheory::default();
     let subject = match DomainObjectRef::new("workspace_fs", "node", binding.subject.clone()) {
         Ok(subject) => subject,
         Err(error) => {
@@ -543,49 +506,55 @@ fn hydrate_stewardship_theory(
                 code: "theory_image_inconsistent".to_string(),
                 message: error.to_string(),
             });
-            return;
+            return theory;
         }
     };
-    let resolved = match theory.resolved.clone() {
-        Some(resolved) => resolved,
-        None => match ResolvedStewardshipTheory::resolve(stores, &binding.package, &subject) {
-            Ok(resolved) => Arc::new(resolved),
-            Err(error) => {
-                diagnostics.push(AssemblyDiagnostic {
-                    code: error
-                        .to_string()
-                        .split(':')
-                        .next()
-                        .unwrap_or("theory_image_unresolved")
-                        .to_string(),
-                    message: error.to_string(),
-                });
-                return;
-            }
-        },
+    let resolved = match ResolvedStewardshipTheory::resolve_prepared_product(
+        stores,
+        &binding.package,
+        &subject,
+    ) {
+        Ok(resolved) => Arc::new(resolved),
+        Err(error) => {
+            diagnostics.push(AssemblyDiagnostic {
+                code: error
+                    .to_string()
+                    .split(':')
+                    .next()
+                    .unwrap_or("theory_image_unresolved")
+                    .to_string(),
+                message: error.to_string(),
+            });
+            return theory;
+        }
     };
     if let Err(error) = resolved.validate_activation(&binding.package, &subject) {
         diagnostics.push(AssemblyDiagnostic {
             code: "theory_image_inconsistent".to_string(),
             message: error.to_string(),
         });
-        return;
+        return theory;
     }
     let contracts = resolved
         .executable_contracts
         .iter()
         .map(|revision| revision.contract.clone())
         .collect::<Vec<_>>();
-    let capability_runtime = match activate_exact_capabilities(binding, &resolved, &contracts) {
-        Ok(runtime) => runtime,
-        Err(error) => {
-            diagnostics.push(AssemblyDiagnostic {
-                code: "theory_image_inconsistent".to_string(),
-                message: error.to_string(),
-            });
-            return;
-        }
-    };
+    let prepared_closure = resolved
+        .prepared_closure
+        .as_ref()
+        .expect("prepared-product resolution must retain its closure");
+    let capability_runtime =
+        match activate_exact_capabilities(stores, binding, &contracts, prepared_closure) {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                diagnostics.push(AssemblyDiagnostic {
+                    code: "theory_image_inconsistent".to_string(),
+                    message: error.to_string(),
+                });
+                return theory;
+            }
+        };
     let mut strategy = match meld_world_model::AgentStrategyRuntimeConfig::activate_installed(
         resolved.strategy_theory.package.clone(),
         subject,
@@ -597,7 +566,7 @@ fn hydrate_stewardship_theory(
                 code: "theory_image_inconsistent".to_string(),
                 message: error.to_string(),
             });
-            return;
+            return theory;
         }
     };
     let authority_policy = match resolved.authority_policy.binding() {
@@ -607,7 +576,7 @@ fn hydrate_stewardship_theory(
                 code: "theory_image_inconsistent".to_string(),
                 message: error.to_string(),
             });
-            return;
+            return theory;
         }
     };
     strategy.theory_revision = Some(resolved.strategy_theory.revision_ref());
@@ -617,6 +586,7 @@ fn hydrate_stewardship_theory(
     theory.capability_runtime = Some(capability_runtime);
     theory.authority_policy = Some(authority_policy);
     theory.resolved = Some(resolved);
+    theory
 }
 
 /// Bind built-in product capability implementations by exact contract.
@@ -625,38 +595,59 @@ fn hydrate_stewardship_theory(
 /// stewardship expression and it rejects any installed contract for which
 /// the process has no exact invoker.
 fn activate_exact_capabilities(
+    stores: &OpenProductStores,
     binding: &PhysicalBinding,
-    resolved: &ResolvedStewardshipTheory,
     contracts: &[crate::capability::CapabilityTypeContract],
+    closure: &crate::theory::PreparedActivationClosureV1,
 ) -> Result<ProductCapabilityRuntime, crate::error::ApiError> {
+    if closure.assignment.principal_id != binding.package.principal_id
+        || closure.assignment.subject.object_id != binding.subject
+    {
+        return Err(crate::error::ApiError::ConfigError(
+            "prepared product assignment differs from the physical stewardship binding".to_string(),
+        ));
+    }
+    let topology_receipt = stores
+        .pds_products
+        .topology_receipt(&closure.agent_topology_receipt_id)
+        .map_err(|error| crate::error::ApiError::ConfigError(error.to_string()))?
+        .ok_or_else(|| {
+            crate::error::ApiError::ConfigError(
+                "prepared product closure cites a missing Agent topology receipt".to_string(),
+            )
+        })?;
+    if topology_receipt.assignment_id != closure.assignment.assignment_id {
+        return Err(crate::error::ApiError::ConfigError(
+            "prepared Agent topology belongs to another assignment".to_string(),
+        ));
+    }
+    let capability_receipt = stores
+        .pds_products
+        .capability_preparation(&closure.capability_preparation_receipt_id)
+        .map_err(|error| crate::error::ApiError::ConfigError(error.to_string()))?
+        .ok_or_else(|| {
+            crate::error::ApiError::ConfigError(
+                "prepared product closure cites a missing Capability preparation receipt"
+                    .to_string(),
+            )
+        })?;
     let inventory: ProductCapabilityInventory =
         crate::capability::product_capability_inventory()
             .map_err(|error| crate::error::ApiError::ConfigError(error.to_string()))?;
-    let selected_contracts = resolved
-        .executable_contracts
-        .iter()
-        .map(|revision| revision.revision_ref())
+    let selected_contracts = closure
+        .activation
+        .selected_implementations
+        .keys()
+        .cloned()
         .collect::<Vec<_>>();
-    let selected_implementations = selected_contracts
-        .iter()
-        .map(|contract_ref| {
-            inventory
-                .unique_implementation_ref(contract_ref)
-                .map(|implementation_ref| (contract_ref.clone(), implementation_ref))
-        })
-        .collect::<Result<BTreeMap<_, _>, _>>()
-        .map_err(|error| crate::error::ApiError::ConfigError(error.to_string()))?;
     let prepared = inventory
         .prepare(
             ExactCapabilityActivationRequest {
-                assignment_id: format!("legacy::{}::{}", binding.agent_id, binding.subject),
-                activation_id: format!(
-                    "legacy::{}::{}",
-                    binding.workspace_root.display(),
-                    binding.provider_id
-                ),
+                assignment_id: closure.assignment.assignment_id.clone(),
+                activation_id: closure.activation.activation_id.clone(),
                 selected_contracts,
-                selected_implementations,
+                selected_implementations: closure.activation.selected_implementations.clone(),
+                compatibility_policy_revision: "capability-compatibility.v1".to_string(),
             },
             &OwnerBindingView::new(BTreeMap::from([
                 (
@@ -669,6 +660,11 @@ fn activate_exact_capabilities(
             ])),
         )
         .map_err(|error| crate::error::ApiError::ConfigError(error.to_string()))?;
+    if prepared.preparation_receipt != capability_receipt {
+        return Err(crate::error::ApiError::ConfigError(
+            "current physical bindings differ from the prepared capability closure".to_string(),
+        ));
+    }
     for contract in contracts {
         if prepared
             .invokers
@@ -690,7 +686,7 @@ fn activate_exact_capabilities(
 /// Stewardship values shared by the composed actor factories.
 struct ComposedStewardship {
     bindings: StewardshipActorBindings,
-    theory: StewardshipTheoryBindings,
+    theory: HydratedStewardshipTheory,
     network: Option<Arc<Mutex<SledTaskNetworkStore>>>,
     cursor_registry: EventConsumerRegistryCapability,
     worker_id: String,
@@ -1268,11 +1264,10 @@ impl ProductRuntimeAssembly {
 
         let mut diagnostics = Vec::new();
         let composed_stewardship = match stewardship {
-            Some(mut composition) => {
-                hydrate_stewardship_theory(
+            Some(composition) => {
+                let theory = hydrate_stewardship_theory(
                     stores.as_ref(),
                     &composition.binding,
-                    &mut composition.theory,
                     &mut diagnostics,
                 );
                 let bindings = StewardshipActorBindings::derive(&composition.binding)?;
@@ -1287,16 +1282,14 @@ impl ProductRuntimeAssembly {
                     None => None,
                 };
                 Some(ComposedStewardship {
-                    dispatch_slot: DispatchRouteSlot::preloaded(
-                        composition.theory.dispatch.clone(),
-                    ),
+                    dispatch_slot: DispatchRouteSlot::default(),
                     network,
                     cursor_registry: event_authority.consumer_registry_capability(),
                     // Worker identity derives from the durable ledger
                     // identity, never process-random state, so interrupted
                     // claims are resumable across supervisor restarts.
                     worker_id: format!("runtime-worker::{}", event_authority.ledger_identity()),
-                    theory: composition.theory,
+                    theory,
                     dispatch_route_seed: dispatch_route_seed(&composition.binding, &bindings),
                     bindings,
                 })
@@ -2063,16 +2056,12 @@ impl RuntimeSemanticHandleFactory {
                     Some(agent_store),
                     Some(curation_store),
                     Some(registry),
-                    Some(theory_receipts),
-                    Some(pds_packages),
                 ) = (
                     stores.belief_store.opened(),
                     stores.traversal_store.opened(),
                     stores.agent_store.opened(),
                     stores.curation_store.opened(),
                     stores.belief_family_registry.opened(),
-                    stores.theory_receipts.opened(),
-                    stores.pds_packages.opened(),
                 )
                 else {
                     return Ok(Self::None);
@@ -2102,10 +2091,18 @@ impl RuntimeSemanticHandleFactory {
                     return unresolved(
                         diagnostics,
                         "agent_reasoning_theory_unresolved",
-                        "Agent reconciliation requires one complete installed theory receipt"
+                        "Agent reconciliation requires one prepared product compilation"
                             .to_string(),
                     );
                 };
+                let product_compilation_receipt_id = resolved
+                    .product_compilation_receipt_id
+                    .as_deref()
+                    .ok_or_else(|| {
+                        RuntimeAssemblyError::RuntimeHandleConstruction(
+                            "live Agent theory has no prepared product compilation".to_string(),
+                        )
+                    })?;
                 let Some(strategy) = composed.theory.strategy.clone() else {
                     return unresolved(
                         diagnostics,
@@ -2240,8 +2237,8 @@ impl RuntimeSemanticHandleFactory {
                         PlannerSourceKind::Directive,
                         "agent",
                         &agent.agent_id,
-                        &resolved.receipt.receipt_id,
-                        &resolved.receipt.receipt_id,
+                        product_compilation_receipt_id,
+                        product_compilation_receipt_id,
                     ),
                     source(
                         PlannerSourceKind::MaintainedCondition,
@@ -2277,7 +2274,7 @@ impl RuntimeSemanticHandleFactory {
                     policy: PlannerAssemblyPolicy {
                         policy_revision_id: format!(
                             "reasoning-policy::{}",
-                            resolved.receipt.receipt_id
+                            product_compilation_receipt_id
                         ),
                         required_sources: vec![
                             PlannerSourceKind::Graph,
@@ -2350,10 +2347,8 @@ impl RuntimeSemanticHandleFactory {
                     )),
                     authority_port: Arc::new(ProductAgentAuthorityPort::new(
                         Arc::clone(agent_store),
-                        Arc::clone(theory_receipts),
-                        Arc::clone(pds_packages),
-                        resolved.receipt.selection.clone(),
                         agent_id,
+                        frozen_authority.authority_policy_content_hash.clone(),
                     )),
                     frozen_authority: frozen_authority.clone(),
                     curation: Arc::new(ProductPlannedCurationPort::new(Arc::clone(curation_store))),
@@ -3709,14 +3704,8 @@ mod tests {
         let subject = stewardship_subject_ref(&harness.binding).unwrap();
         let rule = standing_curation_rule(subject.clone());
         {
-            let assembly = harness.assembly(StewardshipTheoryBindings::default());
+            let assembly = harness.assembly();
             harness.run_world_genesis(&assembly);
-            crate::docs::theory::install_package(
-                assembly.stores(),
-                &Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/docs_freshness"),
-                5,
-            )
-            .unwrap();
             assembly
                 .stores()
                 .agent_store
@@ -3749,8 +3738,8 @@ mod tests {
             assembly.flush_product_boundary().unwrap();
         }
 
-        let assembly = harness.assembly(StewardshipTheoryBindings::default());
-        let resolved = ResolvedStewardshipTheory::resolve(
+        let assembly = harness.assembly();
+        let resolved = ResolvedStewardshipTheory::resolve_prepared_product(
             assembly.stores(),
             &harness.binding.package,
             &subject,
@@ -3824,7 +3813,7 @@ mod tests {
         let mut exact_semantic_receipt = None;
         let mut exact_terminal_receipt = None;
         for boundary in 0..6 {
-            let assembly = harness.assembly(StewardshipTheoryBindings::default());
+            let assembly = harness.assembly();
             let mut handle = assembly
                 .handle_factories()
                 .get(AGENT_RECONCILIATION_RUNTIME_ID)
@@ -3904,15 +3893,28 @@ mod tests {
                     semantic_receipt.event_record_id,
                     terminal_receipt.event_record_id
                 );
+                let records = assembly
+                    .ports()
+                    .event_replay()
+                    .read_after_limit(0, 32)
+                    .unwrap();
                 assert_eq!(
-                    assembly
-                        .ports()
-                        .event_replay()
-                        .read_after_limit(0, 32)
-                        .unwrap()
-                        .len(),
-                    3
+                    records
+                        .iter()
+                        .filter(|record| {
+                            record.envelope.event_type == "world-model.agent-genesis.v1"
+                        })
+                        .count(),
+                    1
                 );
+                assert!(records.iter().any(|record| {
+                    record.envelope.record_id.as_deref()
+                        == Some(semantic_receipt.event_record_id.as_str())
+                }));
+                assert!(records.iter().any(|record| {
+                    record.envelope.record_id.as_deref()
+                        == Some(terminal_receipt.event_record_id.as_str())
+                }));
                 assembly
                     .graph_runtime()
                     .catch_up_bounded(GraphCatchUpBudget { max_items: 16 })
@@ -3928,7 +3930,7 @@ mod tests {
             drop(assembly);
         }
 
-        let assembly = harness.assembly(StewardshipTheoryBindings::default());
+        let assembly = harness.assembly();
         let operation_id = exact_operation_id.unwrap();
         let result = exact_result.unwrap();
         assert_eq!(
@@ -3969,15 +3971,28 @@ mod tests {
                 .unwrap(),
             exact_terminal_receipt
         );
+        let records = assembly
+            .ports()
+            .event_replay()
+            .read_after_limit(0, 32)
+            .unwrap();
         assert_eq!(
-            assembly
-                .ports()
-                .event_replay()
-                .read_after_limit(0, 32)
-                .unwrap()
-                .len(),
-            3
+            records
+                .iter()
+                .filter(|record| record.envelope.event_type == "world-model.agent-genesis.v1")
+                .count(),
+            1
         );
+        assert!(records.iter().any(|record| {
+            exact_semantic_receipt.as_ref().is_some_and(|receipt| {
+                record.envelope.record_id.as_deref() == Some(receipt.event_record_id.as_str())
+            })
+        }));
+        assert!(records.iter().any(|record| {
+            exact_terminal_receipt.as_ref().is_some_and(|receipt| {
+                record.envelope.record_id.as_deref() == Some(receipt.event_record_id.as_str())
+            })
+        }));
         let mut handle = assembly
             .handle_factories()
             .get(AGENT_RECONCILIATION_RUNTIME_ID)
@@ -4553,10 +4568,6 @@ mod tests {
     use crate::config::{DocsFreshnessSelection, StewardshipConfig, TheorySelection};
     use crate::runtime::registration::RegistrationLifecycle;
     use crate::runtime::supervisor::{RuntimeSupervisor, SupervisorStartCommand};
-    use meld_world_model::agent::{
-        AgentCurationRuleBinding, AgentRegistration, AgentSubscription, SeedAgentRegistration,
-        SubscribeAgentCommand,
-    };
     use meld_world_model::belief::{
         configured_belief_key, OutcomeContentRule, OutcomeFieldRule, OutcomeMappingConfig,
         OutcomeMappingSetConfig, OutcomeSubjectBinding, OutcomeValueSource,
@@ -4612,90 +4623,12 @@ mod tests {
         Arc::new(EventAuthority::open(db, EventAuthorityOpenOptions::default()).unwrap())
     }
 
-    fn family_config_json() -> &'static str {
-        r#"{
-            "family_id": "docs_freshness",
-            "dimension_id": "docs_freshness",
-            "predicate_id": "confidence",
-            "evidence_policy_id": "default_policy",
-            "evidence_schemas": [
-                {
-                    "schema_id": "content_written_signal",
-                    "required": false,
-                    "role": "Support",
-                    "reliability": 1.0,
-                    "precision": 1.0
-                }
-            ],
-            "source_mappings": [
-                {
-                    "mapping_id": "content_written_to_signal",
-                    "source_kind": "content_written",
-                    "evidence_schema_id": "content_written_signal",
-                    "subject_from": "record.subject",
-                    "value_field": "stale_probability",
-                    "factor_id": "content_written_signal"
-                }
-            ],
-            "comparator": {
-                "engine_id": "weighted_bayesian",
-                "engine_version": "1",
-                "factors": [
-                    {
-                        "factor_id": "content_written_signal",
-                        "evidence_schema_id": "content_written_signal",
-                        "weight": 1.0,
-                        "polarity": "Supports"
-                    }
-                ],
-                "missing_evidence_uncertainty": 0.9
-            },
-            "default_prior": 0.8,
-            "planner_projection": {
-                "confidence_field": "confidence",
-                "threshold": 0.7,
-                "posterior_meaning": "stale_probability"
-            },
-            "config_version": "1"
-        }"#
-    }
-
-    fn installed_outcome_mapping() -> OutcomeMappingSetConfig {
-        OutcomeMappingSetConfig {
-            mapping_id: MAPPING_ID.to_string(),
-            rules: vec![installed_task_success_rule()],
-        }
-    }
-
-    fn installed_task_success_rule() -> OutcomeMappingConfig {
-        OutcomeMappingConfig {
-            mapping_id: "task-success-rule".to_string(),
-            source_kind: "content_written".to_string(),
-            match_domain_id: "execution".to_string(),
-            match_event_type: "execution.task.succeeded".to_string(),
-            match_content: vec![OutcomeContentRule::ArrayAnyFieldEquals {
-                array_pointer: "/artifact_records".to_string(),
-                field: "artifact_type_id".to_string(),
-                equals: "docs_patch".to_string(),
-            }],
-            subject: OutcomeSubjectBinding {
-                from: Default::default(),
-                object_kind: "node".to_string(),
-                domain_id: Some("workspace_fs".to_string()),
-            },
-            evidence_fields: vec![OutcomeFieldRule {
-                field: "stale_probability".to_string(),
-                source: OutcomeValueSource::Constant { value: 0.0 },
-            }],
-        }
-    }
-
     fn standing_curation_outcome_mapping() -> OutcomeMappingSetConfig {
         OutcomeMappingSetConfig {
             mapping_id: MAPPING_ID.to_string(),
             rules: vec![OutcomeMappingConfig {
                 mapping_id: "standing-curation-applied".to_string(),
-                source_kind: "content_written".to_string(),
+                source_kind: "docs_freshness_assessment".to_string(),
                 match_domain_id: meld_world_model::CURATION_OWNER_ID.to_string(),
                 match_event_type: meld_world_model::CURATION_RESULT_EVENT_TYPE.to_string(),
                 match_content: vec![OutcomeContentRule::FieldEquals {
@@ -4819,69 +4752,87 @@ mod tests {
             }
         }
 
-        fn assembly(&self, theory: StewardshipTheoryBindings) -> ProductRuntimeAssembly {
+        fn assembly(&self) -> ProductRuntimeAssembly {
             ProductRuntimeAssembly::load_composed(
                 ProductRuntimeConfig::for_product_root(self.binding.storage_root.clone()),
                 Arc::clone(&self.authority),
                 Some(StewardshipComposition {
                     binding: self.binding.clone(),
-                    theory,
                 }),
             )
             .unwrap()
         }
 
-        /// Stage 2 and 3 world initialization through public domain commands.
+        fn world_init_metadata(&self) -> crate::init::world::pipeline::WorldInitRunMetadata {
+            crate::init::world::pipeline::WorldInitRunMetadata {
+                provenance: "trusted init".to_string(),
+                session_id: "assembly-test".to_string(),
+                observed_seq: 5,
+            }
+        }
+
+        /// Product compilation, Agent genesis, and inert preparation.
         fn run_world_genesis(&self, assembly: &ProductRuntimeAssembly) {
             let stores = assembly.stores();
+            let package_receipt = crate::docs::theory::install_package(
+                stores,
+                &Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/docs_freshness"),
+                5,
+            )
+            .unwrap();
             let mut registry = stores.belief_family_registry.as_ref().clone();
-            let family_config = serde_json::from_str(family_config_json()).unwrap();
-            let (_, revision) = registry.install(family_config, 1).unwrap();
-            let agent_store = stores.agent_store.opened().unwrap();
-            AgentRegistration::new(agent_store)
-                .register_seed_agent(SeedAgentRegistration {
-                    agent_id: STEWARD_AGENT_ID.to_string(),
-                    perspective_key: PerspectiveKey::new("default", "default").unwrap(),
-                    subject: stewardship_subject_ref(&self.binding).unwrap(),
-                    branch_scope: BranchScope::main(),
-                    observation_scope: FAMILY_ID.to_string(),
-                    directive: "steward docs freshness".to_string(),
-                    seed_provenance: "trusted init".to_string(),
-                    curation_rule: Some(
-                        AgentCurationRuleBinding::for_rule(
-                            meld_world_model::AgentCurationRuleConfig {
-                                maintained_condition_id: None,
-                                dimension_id: "docs_freshness".to_string(),
-                                threshold: 0.7,
-                                priority_urgency: 8,
-                                desired_summary: "fresh docs".to_string(),
-                                source_kind: "docs_freshness".to_string(),
-                            },
-                        )
-                        .unwrap(),
-                    ),
-                    curation_rule_revision: None,
-                    maintained_condition: None,
-                    maintained_condition_revision: None,
-                    created_at_seq: 2,
-                })
+            let product = crate::init::world::tooling::compile_product_initialization(
+                stores,
+                &self.binding,
+                &package_receipt,
+                5,
+            )
+            .unwrap();
+            let assignment_id = product.assignment.assignment_id.clone();
+            let assignment_subject = product.assignment.subject.clone();
+            let assignment_perspective = product.assignment.perspective_id.clone();
+            let assignment_branch = product.assignment.branch_id.clone();
+            let append = assembly.event_authority().append_capability();
+            crate::init::world::pipeline::WorldInitPipeline::new(
+                &mut registry,
+                stores.belief_store.as_ref(),
+                stores.agent_store.as_ref(),
+                &append,
+            )
+            .with_complete_theory(crate::init::world::pipeline::CompleteTheoryInstall {
+                routed: crate::init::world::pipeline::RoutedTheoryInstall {
+                    receipt: package_receipt,
+                    changed: true,
+                },
+            })
+            .with_complete_product(product)
+            .run(
+                &crate::init::world::WorldInitRequest {
+                    stages: vec![
+                        crate::init::world::WorldInitStage::InstallTheory,
+                        crate::init::world::WorldInitStage::GenesisIdentities,
+                        crate::init::world::WorldInitStage::PrepareActivation,
+                    ],
+                },
+                &self.world_init_metadata(),
+            )
+            .unwrap();
+            let receipts = stores
+                .agent_store
+                .genesis_receipts_for_assignment(&assignment_id)
                 .unwrap();
-            let belief_key = configured_belief_key(
-                &revision,
-                &stewardship_subject_ref(&self.binding).unwrap(),
-                &PerspectiveKey::new("default", "default").unwrap(),
-                &BranchScope::main(),
-            );
-            AgentSubscription::new(agent_store)
-                .subscribe(SubscribeAgentCommand {
-                    agent_id: STEWARD_AGENT_ID.to_string(),
-                    belief_key,
-                    created_at_seq: 3,
-                })
+            assert!(!receipts.is_empty());
+            assert!(receipts.iter().all(|receipt| {
+                receipt.event_position.ledger_id == assembly.event_authority().ledger_identity()
+            }));
+            let agent = stores
+                .agent_store
+                .get_agent(STEWARD_AGENT_ID)
+                .unwrap()
                 .unwrap();
-            AgentRegistration::new(agent_store)
-                .mark_operational(STEWARD_AGENT_ID, 4)
-                .unwrap();
+            assert_eq!(agent.subject, assignment_subject);
+            assert_eq!(agent.perspective_key.index_key(), assignment_perspective);
+            assert_eq!(agent.branch_scope.branch_id, assignment_branch);
             assembly.flush_product_boundary().unwrap();
         }
     }
@@ -4908,6 +4859,48 @@ mod tests {
             .find(|row| row.runtime_id == runtime_id)
             .unwrap_or_else(|| panic!("status row for '{runtime_id}'"))
             .registration_kind
+    }
+
+    #[test]
+    fn product_genesis_requires_its_current_compilation_head() {
+        let harness = StewardshipHarness::new();
+        let assembly = harness.assembly();
+        let stores = assembly.stores();
+        let package_receipt = crate::docs::theory::install_package(
+            stores,
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/docs_freshness"),
+            5,
+        )
+        .unwrap();
+        let product = crate::init::world::tooling::compile_product_initialization(
+            stores,
+            &harness.binding,
+            &package_receipt,
+            5,
+        )
+        .unwrap();
+        let mut registry = stores.belief_family_registry.as_ref().clone();
+        let append = assembly.event_authority().append_capability();
+        let error = crate::init::world::pipeline::WorldInitPipeline::new(
+            &mut registry,
+            stores.belief_store.as_ref(),
+            stores.agent_store.as_ref(),
+            &append,
+        )
+        .with_complete_product(product)
+        .run(
+            &crate::init::world::WorldInitRequest {
+                stages: vec![crate::init::world::WorldInitStage::GenesisIdentities],
+            },
+            &harness.world_init_metadata(),
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("installed current compilation"));
+        assert!(stores
+            .agent_store
+            .get_agent(STEWARD_AGENT_ID)
+            .unwrap()
+            .is_none());
     }
 
     #[test]
@@ -4949,7 +4942,7 @@ mod tests {
     #[test]
     fn ungenesised_stewardship_boot_is_truthful_and_writes_no_semantic_state() {
         let harness = StewardshipHarness::new();
-        let assembly = harness.assembly(StewardshipTheoryBindings::default());
+        let assembly = harness.assembly();
         let registration_set = assembly.registration_set().cloned().unwrap();
 
         let mut command = SupervisorStartCommand::new("instance-a", 100);
@@ -5033,14 +5026,11 @@ mod tests {
     fn genesised_world_binds_epistemic_actors_and_ticks_each_exactly_once() {
         let harness = StewardshipHarness::new();
         {
-            let assembly = harness.assembly(StewardshipTheoryBindings::default());
+            let assembly = harness.assembly();
             harness.run_world_genesis(&assembly);
         }
 
-        let assembly = harness.assembly(StewardshipTheoryBindings {
-            outcome_mapping: Some(installed_outcome_mapping()),
-            ..StewardshipTheoryBindings::default()
-        });
+        let assembly = harness.assembly();
         let registration_set = assembly.registration_set().cloned().unwrap();
         let mut command = SupervisorStartCommand::new("instance-b", 100);
         command.registration_set = Some(registration_set);
@@ -5053,6 +5043,7 @@ mod tests {
             "world_model.graph_replay",
             "world_model.belief_assessment",
             "world_model.evidence_ingestion",
+            "execution.task_admission",
             "execution.publication",
             STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID,
         ];
@@ -5071,11 +5062,11 @@ mod tests {
             lifecycle_of(&status, AGENT_RECONCILIATION_RUNTIME_ID),
             Some(RegistrationLifecycle::UnresolvedRequiredBinding)
         );
-        // Planning theory has no durable registry yet, so it stays a
-        // truthful unresolved binding until a composition injects it.
+        // Agent planning dependencies remain absent, while exact prepared
+        // Capability bindings make Task admission truthfully available.
         assert_eq!(
             lifecycle_of(&status, "execution.task_admission"),
-            Some(RegistrationLifecycle::UnresolvedRequiredBinding)
+            Some(RegistrationLifecycle::ActiveIdle)
         );
         // One bounded invocation per bound actor per maintenance pass.
         let mut ticked: Vec<&str> = tick
@@ -5103,7 +5094,7 @@ mod tests {
         let subject = stewardship_subject_ref(&harness.binding).unwrap();
         let rule = standing_curation_rule(subject.clone());
         {
-            let assembly = harness.assembly(StewardshipTheoryBindings::default());
+            let assembly = harness.assembly();
             harness.run_world_genesis(&assembly);
             assembly
                 .stores()
@@ -5151,10 +5142,7 @@ mod tests {
             assembly.flush_product_boundary().unwrap();
         }
 
-        let assembly = harness.assembly(StewardshipTheoryBindings {
-            outcome_mapping: Some(standing_curation_outcome_mapping()),
-            ..StewardshipTheoryBindings::default()
-        });
+        let assembly = harness.assembly();
         let mut curation = assembly
             .handle_factories()
             .get("world_model.standing_curation")
@@ -5265,25 +5253,38 @@ mod tests {
             .iter()
             .any(|occurrence| occurrence.relation_type == rule.relation_type));
 
-        let mut ingestion = assembly
-            .handle_factories()
-            .get("world_model.evidence_ingestion")
-            .unwrap()
-            .build_handle();
-        ingestion
-            .start_after_lease(RuntimeLeaseContext {
-                runtime_id: "world_model.evidence_ingestion".to_string(),
-                lease_id: "ingestion-lease-a".to_string(),
-            })
-            .unwrap();
-        let ingestion_tick = ingestion.tick(WorkBudget { max_items: 32 }).unwrap();
-        assert!(ingestion_tick.items_committed >= 2);
         let family = assembly
             .stores()
             .belief_family_registry
             .current(FAMILY_ID)
             .unwrap()
             .unwrap();
+        let mapping = Arc::new(
+            ConfiguredOutcomeMappingSet::new(standing_curation_outcome_mapping()).unwrap(),
+        );
+        let mut ingestion = EvidenceIngestionActor::new(
+            "world_model.evidence_ingestion",
+            Arc::clone(&assembly.stores().belief_store),
+            Arc::clone(&assembly.stores().traversal_store),
+            Arc::clone(&assembly.stores().belief_family_registry)
+                as Arc<dyn BeliefFamilyRegistry + Send + Sync>,
+            FAMILY_ID,
+            Arc::new(assembly.ports().event_replay().clone()) as Arc<dyn EvidenceEventReplaySource>,
+            Arc::new(assembly.event_authority().consumer_registry_capability())
+                as Arc<dyn DurableConsumerCursor + Send + Sync>,
+            mapping as Arc<dyn OutcomeEvidenceMapping + Send + Sync>,
+            MAPPING_ID,
+            PerspectiveKey::new("default", "default").unwrap(),
+            BranchScope::main(),
+        )
+        .with_family_revision(family.clone());
+        let ingestion_report = ingestion.bounded_step(&EvidenceIngestionRequest { max_events: 32 });
+        assert!(
+            ingestion_report.fatal_errors.is_empty(),
+            "{ingestion_report:#?}"
+        );
+        assert_eq!(ingestion_report.applicable_count, 1);
+        assert_eq!(ingestion_report.revisions_committed, 1);
         let belief_key = configured_belief_key(
             &family,
             &expected_object,
@@ -5297,7 +5298,8 @@ mod tests {
                 .revision_history(&belief_key)
                 .unwrap()
                 .len(),
-            1
+            1,
+            "{ingestion_report:#?}"
         );
 
         assembly
@@ -5326,7 +5328,10 @@ mod tests {
             })
             .unwrap();
         assert_ne!(unchanged.operation_id, operation_id);
-        ingestion.tick(WorkBudget { max_items: 32 }).unwrap();
+        let unchanged_ingestion =
+            ingestion.bounded_step(&EvidenceIngestionRequest { max_events: 32 });
+        assert!(unchanged_ingestion.fatal_errors.is_empty());
+        assert_eq!(unchanged_ingestion.revisions_committed, 0);
         assert_eq!(
             assembly
                 .stores()
@@ -5342,10 +5347,7 @@ mod tests {
         drop(curation);
         drop(assembly);
 
-        let reopened = harness.assembly(StewardshipTheoryBindings {
-            outcome_mapping: Some(standing_curation_outcome_mapping()),
-            ..StewardshipTheoryBindings::default()
-        });
+        let reopened = harness.assembly();
         let persisted =
             meld_world_model::CurationQuery::new(reopened.stores().curation_store.as_ref())
                 .result_for_operation(&operation_id)
@@ -5383,14 +5385,26 @@ mod tests {
         assert_eq!(replay_tick.items_attempted, 1);
         assert_eq!(replay_tick.items_committed, 0);
         assert_eq!(replay_tick.waiting_on.len(), 1);
+        let reopened_records = reopened
+            .ports()
+            .event_replay()
+            .read_after_limit(0, 32)
+            .unwrap();
         assert_eq!(
-            reopened
-                .ports()
-                .event_replay()
-                .read_after_limit(0, 32)
-                .unwrap()
-                .len(),
-            5
+            reopened_records
+                .iter()
+                .filter(|record| record.envelope.event_type == "world-model.agent-genesis.v1")
+                .count(),
+            1
+        );
+        assert_eq!(
+            reopened_records
+                .iter()
+                .filter(|record| {
+                    record.envelope.event_type == meld_world_model::CURATION_RESULT_EVENT_TYPE
+                })
+                .count(),
+            2
         );
         let reopened_family = reopened
             .stores()
@@ -5446,7 +5460,7 @@ mod tests {
     #[test]
     fn late_bound_dispatch_routes_resolve_the_dispatch_actor() {
         let harness = StewardshipHarness::new();
-        let assembly = harness.assembly(StewardshipTheoryBindings::default());
+        let assembly = harness.assembly();
 
         // Without composed routes the dispatch factory truthfully carries
         // no semantic body and the route seed names the composition inputs.
@@ -5486,12 +5500,12 @@ mod tests {
     fn satisfaction_sequences_are_durably_monotonic_across_assemblies() {
         let harness = StewardshipHarness::new();
         {
-            let assembly = harness.assembly(StewardshipTheoryBindings::default());
+            let assembly = harness.assembly();
             harness.run_world_genesis(&assembly);
         }
 
         let first_sequence = {
-            let assembly = harness.assembly(StewardshipTheoryBindings::default());
+            let assembly = harness.assembly();
             let sequence = DurableStepSequence::new(
                 Arc::clone(assembly.stores().belief_store.opened().unwrap()),
                 AGENT_RECONCILIATION_RUNTIME_ID,
@@ -5504,7 +5518,7 @@ mod tests {
 
         // A fresh assembly over the same durable root continues the ratchet
         // instead of restarting it: injected sequences never regress.
-        let assembly = harness.assembly(StewardshipTheoryBindings::default());
+        let assembly = harness.assembly();
         let sequence = DurableStepSequence::new(
             Arc::clone(assembly.stores().belief_store.opened().unwrap()),
             AGENT_RECONCILIATION_RUNTIME_ID,

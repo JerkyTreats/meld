@@ -78,7 +78,8 @@ pub struct HarnessBootRecord {
     pub registration_ids: Vec<String>,
     /// Desired runtime rows after assembly.
     pub desired_runtimes: Vec<HarnessDesiredRuntimeRecord>,
-    /// Stage reports from the scoped world-initialization pipeline.
+    /// Historical world-initialization reports retained for schema reads.
+    /// New harness runs leave this compatibility field empty.
     pub world_init: Vec<HarnessStageRecord>,
     /// Default bounded budget the supervisor applies per actor invocation.
     pub default_budget_max_items: usize,
@@ -95,7 +96,7 @@ pub struct HarnessDesiredRuntimeRecord {
     pub factory_available: bool,
 }
 
-/// One world-initialization stage outcome.
+/// One historical world-initialization stage outcome.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HarnessStageRecord {
     /// Stage name in the CLI vocabulary, e.g. `install-theory`.

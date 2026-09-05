@@ -47,6 +47,7 @@ fn stage_name(stage: WorldInitStage) -> &'static str {
     match stage {
         WorldInitStage::InstallTheory => "install-theory",
         WorldInitStage::GenesisIdentities => "genesis-identities",
+        WorldInitStage::PrepareActivation => "prepare-activation",
         WorldInitStage::SeedEpistemicFacts => "seed-epistemic-facts",
     }
 }

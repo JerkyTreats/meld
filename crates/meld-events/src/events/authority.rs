@@ -81,6 +81,35 @@ pub struct AppendReceipt {
     pub disposition: AppendDisposition,
 }
 
+/// Opaque proof that one durable ledger position contains an exact record ID.
+///
+/// Only the Event append capability can construct this proof. Producer domains
+/// use it when their completion receipt must bind a semantic record identity
+/// to its canonical ledger position.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EventAppendProof {
+    ledger_id: LedgerIdentity,
+    seq: u64,
+    record_id: String,
+}
+
+impl EventAppendProof {
+    /// Returns the ledger that owns the proven record.
+    pub fn ledger_id(&self) -> LedgerIdentity {
+        self.ledger_id
+    }
+
+    /// Returns the canonical sequence containing the proven record.
+    pub fn seq(&self) -> u64 {
+        self.seq
+    }
+
+    /// Returns the exact durable record ID at the proven sequence.
+    pub fn record_id(&self) -> &str {
+        &self.record_id
+    }
+}
+
 /// Accepted best-effort append without a durability or sequence claim.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BestEffortAppendReceipt {
@@ -396,6 +425,61 @@ impl EventAppendCapability {
         })
     }
 
+    /// Appends one ID-bearing envelope durably and proves its exact position.
+    pub fn append_durable_proven(
+        &self,
+        envelope: EventEnvelope,
+        mode: AppendMode,
+    ) -> Result<EventAppendProof, EventAuthorityError> {
+        if envelope.record_id.is_none() {
+            return Err(EventAuthorityError::invalid_request(
+                "an identity-bearing append proof requires an Event record ID",
+            ));
+        }
+        let expected = envelope.clone();
+        let receipt = self.append_durable(envelope, mode)?;
+        self.prove_append(receipt, &expected)
+    }
+
+    /// Proves that an existing durable append receipt names one exact envelope.
+    fn prove_append(
+        &self,
+        receipt: AppendReceipt,
+        expected_envelope: &EventEnvelope,
+    ) -> Result<EventAppendProof, EventAuthorityError> {
+        let expected_record_id = expected_envelope.record_id.as_deref().ok_or_else(|| {
+            EventAuthorityError::invalid_request(
+                "an identity-bearing append proof requires an Event record ID",
+            )
+        })?;
+        if receipt.ledger_id != self.inner.ledger_id {
+            return Err(EventAuthorityError::IdentityMismatch {
+                expected: self.inner.ledger_id,
+                actual: receipt.ledger_id,
+            });
+        }
+        if receipt.seq == 0 || expected_record_id.trim().is_empty() {
+            return Err(EventAuthorityError::invalid_request(
+                "append proof requires a nonzero sequence and nonempty record ID",
+            ));
+        }
+        let record = self.inner.store.event_at(receipt.seq)?.ok_or_else(|| {
+            EventAuthorityError::invalid_request(
+                "append receipt sequence does not resolve to a durable Event record",
+            )
+        })?;
+        if !same_proven_envelope(&record.envelope, expected_envelope) {
+            return Err(EventAuthorityError::invalid_request(
+                "append receipt sequence contains another Event envelope",
+            ));
+        }
+        Ok(EventAppendProof {
+            ledger_id: receipt.ledger_id,
+            seq: receipt.seq,
+            record_id: expected_record_id.to_string(),
+        })
+    }
+
     /// Appends and flushes a batch through the same group commit, preserving
     /// one identity-bearing receipt per input envelope.
     pub fn append_durable_batch(
@@ -446,6 +530,19 @@ impl EventAppendCapability {
     pub fn barrier(&self) -> Result<(), EventAuthorityError> {
         self.inner.writer.barrier().map_err(Into::into)
     }
+}
+
+fn same_proven_envelope(actual: &EventEnvelope, expected: &EventEnvelope) -> bool {
+    actual.record_id == expected.record_id
+        && actual.domain_id == expected.domain_id
+        && actual.stream_id == expected.stream_id
+        && actual.event_type == expected.event_type
+        && actual.occurred_at == expected.occurred_at
+        && actual.content_hash == expected.content_hash
+        && actual.objects == expected.objects
+        && actual.relations == expected.relations
+        && actual.provenance == expected.provenance
+        && actual.data == expected.data
 }
 
 impl EventReplayCapability {
@@ -803,6 +900,36 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn unrelated_envelope_cannot_satisfy_an_append_proof() {
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        let authority = EventAuthority::open(db, EventAuthorityOpenOptions::default()).unwrap();
+        let append = authority.append_capability();
+        let expected = EventEnvelope::with_now_domain(
+            "append-proof-test",
+            "world-model",
+            "agent-genesis",
+            "world-model.agent-genesis.v1",
+            None,
+            json!({"agent": "expected"}),
+        )
+        .with_record_id("agent-genesis::expected".to_string());
+        let unrelated = EventEnvelope::with_now_domain(
+            "append-proof-test",
+            "world-model",
+            "unrelated",
+            "world-model.unrelated.v1",
+            None,
+            json!({"agent": "unrelated"}),
+        )
+        .with_record_id("agent-genesis::expected".to_string());
+        let receipt = append
+            .append_durable(unrelated, AppendMode::Idempotent)
+            .unwrap();
+
+        assert!(append.prove_append(receipt, &expected).is_err());
+    }
 
     #[test]
     fn failed_flush_returns_indeterminate_without_advancing_watermark() {

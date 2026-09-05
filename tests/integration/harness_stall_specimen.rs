@@ -38,31 +38,13 @@ fn the_anchor_stall_is_recorded_and_the_walk_names_the_dead_end() {
         survey_boot_request(session.path(), &binding, manifest_id, booted_at_ms)
     };
 
-    // First boot initializes the world; actor binding checks installed
-    // theory at assembly, before this init runs, exactly as the product
-    // does across `meld world init` and a later `meld runtime run`.
-    let first_boot = HarnessRun::boot(boot_request("stall-specimen-init", 500)).unwrap();
-    assert!(first_boot
-        .manifest()
-        .boot
-        .world_init
-        .iter()
-        .all(|stage| stage.disposition == "applied"));
-    drop(first_boot);
-
-    // Second boot re-assembles over the initialized root: the family now
-    // resolves at assembly time, the staged init re-runs unchanged, and
-    // the belief assessment actor binds.
+    // The fixture installs its historical family directly through the
+    // Belief owner before assembly, so the harness itself has no alternate
+    // world-initialization authority.
     let mut run = HarnessRun::boot(boot_request("stall-specimen", 1_000)).unwrap();
-    assert!(run
-        .manifest()
-        .boot
-        .world_init
-        .iter()
-        .all(|stage| stage.disposition == "unchanged"));
 
     // Drive the composed runtime with injected time. No stimuli beyond
-    // the stage-4 genesis fact: the stall must emerge, not be arranged.
+    // the installed test fixture: the stall must emerge, not be arranged.
     let mut driver = run.driver().unwrap();
     let mut actions: Vec<RuntimeActionRecord> = Vec::new();
     for now_ms in [1_100, 1_200, 1_300] {
@@ -209,18 +191,7 @@ fn the_anchor_stall_is_recorded_and_the_walk_names_the_dead_end() {
         .iter()
         .all(|action| recorded_ids.contains(&&action.action_id)));
 
-    // End of the chain: the genesis fact exists on the ledger and the
-    // walk resolves it.
     let walker = ThreadWalker::over_assembly(run.assembly());
-    let genesis = walker.walk(ThreadSubject::Event { seq: 1 }).unwrap();
-    assert!(
-        genesis.nodes[0]
-            .summary
-            .contains("world_model.unobserved_scope"),
-        "seq 1 is the seeded genesis fact: {}",
-        genesis.nodes[0].summary
-    );
-
     // Start of the absence: the current anchor for the exact subject key
     // the assessment queried, under the composition's hardcoded anchor
     // perspective, does not exist — and the subject key appears in no

@@ -7,10 +7,9 @@ use meld::runtime::assembly::ProductRuntimeAssembly;
 use meld::runtime::contracts::{RuntimeLaunchStatus, RuntimeStatusReader};
 use meld::runtime::storage::ProductStorageLayout;
 use meld::runtime::supervisor::{RuntimeId, SupervisorReportStore};
-use meld::runtime::theory::{ResolvedStewardshipTheory, TheoryInstallationReceipt};
-use meld_events::{AppendMode, DomainObjectRef, EventEnvelope};
+use meld::runtime::theory::ResolvedStewardshipTheory;
+use meld_events::{AppendMode, DomainObjectRef};
 use meld_lang::{Condition, Literal, Term};
-use serde_json::json;
 use serde_json::Value;
 use std::path::Path;
 use tempfile::TempDir;
@@ -361,7 +360,7 @@ fn runtime_run_publishes_durable_lifecycle_snapshots() {
 }
 
 #[test]
-fn stewardship_receipts_activate_routes_and_preserve_a_b_lineage() {
+fn prepared_product_activates_routes_and_ignores_loose_owner_heads() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
         meld::init::initialize_workflows(false).unwrap();
@@ -377,7 +376,7 @@ fn stewardship_receipts_activate_routes_and_preserve_a_b_lineage() {
             .execute(&Commands::Scan { force: true })
             .unwrap();
         assert!(run_context.product_runtime().capability_runtime().is_none());
-        run_context
+        let first_init = run_context
             .execute(&Commands::World {
                 command: WorldCommands::Init {
                     path: workspace_root.clone(),
@@ -391,6 +390,45 @@ fn stewardship_receipts_activate_routes_and_preserve_a_b_lineage() {
                 },
             })
             .unwrap();
+        let first_init: meld::init::world::WorldInitReport =
+            serde_json::from_str(&first_init).unwrap();
+        assert_eq!(first_init.stage_reports.len(), 4);
+        assert!(first_init
+            .stage_reports
+            .iter()
+            .all(|stage| stage.disposition == meld::init::world::StageDisposition::Applied));
+        let second_init = run_context
+            .execute(&Commands::World {
+                command: WorldCommands::Init {
+                    path: workspace_root.clone(),
+                    stages: Vec::new(),
+                    theory_source: Some(
+                        Path::new(env!("CARGO_MANIFEST_DIR"))
+                            .join("theory")
+                            .join("docs_freshness"),
+                    ),
+                    format: "json".to_string(),
+                },
+            })
+            .unwrap();
+        let second_init: meld::init::world::WorldInitReport =
+            serde_json::from_str(&second_init).unwrap();
+        assert!(second_init
+            .stage_reports
+            .iter()
+            .all(|stage| stage.disposition == meld::init::world::StageDisposition::Unchanged));
+        assert_eq!(
+            first_init
+                .stage_reports
+                .iter()
+                .map(|stage| &stage.record_ids)
+                .collect::<Vec<_>>(),
+            second_init
+                .stage_reports
+                .iter()
+                .map(|stage| &stage.record_ids)
+                .collect::<Vec<_>>()
+        );
         drop(run_context);
 
         let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
@@ -399,15 +437,62 @@ fn stewardship_receipts_activate_routes_and_preserve_a_b_lineage() {
             .unwrap()
             .package;
         assert_eq!(selection.expression, "documentation_maintenance");
-        let resolved = ResolvedStewardshipTheory::resolve(
+        assert!(product.capability_runtime().is_some());
+        let prepared_head = product
+            .stores()
+            .pds_products
+            .prepared_head(&selection.expression)
+            .unwrap()
+            .unwrap();
+        let prepared = product
+            .stores()
+            .pds_products
+            .prepared_closure(&prepared_head.prepared_id)
+            .unwrap()
+            .unwrap();
+        assert!(product
+            .stores()
+            .pds_products
+            .assignment(&prepared.assignment.assignment_id)
+            .unwrap()
+            .is_some());
+        assert!(product
+            .stores()
+            .pds_products
+            .topology_receipt(&prepared.agent_topology_receipt_id)
+            .unwrap()
+            .is_some());
+        assert!(product
+            .stores()
+            .pds_products
+            .capability_preparation(&prepared.capability_preparation_receipt_id)
+            .unwrap()
+            .is_some());
+        let resolved = ResolvedStewardshipTheory::resolve_prepared_product(
             product.stores(),
             &selection,
             &DomainObjectRef::new("workspace_fs", "node", "docs").unwrap(),
         )
         .unwrap();
-        let package_receipt_id = resolved.package_receipt_id.clone();
+        let compilation = product
+            .stores()
+            .pds_products
+            .compilation(&prepared.assignment.product_compilation_receipt_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            resolved.package_receipt_ids,
+            compilation.package_receipt_ids
+        );
+        let compilation_receipt_id = resolved
+            .product_compilation_receipt_id
+            .clone()
+            .expect("prepared runtime theory has a compilation");
+        assert_eq!(
+            compilation_receipt_id,
+            prepared.assignment.product_compilation_receipt_id
+        );
         let receipt = resolved.receipt;
-        assert_ne!(package_receipt_id, receipt.receipt_id);
         let agent = product
             .stores()
             .agent_store
@@ -507,72 +592,24 @@ fn stewardship_receipts_activate_routes_and_preserve_a_b_lineage() {
             .maintained_condition_registry
             .install(condition_b_body, 100)
             .unwrap();
-        let receipt_b = TheoryInstallationReceipt::new(
-            selection.clone(),
-            receipt.belief_family.clone(),
-            curation_b.revision_ref(),
-            condition_b.revision_ref(),
-            receipt.outcome_mapping.clone(),
-            receipt.strategy_theory.clone(),
-            receipt.executable_contracts.clone(),
-            receipt.authority_policy.clone(),
-            receipt.claim_policy.clone(),
-            100,
-        )
-        .unwrap();
-        product
-            .stores()
-            .theory_receipts
-            .install(receipt_b.clone())
-            .unwrap();
-        product
-            .event_authority()
-            .append_capability()
-            .append_durable(
-                EventEnvelope::new_domain(
-                    "2026-08-12T00:00:00Z".to_string(),
-                    "runtime-cli-revision-b",
-                    "world_model",
-                    "epistemic-genesis-b",
-                    "world_model.unobserved_scope",
-                    None,
-                    json!({ "revision": "b" }),
-                )
-                .with_record_id("runtime-cli-revision-b")
-                .with_graph(vec![agent.subject.clone()], Vec::new()),
-                AppendMode::Idempotent,
-            )
-            .unwrap();
+        assert_ne!(curation_b.revision_ref(), receipt.curation_rule);
+        assert_ne!(condition_b.revision_ref(), receipt.maintained_condition);
         drop(run_context);
 
         let run_context_b = RunContext::new(workspace_root.clone(), None).unwrap();
-        run_context_b
-            .execute(&runtime_run_json(
-                Some("runtime-cli-dispatch-b"),
-                1,
-                Some(100),
-                "on-heartbeat-expiry",
-            ))
-            .unwrap();
         let product_b = run_context_b.product_runtime();
-        assert_eq!(
-            product_b
-                .stores()
-                .theory_receipts
-                .current(&selection)
-                .unwrap()
-                .receipt_id,
-            receipt_b.receipt_id
-        );
-        let historical_a = ResolvedStewardshipTheory::resolve_pds_receipt(
+        let resolved_b = ResolvedStewardshipTheory::resolve_prepared_product(
             product_b.stores(),
             &selection,
             &agent.subject,
-            &package_receipt_id,
         )
         .unwrap();
-        assert_eq!(historical_a.curation_rule, curation_a);
-        assert_eq!(historical_a.maintained_condition, condition_a);
+        assert_eq!(
+            resolved_b.product_compilation_receipt_id.as_deref(),
+            Some(compilation_receipt_id.as_str())
+        );
+        assert_eq!(resolved_b.curation_rule, curation_a);
+        assert_eq!(resolved_b.maintained_condition, condition_a);
         drop(run_context_b);
         provider.shutdown();
     });

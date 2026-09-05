@@ -9,15 +9,18 @@ pub mod contracts;
 pub mod error;
 pub mod handler;
 pub mod package;
+pub mod product;
 pub mod receipt;
 pub mod registry;
 pub mod resolution;
 pub mod router;
 
+pub use activation::*;
 pub use contracts::*;
 pub use error::*;
 pub use handler::*;
 pub use package::*;
+pub use product::*;
 pub use receipt::*;
 pub use registry::*;
 pub use resolution::*;

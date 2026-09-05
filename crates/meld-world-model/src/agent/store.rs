@@ -11,6 +11,10 @@ use crate::agent::contracts::{
     AgentRecord, AgentStatus, AgentSubscriptionRecord, AgentSubscriptionStatus,
     LegacyAgentDecisionRecord, LegacyAgentSinkReceiptRecord,
 };
+use crate::agent::genesis::{
+    AgentGenesisIntentV1, AgentGenesisPublicationV1, AgentGenesisReceiptV1,
+    AgentSubscriptionRequestV1,
+};
 use crate::error::StorageError;
 
 const TREE_AGENT_RECORDS: &str = "agent_records";
@@ -29,6 +33,11 @@ const TREE_RECONCILIATION_JUDGMENTS: &str = "agent_reconciliation_plan_judgments
 const TREE_RECONCILIATION_PROGRESS: &str = "agent_reconciliation_product_progress";
 const TREE_RECONCILIATION_RECEIPTS: &str = "agent_reconciliation_consumer_receipts";
 const TREE_RECONCILIATION_MILESTONES: &str = "agent_reconciliation_milestones";
+const TREE_GENESIS_INTENTS: &str = "agent_genesis_intents_v1";
+const TREE_GENESIS_SUBSCRIPTION_REQUESTS: &str = "agent_genesis_subscription_requests_v1";
+const TREE_GENESIS_PUBLICATIONS: &str = "agent_genesis_publications_v1";
+const TREE_GENESIS_RECEIPTS: &str = "agent_genesis_receipts_v1";
+const TREE_GENESIS_BY_AGENT: &str = "agent_genesis_by_agent_v1";
 const KEY_PAD: usize = 20;
 
 /// Sled backed storage for durable agent records and indexes.
@@ -52,6 +61,11 @@ pub struct AgentStore {
     reconciliation_progress: Tree,
     reconciliation_receipts: Tree,
     reconciliation_milestones: Tree,
+    genesis_intents: Tree,
+    genesis_subscription_requests: Tree,
+    genesis_publications: Tree,
+    genesis_receipts: Tree,
+    genesis_by_agent: Tree,
 }
 
 #[allow(dead_code)]
@@ -97,8 +111,102 @@ impl AgentStore {
             reconciliation_milestones: db
                 .open_tree(TREE_RECONCILIATION_MILESTONES)
                 .map_err(to_storage_io)?,
+            genesis_intents: db.open_tree(TREE_GENESIS_INTENTS).map_err(to_storage_io)?,
+            genesis_subscription_requests: db
+                .open_tree(TREE_GENESIS_SUBSCRIPTION_REQUESTS)
+                .map_err(to_storage_io)?,
+            genesis_publications: db
+                .open_tree(TREE_GENESIS_PUBLICATIONS)
+                .map_err(to_storage_io)?,
+            genesis_receipts: db.open_tree(TREE_GENESIS_RECEIPTS).map_err(to_storage_io)?,
+            genesis_by_agent: db.open_tree(TREE_GENESIS_BY_AGENT).map_err(to_storage_io)?,
             db,
         })
+    }
+
+    pub(crate) fn claim_genesis_lineage(
+        &self,
+        agent_id: &str,
+        intent_id: &str,
+    ) -> Result<bool, StorageError> {
+        match self
+            .genesis_by_agent
+            .compare_and_swap(
+                agent_id.as_bytes(),
+                None as Option<&[u8]>,
+                Some(intent_id.as_bytes()),
+            )
+            .map_err(to_storage_io)?
+        {
+            Ok(()) => {
+                self.genesis_by_agent.flush().map_err(to_storage_io)?;
+                Ok(true)
+            }
+            Err(conflict) if conflict.current.as_deref() == Some(intent_id.as_bytes()) => Ok(false),
+            Err(_) => Err(StorageError::InvalidPath(format!(
+                "Agent '{agent_id}' already belongs to a different genesis lineage"
+            ))),
+        }
+    }
+
+    pub(crate) fn put_genesis_intent(
+        &self,
+        intent: &AgentGenesisIntentV1,
+    ) -> Result<bool, StorageError> {
+        put_immutable(&self.genesis_intents, &intent.intent_id, intent)
+    }
+
+    pub(crate) fn put_subscription_request(
+        &self,
+        request: &AgentSubscriptionRequestV1,
+    ) -> Result<bool, StorageError> {
+        put_immutable(
+            &self.genesis_subscription_requests,
+            &request.request_id,
+            request,
+        )
+    }
+
+    pub(crate) fn put_genesis_publication(
+        &self,
+        publication: &AgentGenesisPublicationV1,
+    ) -> Result<bool, StorageError> {
+        put_immutable(
+            &self.genesis_publications,
+            &publication.publication_id,
+            publication,
+        )
+    }
+
+    pub(crate) fn put_genesis_receipt(
+        &self,
+        receipt: &AgentGenesisReceiptV1,
+    ) -> Result<bool, StorageError> {
+        put_immutable(&self.genesis_receipts, &receipt.genesis_receipt_id, receipt)
+    }
+
+    pub fn genesis_receipt(
+        &self,
+        receipt_id: &str,
+    ) -> Result<Option<AgentGenesisReceiptV1>, StorageError> {
+        get_immutable(&self.genesis_receipts, receipt_id)
+    }
+
+    pub fn genesis_receipts_for_assignment(
+        &self,
+        assignment_id: &str,
+    ) -> Result<Vec<AgentGenesisReceiptV1>, StorageError> {
+        let mut receipts = Vec::new();
+        for row in &self.genesis_receipts {
+            let (_, raw) = row.map_err(to_storage_io)?;
+            let receipt: AgentGenesisReceiptV1 =
+                serde_json::from_slice(&raw).map_err(to_storage_data)?;
+            if receipt.assignment_id == assignment_id {
+                receipts.push(receipt);
+            }
+        }
+        receipts.sort_by(|left, right| left.topology_position_id.cmp(&right.topology_position_id));
+        Ok(receipts)
     }
 
     /// Persist one Agent-owned Goal without rewriting an existing identity.
@@ -273,7 +381,7 @@ impl AgentStore {
     }
 
     /// Write an agent record and its status index.
-    pub fn put_agent(&self, record: &AgentRecord) -> Result<(), StorageError> {
+    pub(crate) fn put_agent(&self, record: &AgentRecord) -> Result<(), StorageError> {
         record.validate()?;
         self.agents
             .insert(
@@ -326,7 +434,10 @@ impl AgentStore {
     }
 
     /// Write a subscription record and its lookup indexes.
-    pub fn put_subscription(&self, record: &AgentSubscriptionRecord) -> Result<(), StorageError> {
+    pub(crate) fn put_subscription(
+        &self,
+        record: &AgentSubscriptionRecord,
+    ) -> Result<(), StorageError> {
         record.validate()?;
         self.subscriptions
             .insert(
