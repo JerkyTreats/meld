@@ -742,6 +742,7 @@ fn owner_neutral_rule_authors_dissimilar_installed_vocabulary() {
     let store = Arc::new(CurationStore::new(db).unwrap());
     let subject = DomainObjectRef::new("inventory", "asset", "asset-a").unwrap();
     let neutral_rule = StandingCurationRule {
+        coverage: None,
         source_event_route: None,
         judgment_scope: None,
         rule_id: "inventory-rule".to_string(),
@@ -1464,6 +1465,7 @@ impl Fixture {
 
 fn rule() -> StandingCurationRule {
     StandingCurationRule {
+        coverage: None,
         source_event_route: None,
         judgment_scope: None,
         rule_id: "rule-a".to_string(),
@@ -1769,4 +1771,184 @@ fn accepted_operation_finishes_its_original_rule_after_the_actor_is_rebound() {
         fixture.rule.rule.roots[0]
     );
     assert_eq!(actor.bounded_step(1).operations_attempted, 0);
+}
+
+#[test]
+fn coverage_requires_ready_owner_evidence_and_exact_relational_items() {
+    use crate::world_state::graph::contracts::{HydrationReference, OwnerPublicationState};
+    for scenario in [
+        "missing",
+        "satisfied",
+        "unready",
+        "incomplete",
+        "foreign_source",
+        "ambiguous_target",
+    ] {
+        let mut fixture = Fixture::new(0);
+        let mut configured = rule();
+        configured.coverage = Some(CurationCoverageRule {
+            source_required_qualifications: BTreeMap::from([("ready".into(), "true".into())]),
+            target_kind: "target".into(),
+            target_required_qualifications: BTreeMap::from([("available".into(), "true".into())]),
+            item_kind: "comparison".into(),
+            item_target_relation: "compares_target".into(),
+            item_source_relation: "compares_source".into(),
+            source_kind: "fact".into(),
+            item_required_qualifications: BTreeMap::from([("represented".into(), "true".into())]),
+            expectation_kind: "expected_target".into(),
+            requirement_kind: "required_fact".into(),
+            expected_target_relation: "expects".into(),
+            expectation_requirement_relation: "requires".into(),
+            requirement_source_relation: "requires_fact".into(),
+        });
+        fixture.rule = fixture.store.install_rule(configured, 2).unwrap();
+        fixture.actor = StandingCurationActor::new(
+            "world_model.standing_curation",
+            "session-a",
+            authority(),
+            fixture.rule.clone(),
+            fixture.store.clone(),
+            fixture.traversal.clone(),
+            fixture.events.clone(),
+        )
+        .unwrap();
+        let hydration = HydrationReference {
+            owner_id: "workspace_fs".into(),
+            product_kind: "snapshot".into(),
+            product_id: "workspace-v1".into(),
+            revision_id: "workspace-v1".into(),
+            role: "observed".into(),
+        };
+        let object = |kind: &str, id: &str, qualifications: BTreeMap<String, String>| {
+            OwnerObjectPublication {
+                publication_id: format!("workspace-v1::{kind}::{id}"),
+                object_ref: DomainObjectRef::new("workspace_fs", kind, id).unwrap(),
+                state: OwnerPublicationState::Observed,
+                source_product_ref: "workspace-v1".into(),
+                hydration: hydration.clone(),
+                provenance_refs: vec![],
+                qualifications,
+            }
+        };
+        let root = object(
+            "node",
+            "subject-a",
+            BTreeMap::from([("ready".into(), (scenario != "unready").to_string())]),
+        );
+        let target = object(
+            "target",
+            "target-a",
+            BTreeMap::from([("available".into(), "true".into())]),
+        );
+        let a = object("fact", "a", BTreeMap::new());
+        let b = object("fact", "b", BTreeMap::new());
+        let first = object(
+            "comparison",
+            "a",
+            BTreeMap::from([("represented".into(), "true".into())]),
+        );
+        let second = object(
+            "comparison",
+            "b",
+            BTreeMap::from([("represented".into(), (scenario == "satisfied").to_string())]),
+        );
+        let relation = |id: &str,
+                        relation_type: &str,
+                        src: &DomainObjectRef,
+                        dst: &DomainObjectRef| OwnerRelationOccurrence {
+            occurrence_id: id.into(),
+            relation_type: relation_type.into(),
+            src: src.clone(),
+            dst: dst.clone(),
+            source_product_ref: "workspace-v1".into(),
+            hydration: hydration.clone(),
+            qualifications: BTreeMap::new(),
+            provenance_refs: vec![],
+        };
+        {
+            let mut traversal = fixture.traversal.result.lock().unwrap();
+            traversal.receipts = fixture.traversal.cut.lock().unwrap().receipts.clone();
+            if scenario == "incomplete" {
+                traversal.receipts[0].completeness.status = OwnerCompletenessStatus::Incomplete;
+            }
+            traversal.occurrences = vec![
+                relation(
+                    "target-a",
+                    "compares_target",
+                    &first.object_ref,
+                    &target.object_ref,
+                ),
+                relation(
+                    "target-b",
+                    "compares_target",
+                    &second.object_ref,
+                    &target.object_ref,
+                ),
+                relation(
+                    "source-a",
+                    "compares_source",
+                    &first.object_ref,
+                    &a.object_ref,
+                ),
+                relation(
+                    "source-b",
+                    "compares_source",
+                    &second.object_ref,
+                    &b.object_ref,
+                ),
+            ];
+            if scenario == "foreign_source" {
+                traversal.occurrences[3].dst =
+                    DomainObjectRef::new("foreign", "fact", "b").unwrap();
+            }
+            if scenario == "ambiguous_target" {
+                let mut duplicate = traversal.occurrences[0].clone();
+                duplicate.occurrence_id = "duplicate".into();
+                traversal.occurrences.push(duplicate);
+            }
+            traversal.objects = vec![root, target, a, b, first, second];
+        }
+        let step = fixture.actor.bounded_step(1);
+        if ["foreign_source", "ambiguous_target"].contains(&scenario) {
+            let failed = result_events(&fixture.events).pop().unwrap();
+            assert_eq!(failed.disposition, CurationTerminalDisposition::Failed);
+            assert!(failed.semantic_publication.is_none());
+            continue;
+        }
+        assert!(
+            step.fatal_errors.is_empty() && step.retryable_errors.is_empty(),
+            "{scenario}: {step:?}"
+        );
+        let result = result_events(&fixture.events).pop().unwrap();
+        if ["unready", "incomplete"].contains(&scenario) {
+            assert_eq!(result.disposition, CurationTerminalDisposition::Incomplete);
+            assert!(result.semantic_publication.is_none());
+            continue;
+        }
+        let publication = result.semantic_publication.as_ref().unwrap();
+        assert_eq!(
+            publication
+                .batch
+                .objects
+                .iter()
+                .filter(|object| object.object_ref.object_kind == "required_fact")
+                .count(),
+            2
+        );
+        assert_eq!(
+            publication.batch.objects[0]
+                .qualifications
+                .get("coverage")
+                .map(String::as_str),
+            Some(if scenario == "satisfied" {
+                "satisfied"
+            } else {
+                "unsatisfied"
+            })
+        );
+        let replayed = fixture.actor.bounded_step(1);
+        assert_eq!(replayed.publications_appended, 0);
+        assert_eq!(fixture.traversal.traversals.load(Ordering::SeqCst), 1);
+        assert_eq!(result_events(&fixture.events).pop().unwrap(), result);
+    }
 }

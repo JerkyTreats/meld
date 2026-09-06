@@ -707,6 +707,7 @@ fn curation_assesses_nonce_source_under_a_distinct_exact_agent_judgment_scope() 
         roots: vec![nonce.object_ref().unwrap()],
     };
     let template = CurationRuleTemplate {
+        coverage: None,
         rule_id: "confirm-requested-nonce".into(),
         source_owner_id: OWNER_ID.into(),
         traversal_direction: TraversalDirection::Incoming,
@@ -985,6 +986,7 @@ fn complete_event_source_proves_absence_then_realization_without_fabricated_even
     let rule = store
         .install_rule(
             StandingCurationRule {
+                coverage: None,
                 source_event_route: Some(source_ref.clone()),
                 judgment_scope: Some(judgment.clone()),
                 rule_id: "covered-nonce-rule".into(),

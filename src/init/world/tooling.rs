@@ -202,7 +202,7 @@ pub(crate) fn compile_product_initialization<'a>(
             "selected observation family has no unique package component",
         ));
     }
-    let mut source_owners = std::collections::BTreeSet::new();
+    let mut source_owners = std::collections::BTreeSet::from([binding.subject.domain_id.clone()]);
     for component in &package_receipt.components {
         if component.owner_revision.registry
             == meld_world_model::curation::CURATION_TEMPLATE_REGISTRY_ID

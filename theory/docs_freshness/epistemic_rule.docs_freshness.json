@@ -1,15 +1,38 @@
 {
   "rule_id": "docs-standing-curation",
-  "source_owner_id": "workspace_fs",
+  "source_owner_id": "docs",
   "traversal_direction": "Incoming",
   "bounds": {
-    "max_depth": 4,
-    "max_objects": 32,
-    "max_occurrences": 32,
-    "max_paths": 32
+    "max_depth": 12,
+    "max_objects": 4096,
+    "max_occurrences": 8192,
+    "max_paths": 8192
   },
   "expected_object_kind": "assessment",
   "expected_object_key": "standing-assessment",
   "relation_type": "curation_assesses",
-  "output_policy_revision": "docs-standing-output-v1"
+  "output_policy_revision": "docs-required-coverage-v1",
+  "coverage": {
+    "source_required_qualifications": {
+      "comparison_complete": "true"
+    },
+    "target_kind": "readme_observation",
+    "target_required_qualifications": {
+      "content_available": "true",
+      "assertions_supported": "true"
+    },
+    "item_kind": "source_readme_correspondence",
+    "item_target_relation": "docs_correspondence_readme",
+    "item_source_relation": "docs_correspondence_source",
+    "source_kind": "source_claim",
+    "item_required_qualifications": {
+      "correspondence": "represented",
+      "matches_supported": "true"
+    },
+    "expectation_kind": "expected_readme",
+    "requirement_kind": "required_claim",
+    "expected_target_relation": "curation_expects_readme",
+    "expectation_requirement_relation": "curation_readme_requires",
+    "requirement_source_relation": "curation_requires_source_claim"
+  }
 }

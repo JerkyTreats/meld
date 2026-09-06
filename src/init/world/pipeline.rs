@@ -437,15 +437,45 @@ impl<'a> WorldInitPipeline<'a> {
                     && maintained.condition.observation_scope
                         == meld_world_model::agent::AgentObservationScope::AssignedSubject
             }) {
-                let prepared = product.curation_store.prepare_rule(template,
-                    &meld_world_model::curation::CurationRuleBinding {
-                        agent_id: assigned.agent_id.clone(), subject: product.assignment.subject.clone(),
-                        scope: meld_world_model::world_state::graph::contracts::OwnerPublicationScope {
-                            scope_id: product.assignment.subject.object_id.clone(),
-                            branch_id: Some(branch_scope.branch_id.clone()),
-                            perspective_id: Some(perspective.perspective_id.clone()), valid_at: None,
+                let binding = meld_world_model::curation::CurationRuleBinding {
+                    agent_id: assigned.agent_id.clone(),
+                    subject: product.assignment.subject.clone(),
+                    scope: meld_world_model::world_state::graph::contracts::OwnerPublicationScope {
+                        scope_id: product.assignment.subject.object_id.clone(),
+                        branch_id: Some(branch_scope.branch_id.clone()),
+                        perspective_id: Some(perspective.perspective_id.clone()),
+                        valid_at: None,
+                    },
+                };
+                let installed = product
+                    .curation_store
+                    .resolve_template(template)
+                    .map_err(|error| WorldInitError::Identity(error.to_string()))?
+                    .ok_or_else(|| {
+                        WorldInitError::Identity("assigned Curation template absent".into())
+                    })?;
+                let source =
+                    crate::runtime::theory::assigned_curation_source(&installed.template, &binding)
+                        .map_err(WorldInitError::Identity)?;
+                let prepared = match source {
+                    Some(source) => product.curation_store.prepare_rule_for_source(
+                        template,
+                        &binding,
+                        &source,
+                        &meld_world_model::curation::CurationJudgmentScope {
+                            subject: product.assignment.subject.clone(),
+                            perspective: perspective.clone(),
+                            branch_scope: branch_scope.clone(),
                         },
-                    }, metadata.observed_seq).map_err(|error| WorldInitError::Identity(error.to_string()))?;
+                        metadata.observed_seq,
+                    ),
+                    None => product.curation_store.prepare_rule(
+                        template,
+                        &binding,
+                        metadata.observed_seq,
+                    ),
+                }
+                .map_err(|error| WorldInitError::Identity(error.to_string()))?;
                 agent_owner_revisions.push(prepared.revision_ref());
             }
             let intent = AgentGenesisIntentV1::new(

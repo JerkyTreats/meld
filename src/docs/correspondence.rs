@@ -9,7 +9,8 @@ use crate::execution::{ProviderExecutionPort, ProviderValidationPort};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-pub const CORRESPONDENCE_CONTRACT: &str = "docs.claim-correspondence.v1";
+pub const CORRESPONDENCE_CONTRACT: &str = "docs.claim-correspondence.v2";
+const LEGACY_CORRESPONDENCE_CONTRACT: &str = "docs.claim-correspondence.v1";
 
 /// A source assertion selected from this README's directory subtree. Selection
 /// defines the comparison scope and does not make the assertion required.
@@ -74,10 +75,29 @@ pub(crate) fn input_identity(
         ));
     }
     captured_readmes(bundle)?;
-    input_for_policy(&policy.content_identity(), bundle, sources)
+    input_for_policy(
+        CORRESPONDENCE_CONTRACT,
+        &policy.content_identity(),
+        bundle,
+        sources,
+    )
+}
+
+pub(crate) fn legacy_input_identity(
+    policy: &DocsClaimPolicy,
+    bundle: &DocsEvidenceBundle,
+    sources: &DocsSourceClaimReport,
+) -> Result<String, ApiError> {
+    input_for_policy(
+        LEGACY_CORRESPONDENCE_CONTRACT,
+        &policy.content_identity(),
+        bundle,
+        sources,
+    )
 }
 
 fn input_for_policy(
+    contract: &str,
     policy: &str,
     bundle: &DocsEvidenceBundle,
     sources: &DocsSourceClaimReport,
@@ -85,7 +105,7 @@ fn input_for_policy(
     identity(
         "docs-correspondence-input",
         &(
-            CORRESPONDENCE_CONTRACT,
+            contract,
             policy,
             &bundle
                 .observation
@@ -254,6 +274,45 @@ pub(crate) async fn advance_correspondence(
 }
 
 impl DocsCorrespondenceReport {
+    #[cfg(test)]
+    pub(crate) fn legacy_fixture(
+        &self,
+        bundle: &DocsEvidenceBundle,
+        sources: &DocsSourceClaimReport,
+    ) -> Self {
+        let mut old = self.clone();
+        old.contract_revision = LEGACY_CORRESPONDENCE_CONTRACT.into();
+        old.input_id = input_for_policy(
+            LEGACY_CORRESPONDENCE_CONTRACT,
+            &self.policy_identity,
+            bundle,
+            sources,
+        )
+        .unwrap();
+        old.report_id = old.identity().unwrap();
+        old
+    }
+
+    /// Stable historical reports retain their original publication. The current
+    /// projection adds native support predicates without repeating semantic judgment.
+    pub(crate) fn upgraded(
+        &self,
+        bundle: &DocsEvidenceBundle,
+        sources: &DocsSourceClaimReport,
+    ) -> Result<Self, ApiError> {
+        self.validate_capture(bundle, sources)?;
+        let mut next = self.clone();
+        next.contract_revision = CORRESPONDENCE_CONTRACT.into();
+        next.input_id = input_for_policy(
+            CORRESPONDENCE_CONTRACT,
+            &self.policy_identity,
+            bundle,
+            sources,
+        )?;
+        next.report_id = next.identity()?;
+        Ok(next)
+    }
+
     fn identity(&self) -> Result<String, ApiError> {
         identity(
             "docs-correspondence",
@@ -276,9 +335,16 @@ impl DocsCorrespondenceReport {
         let readmes = captured_readmes(bundle)?;
         if !sources.complete
             || self.policy_identity != sources.policy_identity
-            || self.contract_revision != CORRESPONDENCE_CONTRACT
+            || ![CORRESPONDENCE_CONTRACT, LEGACY_CORRESPONDENCE_CONTRACT]
+                .contains(&self.contract_revision.as_str())
             || self.report_id != self.identity()?
-            || self.input_id != input_for_policy(&self.policy_identity, bundle, sources)?
+            || self.input_id
+                != input_for_policy(
+                    &self.contract_revision,
+                    &self.policy_identity,
+                    bundle,
+                    sources,
+                )?
             || self.readmes.len() > readmes.len()
             || (self.complete && self.readmes.len() != readmes.len())
         {

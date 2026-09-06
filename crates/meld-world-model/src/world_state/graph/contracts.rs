@@ -936,3 +936,10 @@ mod tests {
         }
     }
 }
+
+/// Owner-qualified evidence required before a consumer may use a current cut.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OwnerObjectQualificationRequirement {
+    pub object_ref: DomainObjectRef,
+    pub qualifications: std::collections::BTreeMap<String, String>,
+}

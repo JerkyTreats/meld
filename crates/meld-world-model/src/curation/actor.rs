@@ -631,6 +631,18 @@ impl StandingCurationActor {
                 failures,
             );
         }
+        if !super::coverage::coverage_ready(installed_rule, &traversal) {
+            return CurationResult::new(
+                operation,
+                CurationTerminalDisposition::Incomplete,
+                "required owner comparison evidence is not complete",
+                None,
+                Vec::new(),
+                traversal.frontier.clone(),
+                source_exclusions(&traversal),
+                vec!["coverage_source_unready".into()],
+            );
+        }
         let realization = if let Some(rule) = &installed_rule.rule.realization {
             let source_complete = traversal.receipts.iter().any(|receipt| {
                 receipt.owner_id == installed_rule.rule.source_owner_id
@@ -705,33 +717,6 @@ impl StandingCurationActor {
                 &operation.authority.perspective,
             ),
         )?;
-        // A named request records its own observation even when standing state agrees.
-        // Replays still resolve to the same operation and never publish it twice.
-        if operation.request_id.is_none()
-            && semantic_state_exists(&traversal, &object_id, &occurrence_id)
-            && realization.as_ref().is_none_or(|(_, _, id)| {
-                traversal
-                    .occurrences
-                    .iter()
-                    .any(|occurrence| &occurrence.occurrence_id == id)
-            })
-        {
-            let mut retained_ids = vec![object_id, occurrence_id];
-            if let Some((_, _, realization_id)) = realization {
-                retained_ids.push(realization_id);
-            }
-            return CurationResult::new(
-                operation,
-                CurationTerminalDisposition::Unchanged,
-                "installed Curation-owned state already holds",
-                None,
-                retained_ids,
-                Vec::new(),
-                Vec::new(),
-                Vec::new(),
-            );
-        }
-
         let result_id = stable_identity(
             "standing-curation-result-v1",
             &(
@@ -817,6 +802,32 @@ impl StandingCurationActor {
                 provenance_refs: evidence,
             });
             batch.completeness.included_ids.push(realization_id);
+        }
+        super::coverage::author_coverage(installed_rule, operation, &traversal, &mut batch)?;
+        if operation.request_id.is_none()
+            && batch.objects.iter().all(|object| {
+                traversal
+                    .objects
+                    .iter()
+                    .any(|prior| prior.publication_id == object.publication_id)
+            })
+            && batch.relations.iter().all(|relation| {
+                traversal
+                    .occurrences
+                    .iter()
+                    .any(|prior| prior.occurrence_id == relation.occurrence_id)
+            })
+        {
+            return CurationResult::new(
+                operation,
+                CurationTerminalDisposition::Unchanged,
+                "installed Curation-owned state already holds",
+                None,
+                batch.completeness.included_ids,
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+            );
         }
         let authored_ids = batch.completeness.included_ids.clone();
         let publication = OwnerPublicationOperation::reconstruct(
@@ -962,21 +973,6 @@ fn publication_pending(report: &mut CurationStepReport, error: String) {
             report.output_after_seq
         ))],
     ));
-}
-
-fn semantic_state_exists(
-    traversal: &TraversalResult,
-    object_id: &str,
-    occurrence_id: &str,
-) -> bool {
-    traversal
-        .objects
-        .iter()
-        .any(|object| object.publication_id == object_id)
-        && traversal
-            .occurrences
-            .iter()
-            .any(|occurrence| occurrence.occurrence_id == occurrence_id)
 }
 
 fn source_provenance(traversal: &TraversalResult) -> Vec<String> {

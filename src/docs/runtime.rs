@@ -291,7 +291,9 @@ impl DocsObservationActor {
                     report,
                 )?;
             } else if revision.claim_report.is_some() {
-                if revision.correspondence.is_some() {
+                if revision.correspondence.as_ref().is_some_and(|report| {
+                    report.contract_revision == super::correspondence::CORRESPONDENCE_CONTRACT
+                }) {
                     return Ok((false, source_error));
                 }
                 let source_claims = revision
@@ -308,7 +310,28 @@ impl DocsObservationActor {
                     .binding
                     .store
                     .correspondence_progress(&self.binding_id, &input)?;
-                let report = if let Some(report) = prior.as_ref().filter(|report| report.complete) {
+                let legacy = if prior.is_none() {
+                    let input = super::correspondence::legacy_input_identity(
+                        &policy.policy,
+                        &revision.evidence,
+                        source_claims,
+                    )
+                    .map_err(|error| error.to_string())?;
+                    self.binding
+                        .store
+                        .correspondence_progress(&self.binding_id, &input)?
+                } else {
+                    None
+                };
+                let prior = prior.or(legacy
+                    .map(|report| report.upgraded(&revision.evidence, source_claims))
+                    .transpose()
+                    .map_err(|error| error.to_string())?);
+                let report = if let Some(report) = revision.correspondence.as_ref() {
+                    report
+                        .upgraded(&revision.evidence, source_claims)
+                        .map_err(|error| error.to_string())?
+                } else if let Some(report) = prior.as_ref().filter(|report| report.complete) {
                     report
                         .validate_capture(&revision.evidence, source_claims)
                         .map_err(|error| error.to_string())?;
@@ -967,6 +990,121 @@ mod tests {
             assert_eq!(
                 authority.watermark_capability().snapshot().unwrap().tip_seq,
                 4
+            );
+        }
+    }
+
+    #[test]
+    fn completed_correspondence_upgrades_legacy_projection_without_a_judge() {
+        use super::super::claim_observation::test_support::FixtureJudge;
+        for boundary in 0..3 {
+            let source = tempfile::tempdir().unwrap();
+            let storage = tempfile::tempdir().unwrap();
+            std::fs::write(
+                source.path().join("lib.rs"),
+                "pub fn run() {}\npub fn stop() {}\n",
+            )
+            .unwrap();
+            std::fs::write(source.path().join("README.md"), "`run` exists.\n").unwrap();
+            let authority = EventAuthority::open(
+                sled::open(storage.path().join("events")).unwrap(),
+                EventAuthorityOpenOptions::default(),
+            )
+            .unwrap();
+            let mut first = actor(source.path(), &storage.path().join("docs"), &authority);
+            enable_claims(&mut first, Some(Arc::new(FixtureJudge::default())));
+            for _ in 0..3 {
+                first.tick(WorkBudget { max_items: 1 });
+            }
+            let assessed = first.current_revision().unwrap().unwrap();
+            assert!(assessed.claim_report.is_some());
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let report = runtime
+                .block_on(super::super::correspondence::advance_correspondence(
+                    &FixtureJudge::default(),
+                    &first.binding.claim_policy.as_ref().unwrap().policy,
+                    &assessed.evidence,
+                    assessed.source_claims.as_ref().unwrap(),
+                    None,
+                    1,
+                ))
+                .unwrap();
+            let expected = report.clone();
+            let report =
+                report.legacy_fixture(&assessed.evidence, assessed.source_claims.as_ref().unwrap());
+            first
+                .binding
+                .store
+                .save_correspondence_progress(&first.binding_id, &assessed.revision_id, &report)
+                .unwrap();
+            let pending = if boundary > 0 {
+                let pending = first
+                    .binding
+                    .store
+                    .prepare_correspondence(
+                        &first.binding_id,
+                        &assessed.revision_id,
+                        report.clone(),
+                    )
+                    .unwrap();
+                if boundary == 2 {
+                    authority
+                        .append_capability()
+                        .append_durable_proven(
+                            pending.envelope("docs-observation-test").unwrap(),
+                            AppendMode::Idempotent,
+                        )
+                        .unwrap();
+                }
+                Some(pending)
+            } else {
+                None
+            };
+            drop(first);
+            let mut recovered = actor(source.path(), &storage.path().join("docs"), &authority);
+            enable_claims(&mut recovered, None);
+            let tick = recovered.tick(WorkBudget { max_items: 1 });
+            assert!(tick.retryable_errors.is_empty(), "{boundary}: {tick:?}");
+            assert_eq!(tick.items_committed, 1);
+            let resumed = recovered.current_revision().unwrap().unwrap();
+            if let Some(pending) = pending {
+                assert_eq!(resumed, pending);
+                assert!(!resumed
+                    .publication()
+                    .unwrap()
+                    .batch
+                    .objects
+                    .iter()
+                    .any(|object| object.qualifications.contains_key("comparison_complete")));
+                let tick = recovered.tick(WorkBudget { max_items: 1 });
+                assert!(tick.retryable_errors.is_empty(), "{tick:?}");
+                assert_eq!(
+                    recovered
+                        .binding
+                        .store
+                        .revision(&pending.revision_id)
+                        .unwrap(),
+                    Some(pending)
+                );
+            }
+            let upgraded = recovered.current_revision().unwrap().unwrap();
+            assert_eq!(upgraded.correspondence, Some(expected));
+            assert!(upgraded
+                .publication()
+                .unwrap()
+                .batch
+                .objects
+                .iter()
+                .any(|object| object
+                    .qualifications
+                    .get("comparison_complete")
+                    .is_some_and(|value| value == "true")));
+            assert_eq!(
+                authority.watermark_capability().snapshot().unwrap().tip_seq,
+                if boundary > 0 { 5 } else { 4 }
             );
         }
     }

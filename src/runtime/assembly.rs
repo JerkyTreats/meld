@@ -2732,6 +2732,7 @@ impl RuntimeSemanticHandleFactory {
                 ) = match rule {
                     crate::runtime::theory::PreparedCurationSelection::Installed(rule) => {
                         let planner_request = PlannerCurrentAssemblyRequest {
+                            required_graph_evidence: rule.rule.source_readiness_requirements(),
                             context: context.clone(),
                             policy: planner_policy,
                             traversal_cut_request: TraversalCutRequest {
@@ -5600,7 +5601,7 @@ mod tests {
             let subject = stewardship_subject_ref(&harness.binding).unwrap();
             {
                 let assembly = harness.assembly();
-                harness.run_world_genesis(&assembly);
+                harness.run_workspace_fixture_genesis(&assembly);
                 assembly
                     .ports()
                     .event_append()
@@ -5820,7 +5821,7 @@ mod tests {
         let rule = standing_curation_rule(subject.clone());
         {
             let assembly = harness.assembly();
-            harness.run_world_genesis(&assembly);
+            harness.run_workspace_fixture_genesis(&assembly);
             assembly
                 .stores()
                 .agent_store
@@ -6835,7 +6836,7 @@ mod tests {
             mapping_id: MAPPING_ID.to_string(),
             rules: vec![OutcomeMappingConfig {
                 mapping_id: "standing-curation-applied".to_string(),
-                source_kind: "docs_freshness_assessment".to_string(),
+                source_kind: "docs_required_coverage".to_string(),
                 match_domain_id: meld_world_model::CURATION_OWNER_ID.to_string(),
                 match_event_type: meld_world_model::CURATION_RESULT_EVENT_TYPE.to_string(),
                 match_content: vec![OutcomeContentRule::FieldEquals {
@@ -6848,8 +6849,8 @@ mod tests {
                     domain_id: Some(meld_world_model::CURATION_OWNER_ID.to_string()),
                 },
                 evidence_fields: vec![OutcomeFieldRule {
-                    field: "stale_probability".to_string(),
-                    source: OutcomeValueSource::Constant { value: 0.0 },
+                    field: "coverage_probability".to_string(),
+                    source: OutcomeValueSource::Constant { value: 1.0 },
                 }],
             }],
         }
@@ -6865,12 +6866,29 @@ mod tests {
         }
     }
 
+    fn workspace_fixture_curation_template() -> meld_world_model::curation::CurationRuleTemplate {
+        meld_world_model::curation::CurationRuleTemplate {
+            rule_id: "workspace-fixture-curation".into(),
+            source_owner_id: "workspace_fs".into(),
+            traversal_direction:
+                meld_world_model::world_state::graph::contracts::TraversalDirection::Incoming,
+            bounds: meld_world_model::world_state::graph::contracts::TraversalBounds {
+                max_depth: 4,
+                max_objects: 32,
+                max_occurrences: 32,
+                max_paths: 32,
+            },
+            expected_object_kind: "assessment".into(),
+            expected_object_key: "standing-assessment".into(),
+            relation_type: "curation_assesses".into(),
+            output_policy_revision: "workspace-fixture-output-v1".into(),
+            realization: None,
+            coverage: None,
+        }
+    }
+
     fn standing_curation_rule(subject: DomainObjectRef) -> meld_world_model::StandingCurationRule {
-        let template: meld_world_model::curation::CurationRuleTemplate = serde_json::from_str(
-            include_str!("../../theory/docs_freshness/epistemic_rule.docs_freshness.json"),
-        )
-        .unwrap();
-        template
+        workspace_fixture_curation_template()
             .ground(&meld_world_model::curation::CurationRuleBinding {
                 agent_id: STEWARD_AGENT_ID.into(),
                 subject,
@@ -7108,6 +7126,43 @@ mod tests {
         }
 
         /// Product compilation, Agent genesis, and inert preparation.
+        /// Shared Agent and Execution proofs use explicit workspace evidence. Their
+        /// fixed Curation vocabulary is independent of the evolving Docs product.
+        fn run_workspace_fixture_genesis(&self, assembly: &ProductRuntimeAssembly) {
+            let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/docs_freshness");
+            let package = tempfile::tempdir().unwrap();
+            for entry in std::fs::read_dir(&source).unwrap() {
+                let entry = entry.unwrap();
+                if entry.file_type().unwrap().is_file() {
+                    std::fs::copy(entry.path(), package.path().join(entry.file_name())).unwrap();
+                }
+            }
+            let template = workspace_fixture_curation_template();
+            let bytes = serde_json::to_vec(&template).unwrap();
+            std::fs::write(
+                package.path().join("epistemic_rule.docs_freshness.json"),
+                &bytes,
+            )
+            .unwrap();
+            let mut manifest: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(package.path().join("pds-package.json")).unwrap(),
+            )
+            .unwrap();
+            for component in manifest["components"].as_array_mut().unwrap() {
+                if component["content"]["path"] == "epistemic_rule.docs_freshness.json" {
+                    component["owner_component_id"] = template.rule_id.clone().into();
+                    component["content"]["content_hash"] =
+                        blake3::hash(&bytes).to_hex().to_string().into();
+                }
+            }
+            std::fs::write(
+                package.path().join("pds-package.json"),
+                serde_json::to_vec(&manifest).unwrap(),
+            )
+            .unwrap();
+            self.run_world_genesis_from(assembly, package.path());
+        }
+
         fn run_world_genesis(&self, assembly: &ProductRuntimeAssembly) {
             self.run_world_genesis_from(
                 assembly,
@@ -7347,6 +7402,295 @@ mod tests {
             binding.store.revision(&first.revision_id).unwrap(),
             Some(first)
         );
+    }
+
+    #[test]
+    fn native_docs_correct_readme_requires_no_goal_or_task() {
+        let harness = StewardshipHarness::new();
+        std::fs::write(
+            harness._workspace.path().join("lib.rs"),
+            "pub fn run() {}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            harness._workspace.path().join("README.md"),
+            "`run` exists.\n",
+        )
+        .unwrap();
+        {
+            let assembly = harness.assembly();
+            harness.run_world_genesis(&assembly);
+        }
+        let assembly = harness.assembly();
+        harness.bind_production_routes(&assembly);
+        assert!(assembly.bind_docs_claim_judge(Arc::new(
+            crate::docs::claim_observation::test_support::FixtureJudge::default()
+        )));
+        let mut supervisor = harness.start_supervisor(&assembly);
+        for pass in 0..16 {
+            supervisor.tick(1_000 + pass * 10).unwrap();
+        }
+        let RuntimeSemanticHandleFactory::TaskAdmission(execution) = &assembly
+            .handle_factories()
+            .get("execution.task_admission")
+            .unwrap()
+            .semantic
+        else {
+            panic!("Execution absent")
+        };
+        assert!(execution
+            .network
+            .lock()
+            .unwrap()
+            .state()
+            .admissions
+            .is_empty());
+        assert!(assembly
+            .stores()
+            .agent_store
+            .reconciliation_goals_for_agent(STEWARD_AGENT_ID)
+            .unwrap()
+            .is_empty());
+        let judgments = assembly.stores().agent_store.condition_judgments().unwrap();
+        assert!(
+            judgments
+                .iter()
+                .any(|judgment| judgment.agent_id == STEWARD_AGENT_ID
+                    && judgment.evaluation == meld_lang::EvalResult::Satisfied),
+            "native admitted coverage must reach Agent, not merely leave it waiting: {judgments:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(harness._workspace.path().join("README.md")).unwrap(),
+            "`run` exists.\n"
+        );
+        supervisor.request_shutdown(1_400).unwrap();
+        drop(supervisor);
+        drop(assembly);
+        let reopened = harness.assembly();
+        harness.bind_production_routes(&reopened);
+        let mut command = SupervisorStartCommand::new("docs-coverage-reopened", 2_000);
+        command.registration_set = reopened.registration_set().cloned();
+        let mut resumed =
+            RuntimeSupervisor::start(reopened.supervisor_startup_package(), command).unwrap();
+        for pass in 0..12 {
+            resumed.tick(2_100 + pass * 10).unwrap();
+        }
+        assert!(reopened
+            .stores()
+            .agent_store
+            .reconciliation_goals_for_agent(STEWARD_AGENT_ID)
+            .unwrap()
+            .is_empty());
+        let after = reopened.stores().agent_store.condition_judgments().unwrap();
+        assert!(after.len() > judgments.len());
+        assert!(after
+            .iter()
+            .all(|judgment| judgment.evaluation == meld_lang::EvalResult::Satisfied));
+        resumed.request_shutdown(2_400).unwrap();
+    }
+
+    #[test]
+    fn native_docs_curation_requires_source_claims_and_revises_coverage_from_observation() {
+        use crate::docs::claim_observation::test_support::FixtureJudge;
+        use crate::docs::claim_validation::*;
+        use meld_world_model::world_state::graph::contracts::*;
+        struct Judge(FixtureJudge);
+        #[async_trait::async_trait]
+        impl DocsClaimJudge for Judge {
+            async fn extract_source(
+                &self,
+                request: &crate::docs::source_claims::DocsSourceClaimRequest<'_>,
+            ) -> Result<crate::docs::source_claims::ProposedSourceClaims, crate::error::ApiError>
+            {
+                self.0.extract_source(request).await
+            }
+            async fn correspond(
+                &self,
+                request: &crate::docs::correspondence::DocsCorrespondenceRequest<'_>,
+            ) -> Result<crate::docs::correspondence::ProposedCorrespondence, crate::error::ApiError>
+            {
+                self.0.correspond(request).await
+            }
+            async fn assess(
+                &self,
+                request: &DocsClaimJudgmentRequest<'_>,
+            ) -> Result<Vec<ProviderClaimAssessment>, crate::error::ApiError> {
+                Ok(request
+                    .claims
+                    .iter()
+                    .map(|claim| ProviderClaimAssessment {
+                        claim_id: claim.claim_id.clone(),
+                        verdict: ClaimVerdict::Supported,
+                        confidence: 1.0,
+                        citations: vec![ClaimCitation {
+                            scope: CitationScope::Direct,
+                            quote: request.evidence.direct.clone(),
+                        }],
+                        rationale: "controlled declaration fixture".into(),
+                    })
+                    .collect())
+            }
+        }
+        fn graph(
+            assembly: &ProductRuntimeAssembly,
+            binding: &crate::docs::runtime::DocsObservationBinding,
+        ) -> TraversalResult {
+            let query =
+                meld_world_model::TraversalQuery::new(assembly.stores().traversal_store.as_ref());
+            let cut = query
+                .cut(&TraversalCutRequest {
+                    owners: vec![
+                        TraversalOwnerRequirement {
+                            event_source: None,
+                            owner_id: "docs".into(),
+                            scope: binding.scope.clone(),
+                            required: true,
+                        },
+                        TraversalOwnerRequirement {
+                            event_source: None,
+                            owner_id: "curation".into(),
+                            scope: binding.scope.clone(),
+                            required: false,
+                        },
+                    ],
+                    scope: binding.scope.clone(),
+                    currentness: OwnerCurrentnessPolicy::LatestComplete,
+                    event_position: assembly.graph_runtime().durable_event_cursor().unwrap(),
+                })
+                .unwrap();
+            assert_eq!(cut.status, TraversalCutStatus::Complete, "{cut:?}");
+            let result = query
+                .traverse(
+                    &cut,
+                    &BoundedTraversalRequest {
+                        roots: vec![DomainObjectRef::new(
+                            "docs",
+                            "scope_observation",
+                            &binding.scope.scope_id,
+                        )
+                        .unwrap()],
+                        direction: TraversalDirection::Incoming,
+                        relation_types: None,
+                        bounds: TraversalBounds {
+                            max_depth: 12,
+                            max_objects: 4096,
+                            max_occurrences: 8192,
+                            max_paths: 8192,
+                        },
+                    },
+                )
+                .unwrap();
+            assert!(!result.truncation.is_truncated(), "{result:?}");
+            result
+        }
+        let harness = StewardshipHarness::new();
+        std::fs::write(
+            harness._workspace.path().join("lib.rs"),
+            "pub fn run() {}\npub fn stop() {}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            harness._workspace.path().join("README.md"),
+            "`run` exists.\n",
+        )
+        .unwrap();
+        {
+            let assembly = harness.assembly();
+            harness.run_world_genesis(&assembly);
+        }
+        let assembly = harness.assembly();
+        harness.bind_production_routes(&assembly);
+        assert!(assembly.bind_docs_claim_judge(Arc::new(Judge(FixtureJudge::default()))));
+        let RuntimeSemanticHandleFactory::DocsObservation(binding) = &assembly
+            .handle_factories()
+            .get("docs.observation")
+            .unwrap()
+            .semantic
+        else {
+            panic!("Docs absent")
+        };
+        let mut supervisor = harness.start_supervisor(&assembly);
+        for pass in 0..12 {
+            supervisor.tick(1_000 + pass * 10).unwrap();
+        }
+        let missing = graph(&assembly, binding);
+        let aggregate = missing
+            .objects
+            .iter()
+            .find(|object| {
+                object.object_ref.domain_id == "curation"
+                    && object.object_ref.object_kind == "assessment"
+            })
+            .expect("Curation coverage aggregate");
+        assert_eq!(
+            aggregate.qualifications.get("coverage").map(String::as_str),
+            Some("unsatisfied")
+        );
+        let expected = missing
+            .objects
+            .iter()
+            .filter(|object| object.object_ref.object_kind == "expected_readme")
+            .collect::<Vec<_>>();
+        assert_eq!(expected.len(), 1);
+        assert_eq!(
+            missing
+                .objects
+                .iter()
+                .filter(|object| object.object_ref.object_kind == "required_claim")
+                .count(),
+            2
+        );
+        assert!(missing
+            .occurrences
+            .iter()
+            .any(|relation| relation.relation_type == "curation_requires_source_claim"));
+        let expected_identity = expected[0].object_ref.clone();
+        let first_publication = aggregate.publication_id.clone();
+        std::fs::write(
+            harness._workspace.path().join("README.md"),
+            "`run` exists.\n`stop` exists.\n",
+        )
+        .unwrap();
+        for pass in 0..12 {
+            supervisor.tick(1_200 + pass * 10).unwrap();
+        }
+        let covered = graph(&assembly, binding);
+        let aggregate = covered
+            .objects
+            .iter()
+            .find(|object| {
+                object.object_ref.domain_id == "curation"
+                    && object.object_ref.object_kind == "assessment"
+            })
+            .unwrap();
+        assert_eq!(
+            aggregate.qualifications.get("coverage").map(String::as_str),
+            Some("satisfied")
+        );
+        assert_ne!(aggregate.publication_id, first_publication);
+        assert!(covered
+            .objects
+            .iter()
+            .any(|object| object.object_ref == expected_identity
+                && object
+                    .qualifications
+                    .get("coverage")
+                    .is_some_and(|value| value == "satisfied")));
+        std::fs::remove_file(harness._workspace.path().join("README.md")).unwrap();
+        for pass in 0..12 {
+            supervisor.tick(1_400 + pass * 10).unwrap();
+        }
+        let absent = graph(&assembly, binding);
+        assert!(absent
+            .objects
+            .iter()
+            .any(|object| object.object_ref == expected_identity
+                && object
+                    .qualifications
+                    .get("coverage")
+                    .is_some_and(|value| value == "unsatisfied")));
+        assert!(!harness._workspace.path().join("README.md").exists());
+        supervisor.request_shutdown(1_600).unwrap();
     }
 
     #[test]
@@ -8312,6 +8656,7 @@ mod tests {
         let subject = stewardship_subject_ref(&harness.binding).unwrap();
         let legacy = standing_curation_rule(subject.clone());
         let template = CurationRuleTemplate {
+            coverage: None,
             rule_id: "docs-native-epistemic-rule".into(),
             source_owner_id: "workspace_fs".into(),
             traversal_direction: legacy.traversal_direction,
@@ -8843,7 +9188,7 @@ mod tests {
         let rule = standing_curation_rule(subject.clone());
         {
             let assembly = harness.assembly();
-            harness.run_world_genesis(&assembly);
+            harness.run_workspace_fixture_genesis(&assembly);
             assembly
                 .stores()
                 .agent_store

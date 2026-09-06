@@ -77,21 +77,22 @@ fn shipped_theory_provisions_and_loads_through_every_selection_identity() {
             .iter()
             .map(|rule| rule.match_event_type.as_str())
             .collect();
-        assert!(matched_event_types.contains(&"execution.task.succeeded"));
-        assert!(!matched_event_types.contains(&"execution.package.completed"));
-        assert!(!matched_event_types.contains(&"execution.package.failed"));
-        // The genesis rule closes belief motion from the unobserved-scope
-        // fact: its source kind must map inside the family.
-        assert!(matched_event_types.contains(&"world_model.unobserved_scope"));
-        let genesis_rule = mapping
-            .rules
+        assert!(matched_event_types
             .iter()
-            .find(|rule| rule.match_event_type == "world_model.unobserved_scope")
-            .unwrap();
-        assert!(family
-            .source_mappings
-            .iter()
-            .any(|mapping| mapping.source_kind == genesis_rule.source_kind));
+            .all(|event| *event == "world_model.curation.result.v1"));
+        assert!(!matched_event_types.contains(&"execution.task.succeeded"));
+        assert!(!matched_event_types.contains(&"world_model.unobserved_scope"));
+        for rule in &mapping.rules {
+            assert_eq!(rule.source_kind, "docs_required_coverage");
+            assert!(family
+                .source_mappings
+                .iter()
+                .any(|source| source.source_kind == rule.source_kind));
+        }
+        assert_eq!(
+            family.planner_projection.posterior_meaning,
+            "coverage_probability"
+        );
         assert_eq!(
             family.anchor_requirement,
             meld_world_model::belief::AnchorRequirement::Unanchored

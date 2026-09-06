@@ -64,6 +64,22 @@ impl<'a> PlannerQuery<'a> {
             Ok(result) => result,
             Err(error) => return refuse(error.to_string()),
         };
+        for required in &request.required_graph_evidence {
+            if !traversal_result.objects.iter().any(|object| {
+                object.object_ref == required.object_ref
+                    && object.state
+                        == crate::world_state::graph::contracts::OwnerPublicationState::Observed
+                    && required
+                        .qualifications
+                        .iter()
+                        .all(|(key, value)| object.qualifications.get(key) == Some(value))
+            }) {
+                return refuse(format!(
+                    "required owner evidence is not ready: {}",
+                    required.object_ref.index_key()
+                ));
+            }
+        }
         let current = match self
             .belief_query
             .current_revision_and_view(&request.belief_key)

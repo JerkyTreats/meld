@@ -67,6 +67,7 @@ fn native_epoch_specification_drives_curation_and_preserves_distinct_observation
     let template = curation
         .install_template(
             CurationRuleTemplate {
+                coverage: None,
                 rule_id: "confirm-nonce".into(),
                 source_owner_id: crate::nonce::OWNER_ID.into(),
                 traversal_direction: TraversalDirection::Incoming,
@@ -327,6 +328,7 @@ fn native_epoch_specification_drives_curation_and_preserves_distinct_observation
         )
     };
     let mut planner_request = PlannerCurrentAssemblyRequest {
+        required_graph_evidence: Vec::new(),
         context: PlannerDecisionContext {
             context_id: "prepared".into(),
             agent_id: authority.agent_id.clone(),

@@ -544,24 +544,41 @@ impl ResolvedStewardshipTheory {
         if rules.len() != 1 || !genesis[0].installed_owner_revisions.contains(&template_ref) {
             return Err(missing("prepared native Curation revision"));
         }
-        stores
+        let binding = meld_world_model::curation::CurationRuleBinding {
+            agent_id: agent.agent_id.clone(),
+            subject: agent.subject.clone(),
+            scope: meld_world_model::world_state::graph::contracts::OwnerPublicationScope {
+                scope_id: agent.subject.object_id.clone(),
+                branch_id: Some(agent.branch_scope.branch_id.clone()),
+                perspective_id: Some(agent.perspective_key.perspective_id.clone()),
+                valid_at: None,
+            },
+        };
+        let template = stores
             .curation_store
-            .resolve_bound_rule(
+            .resolve_template(&template_ref)
+            .map_err(owner_error)?
+            .ok_or_else(|| missing("installed Curation template"))?;
+        let rule = match assigned_curation_source(&template.template, &binding)
+            .map_err(TheoryResolutionError::Inconsistent)?
+        {
+            Some(source) => stores.curation_store.resolve_source_bound_rule(
                 &template_ref,
-                &meld_world_model::curation::CurationRuleBinding {
-                    agent_id: agent.agent_id.clone(),
+                &binding,
+                &source,
+                &meld_world_model::curation::CurationJudgmentScope {
                     subject: agent.subject.clone(),
-                    scope: meld_world_model::world_state::graph::contracts::OwnerPublicationScope {
-                        scope_id: agent.subject.object_id.clone(),
-                        branch_id: Some(agent.branch_scope.branch_id.clone()),
-                        perspective_id: Some(agent.perspective_key.perspective_id.clone()),
-                        valid_at: None,
-                    },
+                    perspective: agent.perspective_key.clone(),
+                    branch_scope: agent.branch_scope.clone(),
                 },
                 rules[0],
-            )
-            .map(|rule| Some(PreparedCurationSelection::Installed(Box::new(rule))))
-            .map_err(owner_error)
+            ),
+            None => stores
+                .curation_store
+                .resolve_bound_rule(&template_ref, &binding, rules[0]),
+        }
+        .map_err(owner_error)?;
+        Ok(Some(PreparedCurationSelection::Installed(Box::new(rule))))
     }
 
     /// Build the exact in-memory execution catalog selected by the receipt.
@@ -847,6 +864,22 @@ fn missing(kind: &str) -> TheoryResolutionError {
 
 fn owner_error(error: impl ToString) -> TheoryResolutionError {
     TheoryResolutionError::Corrupt(error.to_string())
+}
+
+/// Composition selects an owner adapter; the owner constructs its semantic source address.
+pub(crate) fn assigned_curation_source(
+    template: &meld_world_model::curation::CurationRuleTemplate,
+    binding: &meld_world_model::curation::CurationRuleBinding,
+) -> Result<Option<meld_world_model::curation::CurationSourceBinding>, String> {
+    if template.source_owner_id == binding.subject.domain_id {
+        return Ok(None);
+    }
+    match template.source_owner_id.as_str() {
+        crate::docs::publication::OWNER_ID => {
+            crate::docs::publication::curation_source(binding).map(Some)
+        }
+        owner => Err(format!("no assigned Curation source adapter for '{owner}'")),
+    }
 }
 
 #[cfg(test)]

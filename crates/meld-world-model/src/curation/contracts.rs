@@ -45,6 +45,8 @@ pub struct StandingCurationRule {
     pub output_policy_revision: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub realization: Option<CurationRealizationRule>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coverage: Option<super::CurationCoverageRule>,
 }
 
 /// Agent judgment context, independent from the source owner's publication scope.
@@ -102,6 +104,9 @@ impl StandingCurationRule {
             }
         }
         self.bounds.validate_for_curation()?;
+        if let Some(coverage) = &self.coverage {
+            coverage.validate()?;
+        }
         if let Some(realization) = &self.realization {
             realization.observed_object.validate()?;
             if !self.roots.contains(&realization.observed_object) {
@@ -175,6 +180,23 @@ impl StandingCurationRule {
             self.expected_object_kind.clone(),
             self.expected_object_id.clone(),
         )
+    }
+
+    /// Consumers must wait for the same source evidence Curation requires for coverage.
+    pub fn source_readiness_requirements(
+        &self,
+    ) -> Vec<crate::world_state::graph::contracts::OwnerObjectQualificationRequirement> {
+        self.coverage.as_ref().map_or_else(Vec::new, |coverage| {
+            self.roots
+                .iter()
+                .map(|root| {
+                    crate::world_state::graph::contracts::OwnerObjectQualificationRequirement {
+                        object_ref: root.clone(),
+                        qualifications: coverage.source_required_qualifications.clone(),
+                    }
+                })
+                .collect()
+        })
     }
 
     pub fn traversal_request(&self) -> BoundedTraversalRequest {

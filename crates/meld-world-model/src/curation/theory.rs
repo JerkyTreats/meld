@@ -47,6 +47,8 @@ pub struct CurationRuleTemplate {
     pub output_policy_revision: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub realization: Option<CurationRealizationTemplate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coverage: Option<super::CurationCoverageRule>,
 }
 
 /// Owner-issued selection of an independently scoped observation source.
@@ -169,6 +171,7 @@ impl CurationRuleTemplate {
             expected_object_id,
             relation_type: self.relation_type.clone(),
             output_policy_revision: self.output_policy_revision.clone(),
+            coverage: self.coverage.clone(),
             realization: self
                 .realization
                 .as_ref()

@@ -465,6 +465,80 @@ impl DocsObservationRevision {
                 }
             }
         }
+        if self.correspondence.as_ref().is_some_and(|report| {
+            report.contract_revision == super::correspondence::CORRESPONDENCE_CONTRACT
+        }) {
+            semantic_qualifications
+                .entry(root.clone())
+                .or_default()
+                .insert("comparison_complete".into(), "true".into());
+            for readme in &observed.readmes {
+                let object = DomainObjectRef::new(
+                    OWNER_ID,
+                    "readme_observation",
+                    format!("{}::{}", self.scope.scope_id, readme.path),
+                )
+                .map_err(|error| error.to_string())?;
+                let supported = self.claim_report.as_ref().and_then(|report| report.readmes.iter().find(|judgment| judgment.path == readme.path))
+                    .is_some_and(|judgment| matches!(&judgment.disposition, super::claim_observation::ObservedClaimDisposition::Assessed { report } if report.accepted));
+                semantic_qualifications
+                    .entry(object)
+                    .or_default()
+                    .extend(BTreeMap::from([
+                        (
+                            "content_available".into(),
+                            matches!(readme.state, ObservedReadmeState::Present { .. }).to_string(),
+                        ),
+                        ("assertions_supported".into(), supported.to_string()),
+                    ]));
+            }
+            let report = self
+                .correspondence
+                .as_ref()
+                .expect("current correspondence");
+            for readme in &report.readmes {
+                let assessments = self
+                    .claim_report
+                    .as_ref()
+                    .and_then(|report| {
+                        report
+                            .readmes
+                            .iter()
+                            .find(|judgment| judgment.path == readme.path)
+                    })
+                    .and_then(|judgment| match &judgment.disposition {
+                        super::claim_observation::ObservedClaimDisposition::Assessed { report } => {
+                            Some(&report.assessments)
+                        }
+                        _ => None,
+                    });
+                for claim in &readme.claims {
+                    let supported = !claim.readme_claim_ids.is_empty()
+                        && claim.readme_claim_ids.iter().all(|id| {
+                            assessments.is_some_and(|assessments| {
+                                assessments.iter().any(|assessment| {
+                                    assessment.claim.claim_id == *id
+                                        && assessment.verdict
+                                            == super::claim_validation::ClaimVerdict::Supported
+                                })
+                            })
+                        });
+                    let object = DomainObjectRef::new(
+                        OWNER_ID,
+                        "source_readme_correspondence",
+                        format!(
+                            "{}::{}::{}",
+                            report.report_id, readme.path, claim.source_claim_id
+                        ),
+                    )
+                    .map_err(|error| error.to_string())?;
+                    semantic_qualifications
+                        .entry(object)
+                        .or_default()
+                        .insert("matches_supported".into(), supported.to_string());
+                }
+            }
+        }
         for object in &mut objects {
             if let Some(qualifications) = semantic_qualifications.remove(&object.object_ref) {
                 object.qualifications.extend(qualifications);
@@ -528,4 +602,27 @@ pub fn graph_route() -> GraphOwnerEventRoute {
         enumeration_rule_revision: OBSERVATION_SCHEMA.into(),
         complete_event_source: false,
     }
+}
+
+/// Docs owns the address and scope of the comparison source consumed by Curation.
+pub fn curation_source(
+    binding: &meld_world_model::curation::CurationRuleBinding,
+) -> Result<meld_world_model::curation::CurationSourceBinding, String> {
+    binding
+        .subject
+        .validate()
+        .map_err(|error| error.to_string())?;
+    binding
+        .scope
+        .validate()
+        .map_err(|error| error.to_string())?;
+    Ok(meld_world_model::curation::CurationSourceBinding {
+        // Docs proves a captured scope, not exhaustive absence across an Event route.
+        event_source: None,
+        scope: binding.scope.clone(),
+        roots: vec![
+            DomainObjectRef::new(OWNER_ID, "scope_observation", &binding.scope.scope_id)
+                .map_err(|error| error.to_string())?,
+        ],
+    })
 }

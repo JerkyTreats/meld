@@ -37,6 +37,78 @@ mod tests {
     }
 
     #[test]
+    fn native_coverage_mapping_rejects_task_success_and_unobserved_scope_shortcuts() {
+        use meld_world_model::belief::{
+            ConfiguredOutcomeMappingSet, OutcomeEvidenceMapping, OutcomeMappingDisposition,
+            OutcomeMappingInput,
+        };
+        let mapping = ConfiguredOutcomeMappingSet::new(
+            serde_json::from_str(include_str!(
+                "../../theory/docs_freshness/outcome_interpretation.docs_freshness.json"
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        let native = serde_json::json!({"disposition":"applied", "semantic_publication":{"batch":{"objects":[{"qualifications":{
+            "coverage":"satisfied", "output_policy_revision":"docs-required-coverage-v1",
+            "judgment_subject_domain":"workspace_fs", "judgment_subject_kind":"node", "judgment_subject_id":"scope"
+        }}]}}});
+        let mut foreign_policy = native.clone();
+        foreign_policy["semantic_publication"]["batch"]["objects"][0]["qualifications"]
+            ["output_policy_revision"] = "foreign-policy".into();
+        for (domain, event_type, payload, applicable) in [
+            ("curation", "world_model.curation.result.v1", native, true),
+            (
+                "curation",
+                "world_model.curation.result.v1",
+                foreign_policy,
+                false,
+            ),
+            (
+                "execution",
+                "execution.task.succeeded",
+                serde_json::json!({"artifact_records":[{"artifact_type_id":"docs_freshness_assessment","content":{"subject_id":"scope","stale_probability":0.0}}]}),
+                false,
+            ),
+            (
+                "world_model",
+                "world_model.unobserved_scope",
+                serde_json::json!({}),
+                false,
+            ),
+        ] {
+            let input = OutcomeMappingInput {
+                record: meld_events::EventRecord {
+                    seq: 1,
+                    envelope: meld_events::EventEnvelope::with_now_domain(
+                        "docs-mapping-test",
+                        domain,
+                        "scope",
+                        event_type,
+                        None,
+                        payload,
+                    )
+                    .with_record_id("mapping-test"),
+                },
+                mapping_id: mapping.mapping_id().into(),
+                mapping_revision: None,
+            };
+            let result = mapping.map_outcome(&input);
+            if applicable {
+                assert!(
+                    matches!(result, OutcomeMappingDisposition::Applicable { .. }),
+                    "{result:?}"
+                );
+            } else {
+                assert!(
+                    matches!(result, OutcomeMappingDisposition::NotApplicable { .. }),
+                    "{result:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn routed_docs_package_round_trips_all_exact_owner_revisions() {
         let root = tempfile::tempdir().unwrap();
         let stores =

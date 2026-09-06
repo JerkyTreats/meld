@@ -2,21 +2,48 @@
   "mapping_id": "docs_freshness_outcome_interpretation_v1",
   "rules": [
     {
-      "mapping_id": "docs_unobserved_scope_genesis_v1",
-      "source_kind": "world_model_unobserved_scope",
-      "match_domain_id": "world_model",
-      "match_event_type": "world_model.unobserved_scope",
-      "match_content": [],
+      "mapping_id": "docs-coverage-satisfied",
+      "source_kind": "docs_required_coverage",
+      "match_domain_id": "curation",
+      "match_event_type": "world_model.curation.result.v1",
+      "match_content": [
+        {
+          "rule": "field_equals",
+          "pointer": "/disposition",
+          "equals": "applied"
+        },
+        {
+          "rule": "field_equals",
+          "pointer": "/semantic_publication/batch/objects/0/qualifications/coverage",
+          "equals": "satisfied"
+        },
+        {
+          "rule": "field_equals",
+          "pointer": "/semantic_publication/batch/objects/0/qualifications/output_policy_revision",
+          "equals": "docs-required-coverage-v1"
+        },
+        {
+          "rule": "field_equals",
+          "pointer": "/semantic_publication/batch/objects/0/qualifications/judgment_subject_domain",
+          "equals": "workspace_fs"
+        },
+        {
+          "rule": "field_equals",
+          "pointer": "/semantic_publication/batch/objects/0/qualifications/judgment_subject_kind",
+          "equals": "node"
+        }
+      ],
       "subject": {
         "object_kind": "node",
         "domain_id": "workspace_fs",
         "from": {
-          "source": "envelope_objects"
+          "source": "payload_object_id",
+          "pointer": "/semantic_publication/batch/objects/0/qualifications/judgment_subject_id"
         }
       },
       "evidence_fields": [
         {
-          "field": "stale_probability",
+          "field": "coverage_probability",
           "source": {
             "source": "constant",
             "value": 1.0
@@ -25,98 +52,51 @@
       ]
     },
     {
-      "mapping_id": "docs_exact_byte_assessment_v1",
-      "source_kind": "docs_freshness_assessment",
-      "match_domain_id": "execution",
-      "match_event_type": "execution.task.succeeded",
+      "mapping_id": "docs-coverage-unsatisfied",
+      "source_kind": "docs_required_coverage",
+      "match_domain_id": "curation",
+      "match_event_type": "world_model.curation.result.v1",
       "match_content": [
         {
-          "rule": "array_any_field_equals",
-          "array_pointer": "/artifact_records",
-          "field": "artifact_type_id",
-          "equals": "docs_freshness_assessment"
+          "rule": "field_equals",
+          "pointer": "/disposition",
+          "equals": "applied"
+        },
+        {
+          "rule": "field_equals",
+          "pointer": "/semantic_publication/batch/objects/0/qualifications/coverage",
+          "equals": "unsatisfied"
+        },
+        {
+          "rule": "field_equals",
+          "pointer": "/semantic_publication/batch/objects/0/qualifications/output_policy_revision",
+          "equals": "docs-required-coverage-v1"
+        },
+        {
+          "rule": "field_equals",
+          "pointer": "/semantic_publication/batch/objects/0/qualifications/judgment_subject_domain",
+          "equals": "workspace_fs"
+        },
+        {
+          "rule": "field_equals",
+          "pointer": "/semantic_publication/batch/objects/0/qualifications/judgment_subject_kind",
+          "equals": "node"
         }
       ],
       "subject": {
         "object_kind": "node",
         "domain_id": "workspace_fs",
         "from": {
-          "source": "payload_array_element_object_id",
-          "array_pointer": "/artifact_records",
-          "field": "artifact_type_id",
-          "equals": "docs_freshness_assessment",
-          "pointer": "/content/subject_id"
+          "source": "payload_object_id",
+          "pointer": "/semantic_publication/batch/objects/0/qualifications/judgment_subject_id"
         }
       },
       "evidence_fields": [
         {
-          "field": "stale_probability",
+          "field": "coverage_probability",
           "source": {
-            "source": "data_array_element_scalar",
-            "array_pointer": "/artifact_records",
-            "field": "artifact_type_id",
-            "equals": "docs_freshness_assessment",
-            "pointer": "/content/stale_probability"
-          }
-        },
-        {
-          "field": "source_fingerprint",
-          "source": {
-            "source": "data_array_element_text",
-            "array_pointer": "/artifact_records",
-            "field": "artifact_type_id",
-            "equals": "docs_freshness_assessment",
-            "pointer": "/content/source_fingerprint"
-          }
-        },
-        {
-          "field": "policy_identity",
-          "source": {
-            "source": "data_array_element_text",
-            "array_pointer": "/artifact_records",
-            "field": "artifact_type_id",
-            "equals": "docs_freshness_assessment",
-            "pointer": "/content/policy_identity"
-          }
-        },
-        {
-          "field": "validation_fingerprint",
-          "source": {
-            "source": "data_array_element_text",
-            "array_pointer": "/artifact_records",
-            "field": "artifact_type_id",
-            "equals": "docs_freshness_assessment",
-            "pointer": "/content/validation_fingerprint"
-          }
-        },
-        {
-          "field": "weighted_groundedness",
-          "source": {
-            "source": "data_array_element_scalar",
-            "array_pointer": "/artifact_records",
-            "field": "artifact_type_id",
-            "equals": "docs_freshness_assessment",
-            "pointer": "/content/weighted_groundedness"
-          }
-        },
-        {
-          "field": "unsupported_claim_mass",
-          "source": {
-            "source": "data_array_element_scalar",
-            "array_pointer": "/artifact_records",
-            "field": "artifact_type_id",
-            "equals": "docs_freshness_assessment",
-            "pointer": "/content/unsupported_claim_mass"
-          }
-        },
-        {
-          "field": "contradiction_claim_mass",
-          "source": {
-            "source": "data_array_element_scalar",
-            "array_pointer": "/artifact_records",
-            "field": "artifact_type_id",
-            "equals": "docs_freshness_assessment",
-            "pointer": "/content/contradiction_claim_mass"
+            "source": "constant",
+            "value": 0.0
           }
         }
       ]

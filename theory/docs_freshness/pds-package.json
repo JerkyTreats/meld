@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "package_id": "meld.docs-freshness",
-  "package_version": "1.5.0",
+  "package_version": "1.6.0",
   "description": "Documentation freshness stewardship theory",
   "imports": [],
   "components": [
@@ -17,7 +17,7 @@
       "content": {
         "kind": "relative_file",
         "path": "belief_family.docs_freshness.json",
-        "content_hash": "68639b88326a4034b252fb3d321592428cbc314b0c2f5a7527f687ec634304df"
+        "content_hash": "5a58db3eb10ae94eac3eb4a3a269c2ffcc35f43e9cc4bffdc600d34ca4aacb8d"
       },
       "requires": []
     },
@@ -33,7 +33,7 @@
       "content": {
         "kind": "relative_file",
         "path": "outcome_interpretation.docs_freshness.json",
-        "content_hash": "42efd430786021675aa9f82622b2a172ba408540124a681c35d2a31e11ccbe83"
+        "content_hash": "f9ab2b4e4d4c35ce23f0104e2554b12e6c1a15d0cfcb5c8a34492dd5660d6994"
       },
       "requires": [
         {
@@ -352,7 +352,7 @@
       "content": {
         "kind": "relative_file",
         "path": "epistemic_rule.docs_freshness.json",
-        "content_hash": "4ea17c286bc3c353a4497609dd8472fb3860d3d3be0b3a05e61889f48037031d"
+        "content_hash": "ec9caa3be57a74868376c90165301fc286bcfaf67477005114a05125f95c7e64"
       },
       "requires": []
     },

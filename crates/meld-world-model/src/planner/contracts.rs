@@ -95,6 +95,9 @@ pub struct PlannerAssemblyRequest {
 /// Store-backed request that resolves the exact Graph and Belief positions.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlannerCurrentAssemblyRequest {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_graph_evidence:
+        Vec<crate::world_state::graph::contracts::OwnerObjectQualificationRequirement>,
     pub context: PlannerDecisionContext,
     pub policy: PlannerAssemblyPolicy,
     pub traversal_cut_request: TraversalCutRequest,

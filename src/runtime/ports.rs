@@ -202,6 +202,7 @@ impl AgentPlannerPort for ProductEpochAgentPlannerPort {
             }
         };
         let request = PlannerCurrentAssemblyRequest {
+            required_graph_evidence: products.curation_rule.rule.source_readiness_requirements(),
             context: self.binding.context.clone(), policy: self.binding.policy.clone(),
             belief_key: self.binding.belief_key.clone(), unanchored_belief: self.binding.unanchored_belief,
             source_positions: self.binding.source_positions.clone(),

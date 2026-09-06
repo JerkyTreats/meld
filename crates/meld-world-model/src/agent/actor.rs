@@ -4322,6 +4322,7 @@ mod tests {
 
     fn rule() -> StandingCurationRule {
         StandingCurationRule {
+            coverage: None,
             source_event_route: None,
             judgment_scope: None,
             rule_id: "rule-docs".to_string(),
