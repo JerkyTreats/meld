@@ -1,6 +1,7 @@
 //! Atomic documentation capability publication and invocation.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 use async_trait::async_trait;
@@ -789,11 +790,30 @@ pub fn publish_patch_set(
                 patch.path
             )));
         }
-        let changed = std::fs::read(&destination)
-            .map(|existing| existing != patch.content.as_bytes())
-            .unwrap_or(true);
+        let destination =
+            canonical_parent.join(relative.file_name().expect("validated README name"));
+        let existing = match std::fs::symlink_metadata(&destination) {
+            Ok(metadata) if metadata.file_type().is_file() => Some(metadata),
+            Ok(_) => {
+                return Err(ApiError::ConfigError(format!(
+                    "README path '{}' is not a regular file",
+                    patch.path
+                )))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(io_error(error)),
+        };
+        let changed = match &existing {
+            Some(_) => std::fs::read(&destination).map_err(io_error)? != patch.content.as_bytes(),
+            None => true,
+        };
         if changed {
-            std::fs::write(&destination, patch.content.as_bytes()).map_err(io_error)?;
+            replace_readme(
+                &canonical_parent,
+                &destination,
+                existing.as_ref(),
+                patch.content.as_bytes(),
+            )?;
         }
         published.push(PublishedReadme {
             path: patch.path.clone(),
@@ -810,6 +830,42 @@ pub fn publish_patch_set(
         contradiction_claim_mass: patches.contradiction_claim_mass,
         published,
     })
+}
+
+// Replacing the directory entry avoids following a raced leaf symlink or changing
+// other hard links to the old README. This is one file commit, not a scope transaction.
+fn replace_readme(
+    parent: &Path,
+    destination: &Path,
+    existing: Option<&std::fs::Metadata>,
+    content: &[u8],
+) -> Result<(), ApiError> {
+    // Hidden staging stays outside the canonical reader's managed source scope.
+    let stage = tempfile::Builder::new()
+        .prefix(".meld-docs-")
+        .tempdir_in(parent)
+        .map_err(io_error)?;
+    let mut builder = tempfile::Builder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        builder.permissions(std::fs::Permissions::from_mode(0o666));
+    }
+    let mut file = builder.tempfile_in(stage.path()).map_err(io_error)?;
+    if let Some(metadata) = existing {
+        file.as_file()
+            .set_permissions(metadata.permissions())
+            .map_err(io_error)?;
+    }
+    file.write_all(content).map_err(io_error)?;
+    file.as_file().sync_all().map_err(io_error)?;
+    file.persist(destination)
+        .map_err(|error| io_error(error.error))?;
+    #[cfg(unix)]
+    std::fs::File::open(parent)
+        .and_then(|directory| directory.sync_all())
+        .map_err(io_error)?;
+    Ok(())
 }
 
 pub fn assess_published_scope(
@@ -1046,6 +1102,77 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("identity drift"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn publication_refuses_symlink_destinations_without_changing_foreign_files() {
+        for original in [Some("foreign content\n"), None] {
+            let root = tempfile::tempdir().unwrap();
+            let foreign = tempfile::tempdir().unwrap();
+            let target = foreign.path().join("private.txt");
+            if let Some(content) = original {
+                std::fs::write(&target, content).unwrap();
+            }
+            std::fs::write(root.path().join("lib.rs"), "pub fn run() {}\n").unwrap();
+            let source = inspect_scope(root.path()).unwrap();
+            std::os::unix::fs::symlink(&target, root.path().join("README.md")).unwrap();
+            let patches = validated_patch_set(
+                source.source_fingerprint,
+                "# Tool\n\n`run` exists.\n".into(),
+            );
+            let result = publish_patch_set(root.path(), &claim_policy(), &patches);
+            assert_eq!(
+                std::fs::read_to_string(&target).ok().as_deref(),
+                original,
+                "README publication must not alter a symlink target"
+            );
+            assert!(
+                result.is_err(),
+                "a nonregular README must remain unresolved"
+            );
+            assert!(std::fs::symlink_metadata(root.path().join("README.md"))
+                .unwrap()
+                .file_type()
+                .is_symlink());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn publication_replaces_one_readme_without_mutating_other_hard_links() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let root = tempfile::tempdir().unwrap();
+        let foreign = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("lib.rs"), "pub fn run() {}\n").unwrap();
+        let readme = root.path().join("README.md");
+        let target = foreign.path().join("prior.txt");
+        std::fs::write(&target, "original\n").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o640)).unwrap();
+        std::fs::hard_link(&target, &readme).unwrap();
+        let source = inspect_scope(root.path()).unwrap();
+        let patches = validated_patch_set(
+            source.source_fingerprint.clone(),
+            "# Tool\n\n`run` exists.\n".into(),
+        );
+        let receipt = publish_patch_set(root.path(), &claim_policy(), &patches).unwrap();
+        assert!(receipt.published[0].changed);
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "original\n");
+        assert_eq!(
+            std::fs::read_to_string(&readme).unwrap(),
+            patches.patches[0].content
+        );
+        let installed = std::fs::metadata(&readme).unwrap();
+        assert_ne!(installed.ino(), std::fs::metadata(&target).unwrap().ino());
+        assert_eq!(installed.permissions().mode() & 0o777, 0o640);
+        let second = publish_patch_set(root.path(), &claim_policy(), &patches).unwrap();
+        assert!(!second.published[0].changed);
+        assert_eq!(std::fs::metadata(&readme).unwrap().ino(), installed.ino());
+        assert_eq!(
+            inspect_scope(root.path()).unwrap().source_fingerprint,
+            source.source_fingerprint
+        );
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 2);
     }
 
     #[test]
