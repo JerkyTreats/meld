@@ -742,7 +742,9 @@ fn graph_runtime_from_ports_replays_appends_and_reports_one_authority_cursor() {
         .unwrap();
 
     assert_eq!(report.input_event_seq, 0);
-    assert_eq!(report.output_event_seq, source.seq);
+    assert_eq!(report.output_event_seq, source.seq + 1);
+    assert_eq!(report.events_attempted, 2);
+    assert!(!report.budget_exhausted);
     assert_eq!(report.derived_events_appended, 1);
     assert_eq!(runtime.ledger_identity(), ledger_id);
     assert_eq!(
@@ -752,7 +754,7 @@ fn graph_runtime_from_ports_replays_appends_and_reports_one_authority_cursor() {
             .unwrap()
             .unwrap()
             .reported_seq,
-        source.seq
+        report.output_event_seq
     );
     let page = authority
         .replay_capability()

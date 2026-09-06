@@ -6804,6 +6804,7 @@ mod tests {
     struct LostDispatchReturn {
         inner: SharedClaimedTaskInvoker,
         invoked: std::sync::atomic::AtomicBool,
+        continuous_retry: bool,
         lose_return: Arc<std::sync::atomic::AtomicBool>,
     }
 
@@ -6818,7 +6819,8 @@ mod tests {
             meld_execution::task_network::dispatch_actor::ClaimedInvocationOutcome,
             meld_execution::task_network::dispatch_actor::DispatchPortError,
         > {
-            if self.lose_return.load(std::sync::atomic::Ordering::SeqCst)
+            if !self.continuous_retry
+                && self.lose_return.load(std::sync::atomic::Ordering::SeqCst)
                 && self.invoked.swap(true, std::sync::atomic::Ordering::SeqCst)
             {
                 return Err(
@@ -6858,7 +6860,7 @@ mod tests {
         fn bind_production_routes_with_loss(
             &self,
             assembly: &ProductRuntimeAssembly,
-            loss: Option<Arc<std::sync::atomic::AtomicBool>>,
+            loss: Option<(Arc<std::sync::atomic::AtomicBool>, bool)>,
         ) {
             let route_storage = self._external.path().join("claimed-route");
             std::fs::create_dir_all(&route_storage).unwrap();
@@ -6903,10 +6905,11 @@ mod tests {
                     registry: capability_runtime.registry,
                 },
             );
-            if let Some(lose_return) = loss {
+            if let Some((lose_return, continuous_retry)) = loss {
                 routes.claim_invoker = SharedClaimedTaskInvoker(Arc::new(LostDispatchReturn {
                     inner: routes.claim_invoker,
                     invoked: std::sync::atomic::AtomicBool::new(false),
+                    continuous_retry,
                     lose_return,
                 }));
             }
@@ -7053,15 +7056,20 @@ mod tests {
 
     #[test]
     fn installed_startup_executes_confirms_and_accepts_belief_before_goal_satisfaction() {
-        prove_installed_startup(false);
+        prove_installed_startup(false, false);
     }
 
     #[test]
     fn startup_confirms_visible_nonce_while_execution_return_remains_uncertain() {
-        prove_installed_startup(true);
+        prove_installed_startup(true, false);
     }
 
-    fn prove_installed_startup(lose_callback: bool) {
+    #[test]
+    fn startup_confirms_while_continuous_callback_retries_keep_producing_events() {
+        prove_installed_startup(true, true);
+    }
+
+    fn prove_installed_startup(lose_callback: bool, continuous_retry: bool) {
         let mut harness = StewardshipHarness::new();
         harness.binding.subject = DomainObjectRef::new("runtime", "instance", "meld").unwrap();
         harness.binding.workspace_root = None;
@@ -7127,7 +7135,7 @@ mod tests {
         drop(assembly);
         let assembly = harness.assembly();
         let loss = Arc::new(std::sync::atomic::AtomicBool::new(lose_callback));
-        harness.bind_production_routes_with_loss(&assembly, Some(loss.clone()));
+        harness.bind_production_routes_with_loss(&assembly, Some((loss.clone(), continuous_retry)));
         let RuntimeSemanticHandleFactory::AgentActor(factory) = &assembly
             .handle_factories()
             .get(AGENT_RECONCILIATION_RUNTIME_ID)

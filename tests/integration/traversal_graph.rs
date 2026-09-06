@@ -733,7 +733,8 @@ fn graph_runtime_repeated_catch_up_is_idempotent() {
         .unwrap();
     assert_eq!(first_report.actor_id, "world_state.graph.reducer");
     assert_eq!(first_report.input_event_seq, 0);
-    assert_eq!(first_report.events_attempted, 1);
+    assert_eq!(first_report.events_attempted, 2);
+    assert_eq!(first_report.output_event_seq, 2);
     assert_eq!(first_report.traversal_events_applied, 1);
     assert_eq!(first_report.derived_events_appended, 1);
     assert_eq!(first_report.retryable_errors.len(), 0);
@@ -901,10 +902,16 @@ fn graph_runtime_bounded_report_resumes_without_skipping_source_events() {
         .unwrap();
 
     assert_eq!(second.input_event_seq, 1);
-    assert_eq!(second.events_attempted, 2);
+    assert_eq!(second.events_attempted, 3);
+    assert_eq!(second.output_event_seq, 4);
     assert_eq!(second.traversal_events_applied, 1);
     assert_eq!(second.derived_events_appended, 1);
     assert!(!second.budget_exhausted);
+    let quiet = reopened_runtime
+        .catch_up_bounded(GraphCatchUpBudget { max_items: 8 })
+        .unwrap();
+    assert_eq!(quiet.events_attempted, 0);
+    assert_eq!(quiet.output_event_seq, 4);
 
     let traversal = reopened_runtime.traversal_store();
     let query = TraversalQuery::new(traversal.as_ref());

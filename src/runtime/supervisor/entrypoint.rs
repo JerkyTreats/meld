@@ -203,6 +203,7 @@ pub struct RuntimeSupervisor<'a> {
     report_store: SupervisorReportStore,
     event_sequence: u64,
     action_sequence: u64,
+    next_tick_start: usize,
     restart_attempt_limit: u64,
     restart_backoff_ms: u64,
     shutdown_completed: bool,
@@ -313,6 +314,7 @@ impl<'a> RuntimeSupervisor<'a> {
             report_store,
             event_sequence: INITIAL_EVENT_SEQUENCE,
             action_sequence: 0,
+            next_tick_start: 0,
             restart_attempt_limit: command.restart_attempt_limit,
             restart_backoff_ms: command.restart_backoff_ms,
             shutdown_completed: false,
@@ -690,11 +692,18 @@ impl<'a> RuntimeSupervisor<'a> {
                 ));
             }
         }
-        let owners = self
+        let mut owners = self
             .handles
             .values()
             .map(|runtime| runtime.owner.clone())
             .collect::<Vec<_>>();
+        // Rotate the first actor so continuous producers cannot always invalidate
+        // a consumer's inputs immediately before its bounded invocation.
+        if !owners.is_empty() {
+            let start = self.next_tick_start % owners.len();
+            owners.rotate_left(start);
+            self.next_tick_start = (start + 1) % owners.len();
+        }
         let mut renewed_runtime_ids = Vec::new();
         let mut heartbeat_runtime_ids = Vec::new();
         let mut actions = Vec::new();
@@ -2507,6 +2516,39 @@ mod tests {
         // Truthfulness fix: a restarted actor is starting until its next
         // real bounded tick report, never immediately healthy.
         assert_eq!(health.status, RuntimeHealthStatus::Starting);
+    }
+
+    #[test]
+    fn every_active_actor_gets_the_first_opportunity_without_extra_invocations() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config = ProductRuntimeConfig::for_product_root(temp.path());
+        config.enabled_runtime_ids = vec!["event.append".into(), "world_model.graph_replay".into()];
+        let assembly = ProductRuntimeAssembly::load(config).unwrap();
+        let mut supervisor = RuntimeSupervisor::start(
+            assembly.supervisor_startup_package(),
+            SupervisorStartCommand::new("fair-actors", 100),
+        )
+        .unwrap();
+        let expected = std::collections::BTreeSet::from([
+            "event.append".to_string(),
+            "world_model.graph_replay".to_string(),
+        ]);
+        let mut first = std::collections::BTreeSet::new();
+        for pass in 0..expected.len() {
+            let report = supervisor.tick(120 + pass as u64 * 10).unwrap();
+            assert_eq!(report.renewed_runtime_ids.len(), expected.len());
+            assert_eq!(report.actions.len(), expected.len());
+            assert_eq!(
+                report
+                    .renewed_runtime_ids
+                    .iter()
+                    .cloned()
+                    .collect::<std::collections::BTreeSet<_>>(),
+                expected
+            );
+            first.insert(report.renewed_runtime_ids[0].clone());
+        }
+        assert_eq!(first, expected);
     }
 
     #[test]

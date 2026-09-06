@@ -352,10 +352,40 @@ impl GraphRuntime {
 
     fn catch_up_with_limit(&self, max_items: usize) -> Result<GraphCatchUpReport, StorageError> {
         let _guard = self.catch_up_lock.lock();
-        let mut derived_events_appended = self.drain_derived_outbox()?;
+        let mut combined = self.catch_up_page(max_items, true)?;
+        while combined.source_replay.is_none()
+            && combined.events_attempted < max_items
+            && combined.budget_exhausted
+            && combined.retryable_errors.is_empty()
+            && combined.fatal_errors.is_empty()
+        {
+            // Newly derived records consume the remainder of this same work budget.
+            // Historical source scans retain their independent reporting boundary.
+            let next = self.catch_up_page(max_items - combined.events_attempted, false)?;
+            combined.output_event_seq = next.output_event_seq;
+            combined.events_attempted += next.events_attempted;
+            combined.traversal_events_applied += next.traversal_events_applied;
+            combined.derived_events_appended += next.derived_events_appended;
+            combined.retryable_errors.extend(next.retryable_errors);
+            combined.fatal_errors.extend(next.fatal_errors);
+            combined.budget_exhausted = next.budget_exhausted;
+            combined.waiting_on = next.waiting_on;
+            if next.events_attempted == 0 {
+                break;
+            }
+        }
+        Ok(combined)
+    }
+
+    fn catch_up_page(
+        &self,
+        max_items: usize,
+        allow_source_replay: bool,
+    ) -> Result<GraphCatchUpReport, StorageError> {
+        let (mut derived_events_appended, mut derived_through) = self.drain_derived_outbox()?;
         let cursor = self.cursor.get()?;
         let after_seq = cursor.after_seq;
-        if after_seq > 0 {
+        if allow_source_replay && after_seq > 0 {
             if let Some(mut report) = super::source_replay::replay_pending_source(
                 self.traversal.as_ref(),
                 self.replay.as_ref(),
@@ -471,7 +501,9 @@ impl GraphRuntime {
             traversal_events_applied += reducer.applied_events;
             fail_after_projection_before_outbox()?;
             self.derived_outbox.replace(&reducer.emitted_envelopes)?;
-            derived_events_appended += self.drain_derived_outbox()?;
+            let (appended, through) = self.drain_derived_outbox()?;
+            derived_events_appended += appended;
+            derived_through = derived_through.max(through);
             self.traversal.flush()?;
             durable_cursor = self.cursor.advance(event_seq)?;
         }
@@ -491,6 +523,7 @@ impl GraphRuntime {
                 .report_owner_source_cursor(&state.source, durable_cursor)
                 .map_err(authority_error_to_storage)?;
         }
+        let budget_exhausted = budget_exhausted || derived_through > durable_cursor.after_seq;
         let waiting_on = if events_attempted == 0 && !budget_exhausted {
             vec![crate::waiting::WaitingOnDeclaration::broad(
                 "ledger_quiet_past_graph_cursor",
@@ -523,22 +556,24 @@ impl GraphRuntime {
         })
     }
 
-    fn drain_derived_outbox(&self) -> Result<usize, StorageError> {
+    fn drain_derived_outbox(&self) -> Result<(usize, u64), StorageError> {
         let mut pending = self.derived_outbox.pending()?;
         let mut inserted = 0;
+        let mut through = 0;
         while let Some(envelope) = pending.first().cloned() {
             let receipt = self
                 .derived_sink
                 .append_derived(envelope)
                 .map_err(authority_error_to_storage)?;
             validate_receipt_identity(self.ledger_id, receipt)?;
+            through = through.max(receipt.seq);
             if receipt.disposition == AppendDisposition::Inserted {
                 inserted += 1;
             }
             pending.remove(0);
             self.derived_outbox.replace(&pending)?;
         }
-        Ok(inserted)
+        Ok((inserted, through))
     }
 
     /// Clone the shared traversal store.
@@ -704,6 +739,63 @@ mod tests {
             ready.unresolved_operation_summary_ref
         );
         assert_eq!(runtime.derived_outbox.pending().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn derived_event_replay_uses_remaining_budget_and_reports_exhaustion_exactly() {
+        for budget in [1, 16] {
+            let temp = tempfile::tempdir().unwrap();
+            let fixture = GraphRuntimeTestFixture::open(sled::open(temp.path()).unwrap()).unwrap();
+            let runtime = fixture.runtime();
+            fixture
+                .append(
+                    EventEnvelope::with_now_domain(
+                        "session-a",
+                        "context",
+                        "stream-a",
+                        "context.head_selected",
+                        None,
+                        json!({"ok":true}),
+                    )
+                    .with_graph(
+                        vec![
+                            DomainObjectRef::new("context", "head", "node-a::analysis").unwrap(),
+                            DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap(),
+                            DomainObjectRef::new("context", "frame", "frame-a").unwrap(),
+                        ],
+                        Vec::new(),
+                    ),
+                )
+                .unwrap();
+            let first = runtime
+                .catch_up_bounded(GraphCatchUpBudget { max_items: budget })
+                .unwrap();
+            assert!(first.events_attempted <= budget);
+            assert_eq!(first.derived_events_appended, 1);
+            let records = fixture.records().unwrap();
+            assert_eq!(records.len(), 2);
+            if budget == 1 {
+                assert_eq!(first.events_attempted, 1);
+                assert_eq!(first.output_event_seq, records[0].seq);
+                assert!(first.budget_exhausted);
+                let second = runtime
+                    .catch_up_bounded(GraphCatchUpBudget { max_items: 1 })
+                    .unwrap();
+                assert_eq!(second.events_attempted, 1);
+                assert_eq!(second.derived_events_appended, 0);
+                assert_eq!(second.output_event_seq, records[1].seq);
+                assert!(!second.budget_exhausted);
+            } else {
+                assert_eq!(first.events_attempted, 2);
+                assert_eq!(first.output_event_seq, records[1].seq);
+                assert!(!first.budget_exhausted);
+            }
+            assert_eq!(
+                runtime.durable_event_cursor().unwrap().after_seq,
+                records[1].seq
+            );
+            assert_eq!(fixture.records().unwrap().len(), 2);
+        }
     }
 
     #[test]
