@@ -40,6 +40,58 @@ where
     .await
 }
 
+/// Reconstruct a compiled Task from owner-proven outputs with no effect invocation.
+/// Dynamic expansion remains unresolved until its owner supplies a recovery contract.
+pub(crate) async fn recover_task_to_completion<A>(
+    api: &A,
+    executor: &mut crate::task::TaskExecutor,
+    catalog: &CapabilityCatalog,
+    registry: &CapabilityExecutorRegistry,
+    event_context: Option<&ExecutionEventContext>,
+) -> Result<TaskRunSummary, ApiError>
+where
+    A: ExecutionRuntimeContext + 'static,
+{
+    let events = api
+        .durable_event_append()
+        .map(|append| append.replay_capability());
+    let recovery = (registry, events.as_ref(), event_context);
+    meld_execution::task::execute_task_to_completion(
+        api,
+        executor,
+        catalog,
+        &recovery,
+        |_, state, instance, payload, _| {
+            Box::pin(async move {
+                let (registry, events, context) = state;
+                let runtime_init = registry.runtime_init_for(instance)?;
+                let invoker = registry
+                    .get(&instance.capability_type_id, instance.capability_version)
+                    .ok_or_else(|| {
+                        ApiError::ConfigError("Capability recovery owner is unavailable".into())
+                    })?;
+                invoker
+                    .recover(*events, &runtime_init, payload, *context)
+                    .await?
+                    .ok_or_else(|| {
+                        ApiError::ConfigError(format!(
+                            "Capability '{}' has no proven completed output for '{}'",
+                            instance.capability_type_id, payload.invocation_id
+                        ))
+                    })
+            })
+        },
+        |_, _, _, _| {
+            Err(ApiError::ConfigError(
+                "Task expansion recovery is unavailable".into(),
+            ))
+        },
+        None,
+        None,
+    )
+    .await
+}
+
 fn compile_expansion_via_root_registry<A>(
     api: &A,
     compiled_task: &CompiledTaskRecord,

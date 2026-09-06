@@ -127,6 +127,17 @@ pub enum ClaimedInvocationOutcome {
 /// invocation resolved to a bounded, recordable failure.
 #[async_trait]
 pub trait ClaimedTaskInvoker: Send + Sync {
+    /// Observe an existing claim's completed effects without executing new work.
+    /// A closed admission fence permits this return path but never invocation.
+    async fn recover_claimed_task(
+        &self,
+        _node: &TaskNode,
+        _claim: &Claim,
+        _init_payload: &TaskInitializationPayload,
+    ) -> Result<Option<ClaimedInvocationOutcome>, DispatchPortError> {
+        Ok(None)
+    }
+
     /// Executes one bounded invocation for a claimed task node.
     async fn invoke_claimed_task(
         &self,
@@ -793,7 +804,7 @@ where
             (node.clone(), init_payload)
         };
 
-        if let Err(error) = self.validate_task_authority(network.network_state(), &node) {
+        if let Err(error) = validate_task_admission_attribution(network.network_state(), &node) {
             report.fatal(
                 Some(claim.task_instance_id.clone()),
                 "effective_authority_denied",
@@ -801,12 +812,38 @@ where
             );
             return;
         }
-
-        let outcome = match self
-            .claim_invoker
-            .invoke_claimed_task(&node, claim, &init_payload)
-            .await
-        {
+        let invocation = match self.validate_task_authority(network.network_state(), &node) {
+            Ok(()) => {
+                self.claim_invoker
+                    .invoke_claimed_task(&node, claim, &init_payload)
+                    .await
+            }
+            Err(error) if resumed => match self
+                .claim_invoker
+                .recover_claimed_task(&node, claim, &init_payload)
+                .await
+            {
+                Ok(Some(outcome)) => Ok(outcome),
+                Ok(None) => {
+                    report.fatal(
+                        Some(claim.task_instance_id.clone()),
+                        "effective_authority_denied",
+                        error,
+                    );
+                    return;
+                }
+                Err(error) => Err(error),
+            },
+            Err(error) => {
+                report.fatal(
+                    Some(claim.task_instance_id.clone()),
+                    "effective_authority_denied",
+                    error,
+                );
+                return;
+            }
+        };
+        let outcome = match invocation {
             Ok(ClaimedInvocationOutcome::Completed(artifacts)) => {
                 // Persist the task-owned canonical artifacts before the
                 // terminal outcome so a crash in between replays instead of

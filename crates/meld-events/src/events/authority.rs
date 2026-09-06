@@ -402,6 +402,13 @@ impl EventAppendCapability {
         self.inner.ledger_id
     }
 
+    /// Derive read-only access to this same bound ledger.
+    pub fn replay_capability(&self) -> EventReplayCapability {
+        EventReplayCapability {
+            inner: self.inner.clone(),
+        }
+    }
+
     /// Appends and flushes one envelope before returning its receipt.
     pub fn append_durable(
         &self,
@@ -549,6 +556,41 @@ impl EventReplayCapability {
     /// Returns the ledger accepted by this capability.
     pub fn ledger_identity(&self) -> LedgerIdentity {
         self.inner.ledger_id
+    }
+
+    /// Prove an already committed exact envelope without appending or flushing.
+    /// Missing, uncommitted, or no longer retained records remain unproven.
+    pub fn prove_existing(
+        &self,
+        expected: &EventEnvelope,
+    ) -> Result<Option<EventAppendProof>, EventAuthorityError> {
+        let record_id = expected
+            .record_id
+            .as_deref()
+            .filter(|id| !id.trim().is_empty())
+            .ok_or_else(|| {
+                EventAuthorityError::invalid_request("existing Event proof requires a record ID")
+            })?;
+        let committed = self.inner.writer.watermark().committed_seq();
+        let Some(seq) = self.inner.store.lookup_record_seq(record_id)? else {
+            return Ok(None);
+        };
+        if seq == 0 || seq > committed {
+            return Ok(None);
+        }
+        let Some(record) = self.inner.store.event_at(seq)? else {
+            return Ok(None);
+        };
+        if !same_proven_envelope(&record.envelope, expected) {
+            return Err(EventAuthorityError::invalid_request(
+                "existing Event identity contains another envelope",
+            ));
+        }
+        Ok(Some(EventAppendProof {
+            ledger_id: self.inner.ledger_id,
+            seq,
+            record_id: record_id.into(),
+        }))
     }
 
     /// Replays one identity-checked, bounded page at a frozen durable tip.
@@ -929,6 +971,57 @@ mod tests {
             .unwrap();
 
         assert!(append.prove_append(receipt, &expected).is_err());
+    }
+
+    #[test]
+    fn existing_proof_requires_committed_exact_evidence_and_never_appends() {
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        let authority = EventAuthority::open(db, EventAuthorityOpenOptions::default()).unwrap();
+        let append = authority.append_capability();
+        let read = append.replay_capability();
+        let expected = EventEnvelope::with_now_domain(
+            "read-proof",
+            "example",
+            "effect",
+            "example.effect",
+            None,
+            json!({"value": 1}),
+        )
+        .with_record_id("effect::one");
+        assert!(read.prove_existing(&expected).unwrap().is_none());
+        assert_eq!(
+            authority.watermark_capability().snapshot().unwrap().tip_seq,
+            0
+        );
+        authority.inner.store.fail_next_flush_for_test();
+        assert!(matches!(
+            append.append_durable(expected.clone(), AppendMode::Idempotent),
+            Err(EventAuthorityError::DurabilityIndeterminate { .. })
+        ));
+        assert!(read.prove_existing(&expected).unwrap().is_none());
+        assert_eq!(
+            authority
+                .watermark_capability()
+                .snapshot()
+                .unwrap()
+                .committed_seq,
+            0
+        );
+        let appended = append
+            .append_durable_proven(expected.clone(), AppendMode::Idempotent)
+            .unwrap();
+        let proven = read.prove_existing(&expected).unwrap().unwrap();
+        assert_eq!(proven, appended);
+        let mut wrong = expected.clone();
+        wrong.data = json!({"value": 2});
+        assert!(read.prove_existing(&wrong).is_err());
+        wrong = expected.clone();
+        wrong.record_id = Some("effect::absent".into());
+        assert!(read.prove_existing(&wrong).unwrap().is_none());
+        assert_eq!(
+            authority.watermark_capability().snapshot().unwrap().tip_seq,
+            1
+        );
     }
 
     #[test]

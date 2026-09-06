@@ -664,8 +664,7 @@ impl EventStore {
         Ok(out)
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    fn lookup_record_seq(&self, record_id: &str) -> Result<Option<u64>, StorageError> {
+    pub(crate) fn lookup_record_seq(&self, record_id: &str) -> Result<Option<u64>, StorageError> {
         let Some(raw) = self
             .spine_record_index
             .get(record_id.as_bytes())

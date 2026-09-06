@@ -60,6 +60,18 @@ pub trait CapabilityInvoker: Send + Sync {
         })
     }
 
+    /// Reconstruct completed output from durable owner evidence only.
+    /// This does not authorize effects. Unsupported or absent evidence returns `None`.
+    async fn recover(
+        &self,
+        _events: Option<&meld_events::EventReplayCapability>,
+        _runtime_init: &CapabilityRuntimeInit,
+        _payload: &CapabilityInvocationPayload,
+        _event_context: Option<&ExecutionEventContext>,
+    ) -> Result<Option<CapabilityInvocationResult>, Self::Error> {
+        Ok(None)
+    }
+
     /// Invokes the domain runtime for one structured payload.
     async fn invoke(
         &self,

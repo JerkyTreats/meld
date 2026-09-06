@@ -1238,6 +1238,33 @@ struct CompiledTaskClaimInvoker {
 
 #[async_trait]
 impl ClaimedTaskInvoker for CompiledTaskClaimInvoker {
+    async fn recover_claimed_task(
+        &self,
+        node: &TaskNode,
+        claim: &Claim,
+        init_payload: &TaskInitializationPayload,
+    ) -> Result<Option<ClaimedInvocationOutcome>, DispatchPortError> {
+        let mut executor = crate::task::TaskExecutor::new(
+            node.compiled_task.clone(),
+            init_payload.clone(),
+            format!("dispatch_claim::{}", claim.claim_id),
+        )
+        .map_err(|error| DispatchPortError::fatal(error.to_string()))?;
+        let context = self.event_context(node);
+        crate::task::runtime::recover_task_to_completion(
+            self.core.api.as_ref(),
+            &mut executor,
+            &self.core.catalog,
+            &self.core.registry,
+            context.as_ref(),
+        )
+        .await
+        .map_err(|error| DispatchPortError::retryable(error.to_string()))?;
+        Ok(Some(ClaimedInvocationOutcome::Completed(
+            executor.artifact_repo().record().artifacts.clone(),
+        )))
+    }
+
     async fn invoke_claimed_task(
         &self,
         node: &TaskNode,
@@ -1253,26 +1280,7 @@ impl ClaimedTaskInvoker for CompiledTaskClaimInvoker {
         // Per-task lifecycle events reach the ledger only through an event
         // context; the route core carries the session partition the
         // composed actors share, so the claimed route publishes under it.
-        let event_context = self.core.session_id.as_ref().map(|session_id| {
-            crate::execution::ExecutionEventContext {
-                effect_authority: node
-                    .lineage
-                    .admission
-                    .as_ref()
-                    .zip(node.lineage.authority_decision.as_ref())
-                    .and_then(|(admission, decision)| {
-                        admission.admission_epoch.as_ref().map(|epoch| {
-                            meld_execution::ExecutionEffectAuthority {
-                                issuer_ref: admission.agent_id.clone(),
-                                principal_id: decision.principal_id.clone(),
-                                subject: decision.subject.clone(),
-                                fence_ref: epoch.clone(),
-                            }
-                        })
-                    }),
-                session_id: session_id.clone(),
-            }
-        });
+        let event_context = self.event_context(node);
         match crate::task::execute_task_to_completion(
             self.core.api.as_ref(),
             &mut executor,
@@ -1306,6 +1314,32 @@ impl ClaimedTaskInvoker for CompiledTaskClaimInvoker {
     }
 }
 
+impl CompiledTaskClaimInvoker {
+    fn event_context(&self, node: &TaskNode) -> Option<crate::execution::ExecutionEventContext> {
+        self.core
+            .session_id
+            .as_ref()
+            .map(|session_id| crate::execution::ExecutionEventContext {
+                effect_authority: node
+                    .lineage
+                    .admission
+                    .as_ref()
+                    .zip(node.lineage.authority_decision.as_ref())
+                    .and_then(|(admission, decision)| {
+                        admission.admission_epoch.as_ref().map(|epoch| {
+                            meld_execution::ExecutionEffectAuthority {
+                                issuer_ref: admission.agent_id.clone(),
+                                principal_id: decision.principal_id.clone(),
+                                subject: decision.subject.clone(),
+                                fence_ref: epoch.clone(),
+                            }
+                        })
+                    }),
+                session_id: session_id.clone(),
+            })
+    }
+}
+
 fn is_terminal_claimed_failure(message: &str) -> bool {
     message.contains(meld_execution::error::TERMINAL_CAPABILITY_FAILURE_MARKER)
         || message.contains(crate::context::capability::GATE_FAILURE_MARKER)
@@ -1319,6 +1353,15 @@ pub struct SharedClaimedTaskInvoker(pub Arc<dyn ClaimedTaskInvoker>);
 
 #[async_trait]
 impl ClaimedTaskInvoker for SharedClaimedTaskInvoker {
+    async fn recover_claimed_task(
+        &self,
+        node: &TaskNode,
+        claim: &Claim,
+        init_payload: &TaskInitializationPayload,
+    ) -> Result<Option<ClaimedInvocationOutcome>, DispatchPortError> {
+        self.0.recover_claimed_task(node, claim, init_payload).await
+    }
+
     async fn invoke_claimed_task(
         &self,
         node: &TaskNode,

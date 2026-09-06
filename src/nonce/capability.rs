@@ -11,7 +11,7 @@ use crate::error::{ApiError, StorageError};
 use crate::execution::{ExecutionEventContext, ExecutionRuntimeContext};
 use crate::task::{ArtifactProducerRef, ArtifactRecord};
 
-use super::{emit, NonceRequest};
+use super::{emit, NonceEmissionReceipt, NonceRequest};
 
 pub const EMIT: &str = "nonce.emit";
 pub const REQUEST: &str = "nonce_request";
@@ -114,43 +114,7 @@ impl CapabilityInvoker for NonceEmitter {
         payload: &CapabilityInvocationPayload,
         event_context: Option<&ExecutionEventContext>,
     ) -> Result<CapabilityInvocationResult, ApiError> {
-        payload.validate_against(runtime_init)?;
-        let input = payload
-            .supplied_inputs
-            .iter()
-            .find(|input| input.slot_id == REQUEST)
-            .ok_or_else(|| invalid("nonce request input is absent"))?;
-        let value = match &input.value {
-            SuppliedValueRef::StructuredValue(value) => value,
-            SuppliedValueRef::Artifact(artifact) => &artifact.content,
-        };
-        let request: NonceRequest =
-            serde_json::from_value(value.clone()).map_err(|error| invalid(error.to_string()))?;
-        request
-            .validate()
-            .map_err(|error| invalid(error.to_string()))?;
-        if runtime_init.capability_type_id != EMIT
-            || runtime_init.capability_version != VERSION
-            || runtime_init.scope_ref != request.subject_ref.object_id
-        {
-            return Err(invalid(
-                "nonce request does not match the bound Capability and subject",
-            ));
-        }
-        let context = event_context
-            .ok_or_else(|| invalid("nonce emission requires an admitted effect context"))?;
-        let authority = context
-            .effect_authority
-            .as_ref()
-            .ok_or_else(|| invalid("nonce emission has no admitted effect authority"))?;
-        if authority.issuer_ref != request.issuer_ref
-            || authority.subject != request.subject_ref
-            || authority.fence_ref != request.fence_ref
-        {
-            return Err(invalid(
-                "nonce request disagrees with the admitted issuer, subject, or fence",
-            ));
-        }
+        let (request, context) = validated_request(runtime_init, payload, event_context)?;
         let append = api.durable_event_append().ok_or_else(|| {
             ApiError::StorageError(StorageError::EventAuthorityUnavailable(
                 "nonce emitter has no bound product Event authority".into(),
@@ -159,26 +123,113 @@ impl CapabilityInvoker for NonceEmitter {
         let receipt = emit(&append, &context.session_id, &request).map_err(|error| {
             ApiError::StorageError(StorageError::EventAuthorityUnavailable(error.to_string()))
         })?;
-        Ok(CapabilityInvocationResult {
-            emitted_artifacts: vec![ArtifactRecord {
-                artifact_id: format!("{}::{RECEIPT}", payload.invocation_id),
-                artifact_type_id: RECEIPT.into(),
-                schema_version: VERSION,
-                content: serde_json::to_value(receipt)
-                    .map_err(|error| invalid(error.to_string()))?,
-                producer: ArtifactProducerRef {
-                    task_id: payload
-                        .upstream_lineage
-                        .as_ref()
-                        .map(|lineage| lineage.task_id.clone())
-                        .unwrap_or_default(),
-                    capability_instance_id: runtime_init.capability_instance_id.clone(),
-                    invocation_id: Some(payload.invocation_id.clone()),
-                    output_slot_id: Some(RECEIPT.into()),
-                },
-            }],
-        })
+        receipt_result(runtime_init, payload, receipt)
     }
+
+    async fn recover(
+        &self,
+        events: Option<&meld_events::EventReplayCapability>,
+        runtime_init: &CapabilityRuntimeInit,
+        payload: &CapabilityInvocationPayload,
+        event_context: Option<&ExecutionEventContext>,
+    ) -> Result<Option<CapabilityInvocationResult>, ApiError> {
+        let (request, context) = validated_request(runtime_init, payload, event_context)?;
+        let Some(events) = events else {
+            return Ok(None);
+        };
+        let expected = request
+            .envelope(&context.session_id)
+            .map_err(|error| invalid(error.to_string()))?;
+        let Some(proof) = events.prove_existing(&expected).map_err(|error| {
+            ApiError::StorageError(StorageError::EventAuthorityUnavailable(error.to_string()))
+        })?
+        else {
+            return Ok(None);
+        };
+        receipt_result(
+            runtime_init,
+            payload,
+            NonceEmissionReceipt {
+                nonce_id: request.nonce_id,
+                event_record_id: proof.record_id().into(),
+                position: meld_events::LedgerCursor {
+                    ledger_id: proof.ledger_id(),
+                    after_seq: proof.seq(),
+                },
+            },
+        )
+        .map(Some)
+    }
+}
+
+fn validated_request<'a>(
+    runtime_init: &CapabilityRuntimeInit,
+    payload: &CapabilityInvocationPayload,
+    event_context: Option<&'a ExecutionEventContext>,
+) -> Result<(NonceRequest, &'a ExecutionEventContext), ApiError> {
+    payload.validate_against(runtime_init)?;
+    let input = payload
+        .supplied_inputs
+        .iter()
+        .find(|input| input.slot_id == REQUEST)
+        .ok_or_else(|| invalid("nonce request input is absent"))?;
+    let value = match &input.value {
+        SuppliedValueRef::StructuredValue(value) => value,
+        SuppliedValueRef::Artifact(artifact) => &artifact.content,
+    };
+    let request: NonceRequest =
+        serde_json::from_value(value.clone()).map_err(|error| invalid(error.to_string()))?;
+    request
+        .validate()
+        .map_err(|error| invalid(error.to_string()))?;
+    if runtime_init.capability_type_id != EMIT
+        || runtime_init.capability_version != VERSION
+        || runtime_init.scope_ref != request.subject_ref.object_id
+    {
+        return Err(invalid(
+            "nonce request does not match the bound Capability and subject",
+        ));
+    }
+    let context = event_context
+        .ok_or_else(|| invalid("nonce emission requires an admitted effect context"))?;
+    let authority = context
+        .effect_authority
+        .as_ref()
+        .ok_or_else(|| invalid("nonce emission has no admitted effect authority"))?;
+    if authority.issuer_ref != request.issuer_ref
+        || authority.subject != request.subject_ref
+        || authority.fence_ref != request.fence_ref
+    {
+        return Err(invalid(
+            "nonce request disagrees with the admitted issuer, subject, or fence",
+        ));
+    }
+    Ok((request, context))
+}
+
+fn receipt_result(
+    runtime_init: &CapabilityRuntimeInit,
+    payload: &CapabilityInvocationPayload,
+    receipt: NonceEmissionReceipt,
+) -> Result<CapabilityInvocationResult, ApiError> {
+    Ok(CapabilityInvocationResult {
+        emitted_artifacts: vec![ArtifactRecord {
+            artifact_id: format!("{}::{RECEIPT}", payload.invocation_id),
+            artifact_type_id: RECEIPT.into(),
+            schema_version: VERSION,
+            content: serde_json::to_value(receipt).map_err(|error| invalid(error.to_string()))?,
+            producer: ArtifactProducerRef {
+                task_id: payload
+                    .upstream_lineage
+                    .as_ref()
+                    .map(|lineage| lineage.task_id.clone())
+                    .unwrap_or_default(),
+                capability_instance_id: runtime_init.capability_instance_id.clone(),
+                invocation_id: Some(payload.invocation_id.clone()),
+                output_slot_id: Some(RECEIPT.into()),
+            },
+        }],
+    })
 }
 
 fn invalid(message: impl Into<String>) -> ApiError {

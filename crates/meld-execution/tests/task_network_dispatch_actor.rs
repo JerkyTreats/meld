@@ -611,6 +611,77 @@ fn forged_durable_executable_is_rejected_before_resumed_invocation() {
 }
 
 #[test]
+fn closed_admission_recovers_only_proven_claim_outputs_without_invocation() {
+    struct RecoveryOnly {
+        proven: Arc<Mutex<bool>>,
+    }
+    #[async_trait]
+    impl ClaimedTaskInvoker for RecoveryOnly {
+        async fn invoke_claimed_task(
+            &self,
+            _: &TaskNode,
+            _: &Claim,
+            _: &TaskInitializationPayload,
+        ) -> Result<ClaimedInvocationOutcome, DispatchPortError> {
+            panic!("closed admission must never execute an effect")
+        }
+        async fn recover_claimed_task(
+            &self,
+            _: &TaskNode,
+            claim: &Claim,
+            _: &TaskInitializationPayload,
+        ) -> Result<Option<ClaimedInvocationOutcome>, DispatchPortError> {
+            Ok((*self.proven.lock().unwrap())
+                .then(|| ClaimedInvocationOutcome::Completed(vec![claim_artifact(claim)])))
+        }
+    }
+    let policy = authority_policy();
+    let proven = Arc::new(Mutex::new(false));
+    let actor = DispatchRuntimeActor::new(
+        "worker-a",
+        open_db(),
+        RecoveryOnly {
+            proven: proven.clone(),
+        },
+    )
+    .unwrap()
+    .with_authority_policy(policy.clone())
+    .with_admission_generation("generation-v2");
+    let mut store = InMemoryTaskNetworkStore::new("network-docs");
+    admitted_record(&mut store, &policy, "generation-v1");
+    let task_instance_id = realize_admitted(&mut store);
+    let command = task_network_support::apply_memory_command(
+        &store,
+        "prior-claim",
+        Command::ClaimReadyTask(DispatchRequest {
+            claim_id: "prior-claim".into(),
+            task_instance_id: task_instance_id.clone(),
+            worker_id: "worker-a".into(),
+            idempotency_key: "prior-claim".into(),
+        }),
+    );
+    assert!(matches!(store.submit(command), Response::Accepted { .. }));
+    let pending = block_on(actor.tick(&mut store, tick_request(1, 1))).unwrap();
+    assert!(pending
+        .fatal_errors
+        .iter()
+        .any(|error| error.code == "effective_authority_denied"));
+    assert!(store.state().outcomes.is_empty());
+    assert!(matches!(
+        store.state().statuses.get(&task_instance_id),
+        Some(TaskStatus::Running { .. })
+    ));
+    *proven.lock().unwrap() = true;
+    let recovered = block_on(actor.tick(&mut store, tick_request(2, 1))).unwrap();
+    assert_eq!(recovered.items_committed, 1, "{recovered:?}");
+    assert_eq!(store.state().claims.len(), 1);
+    assert_eq!(store.state().outcomes.len(), 1);
+    let repeated = block_on(actor.tick(&mut store, tick_request(3, 1))).unwrap();
+    assert_eq!(repeated.items_attempted, 0);
+    assert_eq!(store.state().outcomes.len(), 1);
+}
+
+#[test]
 fn admitted_task_with_stale_generation_is_denied_before_claim() {
     let fixture = DispatchFixture::new();
     let policy = authority_policy();

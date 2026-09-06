@@ -7056,20 +7056,44 @@ mod tests {
 
     #[test]
     fn installed_startup_executes_confirms_and_accepts_belief_before_goal_satisfaction() {
-        prove_installed_startup(false, false);
+        prove_installed_startup(StartupCallback::Normal);
     }
 
     #[test]
     fn startup_confirms_visible_nonce_while_execution_return_remains_uncertain() {
-        prove_installed_startup(true, false);
+        prove_installed_startup(StartupCallback::Withheld);
     }
 
     #[test]
     fn startup_confirms_while_continuous_callback_retries_keep_producing_events() {
-        prove_installed_startup(true, true);
+        prove_installed_startup(StartupCallback::ContinuousRetry);
     }
 
-    fn prove_installed_startup(lose_callback: bool, continuous_retry: bool) {
+    #[test]
+    fn startup_recovers_an_unreturned_effect_across_successor_epoch() {
+        prove_installed_startup(StartupCallback::RestartWithheld);
+    }
+
+    #[test]
+    fn startup_recovers_an_unreturned_effect_after_interruption_and_lease_expiry() {
+        prove_installed_startup(StartupCallback::RestartInterrupted);
+    }
+
+    enum StartupCallback {
+        Normal,
+        Withheld,
+        ContinuousRetry,
+        RestartWithheld,
+        RestartInterrupted,
+    }
+
+    fn prove_installed_startup(callback: StartupCallback) {
+        let lose_callback = !matches!(callback, StartupCallback::Normal);
+        let continuous_retry = matches!(callback, StartupCallback::ContinuousRetry);
+        let restart_pending = matches!(
+            callback,
+            StartupCallback::RestartWithheld | StartupCallback::RestartInterrupted
+        );
         let mut harness = StewardshipHarness::new();
         harness.binding.subject = DomainObjectRef::new("runtime", "instance", "meld").unwrap();
         harness.binding.workspace_root = None;
@@ -7348,7 +7372,7 @@ mod tests {
         foreign = request.clone();
         foreign.evidence_schema_id = "foreign-schema".into();
         assert!(subscriptions.returned_evidence(&foreign).unwrap().is_none());
-        if lose_callback {
+        if lose_callback && !restart_pending {
             loss.store(false, std::sync::atomic::Ordering::SeqCst);
             for pass in 0..15 {
                 supervisor.tick(1_600 + pass * 10).unwrap();
@@ -7414,6 +7438,10 @@ mod tests {
                 .unwrap(),
             Some(disposition.clone())
         );
+        if !matches!(callback, StartupCallback::RestartInterrupted) {
+            supervisor.request_shutdown(2_100).unwrap();
+        }
+        drop(pending_owner);
         drop(supervisor);
         drop(assembly);
         let reopened = harness.assembly();
@@ -7431,7 +7459,7 @@ mod tests {
                 .agent_store
                 .goal_disposition_for_plan(&plan.plan_revision_id)
                 .unwrap(),
-            Some(disposition)
+            Some(disposition.clone())
         );
         assert_eq!(
             reopened
@@ -7439,8 +7467,201 @@ mod tests {
                 .agent_store
                 .epoch_products(&goals[0].goal.goal_id)
                 .unwrap(),
-            Some(products)
+            Some(products.clone())
         );
+        if !lose_callback || restart_pending {
+            harness.bind_production_routes(&reopened);
+            let mut command = SupervisorStartCommand::new("startup-successor", 1_000_000);
+            command.registration_set = reopened.registration_set().cloned();
+            let mut successor =
+                RuntimeSupervisor::start(reopened.supervisor_startup_package(), command).unwrap();
+            let mut successor_reports = Vec::new();
+            for pass in 0..50 {
+                successor_reports.push(successor.tick(1_000_100 + pass * 10).unwrap());
+            }
+            let successor_goals = reopened
+                .stores()
+                .agent_store
+                .reconciliation_goals_for_agent("startup-agent")
+                .unwrap();
+            assert_eq!(successor_goals.len(), 2, "{successor_reports:#?}");
+            let next = successor_goals
+                .iter()
+                .find(|goal| goal.goal.goal_id != goals[0].goal.goal_id)
+                .unwrap();
+            let next_products = reopened
+                .stores()
+                .agent_store
+                .epoch_products(&next.goal.goal_id)
+                .unwrap()
+                .unwrap();
+            assert_ne!(
+                next_products.specification.fence.admission_epoch,
+                products.specification.fence.admission_epoch
+            );
+            assert_ne!(
+                next_products.observation_subject,
+                products.observation_subject
+            );
+            assert_ne!(next_products.effect_visibility, products.effect_visibility);
+            let next_history = reopened
+                .stores()
+                .agent_store
+                .completed_history_for_goal(&next.goal.goal_id)
+                .unwrap();
+            assert!(
+                next_history.iter().any(|entry| matches!(
+                    entry.accepted_milestone,
+                    meld_world_model::strategy::PlanMilestoneRequirement::GraphVisible { .. }
+                )),
+                "{successor_reports:#?}"
+            );
+            assert!(
+                next_history.iter().any(|entry| matches!(
+                    entry.accepted_milestone,
+                    meld_world_model::strategy::PlanMilestoneRequirement::BeliefRevision { .. }
+                )),
+                "{successor_reports:#?}"
+            );
+            let next_plan = reopened
+                .stores()
+                .agent_store
+                .current_reconciliation_plan(&next.goal.goal_id)
+                .unwrap()
+                .unwrap();
+            let next_disposition = reopened
+                .stores()
+                .agent_store
+                .goal_disposition_for_plan(&next_plan.plan_revision_id)
+                .unwrap()
+                .unwrap_or_else(|| panic!("{successor_reports:#?}"));
+            assert!(next_history.iter().any(|entry| matches!(
+                entry.accepted_milestone,
+                meld_world_model::strategy::PlanMilestoneRequirement::ExecutionTerminal { .. }
+            )));
+            assert!(next_history.iter().any(|entry| matches!(
+                entry.accepted_milestone,
+                meld_world_model::strategy::PlanMilestoneRequirement::CurationTerminal { .. }
+            )));
+            assert!(next_history.iter().all(|entry| history
+                .iter()
+                .all(|prior| prior.product_id != entry.product_id)));
+            for entry in next_history.iter().filter(|entry| {
+                matches!(
+                    entry.accepted_milestone,
+                    meld_world_model::strategy::PlanMilestoneRequirement::BeliefRevision { .. }
+                )
+            }) {
+                let next_milestones = reopened
+                    .stores()
+                    .agent_store
+                    .milestones_for_goal(&next.goal.goal_id)
+                    .unwrap();
+                assert!(next_milestones.iter().any(|milestone| milestone.requirement
+                    == entry.accepted_milestone
+                    && next_disposition
+                        .accepted_milestone_ids
+                        .contains(&milestone.milestone_id)));
+                assert!(history
+                    .iter()
+                    .all(|prior| prior.owner_position_id != entry.owner_position_id));
+            }
+            let watermark = harness.authority.watermark_capability().snapshot().unwrap();
+            let events = harness
+                .authority
+                .replay_capability()
+                .replay(meld_events::ReplayRequest {
+                    cursor: meld_events::LedgerCursor {
+                        ledger_id: watermark.ledger_id,
+                        after_seq: 0,
+                    },
+                    limit: 1024,
+                })
+                .unwrap()
+                .records;
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|event| event.event_type == crate::nonce::EVENT_TYPE)
+                    .count(),
+                2
+            );
+            let prior_history = reopened
+                .stores()
+                .agent_store
+                .completed_history_for_goal(&goals[0].goal.goal_id)
+                .unwrap();
+            if restart_pending {
+                assert!(prior_history.iter().any(|entry| matches!(
+                    entry.accepted_milestone,
+                    meld_world_model::strategy::PlanMilestoneRequirement::ExecutionTerminal { .. }
+                )), "original Task return was lost across restart: {successor_reports:#?}");
+                assert!(history.iter().all(|entry| prior_history.contains(entry)));
+            } else {
+                assert_eq!(prior_history, history);
+            }
+            assert_eq!(
+                reopened
+                    .stores()
+                    .agent_store
+                    .goal_disposition_for_plan(&plan.plan_revision_id)
+                    .unwrap(),
+                Some(disposition.clone())
+            );
+            successor.request_shutdown(1_001_000).unwrap();
+            drop(successor);
+            drop(reopened);
+            let retained = harness.assembly();
+            for (
+                goal_id,
+                retained_history,
+                retained_plan,
+                retained_disposition,
+                retained_products,
+            ) in [
+                (
+                    &goals[0].goal.goal_id,
+                    &prior_history,
+                    &plan,
+                    &disposition,
+                    &products,
+                ),
+                (
+                    &next.goal.goal_id,
+                    &next_history,
+                    &next_plan,
+                    &next_disposition,
+                    &next_products,
+                ),
+            ] {
+                assert_eq!(
+                    retained
+                        .stores()
+                        .agent_store
+                        .completed_history_for_goal(goal_id)
+                        .unwrap(),
+                    *retained_history
+                );
+                assert_eq!(
+                    retained
+                        .stores()
+                        .agent_store
+                        .goal_disposition_for_plan(&retained_plan.plan_revision_id)
+                        .unwrap()
+                        .as_ref(),
+                    Some(retained_disposition)
+                );
+                assert_eq!(
+                    retained
+                        .stores()
+                        .agent_store
+                        .epoch_products(goal_id)
+                        .unwrap()
+                        .as_ref(),
+                    Some(retained_products)
+                );
+            }
+        }
     }
 
     fn lifecycle_of(

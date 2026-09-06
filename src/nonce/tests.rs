@@ -238,6 +238,16 @@ async fn capability_requires_exact_effect_authority_and_returns_a_proven_append_
     )
     .unwrap();
     assert!(api.bind_event_append(foreign.append_capability()).is_err());
+    let events = authority.replay_capability();
+    assert!(emitter
+        .recover(Some(&events), &runtime, &payload, Some(&context))
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        authority.watermark_capability().snapshot().unwrap().tip_seq,
+        0
+    );
     for field in 0..3 {
         let mut wrong = context.clone();
         let grant = wrong.effect_authority.as_mut().unwrap();
@@ -266,6 +276,49 @@ async fn capability_requires_exact_effect_authority_and_returns_a_proven_append_
         .await
         .unwrap();
     assert_eq!(first.emitted_artifacts, replay.emitted_artifacts);
+    let recovered = emitter
+        .recover(Some(&events), &runtime, &payload, Some(&context))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(recovered.emitted_artifacts, first.emitted_artifacts);
+    assert!(emitter
+        .recover(
+            Some(&foreign.replay_capability()),
+            &runtime,
+            &payload,
+            Some(&context)
+        )
+        .await
+        .unwrap()
+        .is_none());
+    let mut other_payload = payload.clone();
+    let mut other_request = request.clone();
+    other_request = NonceRequest::new(
+        other_request.issuer_ref,
+        other_request.subject_ref,
+        other_request.correlation_refs,
+        "next-fence".into(),
+    )
+    .unwrap();
+    other_payload.supplied_inputs[0].value =
+        SuppliedValueRef::StructuredValue(serde_json::to_value(&other_request).unwrap());
+    let mut other_context = context.clone();
+    other_context.effect_authority.as_mut().unwrap().fence_ref = "next-fence".into();
+    assert!(emitter
+        .recover(
+            Some(&events),
+            &runtime,
+            &other_payload,
+            Some(&other_context)
+        )
+        .await
+        .unwrap()
+        .is_none());
+    assert!(emitter
+        .recover(Some(&events), &runtime, &payload, Some(&other_context))
+        .await
+        .is_err());
     let receipt: NonceEmissionReceipt =
         serde_json::from_value(first.emitted_artifacts[0].content.clone()).unwrap();
     assert_eq!(
