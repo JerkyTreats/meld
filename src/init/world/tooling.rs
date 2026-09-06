@@ -295,7 +295,35 @@ pub(crate) fn compile_product_initialization<'a>(
         })
         .collect::<Result<BTreeMap<_, _>, _>>()
         .map_err(|error| world_init_error(error.to_string()))?;
-    let capability_bindings = OwnerBindingView::new(binding.owner_binding_values());
+    let mut capability_bindings = OwnerBindingView::new(binding.owner_binding_values());
+    let policies = package_receipt
+        .components
+        .iter()
+        .filter(|component| {
+            component.route.owner_domain == "docs"
+                && component.route.component_kind == "claim-policy"
+        })
+        .collect::<Vec<_>>();
+    if policies.len() > 1 {
+        return Err(world_init_error(
+            "product requires an unambiguous Docs claim policy",
+        ));
+    }
+    if let Some(component) = policies.first() {
+        let reference = &component.owner_revision;
+        if reference.registry != "docs_claim_policy" {
+            return Err(world_init_error("Docs claim policy has a foreign registry"));
+        }
+        let policy = stores
+            .claim_policy_registry
+            .resolve(&crate::docs::claim_validation::DocsClaimPolicyRevisionRef {
+                policy_id: reference.id.clone(),
+                content_identity: reference.content_hash.clone(),
+            })?
+            .ok_or_else(|| world_init_error("installed Docs claim policy is absent"))?;
+        capability_bindings =
+            crate::docs::contribution::bind_claim_policy(capability_bindings, &policy)?;
+    }
     let activation = StewardshipActivationV1::new(
         assignment.assignment_id.clone(),
         binding.activation_bindings(),

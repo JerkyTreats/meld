@@ -16,7 +16,7 @@ use crate::docs::capability::{
     InspectScopeCapability, PublishPatchSetCapability, ValidatePatchSetCapability,
     ASSESS_PUBLISHED_SCOPE, DRAFT_PATCH_SET, INSPECT_SCOPE, PUBLISH_PATCH_SET, VALIDATE_PATCH_SET,
 };
-use crate::docs::claim_validation::DocsClaimPolicy;
+use crate::docs::claim_validation::{DocsClaimPolicy, DocsClaimPolicyRevision};
 use crate::error::ApiError;
 use crate::execution::ExecutionRuntimeContext;
 use crate::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
@@ -25,20 +25,24 @@ const WORKSPACE_BINDING: &str = "workspace";
 const PROVIDER_BINDING: &str = "provider";
 const SUBJECT_BINDING: &str = "subject";
 const AGENT_BINDING: &str = "agent";
+const CLAIM_POLICY_BINDING: &str = "docs.claim-policy";
 
-pub struct DocsCapabilityContributor {
-    policy: DocsClaimPolicy,
-}
+pub struct DocsCapabilityContributor;
 
-impl DocsCapabilityContributor {
-    pub fn shipped() -> Self {
-        Self {
-            policy: serde_json::from_str(include_str!(
-                "../../theory/docs_freshness/claim_policy.docs-claims-strict-v1.json"
-            ))
-            .expect("shipped docs claim policy is valid JSON"),
-        }
+/// Bind the exact owner-resolved revision selected by product preparation.
+pub fn bind_claim_policy(
+    bindings: OwnerBindingView,
+    revision: &DocsClaimPolicyRevision,
+) -> Result<OwnerBindingView, ApiError> {
+    revision.policy.validate()?;
+    if revision.content_identity != revision.policy.content_identity() {
+        return Err(ApiError::ConfigError(
+            "docs claim policy binding is corrupt".into(),
+        ));
     }
+    let body = serde_json::to_string(revision)
+        .map_err(|error| ApiError::ConfigError(error.to_string()))?;
+    Ok(bindings.with_value(CLAIM_POLICY_BINDING, body))
 }
 
 impl ProductCapabilityContributor for DocsCapabilityContributor {
@@ -70,6 +74,9 @@ impl ProductCapabilityContributor for DocsCapabilityContributor {
                 if matches!(type_id.as_str(), DRAFT_PATCH_SET | VALIDATE_PATCH_SET) {
                     required_binding_ids.insert(PROVIDER_BINDING.to_string());
                 }
+                if matches!(type_id.as_str(), VALIDATE_PATCH_SET | PUBLISH_PATCH_SET) {
+                    required_binding_ids.insert(CLAIM_POLICY_BINDING.to_string());
+                }
                 CapabilityImplementationOffer {
                     contract_ref: revision.revision_ref(),
                     implementation_ref: format!("docs.in-process.v1::{type_id}"),
@@ -77,7 +84,6 @@ impl ProductCapabilityContributor for DocsCapabilityContributor {
                     execution_class: revision.contract.execution_contract.execution_class,
                     factory: Arc::new(DocsInvokerFactory {
                         capability_type_id: type_id,
-                        policy: self.policy.clone(),
                     }),
                 }
             })
@@ -87,7 +93,30 @@ impl ProductCapabilityContributor for DocsCapabilityContributor {
 
 struct DocsInvokerFactory {
     capability_type_id: String,
-    policy: DocsClaimPolicy,
+}
+
+fn selected_claim_policy(
+    bindings: &OwnerBindingView,
+) -> Result<DocsClaimPolicy, CapabilityContributionDiagnostic> {
+    let body = bindings.get(CLAIM_POLICY_BINDING).ok_or_else(|| {
+        diagnostic(
+            "selected_binding_missing",
+            "docs implementation requires an installed claim policy",
+        )
+    })?;
+    let revision: DocsClaimPolicyRevision = serde_json::from_str(body)
+        .map_err(|error| diagnostic("selected_binding_invalid", error.to_string()))?;
+    revision
+        .policy
+        .validate()
+        .map_err(|error| diagnostic("selected_binding_invalid", error.to_string()))?;
+    if revision.content_identity != revision.policy.content_identity() {
+        return Err(diagnostic(
+            "selected_binding_invalid",
+            "docs claim policy binding is corrupt",
+        ));
+    }
+    Ok(revision.policy)
 }
 
 impl CapabilityInvokerFactory for DocsInvokerFactory {
@@ -131,12 +160,14 @@ impl CapabilityInvokerFactory for DocsInvokerFactory {
         > = match self.capability_type_id.as_str() {
             INSPECT_SCOPE => Arc::new(InspectScopeCapability::new(config)),
             DRAFT_PATCH_SET => Arc::new(DraftPatchSetCapability::new(config)),
-            VALIDATE_PATCH_SET => {
-                Arc::new(ValidatePatchSetCapability::new(config, self.policy.clone()))
-            }
-            PUBLISH_PATCH_SET => {
-                Arc::new(PublishPatchSetCapability::new(config, self.policy.clone()))
-            }
+            VALIDATE_PATCH_SET => Arc::new(ValidatePatchSetCapability::new(
+                config,
+                selected_claim_policy(bindings)?,
+            )),
+            PUBLISH_PATCH_SET => Arc::new(PublishPatchSetCapability::new(
+                config,
+                selected_claim_policy(bindings)?,
+            )),
             ASSESS_PUBLISHED_SCOPE => Arc::new(AssessPublishedScopeCapability::new(config)),
             other => {
                 return Err(diagnostic(
@@ -168,7 +199,7 @@ mod tests {
 
     #[test]
     fn deterministic_selection_needs_no_provider_and_excludes_unselected_invokers() {
-        let contributor = Arc::new(DocsCapabilityContributor::shipped());
+        let contributor = Arc::new(DocsCapabilityContributor);
         let inventory = ProductCapabilityInventory::assemble(vec![contributor]).unwrap();
         let contract = inventory
             .contracts()
@@ -201,7 +232,7 @@ mod tests {
 
     #[test]
     fn provider_backed_selection_requires_only_its_declared_provider_binding() {
-        let contributor = Arc::new(DocsCapabilityContributor::shipped());
+        let contributor = Arc::new(DocsCapabilityContributor);
         let inventory = ProductCapabilityInventory::assemble(vec![contributor]).unwrap();
         let contract = inventory
             .contracts()
@@ -233,14 +264,11 @@ mod tests {
 
     #[test]
     fn product_inventory_is_deterministic() {
-        let first = ProductCapabilityInventory::assemble(vec![Arc::new(
-            DocsCapabilityContributor::shipped(),
-        )])
-        .unwrap();
-        let second = ProductCapabilityInventory::assemble(vec![Arc::new(
-            DocsCapabilityContributor::shipped(),
-        )])
-        .unwrap();
+        let first = ProductCapabilityInventory::assemble(vec![Arc::new(DocsCapabilityContributor)])
+            .unwrap();
+        let second =
+            ProductCapabilityInventory::assemble(vec![Arc::new(DocsCapabilityContributor)])
+                .unwrap();
         let first_refs: Vec<_> = first.contracts().map(|item| item.revision_ref()).collect();
         let second_refs: Vec<_> = second.contracts().map(|item| item.revision_ref()).collect();
         assert_eq!(first_refs, second_refs);
@@ -248,11 +276,88 @@ mod tests {
 
     #[test]
     fn shipped_execution_classes_are_preserved() {
-        let contributor = DocsCapabilityContributor::shipped();
+        let contributor = DocsCapabilityContributor;
         assert!(contributor
             .implementation_offers()
             .iter()
             .any(|offer| offer.execution_class == ExecutionClass::Queued));
+    }
+
+    #[test]
+    fn policy_dependent_invokers_require_exact_bound_revision() {
+        let inventory =
+            ProductCapabilityInventory::assemble(vec![Arc::new(DocsCapabilityContributor)])
+                .unwrap();
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        let store = crate::docs::claim_validation::DocsClaimPolicyRegistryStore::new(db).unwrap();
+        let policy: DocsClaimPolicy = serde_json::from_str(include_str!(
+            "../../theory/docs_freshness/claim_policy.docs-claims-strict-v1.json"
+        ))
+        .unwrap();
+        let (_, first) = store.install(policy.clone(), 1).unwrap();
+        let mut alternate = policy;
+        alternate.minimum_claim_confidence = 0.99;
+        let (_, second) = store.install(alternate, 2).unwrap();
+        let physical = OwnerBindingView::new(BTreeMap::from([
+            (WORKSPACE_BINDING.into(), "/tmp".into()),
+            (SUBJECT_BINDING.into(), "docs".into()),
+            (AGENT_BINDING.into(), "agent".into()),
+            (PROVIDER_BINDING.into(), "provider".into()),
+        ]));
+        for capability in [VALIDATE_PATCH_SET, PUBLISH_PATCH_SET] {
+            let contract = inventory
+                .contracts()
+                .find(|revision| revision.contract.capability_type_id == capability)
+                .unwrap()
+                .revision_ref();
+            let request = ExactCapabilityActivationRequest {
+                assignment_id: "assignment".into(),
+                activation_id: "activation".into(),
+                selected_contracts: vec![contract.clone()],
+                selected_implementations: BTreeMap::from([(
+                    contract,
+                    format!("docs.in-process.v1::{capability}"),
+                )]),
+                compatibility_policy_revision: "capability-compatibility.v1".into(),
+            };
+            assert_eq!(
+                inventory
+                    .prepare(request.clone(), &physical)
+                    .err()
+                    .unwrap()
+                    .code,
+                "selected_binding_missing"
+            );
+            let first_binding = bind_claim_policy(physical.clone(), &first).unwrap();
+            let second_binding = bind_claim_policy(physical.clone(), &second).unwrap();
+            assert_eq!(selected_claim_policy(&first_binding).unwrap(), first.policy);
+            assert_eq!(
+                selected_claim_policy(&second_binding).unwrap(),
+                second.policy
+            );
+            let first_prepared = inventory.prepare(request.clone(), &first_binding).unwrap();
+            let second_prepared = inventory.prepare(request.clone(), &second_binding).unwrap();
+            assert_ne!(
+                first_prepared.preparation_receipt,
+                second_prepared.preparation_receipt
+            );
+            assert!(first_prepared.invokers.get(capability, 1).is_some());
+            let mut corrupt = first.clone();
+            corrupt.policy.minimum_claim_confidence = 0.7;
+            assert!(bind_claim_policy(physical.clone(), &corrupt).is_err());
+            let corrupt_binding = physical.clone().with_value(
+                CLAIM_POLICY_BINDING,
+                serde_json::to_string(&corrupt).unwrap(),
+            );
+            assert_eq!(
+                inventory
+                    .prepare(request, &corrupt_binding)
+                    .err()
+                    .unwrap()
+                    .code,
+                "selected_binding_invalid"
+            );
+        }
     }
 
     #[test]

@@ -31,6 +31,12 @@ impl OwnerBindingView {
     pub fn contains(&self, binding_id: &str) -> bool {
         self.values.contains_key(binding_id)
     }
+
+    /// Add an owner-issued resource to the exact preparation fingerprint.
+    pub fn with_value(mut self, binding_id: impl Into<String>, value: impl Into<String>) -> Self {
+        self.values.insert(binding_id.into(), value.into());
+        self
+    }
 }
 
 #[derive(Debug, Clone)]

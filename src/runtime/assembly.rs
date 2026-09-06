@@ -542,17 +542,22 @@ fn hydrate_stewardship_theory(
         .prepared_closure
         .as_ref()
         .expect("prepared-product resolution must retain its closure");
-    let capability_runtime =
-        match activate_exact_capabilities(stores, binding, &contracts, prepared_closure) {
-            Ok(runtime) => runtime,
-            Err(error) => {
-                diagnostics.push(AssemblyDiagnostic {
-                    code: "theory_image_inconsistent".to_string(),
-                    message: error.to_string(),
-                });
-                return theory;
-            }
-        };
+    let capability_runtime = match activate_exact_capabilities(
+        stores,
+        binding,
+        &contracts,
+        prepared_closure,
+        resolved.claim_policy.as_ref(),
+    ) {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            diagnostics.push(AssemblyDiagnostic {
+                code: "theory_image_inconsistent".to_string(),
+                message: error.to_string(),
+            });
+            return theory;
+        }
+    };
     let mut strategy = match meld_world_model::AgentStrategyRuntimeConfig::activate_installed(
         resolved.strategy_theory.package.clone(),
         subject,
@@ -597,6 +602,7 @@ fn activate_exact_capabilities(
     binding: &PhysicalBinding,
     contracts: &[crate::capability::CapabilityTypeContract],
     closure: &crate::theory::PreparedActivationClosureV1,
+    claim_policy: Option<&crate::docs::claim_validation::DocsClaimPolicyRevision>,
 ) -> Result<ProductCapabilityRuntime, crate::error::ApiError> {
     if closure.assignment.principal_id != binding.package.principal_id
         || closure.assignment.subject != binding.subject
@@ -638,6 +644,10 @@ fn activate_exact_capabilities(
         .keys()
         .cloned()
         .collect::<Vec<_>>();
+    let mut owner_bindings = OwnerBindingView::new(binding.owner_binding_values());
+    if let Some(policy) = claim_policy {
+        owner_bindings = crate::docs::contribution::bind_claim_policy(owner_bindings, policy)?;
+    }
     let prepared = inventory
         .prepare(
             ExactCapabilityActivationRequest {
@@ -647,7 +657,7 @@ fn activate_exact_capabilities(
                 selected_implementations: closure.activation.selected_implementations.clone(),
                 compatibility_policy_revision: "capability-compatibility.v1".to_string(),
             },
-            &OwnerBindingView::new(binding.owner_binding_values()),
+            &owner_bindings,
         )
         .map_err(|error| crate::error::ApiError::ConfigError(error.to_string()))?;
     if prepared.preparation_receipt != capability_receipt {
@@ -7230,6 +7240,113 @@ mod tests {
             assert_eq!(agent.branch_scope.branch_id, assignment_branch);
             assembly.flush_product_boundary().unwrap();
         }
+    }
+
+    #[test]
+    fn docs_capabilities_reopen_with_prepared_policy_and_reject_substitution() {
+        let harness = StewardshipHarness::new();
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/docs_freshness");
+        let package = tempfile::tempdir().unwrap();
+        for entry in std::fs::read_dir(&source).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_type().unwrap().is_file() {
+                std::fs::copy(entry.path(), package.path().join(entry.file_name())).unwrap();
+            }
+        }
+        let policy_path = "claim_policy.docs-claims-strict-v1.json";
+        let mut policy: crate::docs::claim_validation::DocsClaimPolicy =
+            serde_json::from_slice(&std::fs::read(package.path().join(policy_path)).unwrap())
+                .unwrap();
+        policy.minimum_claim_confidence = 0.93;
+        let bytes = serde_json::to_vec(&policy).unwrap();
+        std::fs::write(package.path().join(policy_path), &bytes).unwrap();
+        let mut manifest: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(package.path().join("pds-package.json")).unwrap(),
+        )
+        .unwrap();
+        for component in manifest["components"].as_array_mut().unwrap() {
+            if component["content"]["path"] == policy_path {
+                component["content"]["content_hash"] =
+                    blake3::hash(&bytes).to_hex().to_string().into();
+            }
+        }
+        std::fs::write(
+            package.path().join("pds-package.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        let newer;
+        {
+            let assembly = harness.assembly();
+            harness.run_world_genesis_from(&assembly, package.path());
+            let mut other = policy.clone();
+            other.minimum_claim_confidence = 0.97;
+            newer = assembly
+                .stores()
+                .claim_policy_registry
+                .install(other, 99)
+                .unwrap()
+                .1;
+            assembly.flush_product_boundary().unwrap();
+        }
+        let assembly = harness.assembly();
+        let subject = stewardship_subject_ref(&harness.binding).unwrap();
+        let resolved = ResolvedStewardshipTheory::resolve_prepared_product(
+            assembly.stores(),
+            &harness.binding.package,
+            &subject,
+        )
+        .unwrap();
+        let selected = resolved.claim_policy.as_ref().unwrap();
+        assert_eq!(selected.policy, policy);
+        assert_ne!(selected.content_identity, newer.content_identity);
+        let contracts = resolved
+            .executable_contracts
+            .iter()
+            .map(|revision| revision.contract.clone())
+            .collect::<Vec<_>>();
+        let closure = resolved.prepared_closure.as_ref().unwrap();
+        let runtime = activate_exact_capabilities(
+            assembly.stores(),
+            &harness.binding,
+            &contracts,
+            closure,
+            Some(selected),
+        )
+        .unwrap();
+        assert!(runtime
+            .registry
+            .get(crate::docs::capability::VALIDATE_PATCH_SET, 1)
+            .is_some());
+        assert!(runtime
+            .registry
+            .get(crate::docs::capability::PUBLISH_PATCH_SET, 1)
+            .is_some());
+        assert!(activate_exact_capabilities(
+            assembly.stores(),
+            &harness.binding,
+            &contracts,
+            closure,
+            Some(&newer)
+        )
+        .is_err());
+        assert!(activate_exact_capabilities(
+            assembly.stores(),
+            &harness.binding,
+            &contracts,
+            closure,
+            None
+        )
+        .is_err());
+        let mut diagnostics = Vec::new();
+        let hydrated =
+            hydrate_stewardship_theory(assembly.stores(), &harness.binding, &mut diagnostics);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert!(hydrated.capability_runtime.is_some());
+        assert_eq!(
+            hydrated.resolved.unwrap().claim_policy.as_ref().unwrap(),
+            selected
+        );
     }
 
     #[test]
