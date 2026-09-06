@@ -51,6 +51,7 @@ pub fn product_declaration(
     observation_scope_component_id: &str,
     directive: &str,
     requested_authority_ref: &str,
+    source_owners: &BTreeSet<String>,
 ) -> Result<ProductDeclarationV1, TheoryRouterError> {
     let participants = [
         (
@@ -100,6 +101,9 @@ pub fn product_declaration(
         ),
     ]
     .into_iter()
+    .filter(|(participant_id, _, _)| {
+        *participant_id != "workspace.source" || source_owners.contains("workspace_fs")
+    })
     .map(
         |(participant_id, owner_domain, kind)| ActivationParticipantSpec {
             participant_id: participant_id.to_string(),

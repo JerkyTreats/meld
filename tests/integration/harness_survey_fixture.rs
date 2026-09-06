@@ -97,10 +97,10 @@ pub fn survey_binding(
     storage_root: std::path::PathBuf,
 ) -> PhysicalBinding {
     PhysicalBinding {
-        workspace_root,
-        subject: SUBJECT_ID.to_string(),
+        workspace_root: Some(workspace_root),
+        subject: meld_events::DomainObjectRef::new("workspace_fs", "node", SUBJECT_ID).unwrap(),
         agent_id: AGENT_ID.to_string(),
-        provider_id: "specimen-provider".to_string(),
+        provider_id: Some("specimen-provider".to_string()),
         package: SelectedStewardshipPackage {
             expression: "docs_freshness".to_string(),
             principal_id: "workspace-owner".to_string(),

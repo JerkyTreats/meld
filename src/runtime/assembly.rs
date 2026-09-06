@@ -326,15 +326,15 @@ pub fn project_prepared_registrations(
 
 /// Canonical subject reference for one stewardship binding.
 ///
-/// The docs freshness subject is a workspace filesystem node. This
-/// derivation is shared identity: the initialization command surface must
-/// derive the same reference when seeding the stage 4 genesis fact, or the
-/// composed actors observe a different subject than genesis declared.
+/// Initialization and live composition retain the complete declared identity.
 pub fn stewardship_subject_ref(
     binding: &PhysicalBinding,
 ) -> Result<DomainObjectRef, RuntimeAssemblyError> {
-    DomainObjectRef::new("workspace_fs", "node", &binding.subject)
-        .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))
+    binding
+        .subject
+        .validate()
+        .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?;
+    Ok(binding.subject.clone())
 }
 
 /// Pure actor-facing values derived from one stewardship binding.
@@ -497,7 +497,7 @@ fn hydrate_stewardship_theory(
     diagnostics: &mut Vec<AssemblyDiagnostic>,
 ) -> HydratedStewardshipTheory {
     let mut theory = HydratedStewardshipTheory::default();
-    let subject = match DomainObjectRef::new("workspace_fs", "node", binding.subject.clone()) {
+    let subject = match stewardship_subject_ref(binding) {
         Ok(subject) => subject,
         Err(error) => {
             diagnostics.push(AssemblyDiagnostic {
@@ -599,7 +599,7 @@ fn activate_exact_capabilities(
     closure: &crate::theory::PreparedActivationClosureV1,
 ) -> Result<ProductCapabilityRuntime, crate::error::ApiError> {
     if closure.assignment.principal_id != binding.package.principal_id
-        || closure.assignment.subject.object_id != binding.subject
+        || closure.assignment.subject != binding.subject
     {
         return Err(crate::error::ApiError::ConfigError(
             "prepared product assignment differs from the physical stewardship binding".to_string(),
@@ -647,15 +647,7 @@ fn activate_exact_capabilities(
                 selected_implementations: closure.activation.selected_implementations.clone(),
                 compatibility_policy_revision: "capability-compatibility.v1".to_string(),
             },
-            &OwnerBindingView::new(BTreeMap::from([
-                (
-                    "workspace".to_string(),
-                    binding.workspace_root.display().to_string(),
-                ),
-                ("subject".to_string(), binding.subject.clone()),
-                ("agent".to_string(), binding.agent_id.clone()),
-                ("provider".to_string(), binding.provider_id.clone()),
-            ])),
+            &OwnerBindingView::new(binding.owner_binding_values()),
         )
         .map_err(|error| crate::error::ApiError::ConfigError(error.to_string()))?;
     if prepared.preparation_receipt != capability_receipt {
@@ -1232,16 +1224,21 @@ impl Default for RuntimeProcessServices {
 }
 
 impl ProductRuntimeAssembly {
-    /// Describe runtime infrastructure from a workspace without opening stores.
+    /// Describe a configured product or workspace without opening stores.
     pub fn describe_for_workspace(
         workspace_root: &Path,
         config: &MerkleConfig,
     ) -> Result<ProductRuntimeDescription, RuntimeAssemblyError> {
-        let product_root = config
-            .system
-            .storage
-            .resolve_product_root(workspace_root)
+        let selected = PhysicalBinding::resolve_for_target(config, workspace_root)
             .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?;
+        let product_root = match selected {
+            Some(binding) => binding.storage_root,
+            None => config
+                .system
+                .storage
+                .resolve_product_root(workspace_root)
+                .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?,
+        };
         Self::describe(ProductRuntimeConfig::for_product_root(product_root))
     }
 
@@ -1769,14 +1766,7 @@ impl RuntimeFactoryRegistry {
             )?,
             RuntimeFactoryDescriptor::new(
                 "execution.task_dispatch",
-                vec![
-                    TaskNetworkFactory,
-                    TaskArtifactFactory,
-                    Context,
-                    Provider,
-                    Prompt,
-                    Workspace,
-                ],
+                vec![TaskNetworkFactory, TaskArtifactFactory],
             )?,
             RuntimeFactoryDescriptor::new(
                 "execution.publication",
@@ -5289,25 +5279,22 @@ mod tests {
     }
 
     #[test]
-    fn provider_required_runtime_without_provider_fails_before_start() {
+    fn dispatch_without_a_provider_still_requires_its_exact_invocation_binding() {
         let temp = tempfile::tempdir().unwrap();
         let mut config = ProductRuntimeConfig::for_product_root(temp.path());
         config.enabled_runtime_ids = vec!["execution.task_dispatch".to_string()];
         config.disabled_runtime_ids = Vec::new();
 
-        let error = match ProductRuntimeAssembly::load(config) {
-            Ok(_) => panic!("provider-dependent runtime should require provider availability"),
-            Err(error) => error,
-        };
-
-        assert!(matches!(
-            error,
-            RuntimeAssemblyError::ProviderConstruction(_)
-        ));
+        let assembly = ProductRuntimeAssembly::load(config).unwrap();
+        assert!(!assembly
+            .handle_factories()
+            .get("execution.task_dispatch")
+            .unwrap()
+            .has_semantic_body());
     }
 
     #[test]
-    fn provider_required_runtime_opens_when_provider_is_available() {
+    fn provider_availability_does_not_replace_dispatch_binding() {
         let temp = tempfile::tempdir().unwrap();
         let mut config = ProductRuntimeConfig::for_product_root(temp.path());
         config.enabled_runtime_ids = vec!["execution.task_dispatch".to_string()];
@@ -5316,12 +5303,17 @@ mod tests {
 
         let assembly = ProductRuntimeAssembly::load(config).unwrap();
 
-        assert!(assembly.ports().adapters().provider().is_required());
+        assert!(!assembly
+            .handle_factories()
+            .get("execution.task_dispatch")
+            .unwrap()
+            .has_semantic_body());
+        assert!(!assembly.ports().adapters().provider().is_required());
         assert!(assembly.ports().adapters().provider().is_available());
     }
 
     #[test]
-    fn provider_required_runtime_accepts_present_environment_credentials() {
+    fn optional_provider_accepts_present_environment_credentials() {
         let _guard = ENV_LOCK.lock().unwrap();
         let temp = tempfile::tempdir().unwrap();
         let env_name = "MELD_RUNTIME_ASSEMBLY_TEST_PROVIDER_KEY";
@@ -5334,7 +5326,12 @@ mod tests {
         let assembly = ProductRuntimeAssembly::load(config).unwrap();
 
         std::env::remove_var(env_name);
-        assert!(assembly.ports().adapters().provider().is_required());
+        assert!(!assembly
+            .handle_factories()
+            .get("execution.task_dispatch")
+            .unwrap()
+            .has_semantic_body());
+        assert!(!assembly.ports().adapters().provider().is_required());
         assert!(assembly.ports().adapters().provider().is_available());
     }
 
@@ -6815,27 +6812,31 @@ mod tests {
         fn bind_production_routes(&self, assembly: &ProductRuntimeAssembly) {
             let route_storage = self._external.path().join("claimed-route");
             std::fs::create_dir_all(&route_storage).unwrap();
-            let api = Arc::new(crate::api::ContextApi::with_workspace_root(
-                Arc::new(
-                    crate::store::SledNodeRecordStore::new(route_storage.join("nodes")).unwrap(),
-                ),
-                Arc::new(
-                    crate::context::frame::FrameStorage::new(route_storage.join("frames")).unwrap(),
-                ),
-                Arc::new(parking_lot::RwLock::new(crate::heads::HeadIndex::new())),
-                Arc::new(
-                    crate::prompt_context::PromptContextArtifactStorage::new(
-                        route_storage.join("prompt-artifacts"),
-                    )
-                    .unwrap(),
-                ),
-                Arc::new(parking_lot::RwLock::new(crate::agent::AgentRegistry::new())),
-                Arc::new(parking_lot::RwLock::new(
-                    crate::provider::ProviderRegistry::new(),
-                )),
-                Arc::new(crate::concurrency::NodeLockManager::new()),
-                self.binding.workspace_root.clone(),
-            ));
+            let api = Arc::new(
+                crate::api::ContextApi::new(
+                    Arc::new(
+                        crate::store::SledNodeRecordStore::new(route_storage.join("nodes"))
+                            .unwrap(),
+                    ),
+                    Arc::new(
+                        crate::context::frame::FrameStorage::new(route_storage.join("frames"))
+                            .unwrap(),
+                    ),
+                    Arc::new(parking_lot::RwLock::new(crate::heads::HeadIndex::new())),
+                    Arc::new(
+                        crate::prompt_context::PromptContextArtifactStorage::new(
+                            route_storage.join("prompt-artifacts"),
+                        )
+                        .unwrap(),
+                    ),
+                    Arc::new(parking_lot::RwLock::new(crate::agent::AgentRegistry::new())),
+                    Arc::new(parking_lot::RwLock::new(
+                        crate::provider::ProviderRegistry::new(),
+                    )),
+                    Arc::new(crate::concurrency::NodeLockManager::new()),
+                )
+                .with_optional_workspace(self.binding.workspace_root.clone()),
+            );
             api.bind_event_append(assembly.event_authority().append_capability())
                 .unwrap();
             let seed = assembly.dispatch_route_seed().unwrap().clone();
@@ -6996,11 +6997,14 @@ mod tests {
     #[test]
     fn installed_startup_executes_confirms_and_accepts_belief_before_goal_satisfaction() {
         let mut harness = StewardshipHarness::new();
-        harness.binding.subject = "startup".into();
+        harness.binding.subject = DomainObjectRef::new("runtime", "instance", "meld").unwrap();
+        harness.binding.workspace_root = None;
+        harness.binding.provider_id = None;
+        std::fs::remove_dir(harness._workspace.path()).unwrap();
         harness.binding.agent_id = "startup-agent".into();
         harness.binding.package = crate::config::SelectedStewardshipPackage {
             expression: "startup".into(),
-            principal_id: "workspace-owner".into(),
+            principal_id: "runtime-owner".into(),
             belief_family_id: "startup_realization".into(),
             evidence_mapping_id: "startup_realization_v1".into(),
             curation_rule_id: "startup_realization".into(),
@@ -7026,6 +7030,15 @@ mod tests {
             .prepared_closure(&prepared.prepared_id)
             .unwrap()
             .unwrap();
+        assert_eq!(prepared.assignment.subject, harness.binding.subject);
+        assert!(!prepared.activation.bindings.contains_key("workspace"));
+        assert!(!prepared.activation.bindings.contains_key("provider"));
+        assert_eq!(prepared.participant_plan.participants.len(), 8);
+        assert!(prepared
+            .participant_plan
+            .participants
+            .iter()
+            .all(|participant| participant.participant_id != "workspace.source"));
         let receipts = assembly
             .stores()
             .agent_store

@@ -444,9 +444,9 @@ pub enum RuntimeCommands {
 
 #[derive(Subcommand)]
 pub enum WorldCommands {
-    /// Run world initialization stages 2 through 4 idempotently
+    /// Install a native product, prepare its Agent, and seed its initial evidence
     Init {
-        /// Target workspace path (explicit default argument)
+        /// Declared workspace target, when the product requires a workspace
         #[arg(value_name = "PATH", index = 1, default_value = ".")]
         path: PathBuf,
 
@@ -456,8 +456,7 @@ pub enum WorldCommands {
         #[arg(long = "stage", value_name = "STAGE")]
         stages: Vec<String>,
 
-        /// Theory source directory whose authored bodies are provisioned
-        /// into the XDG theory root before the stages resolve them
+        /// Native package directory to install through its declared owner routes
         #[arg(long = "theory-source", value_name = "DIR")]
         theory_source: Option<PathBuf>,
 

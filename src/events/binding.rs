@@ -1,7 +1,7 @@
-//! Product-owned binding from one branch identity to one event authority.
+//! Product-owned binding from one product identity to one event authority.
 //!
 //! The event crate owns ledger migration semantics. This root adapter owns the
-//! product path, branch identity, cutover lock, and crash-safe binding file.
+//! product path, identity, cutover lock, and crash-safe binding file.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -41,12 +41,12 @@ pub struct LegacyEventSourceBinding {
     pub ledger_identity: LedgerIdentity,
 }
 
-/// Durable mapping from one product branch to one canonical event authority.
+/// Durable mapping from one product to one canonical event authority.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProductEventBinding {
     /// Binding wire schema.
     pub schema_version: u32,
-    /// Product identity derived from the resolved branch.
+    /// Product identity. The wire field retains its original branch name for reopen compatibility.
     pub branch_id: String,
     /// Canonical path of the writable authority ledger.
     pub ledger_path: PathBuf,
@@ -98,10 +98,31 @@ pub fn resolve_product_event_authority(
     target_ledger_path: &Path,
     legacy_ledger_path: &Path,
 ) -> Result<ResolvedProductEventAuthority, ProductEventBindingError> {
-    fs::create_dir_all(&branch.data_home_path)?;
-    let _lock = CutoverLock::acquire(&branch.data_home_path.join(LOCK_FILE))?;
+    resolve_product_event_authority_at(
+        &branch.branch_id,
+        &branch.data_home_path,
+        target_ledger_path,
+        legacy_ledger_path,
+    )
+}
 
-    let binding_path = branch.data_home_path.join(BINDING_FILE);
+/// Resolve the canonical authority for a product with or without a workspace branch.
+/// The same durable binding and cutover protocol apply to both scopes.
+pub fn resolve_product_event_authority_at(
+    product_id: &str,
+    binding_directory: &Path,
+    target_ledger_path: &Path,
+    legacy_ledger_path: &Path,
+) -> Result<ResolvedProductEventAuthority, ProductEventBindingError> {
+    if product_id.trim().is_empty() {
+        return Err(ProductEventBindingError::Mismatch(
+            "empty product identity".to_string(),
+        ));
+    }
+    fs::create_dir_all(binding_directory)?;
+    let _lock = CutoverLock::acquire(&binding_directory.join(LOCK_FILE))?;
+
+    let binding_path = binding_directory.join(BINDING_FILE);
     let persisted_binding = read_binding(&binding_path)?;
     fs::create_dir_all(target_ledger_path)?;
     if persisted_binding.is_none() {
@@ -124,26 +145,26 @@ pub fn resolve_product_event_authority(
 
     match persisted_binding {
         Some(binding) => {
-            resolve_existing_binding(branch, &binding_path, target_path, legacy_path, binding)
+            resolve_existing_binding(product_id, &binding_path, target_path, legacy_path, binding)
         }
-        None => create_binding(branch, &binding_path, target_path, legacy_path),
+        None => create_binding(product_id, &binding_path, target_path, legacy_path),
     }
 }
 
 fn resolve_existing_binding(
-    branch: &ResolvedBranch,
+    product_id: &str,
     binding_path: &Path,
     target_path: PathBuf,
     legacy_path: Option<PathBuf>,
     binding: ProductEventBinding,
 ) -> Result<ResolvedProductEventAuthority, ProductEventBindingError> {
-    validate_binding(branch, &target_path, &binding)?;
+    validate_binding(product_id, &target_path, &binding)?;
 
     match binding.state {
         ProductEventBindingState::Active => {
             validate_active_source(&binding, legacy_path.as_deref())?;
             let authority =
-                open_bound_authority(&target_path, binding.ledger_identity, &branch.branch_id)?;
+                open_bound_authority(&target_path, binding.ledger_identity, product_id)?;
             Ok(ResolvedProductEventAuthority { authority, binding })
         }
         ProductEventBindingState::Preparing => {
@@ -174,7 +195,7 @@ fn resolve_existing_binding(
                 )));
             }
             let authority =
-                open_bound_authority(&target_path, binding.ledger_identity, &branch.branch_id)?;
+                open_bound_authority(&target_path, binding.ledger_identity, product_id)?;
             let report = source.migrate_all_into(
                 &target_path,
                 authority.as_ref(),
@@ -197,7 +218,7 @@ fn resolve_existing_binding(
 }
 
 fn create_binding(
-    branch: &ResolvedBranch,
+    product_id: &str,
     binding_path: &Path,
     target_path: PathBuf,
     legacy_path: Option<PathBuf>,
@@ -221,14 +242,14 @@ fn create_binding(
         sled::open(&target_path).map_err(authority_persistence)?,
         EventAuthorityOpenOptions::default(),
     )?);
-    authority.bind_product_identity(&branch.branch_id)?;
+    authority.bind_product_identity(product_id)?;
     let source_binding = source.as_ref().map(|source| LegacyEventSourceBinding {
         ledger_path: source.canonical_path().to_path_buf(),
         ledger_identity: source.ledger_identity(),
     });
     let mut binding = ProductEventBinding {
         schema_version: BINDING_SCHEMA_VERSION,
-        branch_id: branch.branch_id.clone(),
+        branch_id: product_id.to_string(),
         ledger_path: target_path.clone(),
         ledger_identity: authority.ledger_identity(),
         generation: 1,
@@ -303,7 +324,7 @@ fn validate_active_source(
 }
 
 fn validate_binding(
-    branch: &ResolvedBranch,
+    product_id: &str,
     target_path: &Path,
     binding: &ProductEventBinding,
 ) -> Result<(), ProductEventBindingError> {
@@ -313,10 +334,10 @@ fn validate_binding(
             binding.schema_version
         )));
     }
-    if binding.branch_id != branch.branch_id {
+    if binding.branch_id != product_id {
         return Err(ProductEventBindingError::Mismatch(format!(
             "binding branch {} does not match resolved branch {}",
-            binding.branch_id, branch.branch_id
+            binding.branch_id, product_id
         )));
     }
     if binding.ledger_path != target_path {

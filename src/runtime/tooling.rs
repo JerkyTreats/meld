@@ -263,7 +263,7 @@ struct RuntimeRunOptions<'a> {
 }
 
 /// Serve `meld runtime status` for a live composition without opening
-/// any store: the lock-free workspace description finds the product
+/// any store: the lock-free product description finds the product
 /// root, the discovery file finds the live surface, and the answer is
 /// the snapshot that surface serves.
 ///

@@ -121,6 +121,7 @@ mod tests {
             "docs-belief-family",
             "steward documentation freshness",
             "docs_workspace_local",
+            &std::collections::BTreeSet::from(["workspace_fs".into()]),
         )
         .unwrap();
         assert!(ProductCompilationReceiptV1::compile(&declaration, Vec::new(), 1).is_err());

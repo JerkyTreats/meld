@@ -635,6 +635,135 @@ fn prepared_product_activates_routes_and_ignores_loose_owner_heads() {
     });
 }
 
+#[test]
+fn startup_cli_reaches_goal_without_workspace_branch_or_provider() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        let absent_workspace = temp_dir.path().join("no-workspace");
+        let product_root = temp_dir.path().join("startup-product");
+        let config = format!(
+            r#"[system.storage]
+product_root = "{}"
+
+[stewardship.declarations.startup]
+expression = "startup"
+subject = {{ domain_id = "runtime", object_kind = "instance", object_id = "meld" }}
+agent_id = "startup-agent"
+principal_id = "runtime-owner"
+
+[stewardship.declarations.startup.theory]
+belief_family_id = "startup_realization"
+evidence_mapping_id = "startup_realization_v1"
+curation_rule_id = "startup_realization"
+maintained_condition_id = "startup_realization"
+strategy_theory_id = "startup_realization"
+authority_policy_id = "startup_nonce_local"
+"#,
+            product_root.display()
+        );
+        let config_dir = Path::new(&std::env::var("XDG_CONFIG_HOME").unwrap()).join("meld");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(config_dir.join("config.toml"), config).unwrap();
+        let config = ConfigLoader::load_global().unwrap();
+        let description =
+            ProductRuntimeAssembly::describe_for_workspace(&absent_workspace, &config).unwrap();
+        assert_eq!(description.product_root, product_root);
+        assert!(!product_root.exists());
+        let run = RunContext::new(absent_workspace.clone(), None).unwrap();
+        assert!(run.api().workspace_root().is_none());
+        run.execute(&Commands::World {
+            command: WorldCommands::Init {
+                path: absent_workspace.clone(),
+                stages: Vec::new(),
+                theory_source: Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/startup")),
+                format: "json".to_string(),
+            },
+        })
+        .unwrap();
+        let head = run
+            .product_runtime()
+            .stores()
+            .pds_products
+            .prepared_head("startup")
+            .unwrap()
+            .unwrap();
+        let prepared = run
+            .product_runtime()
+            .stores()
+            .pds_products
+            .prepared_closure(&head.prepared_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            prepared.assignment.subject,
+            DomainObjectRef::new("runtime", "instance", "meld").unwrap()
+        );
+        assert_eq!(prepared.participant_plan.participants.len(), 8);
+        assert!(!prepared.activation.bindings.contains_key("workspace"));
+        assert!(!prepared.activation.bindings.contains_key("provider"));
+        let ledger_id = run
+            .event_watermark_capability()
+            .snapshot()
+            .unwrap()
+            .ledger_id;
+        drop(run);
+
+        let run = RunContext::new(absent_workspace.clone(), None).unwrap();
+        assert_eq!(
+            run.event_watermark_capability()
+                .snapshot()
+                .unwrap()
+                .ledger_id,
+            ledger_id
+        );
+        run.execute(&runtime_run_json(
+            Some("startup-without-workspace"),
+            1,
+            Some(3_000),
+            "on-heartbeat-expiry",
+        ))
+        .unwrap();
+        let store = &run.product_runtime().stores().agent_store;
+        let goals = store
+            .reconciliation_goals_for_agent("startup-agent")
+            .unwrap();
+        assert_eq!(goals.len(), 1);
+        let goal_id = &goals[0].goal.goal_id;
+        let history = store.completed_history_for_goal(goal_id).unwrap();
+        assert!(
+            history.iter().any(|entry| matches!(
+                entry.accepted_milestone,
+                meld_world_model::strategy::PlanMilestoneRequirement::CurationTerminal { .. }
+            )),
+            "missing confirmation: {history:#?}"
+        );
+        assert!(
+            history.iter().any(|entry| matches!(
+                entry.accepted_milestone,
+                meld_world_model::strategy::PlanMilestoneRequirement::BeliefRevision { .. }
+            )),
+            "missing Belief return: {history:#?}"
+        );
+        let plan = store.current_reconciliation_plan(goal_id).unwrap().unwrap();
+        let disposition = store
+            .goal_disposition_for_plan(&plan.plan_revision_id)
+            .unwrap()
+            .expect("Startup Goal unsatisfied");
+        assert!(!disposition.accepted_milestone_ids.is_empty());
+        drop(run);
+        let run = RunContext::new(absent_workspace.clone(), None).unwrap();
+        assert_eq!(
+            run.product_runtime()
+                .stores()
+                .agent_store
+                .goal_disposition_for_plan(&plan.plan_revision_id)
+                .unwrap(),
+            Some(disposition)
+        );
+        assert!(!absent_workspace.exists());
+    });
+}
+
 fn write_stewardship_config(workspace_root: &Path, endpoint: &str) {
     let config_dir = workspace_root.join("config");
     std::fs::create_dir_all(&config_dir).unwrap();

@@ -1,7 +1,7 @@
 //! CLI adapter for the world initialization command surface.
 //!
 //! Owner: root init. Parses the stage selection, resolves stage 0 inputs
-//! (XDG-only configuration, the physical binding, and the theory bodies),
+//! from XDG configuration, physical bindings, and the selected native package,
 //! guards that the addressed target workspace and the open product stores
 //! belong to the configured selection, and delegates to the crate-private
 //! world initialization pipeline. No runtime state is created under the target
@@ -11,7 +11,6 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use meld_events::DomainObjectRef;
 use meld_execution::capability::CapabilityContractRevisionRef;
 use meld_world_model::belief::{BeliefFamilyRegistryStore, BranchScope};
 use meld_world_model::PerspectiveKey;
@@ -19,8 +18,7 @@ use meld_world_model::PerspectiveKey;
 use crate::capability::{OwnerBindingView, ProductCapabilityInventory};
 use crate::config::{
     AdapterPlacement, AssignedAgentPositionV1, ConfigLoader, OperationalLimits, PhysicalBinding,
-    PhysicalBindingRef, RuntimeIsolationRequirements, StewardshipActivationV1,
-    StewardshipAssignmentV1,
+    RuntimeIsolationRequirements, StewardshipActivationV1, StewardshipAssignmentV1,
 };
 use crate::error::ApiError;
 use crate::init::world::pipeline::{
@@ -47,22 +45,14 @@ const STAGE_NAMES: [(&str, WorldInitStage); 4] = [
 const SEED_PERSPECTIVE_KIND: &str = "default";
 const SEED_PERSPECTIVE_ID: &str = "default";
 
-/// Domain and kind convention for the selected subtree subject.
-///
-/// The exact docs subject binding is owned by the world model; until the
-/// runtime actor binding consumes it, the selection's subject identity is
-/// addressed as a workspace filesystem node object.
-const SUBJECT_DOMAIN_ID: &str = "workspace_fs";
-const SUBJECT_OBJECT_KIND: &str = "node";
-
 /// Provenance recorded by the initialization command surface.
 const INIT_PROVENANCE: &str = "meld world init";
 
 /// Run world initialization stages 2 through 5 for the addressed target.
 ///
 /// Configuration resolves through the XDG config home only. The explicit
-/// `target_path` argument must resolve to the configured selection's
-/// target root, and the open product stores must belong to the selection's
+/// `target_path` selects a declared workspace when one is required.
+/// The open product stores must belong to the selection's
 /// storage root, so the command can never initialize a world other than
 /// the one it addressed.
 pub fn run_world_init(
@@ -85,37 +75,19 @@ pub fn run_world_init(
         ))
     })?;
 
-    // An explicit theory source provisions the XDG theory root before the
-    // loaders resolve selection identities against it. Provisioning is
-    // config-home file placement only; durable installation stays with the
-    // staged pipeline below.
-    let subject = DomainObjectRef::new(SUBJECT_DOMAIN_ID, SUBJECT_OBJECT_KIND, &binding.subject)
-        .map_err(|error| world_init_error(error.to_string()))?;
-    if let Some(source_dir) = theory_source {
-        crate::init::world::source::provision_theory_source(
-            source_dir,
-            &binding.package,
-            &subject,
-        )?;
-    }
-
-    let target_root = target_path.canonicalize().map_err(|error| {
-        ApiError::ConfigError(format!(
-            "world init target path '{}' cannot be resolved: {error}",
-            target_path.display()
-        ))
-    })?;
-    if target_root != binding.workspace_root {
-        return Err(ApiError::ConfigError(format!(
-            "world init target '{}' does not match the configured stewardship target root '{}'",
-            target_root.display(),
-            binding.workspace_root.display()
-        )));
+    if let Some(workspace_root) = &binding.workspace_root {
+        let target_root = target_path
+            .canonicalize()
+            .map_err(|error| world_init_error(error.to_string()))?;
+        if &target_root != workspace_root {
+            return Err(world_init_error(
+                "world init target differs from the configured workspace",
+            ));
+        }
     }
     if assembly.product_root() != binding.storage_root {
         return Err(ApiError::ConfigError(format!(
-            "open product storage root '{}' does not match the selection's storage root '{}'; \
-             run with --workspace pointing at the configured target root",
+            "open product storage root '{}' does not match the selection's storage root '{}'",
             assembly.product_root().display(),
             binding.storage_root.display()
         )));
@@ -230,6 +202,23 @@ pub(crate) fn compile_product_initialization<'a>(
             "selected observation family has no unique package component",
         ));
     }
+    let mut source_owners = std::collections::BTreeSet::new();
+    for component in &package_receipt.components {
+        if component.owner_revision.registry
+            == meld_world_model::curation::CURATION_TEMPLATE_REGISTRY_ID
+        {
+            let template = stores
+                .curation_store
+                .resolve_template(&meld_world_model::belief::TheoryRevisionRef {
+                    registry: component.owner_revision.registry.clone(),
+                    id: component.owner_revision.id.clone(),
+                    content_hash: component.owner_revision.content_hash.clone(),
+                })
+                .map_err(|error| world_init_error(error.to_string()))?
+                .ok_or_else(|| world_init_error("installed Curation template is absent"))?;
+            source_owners.insert(template.template.source_owner_id);
+        }
+    }
     let declaration = super::product::product_declaration(
         &binding.package.expression,
         &binding.package.principal_id,
@@ -237,9 +226,11 @@ pub(crate) fn compile_product_initialization<'a>(
         &observation_components[0].component_id,
         &format!(
             "steward '{}' for subject '{}'",
-            binding.package.expression, binding.subject
+            binding.package.expression,
+            binding.subject.index_key()
         ),
         &binding.package.authority_policy_id,
+        &source_owners,
     )
     .map_err(|error| world_init_error(error.to_string()))?;
     let compilation = ProductCompilationReceiptV1::compile(
@@ -250,8 +241,7 @@ pub(crate) fn compile_product_initialization<'a>(
     .map_err(|error| world_init_error(error.to_string()))?;
     let topology_id = product_topology_id(&declaration.agent_topology)
         .map_err(|error| world_init_error(error.to_string()))?;
-    let subject = DomainObjectRef::new(SUBJECT_DOMAIN_ID, SUBJECT_OBJECT_KIND, &binding.subject)
-        .map_err(|error| world_init_error(error.to_string()))?;
+    let subject = binding.subject.clone();
     let perspective = PerspectiveKey::new(SEED_PERSPECTIVE_KIND, SEED_PERSPECTIVE_ID)
         .map_err(|error| world_init_error(error.to_string()))?;
     let assignment = StewardshipAssignmentV1::new(
@@ -285,35 +275,10 @@ pub(crate) fn compile_product_initialization<'a>(
         })
         .collect::<Result<BTreeMap<_, _>, _>>()
         .map_err(|error| world_init_error(error.to_string()))?;
-    let capability_bindings = OwnerBindingView::new(BTreeMap::from([
-        (
-            "workspace".to_string(),
-            binding.workspace_root.display().to_string(),
-        ),
-        ("subject".to_string(), binding.subject.clone()),
-        ("agent".to_string(), binding.agent_id.clone()),
-        ("provider".to_string(), binding.provider_id.clone()),
-    ]));
+    let capability_bindings = OwnerBindingView::new(binding.owner_binding_values());
     let activation = StewardshipActivationV1::new(
         assignment.assignment_id.clone(),
-        BTreeMap::from([
-            (
-                "workspace".to_string(),
-                PhysicalBindingRef::WorkspaceRef(binding.workspace_root.display().to_string()),
-            ),
-            (
-                "subject".to_string(),
-                PhysicalBindingRef::ConfigRef(binding.subject.clone()),
-            ),
-            (
-                "agent".to_string(),
-                PhysicalBindingRef::ConfigRef(binding.agent_id.clone()),
-            ),
-            (
-                "provider".to_string(),
-                PhysicalBindingRef::ProviderRef(binding.provider_id.clone()),
-            ),
-        ]),
+        binding.activation_bindings(),
         selected_implementations,
         AdapterPlacement::InProcess,
         RuntimeIsolationRequirements::default(),
@@ -477,10 +442,11 @@ mod tests {
         assert_eq!(replay.receipt.receipt_id, routed.receipt.receipt_id);
         assert!(!replay.changed);
         let binding = PhysicalBinding {
-            workspace_root: workspace.path().into(),
-            subject: "dependency-graph".into(),
+            workspace_root: Some(workspace.path().into()),
+            subject: meld_events::DomainObjectRef::new("workspace_fs", "node", "dependency-graph")
+                .unwrap(),
             agent_id: "security-steward".into(),
-            provider_id: "unused-provider".into(),
+            provider_id: None,
             package: selected,
             storage_root: root.path().into(),
         };

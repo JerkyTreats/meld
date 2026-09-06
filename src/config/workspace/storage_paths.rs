@@ -38,6 +38,16 @@ pub struct StorageConfig {
 }
 
 impl StorageConfig {
+    /// A runtime without a workspace binds an explicit absolute product location.
+    pub fn resolve_unscoped_product_root(&self) -> Result<PathBuf, ApiError> {
+        let root = self.product_root.as_ref().ok_or_else(|| {
+            ApiError::ConfigError(
+                "a product without a workspace requires an absolute product_root".into(),
+            )
+        })?;
+        resolve_existing_ancestor(&normalize_absolute(root)?)
+    }
+
     /// Resolve storage paths to actual filesystem locations.
     pub fn resolve_paths(
         &self,

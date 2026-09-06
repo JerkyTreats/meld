@@ -9,7 +9,9 @@ use crate::config::MerkleConfig;
 use crate::config::PhysicalBinding;
 use crate::context::head::backfill_legacy_heads_into_ledger;
 use crate::error::{ApiError, StorageError};
-use crate::events::binding::{resolve_product_event_authority, ProductEventBindingError};
+use crate::events::binding::{
+    resolve_product_event_authority, resolve_product_event_authority_at, ProductEventBindingError,
+};
 use crate::heads::HeadIndex;
 use crate::runtime::assembly::{
     ProductRuntimeAssembly, ProductRuntimeConfig, StewardshipComposition,
@@ -36,25 +38,53 @@ impl CliRuntimeAssembly {
     pub fn load(
         workspace_root: &Path,
         config: &MerkleConfig,
-        active_branch: &ResolvedBranch,
+        active_branch: Option<&ResolvedBranch>,
         enable_runtime_ids: &[String],
     ) -> Result<Self, ApiError> {
-        let (legacy_store_path, frame_storage_path, artifact_storage_path) =
-            config.system.storage.resolve_paths(workspace_root)?;
-        let product_root = config.system.storage.resolve_product_root(workspace_root)?;
-        let product_layout = ProductStorageLayout::from_root(&product_root);
-        let resolved = resolve_product_event_authority(
-            active_branch,
-            &product_layout.ledger_db,
-            &legacy_store_path,
-        )
-        .map_err(binding_error)?;
-        // Stage 0 lowers every configured declaration through the same
-        // physical binding contract, then selects by the addressed target.
-        // A declaration for another workspace does not activate here, while
-        // ambiguous ownership of this target fails truthfully.
         let stewardship = PhysicalBinding::resolve_for_target(config, workspace_root)?
             .map(|binding| StewardshipComposition { binding });
+        let runtime_workspace = stewardship.as_ref().map_or_else(
+            || Some(workspace_root.to_path_buf()),
+            |selected| selected.binding.workspace_root.clone(),
+        );
+        let product_root = match &stewardship {
+            Some(selected) => selected.binding.storage_root.clone(),
+            None => config.system.storage.resolve_product_root(workspace_root)?,
+        };
+        let (legacy_store_path, frame_storage_path, artifact_storage_path) =
+            match &runtime_workspace {
+                Some(workspace) => config.system.storage.resolve_paths(workspace)?,
+                None => {
+                    let root = product_root.join("compatibility");
+                    (
+                        root.join("store"),
+                        root.join("frames"),
+                        root.join("artifacts"),
+                    )
+                }
+            };
+        let product_layout = ProductStorageLayout::from_root(&product_root);
+        let resolved = match active_branch {
+            Some(branch) => resolve_product_event_authority(
+                branch,
+                &product_layout.ledger_db,
+                &legacy_store_path,
+            ),
+            None => {
+                let selected = stewardship.as_ref().ok_or_else(|| {
+                    ApiError::ConfigError(
+                        "a product without a branch requires a stewardship binding".to_string(),
+                    )
+                })?;
+                resolve_product_event_authority_at(
+                    &format!("subject:{}", selected.binding.subject.index_key()),
+                    &product_root,
+                    &product_layout.ledger_db,
+                    &legacy_store_path,
+                )
+            }
+        }
+        .map_err(binding_error)?;
         // Operator runtime enablement opens the default valve: each named
         // runtime leaves the default-disabled set. Naming a runtime that is
         // not disabled by default is an error rather than a silent no-op.
@@ -63,7 +93,10 @@ impl CliRuntimeAssembly {
         // provider map, so provider-requiring runtimes may compose.
         // Reachability stays a runtime concern: an unreachable endpoint
         // fails invocations retryably, it does not fail the boot.
-        if stewardship.is_some() {
+        if stewardship
+            .as_ref()
+            .is_some_and(|selected| selected.binding.provider_id.is_some())
+        {
             runtime_config.provider.provider_available = true;
         }
         let default_disabled = runtime_config.disabled_runtime_ids.clone();
@@ -124,16 +157,17 @@ impl CliRuntimeAssembly {
             &graph_runtime,
         )));
 
-        let head_index_path = HeadIndex::persistence_path(workspace_root);
-        let head_index = Arc::new(parking_lot::RwLock::new(
-            HeadIndex::load_from_disk(&head_index_path).unwrap_or_else(|error| {
-                tracing::warn!(
-                    "Failed to load head index from disk: {}, starting with empty index",
-                    error
-                );
-                HeadIndex::new()
-            }),
-        ));
+        let head_index = Arc::new(parking_lot::RwLock::new(match &runtime_workspace {
+            Some(workspace) => HeadIndex::load_from_disk(HeadIndex::persistence_path(workspace))
+                .unwrap_or_else(|error| {
+                    tracing::warn!(
+                        "Failed to load head index from disk: {}, starting with empty index",
+                        error
+                    );
+                    HeadIndex::new()
+                }),
+            None => HeadIndex::new(),
+        }));
         {
             let head_index_guard = head_index.read();
             if let Err(error) = backfill_legacy_heads_into_ledger(
@@ -161,7 +195,7 @@ impl CliRuntimeAssembly {
             }
         }
 
-        let api = ContextApi::with_workspace_root(
+        let api = ContextApi::new(
             node_store,
             frame_storage,
             head_index,
@@ -169,8 +203,8 @@ impl CliRuntimeAssembly {
             Arc::new(parking_lot::RwLock::new(agent_registry)),
             Arc::new(parking_lot::RwLock::new(provider_registry)),
             Arc::new(crate::concurrency::NodeLockManager::new()),
-            workspace_root.to_path_buf(),
-        );
+        )
+        .with_optional_workspace(runtime_workspace);
         api.set_world_model_queries(world_model_queries);
         api.set_belief_store(belief_store);
         api.set_workflow_registry(Arc::clone(&workflow_registry));

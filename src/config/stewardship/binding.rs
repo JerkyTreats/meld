@@ -46,19 +46,18 @@ pub struct SelectedStewardshipPackage {
 /// registrations from this value; this module does not produce
 /// registrations and never enumerates internal actor topology.
 ///
-/// Invariants: `workspace_root` is canonical and absolute;
-/// `storage_root` resolves outside `workspace_root` (workspace purity is
-/// enforced by the storage path resolver and preserved here).
+/// A declared workspace is canonical and absolute, and product storage
+/// remains outside it. Runtime subjects need neither a workspace nor a provider.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PhysicalBinding {
-    /// Canonical target workspace subtree root the expression stewards.
-    pub workspace_root: PathBuf,
+    /// Optional canonical workspace supplied to the selected owner implementations.
+    pub workspace_root: Option<PathBuf>,
     /// Subject identity the expression is about.
-    pub subject: String,
+    pub subject: meld_events::DomainObjectRef,
     /// Durable agent identity that stewards the subject.
     pub agent_id: String,
-    /// Provider key, guaranteed present in the root provider map.
-    pub provider_id: String,
+    /// Optional provider key, validated against the root map when declared.
+    pub provider_id: Option<String>,
     /// Stewardship package selected by identity.
     pub package: SelectedStewardshipPackage,
     /// External product storage root, outside the target workspace.
@@ -109,12 +108,6 @@ impl PhysicalBinding {
         config: &MerkleConfig,
         target: &std::path::Path,
     ) -> Result<Option<Self>, ApiError> {
-        let canonical_target = target.canonicalize().map_err(|error| {
-            ApiError::ConfigError(format!(
-                "stewardship target '{}' cannot be resolved: {error}",
-                target.display()
-            ))
-        })?;
         config
             .stewardship
             .validate_sourced(&SelectionOrigins::uniform("resolved configuration"))
@@ -125,12 +118,15 @@ impl PhysicalBinding {
             .lowered_declarations()
             .map_err(selection_errors)?
         {
-            let addresses_target = named.declaration.target_root == canonical_target
-                || named
-                    .declaration
-                    .target_root
-                    .canonicalize()
-                    .is_ok_and(|path| path == canonical_target);
+            let addresses_target = match &named.declaration.target_root {
+                None => true,
+                Some(root) => {
+                    root == target
+                        || target.canonicalize().is_ok_and(|target| {
+                            root.canonicalize().is_ok_and(|root| root == target)
+                        })
+                }
+            };
             if addresses_target {
                 matches.push(Self::resolve_declaration(&named, config)?);
             }
@@ -140,7 +136,7 @@ impl PhysicalBinding {
             1 => Ok(matches.pop()),
             count => Err(ApiError::ConfigError(format!(
                 "{count} stewardship declarations target '{}'",
-                canonical_target.display()
+                target.display()
             ))),
         }
     }
@@ -152,28 +148,36 @@ impl PhysicalBinding {
         let selection = &named.declaration;
         let path = &named.source_path;
 
-        if !config.providers.contains_key(&selection.provider_id) {
-            return Err(ApiError::ConfigError(format!(
-                "{path}.provider_id '{}' does not name a configured provider",
-                selection.provider_id,
-            )));
+        if let Some(provider_id) = &selection.provider_id {
+            if !config.providers.contains_key(provider_id) {
+                return Err(ApiError::ConfigError(format!(
+                    "{path}.provider_id '{}' does not name a configured provider",
+                    provider_id,
+                )));
+            }
         }
 
         // The selection's target root is absolute by validation, so
         // canonicalization never consults the working directory.
-        let workspace_root = selection.target_root.canonicalize().map_err(|error| {
-            ApiError::ConfigError(format!(
-                "{path}.target_root '{}' cannot be resolved: {error}",
-                selection.target_root.display()
-            ))
-        })?;
+        let workspace_root = selection
+            .target_root
+            .as_ref()
+            .map(|target_root| {
+                target_root.canonicalize().map_err(|error| {
+                    ApiError::ConfigError(format!(
+                        "{path}.target_root '{}' cannot be resolved: {error}",
+                        target_root.display()
+                    ))
+                })
+            })
+            .transpose()?;
 
         // resolve_product_root enforces the external product root: any
         // storage root inside the target workspace is rejected there.
-        let storage_root = config
-            .system
-            .storage
-            .resolve_product_root(&workspace_root)?;
+        let storage_root = match &workspace_root {
+            Some(root) => config.system.storage.resolve_product_root(root)?,
+            None => config.system.storage.resolve_unscoped_product_root()?,
+        };
 
         Ok(Self {
             workspace_root,
@@ -193,6 +197,54 @@ impl PhysicalBinding {
             },
             storage_root,
         })
+    }
+
+    /// Exact structural bindings supplied to selected owner implementations.
+    pub fn activation_bindings(
+        &self,
+    ) -> std::collections::BTreeMap<String, super::activation::PhysicalBindingRef> {
+        use super::activation::PhysicalBindingRef;
+        let mut bindings = std::collections::BTreeMap::from([
+            (
+                "subject".into(),
+                PhysicalBindingRef::ConfigRef(self.subject.object_id.clone()),
+            ),
+            (
+                "agent".into(),
+                PhysicalBindingRef::ConfigRef(self.agent_id.clone()),
+            ),
+        ]);
+        if let Some(root) = &self.workspace_root {
+            bindings.insert(
+                "workspace".into(),
+                PhysicalBindingRef::WorkspaceRef(root.display().to_string()),
+            );
+        }
+        if let Some(provider) = &self.provider_id {
+            bindings.insert(
+                "provider".into(),
+                PhysicalBindingRef::ProviderRef(provider.clone()),
+            );
+        }
+        bindings
+    }
+
+    pub fn owner_binding_values(&self) -> std::collections::BTreeMap<String, String> {
+        use super::activation::PhysicalBindingRef;
+        self.activation_bindings()
+            .into_iter()
+            .map(|(key, binding)| {
+                let value = match binding {
+                    PhysicalBindingRef::WorkspaceRef(value)
+                    | PhysicalBindingRef::ProviderRef(value)
+                    | PhysicalBindingRef::CredentialRef(value)
+                    | PhysicalBindingRef::EndpointRef(value)
+                    | PhysicalBindingRef::ExecutableRef(value)
+                    | PhysicalBindingRef::ConfigRef(value) => value,
+                };
+                (key, value)
+            })
+            .collect()
     }
 }
 
@@ -272,11 +324,14 @@ mod tests {
 
         assert_eq!(
             binding.workspace_root,
-            workspace.path().canonicalize().unwrap()
+            Some(workspace.path().canonicalize().unwrap())
         );
-        assert_eq!(binding.subject, "docs");
+        assert_eq!(
+            binding.subject,
+            meld_events::DomainObjectRef::new("workspace_fs", "node", "docs").unwrap()
+        );
         assert_eq!(binding.agent_id, "docs-steward");
-        assert_eq!(binding.provider_id, "main-provider");
+        assert_eq!(binding.provider_id.as_deref(), Some("main-provider"));
         assert_eq!(binding.package.expression, "docs_freshness");
         assert_eq!(binding.package.belief_family_id, "docs_freshness");
         assert_eq!(
@@ -285,7 +340,9 @@ mod tests {
         );
         assert_eq!(binding.package.curation_rule_id, "docs_freshness");
         assert_eq!(binding.package.maintained_condition_id, "docs_freshness");
-        assert!(!binding.storage_root.starts_with(&binding.workspace_root));
+        assert!(!binding
+            .storage_root
+            .starts_with(binding.workspace_root.as_ref().unwrap()));
     }
 
     #[test]
@@ -334,6 +391,42 @@ mod tests {
         let error = PhysicalBinding::resolve(&config).unwrap_err();
 
         assert!(matches!(error, ApiError::ProductRootInsideWorkspace { .. }));
+    }
+
+    #[test]
+    fn runtime_declaration_resolves_without_a_workspace_or_provider() {
+        let external = tempfile::tempdir().unwrap();
+        let unavailable = external.path().join("no-workspace");
+        let mut config = config_with_selection(&unavailable, &external.path().join("runtime"));
+        let legacy = config.stewardship.docs_freshness.take().unwrap();
+        config.providers.clear();
+        let subject = meld_events::DomainObjectRef::new("runtime", "instance", "meld").unwrap();
+        let declaration: StewardshipDeclaration = serde_json::from_value(serde_json::json!({
+            "expression": "startup", "subject": subject,
+            "agent_id": "startup-agent", "principal_id": "runtime-owner",
+            "theory": legacy.theory,
+        }))
+        .unwrap();
+        config
+            .stewardship
+            .declarations
+            .insert("startup".into(), declaration);
+        let binding = PhysicalBinding::resolve_for_target(&config, &unavailable)
+            .unwrap()
+            .unwrap();
+        assert_eq!(binding.subject, subject);
+        assert!(binding.workspace_root.is_none());
+        assert!(binding.provider_id.is_none());
+        assert!(!binding.activation_bindings().contains_key("workspace"));
+        assert!(!binding.activation_bindings().contains_key("provider"));
+        assert!(!unavailable.exists());
+        assert!(!binding.storage_root.exists());
+        config.system.storage.product_root = None;
+        assert!(PhysicalBinding::resolve_for_target(&config, &unavailable).is_err());
+        config.system.storage.product_root = Some("relative-product".into());
+        assert!(PhysicalBinding::resolve_for_target(&config, &unavailable).is_err());
+        assert!(!unavailable.exists());
+        assert!(!binding.storage_root.exists());
     }
 
     #[test]
@@ -419,8 +512,8 @@ mod tests {
         let active: StewardshipDeclaration = legacy.into();
         let mut unrelated = active.clone();
         unrelated.expression = "offline_expression".to_string();
-        unrelated.target_root = external.path().join("absent-workspace");
-        unrelated.provider_id = "offline-provider".to_string();
+        unrelated.target_root = Some(external.path().join("absent-workspace"));
+        unrelated.provider_id = Some("offline-provider".to_string());
         config.stewardship.declarations = std::collections::BTreeMap::from([
             ("active".to_string(), active),
             ("offline".to_string(), unrelated),
@@ -432,7 +525,7 @@ mod tests {
 
         assert_eq!(
             binding.workspace_root,
-            workspace.path().canonicalize().unwrap()
+            Some(workspace.path().canonicalize().unwrap())
         );
     }
 }

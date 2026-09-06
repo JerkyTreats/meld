@@ -808,7 +808,10 @@ claim_policy_id = "docs-claims-strict-v1"
 
         let selection = config.stewardship.declarations.get("docs").unwrap();
         assert_eq!(selection.expression, "documentation_maintenance");
-        assert_eq!(selection.subject, "docs");
+        assert_eq!(
+            selection.subject,
+            meld_events::DomainObjectRef::new("workspace_fs", "node", "docs").unwrap()
+        );
         assert_eq!(selection.theory.belief_family_id, "docs_freshness");
         // Loading and validation are stage 0: no state under the target.
         assert_eq!(std::fs::read_dir(&target).unwrap().count(), 0);

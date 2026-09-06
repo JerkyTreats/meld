@@ -81,6 +81,12 @@ struct ProgressEmitterContext {
 }
 
 impl ContextApi {
+    /// Bind a physical workspace only when the selected product declares one.
+    pub fn with_optional_workspace(mut self, workspace_root: Option<PathBuf>) -> Self {
+        self.workspace_root = workspace_root;
+        self
+    }
+
     /// Create a new Context API service
     pub fn new(
         node_store: Arc<dyn NodeRecordStore + Send + Sync>,

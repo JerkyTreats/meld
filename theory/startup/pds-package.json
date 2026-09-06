@@ -160,7 +160,7 @@
       "content": {
         "kind": "relative_file",
         "path": "authority_policy.startup.json",
-        "content_hash": "342853cba9e7a486ae287c5b17bae9eff5f001b6470c5e1919331c32210a577f"
+        "content_hash": "9769630a12bafb0fd5d544f195bf9c6e9eb5cfab945f04f18e74cda363e1c2ca"
       },
       "requires": []
     },

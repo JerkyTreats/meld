@@ -130,11 +130,13 @@ pub struct StewardshipDeclaration {
     /// Name of the stewardship expression this declaration instantiates.
     pub expression: String,
 
-    /// Target workspace subtree root the expression stewards. Absolute.
-    pub target_root: PathBuf,
+    /// Optional physical workspace, independent of the semantic subject.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_root: Option<PathBuf>,
 
     /// Subject identity the stewardship expression is about.
-    pub subject: String,
+    #[serde(deserialize_with = "deserialize_subject")]
+    pub subject: meld_events::DomainObjectRef,
 
     /// Durable agent identity that stewards the subject.
     pub agent_id: String,
@@ -143,10 +145,33 @@ pub struct StewardshipDeclaration {
     pub principal_id: String,
 
     /// Key into the root provider map binding the model provider.
-    pub provider_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_id: Option<String>,
 
     /// Selected theory identities, resolved by their owning domains.
     pub theory: TheorySelection,
+}
+
+fn deserialize_subject<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<meld_events::DomainObjectRef, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum SubjectInput {
+        Exact(meld_events::DomainObjectRef),
+        Workspace(String),
+    }
+    // Existing workspace declarations used an unqualified node id. New subjects
+    // retain their complete domain reference through assignment and activation.
+    let subject = match SubjectInput::deserialize(deserializer)? {
+        SubjectInput::Exact(subject) => subject,
+        SubjectInput::Workspace(id) => meld_events::DomainObjectRef {
+            domain_id: "workspace_fs".into(),
+            object_kind: "node".into(),
+            object_id: id,
+        },
+    };
+    Ok(subject)
 }
 
 /// One minimal docs freshness stewardship selection.
@@ -311,11 +336,15 @@ impl From<DocsFreshnessSelection> for StewardshipDeclaration {
     fn from(selection: DocsFreshnessSelection) -> Self {
         Self {
             expression: selection.expression,
-            target_root: selection.target_root,
-            subject: selection.subject,
+            target_root: Some(selection.target_root),
+            subject: meld_events::DomainObjectRef {
+                domain_id: "workspace_fs".into(),
+                object_kind: "node".into(),
+                object_id: selection.subject,
+            },
             agent_id: selection.agent_id,
             principal_id: selection.principal_id,
-            provider_id: selection.provider_id,
+            provider_id: Some(selection.provider_id),
             theory: selection.theory,
         }
     }
@@ -366,24 +395,31 @@ fn validate_declaration(
     } else if declaration.expression.trim().is_empty() {
         reject("expression", "must not be empty".to_string());
     }
-    if declaration.target_root.as_os_str().is_empty() {
-        reject("target_root", "must not be empty".to_string());
-    } else if !declaration.target_root.is_absolute() {
-        // Relative targets would resolve against the process working
-        // directory, breaking binding determinism across invocations.
-        reject(
-            "target_root",
-            format!(
-                "must be an absolute path, got '{}'",
-                declaration.target_root.display()
-            ),
-        );
+    if let Some(target_root) = &declaration.target_root {
+        if target_root.as_os_str().is_empty() {
+            reject("target_root", "must not be empty".to_string());
+        } else if !target_root.is_absolute() {
+            // Relative targets would resolve against the process working
+            // directory, breaking binding determinism across invocations.
+            reject(
+                "target_root",
+                format!("must be an absolute path, got '{}'", target_root.display()),
+            );
+        }
+    }
+    if let Err(error) = declaration.subject.validate() {
+        reject("subject", error.to_string());
+    }
+    if declaration
+        .provider_id
+        .as_ref()
+        .is_some_and(|id| id.trim().is_empty())
+    {
+        reject("provider_id", "must not be empty".into());
     }
     for (field, value) in [
-        ("subject", &declaration.subject),
         ("agent_id", &declaration.agent_id),
         ("principal_id", &declaration.principal_id),
-        ("provider_id", &declaration.provider_id),
         (
             "theory.belief_family_id",
             &declaration.theory.belief_family_id,

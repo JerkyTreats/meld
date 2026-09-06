@@ -6,7 +6,7 @@ use crate::cli::progress::LiveProgressHandle;
 use crate::cli::runtime_assembly::CliRuntimeAssembly;
 use crate::cli::session::{finish_command_session, start_command_session};
 use crate::cli::{command_name, typed_summary_event};
-use crate::config::ConfigLoader;
+use crate::config::{ConfigLoader, PhysicalBinding};
 use crate::error::ApiError;
 use crate::session::PrunePolicy;
 use crate::telemetry::emission::{emit_command_summary, truncate_for_summary};
@@ -28,7 +28,7 @@ pub struct RunContext {
     #[allow(dead_code)]
     artifact_storage_path: PathBuf,
     branch_runtime: BranchRuntime,
-    active_branch: BranchHandle,
+    active_branch: Option<BranchHandle>,
 }
 
 impl RunContext {
@@ -136,22 +136,34 @@ impl RunContext {
         } else {
             ConfigLoader::load(&workspace_root)?
         };
-        // Reject invalid product storage before branch registration or any
-        // other startup metadata write.
-        config
-            .system
-            .storage
-            .resolve_product_root(&workspace_root)?;
-        let branch_runtime = BranchRuntime::new();
-        let active_branch = branch_runtime.resolve_active_branch(&workspace_root)?;
-        if let Err(err) = branch_runtime.ensure_active_branch_registered(&active_branch) {
-            warn!(error = %err, "failed to register active branch during startup");
+        // Resolve physical scope before any branch or storage metadata writes.
+        let selected = PhysicalBinding::resolve_for_target(&config, &workspace_root)?;
+        let runtime_workspace = selected.as_ref().map_or_else(
+            || Some(workspace_root.clone()),
+            |binding| binding.workspace_root.clone(),
+        );
+        if selected.is_none() {
+            config
+                .system
+                .storage
+                .resolve_product_root(&workspace_root)?;
         }
+        let branch_runtime = BranchRuntime::new();
+        let active_branch = runtime_workspace
+            .as_ref()
+            .map(|workspace| {
+                let branch = branch_runtime.resolve_active_branch(workspace)?;
+                if let Err(err) = branch_runtime.ensure_active_branch_registered(&branch) {
+                    warn!(error = %err, "failed to register active branch during startup");
+                }
+                Ok::<_, ApiError>(branch)
+            })
+            .transpose()?;
 
         let assembly = CliRuntimeAssembly::load(
             &workspace_root,
             &config,
-            active_branch.resolved(),
+            active_branch.as_ref().map(BranchHandle::resolved),
             enable_runtime_ids,
         )?;
         let store_path = assembly.legacy_store_path().to_path_buf();
@@ -213,26 +225,32 @@ impl RunContext {
         };
         match catch_up() {
             Ok((applied_events, last_reduced_seq)) => {
-                if let Err(err) = self.branch_runtime.record_branch_graph_catch_up_success(
-                    &self.active_branch,
-                    &self.assembly.product_runtime().layout().world_model_db,
-                    last_reduced_seq,
-                    applied_events,
-                ) {
-                    warn!(error = %err, "failed to record branch graph migration after catch-up");
+                if let Some(branch) = &self.active_branch {
+                    if let Err(err) = self.branch_runtime.record_branch_graph_catch_up_success(
+                        branch,
+                        &self.assembly.product_runtime().layout().world_model_db,
+                        last_reduced_seq,
+                        applied_events,
+                    ) {
+                        warn!(error = %err, "failed to record branch graph migration after catch-up");
+                    }
                 }
                 Ok(applied_events)
             }
             Err(err) => {
-                if let Err(record_err) = self.branch_runtime.record_branch_graph_catch_up_failure(
-                    &self.active_branch,
-                    &self.assembly.product_runtime().layout().world_model_db,
-                    &err.to_string(),
-                ) {
-                    warn!(
-                        error = %record_err,
-                        "failed to record branch graph migration failure after catch-up"
-                    );
+                if let Some(branch) = &self.active_branch {
+                    if let Err(record_err) =
+                        self.branch_runtime.record_branch_graph_catch_up_failure(
+                            branch,
+                            &self.assembly.product_runtime().layout().world_model_db,
+                            &err.to_string(),
+                        )
+                    {
+                        warn!(
+                            error = %record_err,
+                            "failed to record branch graph migration failure after catch-up"
+                        );
+                    }
                 }
                 Err(ApiError::from(err))
             }
@@ -264,8 +282,10 @@ impl RunContext {
         // No hidden graph catch-up after the command: catch-up is
         // supervised actor work, never a command-routing side effect. Only
         // the branch last-seen touch survives from the removed pass.
-        if let Err(err) = self.branch_runtime.touch_active_branch(&self.active_branch) {
-            warn!(error = %err, "failed to update active branch last seen after command execution");
+        if let Some(branch) = &self.active_branch {
+            if let Err(err) = self.branch_runtime.touch_active_branch(branch) {
+                warn!(error = %err, "failed to update active branch last seen after command execution");
+            }
         }
         self.emit_command_summary(
             &session_id,
@@ -407,11 +427,10 @@ impl RunContext {
                 let graph_runtime = self.assembly.graph_runtime();
                 crate::branches::tooling::handle_cli_command_with_runtime_state(
                     command,
-                    Some(&self.workspace_root),
-                    Some((
-                        self.active_branch.branch_id(),
-                        graph_runtime.traversal_store().clone(),
-                    )),
+                    self.api().workspace_root(),
+                    self.active_branch.as_ref().map(|branch| {
+                        (branch.branch_id(), graph_runtime.traversal_store().clone())
+                    }),
                     command_event_position,
                 )
             }
