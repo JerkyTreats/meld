@@ -260,9 +260,51 @@ pub(crate) mod test_support {
     #[derive(Default)]
     pub struct FixtureJudge {
         pub calls: AtomicUsize,
+        pub source_calls: AtomicUsize,
     }
     #[async_trait::async_trait]
     impl DocsClaimJudge for FixtureJudge {
+        async fn extract_source(
+            &self,
+            request: &super::super::source_claims::DocsSourceClaimRequest<'_>,
+        ) -> Result<super::super::source_claims::ProposedSourceClaims, ApiError> {
+            use super::super::source_claims::{ProposedSourceClaims, SourceClaimProposal};
+            self.source_calls.fetch_add(1, Ordering::SeqCst);
+            let text = request
+                .source
+                .text
+                .as_deref()
+                .expect("fixture receives captured source");
+            let mut claims = text
+                .lines()
+                .filter_map(|line| {
+                    line.trim()
+                        .strip_prefix("pub fn ")
+                        .and_then(|tail| tail.split_once('('))
+                        .map(|(name, _)| SourceClaimProposal {
+                            statement: format!("`{name}` is declared"),
+                            confidence: 1.0,
+                            quotes: vec![line.to_string()],
+                        })
+                })
+                .collect::<Vec<_>>();
+            if claims.is_empty() && !text.trim().is_empty() {
+                claims.push(SourceClaimProposal {
+                    statement: text.trim().into(),
+                    confidence: 1.0,
+                    quotes: vec![text.into()],
+                });
+            }
+            let no_claims_reason = claims
+                .is_empty()
+                .then(|| "captured source is empty".to_string());
+            Ok(ProposedSourceClaims {
+                complete: true,
+                claims,
+                no_claims_reason,
+            })
+        }
+
         async fn assess(
             &self,
             request: &DocsClaimJudgmentRequest<'_>,

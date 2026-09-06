@@ -198,18 +198,100 @@ impl DocsObservationActor {
             {
                 return Ok((false, source_error));
             }
-            if revision
+            let completed_readme =
+                if revision.source_claims.is_none() && revision.claim_report.is_none() {
+                    self.binding
+                        .store
+                        .claim_progress(
+                            &self.binding_id,
+                            &revision
+                                .evidence
+                                .observation
+                                .as_ref()
+                                .ok_or("Docs source has no observation")?
+                                .revision_id,
+                            &policy.content_identity,
+                        )?
+                        .filter(|report| report.complete)
+                } else {
+                    None
+                };
+            let stale_policy = revision
                 .claim_report
                 .as_ref()
-                .is_some_and(|report| report.policy_identity == policy.content_identity)
-            {
-                return Ok((false, source_error));
-            }
-            if revision.claim_report.is_some() {
+                .is_some_and(|report| report.policy_identity != policy.content_identity)
+                || revision
+                    .source_claims
+                    .as_ref()
+                    .is_some_and(|report| report.policy_identity != policy.content_identity);
+            if stale_policy {
                 revision = self
                     .binding
                     .store
-                    .invalidate_claim_report(&self.binding_id, &revision.revision_id)?;
+                    .invalidate_judgments(&self.binding_id, &revision.revision_id)?;
+            } else if let Some(report) = completed_readme {
+                if !report
+                    .matches_observation(&policy.policy, &revision.evidence)
+                    .map_err(|error| error.to_string())?
+                {
+                    return Err("Docs retained README judgment changed input binding".into());
+                }
+                revision = self.binding.store.prepare_claim_report(
+                    &self.binding_id,
+                    &revision.revision_id,
+                    report,
+                )?;
+            } else if revision.source_claims.is_none() {
+                let input =
+                    super::source_claims::source_input_identity(&policy.policy, &revision.evidence)
+                        .map_err(|error| error.to_string())?;
+                let prior = self
+                    .binding
+                    .store
+                    .source_progress(&self.binding_id, &input)?;
+                let report = if let Some(report) = prior.as_ref().filter(|report| report.complete) {
+                    if !report
+                        .matches_input(&policy.policy, &revision.evidence)
+                        .map_err(|error| error.to_string())?
+                    {
+                        return Err("Docs retained source claims changed input binding".into());
+                    }
+                    report.clone()
+                } else {
+                    let judge = self
+                        .binding
+                        .claim_judge
+                        .current()
+                        .ok_or("Docs source-claim provider is not bound")?;
+                    let runtime = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|error| error.to_string())?;
+                    runtime
+                        .block_on(super::source_claims::advance_source_claims(
+                            judge.as_ref(),
+                            &policy.policy,
+                            &revision.evidence,
+                            prior.as_ref(),
+                            1,
+                        ))
+                        .map_err(|error| error.to_string())?
+                };
+                self.binding.store.save_source_progress(
+                    &self.binding_id,
+                    &revision.revision_id,
+                    &report,
+                )?;
+                if !report.complete {
+                    return Ok((true, source_error));
+                }
+                revision = self.binding.store.prepare_source_claims(
+                    &self.binding_id,
+                    &revision.revision_id,
+                    report,
+                )?;
+            } else if revision.claim_report.is_some() {
+                return Ok((false, source_error));
             } else {
                 let observation_id = &revision
                     .evidence
@@ -346,9 +428,22 @@ impl DocsObservationActor {
             },
             None => None,
         };
+        let source_progress = match current.as_ref().zip(self.binding.claim_policy.as_ref()) {
+            Some((revision, policy)) => match super::source_claims::source_input_identity(
+                &policy.policy,
+                &revision.evidence,
+            ) {
+                Ok(input) => self
+                    .binding
+                    .store
+                    .source_progress(&self.binding_id, &input)?,
+                Err(_) => None,
+            },
+            None => None,
+        };
         let checkpoint = identity(
             "docs-checkpoint",
-            &(&self.binding_id, &head, &claim_progress),
+            &(&self.binding_id, &head, &claim_progress, &source_progress),
         )?;
         let pending = head.as_ref().filter(|head| head.publication.is_none());
         let claim_obligation = current
@@ -362,6 +457,21 @@ impl DocsObservationActor {
                     .is_some_and(|observation| !observation.readmes.is_empty())
                     && revision
                         .claim_report
+                        .as_ref()
+                        .is_none_or(|report| report.policy_identity != policy.content_identity)
+            })
+            .map(|(revision, policy)| (&revision.revision_id, &policy.content_identity));
+        let source_obligation = current
+            .as_ref()
+            .zip(self.binding.claim_policy.as_ref())
+            .filter(|(revision, policy)| {
+                revision
+                    .evidence
+                    .observation
+                    .as_ref()
+                    .is_some_and(|observation| !observation.sources.is_empty())
+                    && revision
+                        .source_claims
                         .as_ref()
                         .is_none_or(|report| report.policy_identity != policy.content_identity)
             })
@@ -384,6 +494,12 @@ impl DocsObservationActor {
                     self.binding
                         .claim_policy
                         .as_ref()
+                        .map(|_| super::source_claims::SOURCE_CLAIM_CONTRACT.into()),
+                )
+                .chain(
+                    self.binding
+                        .claim_policy
+                        .as_ref()
                         .map(|policy| policy.content_identity.clone()),
                 )
                 .collect(),
@@ -392,7 +508,7 @@ impl DocsObservationActor {
             proof_position_ref: checkpoint,
             unresolved_operation_summary_ref: identity(
                 "docs-pending",
-                &(pending, claim_obligation),
+                &(pending, claim_obligation, source_obligation),
             )?,
         })
     }
@@ -578,6 +694,130 @@ mod tests {
     }
 
     #[test]
+    fn source_claim_work_resumes_per_file_and_ignores_readme_only_changes() {
+        use super::super::claim_observation::test_support::FixtureJudge;
+        use std::sync::atomic::Ordering;
+        let source = tempfile::tempdir().unwrap();
+        let storage = tempfile::tempdir().unwrap();
+        for file in ["a.rs", "b.rs"] {
+            std::fs::write(source.path().join(file), "pub fn run() {}\n").unwrap();
+        }
+        let authority = EventAuthority::open(
+            sled::open(storage.path().join("events")).unwrap(),
+            EventAuthorityOpenOptions::default(),
+        )
+        .unwrap();
+        let judge = Arc::new(FixtureJudge::default());
+        let mut first = actor(source.path(), &storage.path().join("docs"), &authority);
+        enable_claims(&mut first, Some(judge.clone()));
+        first.tick(WorkBudget { max_items: 1 });
+        let raw = first.current_revision().unwrap().unwrap();
+        let checkpoint = first.evidence().unwrap().proof_position_ref;
+        first.tick(WorkBudget { max_items: 1 });
+        assert_eq!(judge.source_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(first.current_revision().unwrap(), Some(raw.clone()));
+        assert_ne!(first.evidence().unwrap().proof_position_ref, checkpoint);
+        drop(first);
+        let mut recovered = actor(source.path(), &storage.path().join("docs"), &authority);
+        enable_claims(&mut recovered, Some(judge.clone()));
+        recovered.tick(WorkBudget { max_items: 1 });
+        let published = recovered.current_revision().unwrap().unwrap();
+        assert!(published.source_claims.as_ref().unwrap().complete);
+        assert_eq!(published.source_claims.as_ref().unwrap().files.len(), 2);
+        assert_eq!(judge.source_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(judge.calls.load(Ordering::SeqCst), 0);
+        std::fs::write(source.path().join("README.md"), "# run\n").unwrap();
+        recovered.tick(WorkBudget { max_items: 1 });
+        let raw_changed = recovered.current_revision().unwrap().unwrap();
+        assert!(raw_changed.source_claims.is_none());
+        recovered.tick(WorkBudget { max_items: 1 });
+        let reused = recovered.current_revision().unwrap().unwrap();
+        assert_eq!(reused.source_claims, published.source_claims);
+        assert_eq!(judge.source_calls.load(Ordering::SeqCst), 2);
+        assert_ne!(reused.revision_id, published.revision_id);
+        assert!(recovered
+            .binding
+            .store
+            .save_source_progress(
+                &recovered.binding_id,
+                &raw.revision_id,
+                reused.source_claims.as_ref().unwrap()
+            )
+            .is_err());
+    }
+
+    #[test]
+    fn completed_source_claims_recover_without_repeating_extraction() {
+        use super::super::claim_observation::test_support::FixtureJudge;
+        for boundary in 0..3 {
+            let source = tempfile::tempdir().unwrap();
+            let storage = tempfile::tempdir().unwrap();
+            std::fs::write(source.path().join("lib.rs"), "pub fn run() {}\n").unwrap();
+            let authority = EventAuthority::open(
+                sled::open(storage.path().join("events")).unwrap(),
+                EventAuthorityOpenOptions::default(),
+            )
+            .unwrap();
+            let mut first = actor(source.path(), &storage.path().join("docs"), &authority);
+            enable_claims(&mut first, None);
+            first.tick(WorkBudget { max_items: 1 });
+            let raw = first.current_revision().unwrap().unwrap();
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let report = runtime
+                .block_on(super::super::source_claims::advance_source_claims(
+                    &FixtureJudge::default(),
+                    &first.binding.claim_policy.as_ref().unwrap().policy,
+                    &raw.evidence,
+                    None,
+                    1,
+                ))
+                .unwrap();
+            first
+                .binding
+                .store
+                .save_source_progress(&first.binding_id, &raw.revision_id, &report)
+                .unwrap();
+            let pending = if boundary > 0 {
+                let pending = first
+                    .binding
+                    .store
+                    .prepare_source_claims(&first.binding_id, &raw.revision_id, report.clone())
+                    .unwrap();
+                if boundary == 2 {
+                    authority
+                        .append_capability()
+                        .append_durable_proven(
+                            pending.envelope("docs-observation-test").unwrap(),
+                            AppendMode::Idempotent,
+                        )
+                        .unwrap();
+                }
+                Some(pending)
+            } else {
+                None
+            };
+            drop(first);
+            let mut recovered = actor(source.path(), &storage.path().join("docs"), &authority);
+            enable_claims(&mut recovered, None);
+            let tick = recovered.tick(WorkBudget { max_items: 1 });
+            assert!(tick.retryable_errors.is_empty(), "{tick:?}");
+            assert_eq!(tick.items_committed, 1);
+            let resumed = recovered.current_revision().unwrap().unwrap();
+            assert_eq!(resumed.source_claims, Some(report));
+            if let Some(pending) = pending {
+                assert_eq!(resumed, pending);
+            }
+            assert_eq!(
+                authority.watermark_capability().snapshot().unwrap().tip_seq,
+                2
+            );
+        }
+    }
+
+    #[test]
     fn bounded_claim_judgments_resume_after_reopen_without_repeating_completed_readmes() {
         use super::super::claim_observation::test_support::FixtureJudge;
         use std::sync::atomic::Ordering;
@@ -598,6 +838,9 @@ mod tests {
         let mut first = actor(source.path(), &storage.path().join("docs"), &authority);
         enable_claims(&mut first, Some(judge.clone()));
         first.tick(WorkBudget { max_items: 1 });
+        for _ in 0..3 {
+            first.tick(WorkBudget { max_items: 1 });
+        }
         let raw = first.current_revision().unwrap().unwrap();
         let before = first.evidence().unwrap().proof_position_ref;
         let tick = first.tick(WorkBudget { max_items: 1 });
@@ -643,7 +886,7 @@ mod tests {
         assert_eq!(judge.calls.load(Ordering::SeqCst), 3);
         assert_eq!(
             authority.watermark_capability().snapshot().unwrap().tip_seq,
-            2
+            3
         );
         let selected = recovered.binding.claim_policy.as_mut().unwrap();
         selected.policy.title_weight += 1.0;

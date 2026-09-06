@@ -331,6 +331,15 @@ pub struct DocsClaimJudgmentRequest<'a> {
 
 #[async_trait::async_trait]
 pub trait DocsClaimJudge: Send + Sync {
+    async fn extract_source(
+        &self,
+        _request: &super::source_claims::DocsSourceClaimRequest<'_>,
+    ) -> Result<super::source_claims::ProposedSourceClaims, ApiError> {
+        Err(ApiError::ConfigError(
+            "Docs source-claim extraction is not bound".into(),
+        ))
+    }
+
     async fn assess(
         &self,
         request: &DocsClaimJudgmentRequest<'_>,
@@ -348,6 +357,13 @@ pub struct ProviderDocsClaimJudge<'a, P: ?Sized> {
 impl<P: ProviderValidationPort + ProviderExecutionPort + ?Sized> DocsClaimJudge
     for ProviderDocsClaimJudge<'_, P>
 {
+    async fn extract_source(
+        &self,
+        request: &super::source_claims::DocsSourceClaimRequest<'_>,
+    ) -> Result<super::source_claims::ProposedSourceClaims, ApiError> {
+        super::source_claims::extract_provider_claims(self.api, self.config, request).await
+    }
+
     async fn assess(
         &self,
         request: &DocsClaimJudgmentRequest<'_>,
@@ -1418,7 +1434,7 @@ fn readme_path(directory: &str) -> String {
     }
 }
 
-fn decode_json_response<T: serde::de::DeserializeOwned>(
+pub(crate) fn decode_json_response<T: serde::de::DeserializeOwned>(
     content: &str,
     label: &str,
 ) -> Result<T, ApiError> {

@@ -19,6 +19,12 @@ pub struct DocsObservationHead {
     pub publication: Option<LedgerCursor>,
 }
 
+enum DocsReportUpdate {
+    Readme(super::claim_observation::ObservedDocsClaimReport),
+    Source(super::source_claims::DocsSourceClaimReport),
+    Clear,
+}
+
 impl DocsObservationStore {
     pub fn new(db: sled::Db) -> Result<Self, String> {
         let records = db
@@ -106,6 +112,62 @@ impl DocsObservationStore {
         Ok(revision)
     }
 
+    pub(crate) fn source_progress(
+        &self,
+        binding_id: &str,
+        input: &str,
+    ) -> Result<Option<super::source_claims::DocsSourceClaimReport>, String> {
+        self.read(&format!("source-progress::{binding_id}::{input}"))
+    }
+
+    pub(crate) fn save_source_progress(
+        &self,
+        binding_id: &str,
+        predecessor: &str,
+        report: &super::source_claims::DocsSourceClaimReport,
+    ) -> Result<(), String> {
+        let _guard = self
+            .mutation
+            .lock()
+            .map_err(|_| "Docs observation lock poisoned")?;
+        let head = self
+            .head(binding_id)?
+            .ok_or("Docs source claims have no source head")?;
+        if head.revision_id != predecessor || head.publication.is_none() {
+            return Err("Docs source claims name an unpublished or superseded source".into());
+        }
+        let source = self
+            .revision(predecessor)?
+            .ok_or("Docs source-claim capture is absent")?;
+        report
+            .validate_capture(&source.evidence)
+            .map_err(|error| error.to_string())?;
+        let key = format!("source-progress::{binding_id}::{}", report.input_id);
+        let previous: Option<super::source_claims::DocsSourceClaimReport> = self.read(&key)?;
+        if previous.as_ref().is_some_and(|prior| {
+            prior.files.iter().any(|file| !report.files.contains(file))
+                || (prior.complete && prior != report)
+        }) {
+            return Err("Docs source progress changed completed extraction".into());
+        }
+        self.commit_progress(
+            binding_id,
+            &head,
+            &key,
+            previous.as_ref().map(encode).transpose()?,
+            encode(report)?,
+        )
+    }
+
+    pub(crate) fn prepare_source_claims(
+        &self,
+        binding_id: &str,
+        predecessor: &str,
+        report: super::source_claims::DocsSourceClaimReport,
+    ) -> Result<DocsObservationRevision, String> {
+        self.set_reports(binding_id, predecessor, DocsReportUpdate::Source(report))
+    }
+
     pub(crate) fn claim_progress(
         &self,
         binding_id: &str,
@@ -157,9 +219,24 @@ impl DocsObservationStore {
         }) {
             return Err("Docs claim progress changed completed judgments".into());
         }
-        let expected_head = encode(&head)?;
-        let expected_progress = previous.as_ref().map(encode).transpose()?;
-        let next = encode(report)?;
+        self.commit_progress(
+            binding_id,
+            &head,
+            &key,
+            previous.as_ref().map(encode).transpose()?,
+            encode(report)?,
+        )
+    }
+
+    fn commit_progress(
+        &self,
+        binding_id: &str,
+        head: &DocsObservationHead,
+        key: &str,
+        expected_progress: Option<Vec<u8>>,
+        next: Vec<u8>,
+    ) -> Result<(), String> {
+        let expected_head = encode(head)?;
         let head_key = format!("head::{binding_id}");
         self.records
             .transaction(|tree| {
@@ -183,22 +260,22 @@ impl DocsObservationStore {
         predecessor: &str,
         report: super::claim_observation::ObservedDocsClaimReport,
     ) -> Result<DocsObservationRevision, String> {
-        self.set_claim_report(binding_id, predecessor, Some(report))
+        self.set_reports(binding_id, predecessor, DocsReportUpdate::Readme(report))
     }
 
-    pub(crate) fn invalidate_claim_report(
+    pub(crate) fn invalidate_judgments(
         &self,
         binding_id: &str,
         predecessor: &str,
     ) -> Result<DocsObservationRevision, String> {
-        self.set_claim_report(binding_id, predecessor, None)
+        self.set_reports(binding_id, predecessor, DocsReportUpdate::Clear)
     }
 
-    fn set_claim_report(
+    fn set_reports(
         &self,
         binding_id: &str,
         predecessor: &str,
-        report: Option<super::claim_observation::ObservedDocsClaimReport>,
+        update: DocsReportUpdate,
     ) -> Result<DocsObservationRevision, String> {
         let _guard = self
             .mutation
@@ -213,7 +290,17 @@ impl DocsObservationStore {
         let prior = self
             .revision(predecessor)?
             .ok_or("Docs claim judgment source is absent")?;
-        if prior.claim_report == report {
+        let mut readme = prior.claim_report.clone();
+        let mut source_claims = prior.source_claims.clone();
+        match update {
+            DocsReportUpdate::Readme(report) => readme = Some(report),
+            DocsReportUpdate::Source(report) => source_claims = Some(report),
+            DocsReportUpdate::Clear => {
+                readme = None;
+                source_claims = None;
+            }
+        }
+        if prior.claim_report == readme && prior.source_claims == source_claims {
             return Ok(prior);
         }
         let mut revision = DocsObservationRevision::new(
@@ -226,7 +313,10 @@ impl DocsObservationStore {
             prior.scope,
             prior.evidence,
         )?;
-        if let Some(report) = report {
+        if let Some(report) = source_claims {
+            revision = revision.with_source_claims(report)?;
+        }
+        if let Some(report) = readme {
             revision = revision.with_claim_report(report)?;
         }
         let next = DocsObservationHead {

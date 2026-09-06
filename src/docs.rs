@@ -15,4 +15,5 @@ pub mod observation_store;
 pub mod pds;
 pub mod publication;
 pub(crate) mod runtime;
+pub mod source_claims;
 pub mod theory;

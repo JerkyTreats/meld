@@ -7395,6 +7395,13 @@ mod tests {
         assert!(
             matches!(&report.readmes[0].disposition, ObservedClaimDisposition::Assessed { report } if report.accepted)
         );
+        let source_report = assessed
+            .source_claims
+            .as_ref()
+            .expect("native source claims before Task");
+        assert!(source_report.complete);
+        assert_eq!(source_report.files.len(), 1);
+        assert!(!source_report.files[0].claims.is_empty());
         let operation = assessed.publication().unwrap();
         assert!(operation
             .batch
@@ -7415,6 +7422,16 @@ mod tests {
                     .qualifications
                     .get("verdict")
                     .is_some_and(|verdict| verdict == "supported")));
+        assert!(operation
+            .batch
+            .objects
+            .iter()
+            .any(|object| object.object_ref.object_kind == "source_claim"));
+        assert!(operation
+            .batch
+            .relations
+            .iter()
+            .any(|relation| relation.relation_type == "docs_claim_from_source"));
         let query =
             meld_world_model::TraversalQuery::new(assembly.stores().traversal_store.as_ref());
         let cut = query.cut(&meld_world_model::world_state::graph::contracts::TraversalCutRequest {
@@ -7446,6 +7463,24 @@ mod tests {
         assert!(calls > 0);
         supervisor.tick(1_100).unwrap();
         assert_eq!(judge.calls.load(std::sync::atomic::Ordering::SeqCst), calls);
+        let source_calls = judge.source_calls.load(std::sync::atomic::Ordering::SeqCst);
+        std::fs::write(
+            harness._workspace.path().join("README.md"),
+            "# run\n\n`run` exists.\n\n",
+        )
+        .unwrap();
+        for pass in 0..3 {
+            supervisor.tick(1_101 + pass).unwrap();
+        }
+        let readme_changed = owner.current_revision().unwrap().unwrap();
+        assert_eq!(
+            readme_changed.source_claims.as_ref().unwrap().report_id,
+            source_report.report_id
+        );
+        assert_eq!(
+            judge.source_calls.load(std::sync::atomic::Ordering::SeqCst),
+            source_calls
+        );
         std::fs::write(
             harness._workspace.path().join("lib.rs"),
             "pub fn replacement() {}\n",
@@ -7454,15 +7489,16 @@ mod tests {
         supervisor.tick(1_110).unwrap();
         let changed = owner.current_revision().unwrap().unwrap();
         assert!(changed.claim_report.is_none());
-        assert_eq!(changed.predecessor, Some(assessed.revision_id.clone()));
+        assert_eq!(changed.predecessor, Some(readme_changed.revision_id));
         supervisor.tick(1_120).unwrap();
+        supervisor.tick(1_130).unwrap();
         let successor = owner.current_revision().unwrap().unwrap();
         assert!(
             matches!(&successor.claim_report.as_ref().unwrap().readmes[0].disposition, ObservedClaimDisposition::Assessed { report } if !report.accepted)
         );
         assert_eq!(
             std::fs::read_to_string(harness._workspace.path().join("README.md")).unwrap(),
-            "# run\n\n`run` exists.\n"
+            "# run\n\n`run` exists.\n\n"
         );
         supervisor.request_shutdown(1_200).unwrap();
         drop(supervisor);

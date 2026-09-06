@@ -29,6 +29,9 @@ pub struct ObservedSource {
     pub path: String,
     pub content_hash: String,
     pub byte_length: usize,
+    /// Complete captured text when available; historical hash-only observations remain explicit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,6 +74,17 @@ pub fn validate_observation(bundle: &DocsEvidenceBundle) -> Result<(), ApiError>
         .observation
         .as_ref()
         .ok_or_else(|| ApiError::ConfigError("Docs evidence has no owner observation".into()))?;
+    for source in &observed.sources {
+        if let Some(text) = &source.text {
+            if text.len() != source.byte_length
+                || blake3::hash(text.as_bytes()).to_hex().as_str() != source.content_hash
+            {
+                return Err(ApiError::ConfigError(
+                    "Docs source observation disagrees with its captured bytes".into(),
+                ));
+            }
+        }
+    }
     for readme in &observed.readmes {
         if let ObservedReadmeState::Present {
             content,
@@ -193,6 +207,11 @@ fn inspect_scope_with_read(
                 path: relative_path.clone(),
                 content_hash: blake3::hash(&bytes).to_hex().to_string(),
                 byte_length: bytes.len(),
+                text: if bytes.len() <= MAX_FILE_BYTES {
+                    std::str::from_utf8(&bytes).ok().map(str::to_owned)
+                } else {
+                    None
+                },
             },
         );
         if bytes.len() > MAX_FILE_BYTES || std::str::from_utf8(&bytes).is_err() {

@@ -22,6 +22,8 @@ pub struct DocsObservationRevision {
     pub evidence: DocsEvidenceBundle,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claim_report: Option<super::claim_observation::ObservedDocsClaimReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_claims: Option<super::source_claims::DocsSourceClaimReport>,
 }
 
 impl DocsObservationRevision {
@@ -54,7 +56,32 @@ impl DocsObservationRevision {
             scope,
             evidence,
             claim_report: None,
+            source_claims: None,
         })
+    }
+
+    pub(crate) fn with_source_claims(
+        mut self,
+        report: super::source_claims::DocsSourceClaimReport,
+    ) -> Result<Self, String> {
+        if !report.complete || self.claim_report.is_some() {
+            return Err(
+                "Docs source claims require complete extraction before README judgment attachment"
+                    .into(),
+            );
+        }
+        report
+            .validate_capture(&self.evidence)
+            .map_err(|error| error.to_string())?;
+        let seed = serde_json::to_vec(&(
+            &self.revision_id,
+            super::source_claims::SOURCE_CLAIM_CONTRACT,
+            &report,
+        ))
+        .map_err(|error| error.to_string())?;
+        self.revision_id = format!("docs-revision::{}", blake3::hash(&seed).to_hex());
+        self.source_claims = Some(report);
+        Ok(self)
     }
 
     pub(crate) fn with_claim_report(
@@ -83,6 +110,9 @@ impl DocsObservationRevision {
             self.scope.clone(),
             self.evidence.clone(),
         )?;
+        if let Some(report) = &self.source_claims {
+            expected = expected.with_source_claims(report.clone())?;
+        }
         if let Some(report) = &self.claim_report {
             expected = expected.with_claim_report(report.clone())?;
         }
@@ -192,6 +222,62 @@ impl DocsObservationRevision {
             }
         }
         let mut semantic_qualifications = BTreeMap::new();
+        if let Some(report) = &self.source_claims {
+            let set = add(
+                "source_claim_set",
+                &report.report_id,
+                serde_json::to_value(report).map_err(|error| error.to_string())?,
+            )?;
+            relate("docs_claims_source_scope", set.clone(), root.clone());
+            for file in &report.files {
+                let file_key = format!("{}::{}", report.report_id, file.path);
+                let file_claims = add(
+                    "source_file_claims",
+                    &file_key,
+                    serde_json::to_value(file).map_err(|error| error.to_string())?,
+                )?;
+                relate(
+                    "docs_source_claim_file_in_set",
+                    file_claims.clone(),
+                    set.clone(),
+                );
+                let source_key = format!("{}::{}", self.scope.scope_id, file.path);
+                let source = DomainObjectRef::new(OWNER_ID, "source_observation", &source_key)
+                    .map_err(|error| error.to_string())?;
+                for claim in &file.claims {
+                    let object = add(
+                        "source_claim",
+                        &claim.claim_id,
+                        serde_json::to_value(claim).map_err(|error| error.to_string())?,
+                    )?;
+                    relate("docs_claim_from_source", object.clone(), source.clone());
+                    relate(
+                        "docs_source_claim_in_file",
+                        object.clone(),
+                        file_claims.clone(),
+                    );
+                    semantic_qualifications.insert(
+                        object,
+                        BTreeMap::from([
+                            ("source_path".to_string(), file.path.clone()),
+                            (
+                                "source_directory".to_string(),
+                                file.path
+                                    .rsplit_once('/')
+                                    .map_or(".", |(parent, _)| parent)
+                                    .to_string(),
+                            ),
+                            ("source_hash".to_string(), file.content_hash.clone()),
+                            ("claim_policy".to_string(), report.policy_identity.clone()),
+                            (
+                                "extraction_contract".to_string(),
+                                report.contract_revision.clone(),
+                            ),
+                        ]),
+                    );
+                }
+            }
+        }
         if let Some(report) = &self.claim_report {
             let scope_judgment = add(
                 "observed_claim_assessment",
