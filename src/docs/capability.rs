@@ -6,8 +6,8 @@ use std::path::{Component, Path, PathBuf};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use walkdir::{DirEntry, WalkDir};
 
+use super::observation::MAX_DIRECTORY_EVIDENCE_BYTES;
 use crate::capability::{
     ArtifactSchemaVersionRange, CapabilityInvocationPayload, CapabilityInvocationResult,
     CapabilityInvoker, CapabilityRuntimeInit, CapabilityTypeContract, EffectKind, EffectSpec,
@@ -38,9 +38,6 @@ pub const PUBLICATION_RECEIPT: &str = "docs_publication_receipt";
 pub const FRESHNESS_ASSESSMENT: &str = "docs_freshness_assessment";
 
 const VERSION: u32 = 1;
-const MAX_DIRECTORIES: usize = 64;
-const MAX_FILE_BYTES: usize = 8 * 1024;
-const MAX_DIRECTORY_EVIDENCE_BYTES: usize = 24 * 1024;
 const MAX_CHILD_README_BYTES: usize = 3 * 1024;
 
 #[derive(Debug, Clone)]
@@ -63,6 +60,9 @@ pub struct DirectoryEvidence {
 pub struct DocsEvidenceBundle {
     pub source_fingerprint: String,
     pub directories: Vec<DirectoryEvidence>,
+    /// Exact current observations. Historical artifacts without this field cannot prove observation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation: Option<super::observation::DocsScopeObservation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -569,126 +569,7 @@ fn single_artifact(
     }
 }
 
-pub fn inspect_scope(root: &Path) -> Result<DocsEvidenceBundle, ApiError> {
-    let root = root.canonicalize().map_err(|error| {
-        ApiError::ConfigError(format!(
-            "docs target '{}' is unavailable: {error}",
-            root.display()
-        ))
-    })?;
-    let mut direct_files = BTreeMap::<PathBuf, Vec<PathBuf>>::new();
-    let mut children = BTreeMap::<PathBuf, BTreeSet<PathBuf>>::new();
-    let mut source_hasher = blake3::Hasher::new();
-
-    for entry in WalkDir::new(&root)
-        .follow_links(false)
-        .into_iter()
-        .filter_entry(include_entry)
-    {
-        let entry = entry.map_err(|error| ApiError::ConfigError(error.to_string()))?;
-        let path = entry.path();
-        if entry.file_type().is_dir() {
-            direct_files.entry(path.to_path_buf()).or_default();
-            if let Some(parent) = path.parent().filter(|parent| *parent != path) {
-                if path != root && parent.starts_with(&root) {
-                    children
-                        .entry(parent.to_path_buf())
-                        .or_default()
-                        .insert(path.to_path_buf());
-                }
-            }
-            continue;
-        }
-        if !entry.file_type().is_file() || is_managed_readme(path) {
-            continue;
-        }
-        let Some(parent) = path.parent() else {
-            continue;
-        };
-        let bytes = std::fs::read(path).map_err(io_error)?;
-        if bytes.contains(&0) {
-            continue;
-        }
-        let relative = path.strip_prefix(&root).unwrap_or(path);
-        source_hasher.update(relative.to_string_lossy().as_bytes());
-        source_hasher.update(&(bytes.len() as u64).to_le_bytes());
-        source_hasher.update(blake3::hash(&bytes).as_bytes());
-        direct_files
-            .entry(parent.to_path_buf())
-            .or_default()
-            .push(path.to_path_buf());
-    }
-
-    let mut meaningful = BTreeSet::new();
-    for directory in direct_files
-        .iter()
-        .filter(|(_, files)| !files.is_empty())
-        .map(|(directory, _)| directory)
-    {
-        let mut cursor = Some(directory.as_path());
-        while let Some(path) = cursor {
-            if !path.starts_with(&root) {
-                break;
-            }
-            meaningful.insert(path.to_path_buf());
-            if path == root {
-                break;
-            }
-            cursor = path.parent();
-        }
-    }
-    if meaningful.len() > MAX_DIRECTORIES {
-        return Err(ApiError::ConfigError(format!(
-            "docs scope contains {} meaningful directories, exceeding the bound of {MAX_DIRECTORIES}",
-            meaningful.len()
-        )));
-    }
-
-    let mut directories = meaningful.iter().cloned().collect::<Vec<_>>();
-    directories.sort_by(|left, right| {
-        right
-            .components()
-            .count()
-            .cmp(&left.components().count())
-            .then_with(|| left.cmp(right))
-    });
-    let mut evidence = Vec::new();
-    for directory in directories {
-        let mut files = direct_files.remove(&directory).unwrap_or_default();
-        files.sort();
-        let mut rendered = String::new();
-        let mut names = Vec::new();
-        for file in files {
-            let relative = file.strip_prefix(&root).unwrap_or(&file);
-            names.push(relative.to_string_lossy().to_string());
-            let bytes = std::fs::read(&file).map_err(io_error)?;
-            let text = String::from_utf8_lossy(&bytes[..bytes.len().min(MAX_FILE_BYTES)]);
-            let section = format!("\n--- {} ---\n{}\n", relative.display(), text);
-            if rendered.len() + section.len() > MAX_DIRECTORY_EVIDENCE_BYTES {
-                break;
-            }
-            rendered.push_str(&section);
-        }
-        let child_directories = children
-            .get(&directory)
-            .into_iter()
-            .flatten()
-            .filter(|child| meaningful.contains(*child))
-            .filter_map(|child| child.strip_prefix(&root).ok())
-            .map(relative_display)
-            .collect::<Vec<_>>();
-        evidence.push(DirectoryEvidence {
-            path: relative_display(directory.strip_prefix(&root).unwrap_or(&directory)),
-            direct_files: names,
-            child_directories,
-            evidence: rendered,
-        });
-    }
-    Ok(DocsEvidenceBundle {
-        source_fingerprint: source_hasher.finalize().to_hex().to_string(),
-        directories: evidence,
-    })
-}
+pub use super::observation::inspect_scope;
 
 async fn draft_patch_set(
     api: &dyn ExecutionRuntimeContext,
@@ -882,6 +763,11 @@ pub fn publish_patch_set(
 ) -> Result<DocsPublicationReceipt, ApiError> {
     verify_validated_patch_set(policy, patches)?;
     let root = root.canonicalize().map_err(io_error)?;
+    if inspect_scope(&root)?.source_fingerprint != patches.source_fingerprint {
+        return Err(ApiError::ConfigError(
+            "docs source changed after claim validation".into(),
+        ));
+    }
     let mut published = Vec::new();
     for patch in &patches.patches {
         let relative = safe_readme_path(&patch.path)?;
@@ -932,17 +818,43 @@ pub fn assess_published_scope(
     receipt: &DocsPublicationReceipt,
 ) -> Result<DocsFreshnessAssessment, ApiError> {
     let current = inspect_scope(root)?;
+    let observation = current
+        .observation
+        .as_ref()
+        .expect("native inspection supplies observations");
+    if !observation.coverage_gaps.is_empty()
+        || observation.readmes.iter().any(|readme| {
+            matches!(
+                readme.state,
+                super::observation::ObservedReadmeState::Unavailable { .. }
+            )
+        })
+    {
+        return Err(ApiError::ConfigError(
+            "docs assessment has incomplete observation evidence".into(),
+        ));
+    }
     let mut verified = 0;
+    let mut named = BTreeSet::new();
     for expected in &receipt.published {
-        let relative = safe_readme_path(&expected.path)?;
-        let bytes = std::fs::read(root.join(relative)).map_err(io_error)?;
-        let hash = blake3::hash(&bytes).to_hex().to_string();
-        if hash == expected.content_hash && !bytes.is_empty() {
+        safe_readme_path(&expected.path)?;
+        if !named.insert(expected.path.as_str()) {
+            continue;
+        }
+        if observation.readmes.iter().any(|observed| {
+            observed.path == expected.path
+                && matches!(
+                    &observed.state,
+                    super::observation::ObservedReadmeState::Present { content_hash, content, .. }
+                        if content_hash == &expected.content_hash && !content.is_empty()
+                )
+        }) {
             verified += 1;
         }
     }
     let complete = current.source_fingerprint == receipt.source_fingerprint
         && verified == receipt.published.len()
+        && verified == observation.readmes.len()
         && !receipt.published.is_empty()
         && !receipt.policy_identity.is_empty()
         && !receipt.validation_fingerprint.is_empty()
@@ -954,7 +866,7 @@ pub fn assess_published_scope(
         subject_id: subject_id.to_string(),
         source_fingerprint: current.source_fingerprint,
         stale_probability: if complete { 0.0 } else { 1.0 },
-        expected_readmes: receipt.published.len(),
+        expected_readmes: observation.readmes.len(),
         verified_readmes: verified,
         policy_identity: receipt.policy_identity.clone(),
         validation_fingerprint: receipt.validation_fingerprint.clone(),
@@ -962,37 +874,6 @@ pub fn assess_published_scope(
         unsupported_claim_mass: receipt.unsupported_claim_mass,
         contradiction_claim_mass: receipt.contradiction_claim_mass,
     })
-}
-
-fn include_entry(entry: &DirEntry) -> bool {
-    if entry.depth() == 0 {
-        return true;
-    }
-    if !entry.file_type().is_dir() {
-        return true;
-    }
-    let name = entry.file_name().to_string_lossy();
-    if name.starts_with('.') {
-        return false;
-    }
-    !matches!(
-        name.as_ref(),
-        ".git"
-            | ".venv"
-            | ".tox"
-            | ".mypy_cache"
-            | ".pytest_cache"
-            | ".ruff_cache"
-            | "node_modules"
-            | "target"
-            | "__pycache__"
-    )
-}
-
-fn is_managed_readme(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
 }
 
 fn safe_readme_path(path: &str) -> Result<PathBuf, ApiError> {
@@ -1008,14 +889,6 @@ fn safe_readme_path(path: &str) -> Result<PathBuf, ApiError> {
         )));
     }
     Ok(relative)
-}
-
-fn relative_display(path: &Path) -> String {
-    if path.as_os_str().is_empty() {
-        ".".to_string()
-    } else {
-        path.to_string_lossy().replace('\\', "/")
-    }
 }
 
 fn truncate_chars(value: &str, max: usize) -> String {
@@ -1188,6 +1061,60 @@ mod tests {
         std::fs::write(root.path().join("README.md"), "# Drifted\n").unwrap();
         let stale = assess_published_scope(root.path(), "subject", &receipt).unwrap();
         assert_eq!(stale.stale_probability, 1.0);
+    }
+
+    #[test]
+    fn reobservation_rejects_partial_duplicated_and_missing_readme_returns() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("lib.rs"), "source\n").unwrap();
+        std::fs::create_dir(root.path().join("child")).unwrap();
+        std::fs::write(root.path().join("child/lib.rs"), "child source\n").unwrap();
+        let inspection = inspect_scope(root.path()).unwrap();
+        let patches = validated_patch_set(inspection.source_fingerprint, "# Tool\n".into());
+        let receipt = publish_patch_set(root.path(), &claim_policy(), &patches).unwrap();
+        let partial = assess_published_scope(root.path(), "subject", &receipt).unwrap();
+        assert_eq!(partial.expected_readmes, 2);
+        assert_eq!(partial.verified_readmes, 1);
+        assert_eq!(partial.stale_probability, 1.0);
+        let mut duplicated = receipt.clone();
+        duplicated.published.push(receipt.published[0].clone());
+        assert_eq!(
+            assess_published_scope(root.path(), "subject", &duplicated)
+                .unwrap()
+                .verified_readmes,
+            1
+        );
+        std::fs::remove_file(root.path().join("README.md")).unwrap();
+        let absent = assess_published_scope(root.path(), "subject", &receipt).unwrap();
+        assert_eq!(absent.verified_readmes, 0);
+        assert_eq!(absent.stale_probability, 1.0);
+    }
+
+    #[test]
+    fn incomplete_source_evidence_cannot_be_projected_as_fresh_or_stale() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("lib.rs"), "source\n".repeat(2048)).unwrap();
+        let inspection = inspect_scope(root.path()).unwrap();
+        let patches = validated_patch_set(inspection.source_fingerprint, "# Tool\n".into());
+        let receipt = publish_patch_set(root.path(), &claim_policy(), &patches).unwrap();
+        assert!(assess_published_scope(root.path(), "subject", &receipt)
+            .unwrap_err()
+            .to_string()
+            .contains("incomplete observation"));
+    }
+
+    #[test]
+    fn changed_source_is_rejected_before_publication_writes() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("lib.rs"), "original\n").unwrap();
+        let inspection = inspect_scope(root.path()).unwrap();
+        let patches = validated_patch_set(inspection.source_fingerprint, "# Tool\n".into());
+        std::fs::write(root.path().join("lib.rs"), "successor\n").unwrap();
+        assert!(publish_patch_set(root.path(), &claim_policy(), &patches)
+            .unwrap_err()
+            .to_string()
+            .contains("source changed"));
+        assert!(!root.path().join("README.md").exists());
     }
 
     #[test]
