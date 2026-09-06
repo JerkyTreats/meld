@@ -22,6 +22,7 @@ pub struct DocsObservationHead {
 enum DocsReportUpdate {
     Readme(super::claim_observation::ObservedDocsClaimReport),
     Source(super::source_claims::DocsSourceClaimReport),
+    Correspondence(super::correspondence::DocsCorrespondenceReport),
     Clear,
 }
 
@@ -168,6 +169,71 @@ impl DocsObservationStore {
         self.set_reports(binding_id, predecessor, DocsReportUpdate::Source(report))
     }
 
+    pub(crate) fn correspondence_progress(
+        &self,
+        binding_id: &str,
+        input: &str,
+    ) -> Result<Option<super::correspondence::DocsCorrespondenceReport>, String> {
+        self.read(&format!("correspondence-progress::{binding_id}::{input}"))
+    }
+
+    pub(crate) fn save_correspondence_progress(
+        &self,
+        binding_id: &str,
+        predecessor: &str,
+        report: &super::correspondence::DocsCorrespondenceReport,
+    ) -> Result<(), String> {
+        let _guard = self
+            .mutation
+            .lock()
+            .map_err(|_| "Docs observation lock poisoned")?;
+        let head = self
+            .head(binding_id)?
+            .ok_or("Docs correspondence has no source head")?;
+        if head.revision_id != predecessor || head.publication.is_none() {
+            return Err("Docs correspondence names an unpublished or superseded source".into());
+        }
+        let source = self
+            .revision(predecessor)?
+            .ok_or("Docs correspondence capture absent")?;
+        report
+            .validate_capture(
+                &source.evidence,
+                source
+                    .source_claims
+                    .as_ref()
+                    .ok_or("Docs source claims absent")?,
+            )
+            .map_err(|error| error.to_string())?;
+        let key = format!("correspondence-progress::{binding_id}::{}", report.input_id);
+        let previous: Option<super::correspondence::DocsCorrespondenceReport> = self.read(&key)?;
+        if previous.as_ref().is_some_and(|prior| {
+            !report.readmes.starts_with(&prior.readmes) || (prior.complete && prior != report)
+        }) {
+            return Err("Docs correspondence changed completed comparisons".into());
+        }
+        self.commit_progress(
+            binding_id,
+            &head,
+            &key,
+            previous.as_ref().map(encode).transpose()?,
+            encode(report)?,
+        )
+    }
+
+    pub(crate) fn prepare_correspondence(
+        &self,
+        binding_id: &str,
+        predecessor: &str,
+        report: super::correspondence::DocsCorrespondenceReport,
+    ) -> Result<DocsObservationRevision, String> {
+        self.set_reports(
+            binding_id,
+            predecessor,
+            DocsReportUpdate::Correspondence(report),
+        )
+    }
+
     pub(crate) fn claim_progress(
         &self,
         binding_id: &str,
@@ -292,15 +358,27 @@ impl DocsObservationStore {
             .ok_or("Docs claim judgment source is absent")?;
         let mut readme = prior.claim_report.clone();
         let mut source_claims = prior.source_claims.clone();
+        let correspondence;
         match update {
-            DocsReportUpdate::Readme(report) => readme = Some(report),
-            DocsReportUpdate::Source(report) => source_claims = Some(report),
+            DocsReportUpdate::Readme(report) => {
+                readme = Some(report);
+                correspondence = None;
+            }
+            DocsReportUpdate::Source(report) => {
+                source_claims = Some(report);
+                correspondence = None;
+            }
+            DocsReportUpdate::Correspondence(report) => correspondence = Some(report),
             DocsReportUpdate::Clear => {
                 readme = None;
                 source_claims = None;
+                correspondence = None;
             }
         }
-        if prior.claim_report == readme && prior.source_claims == source_claims {
+        if prior.claim_report == readme
+            && prior.source_claims == source_claims
+            && prior.correspondence == correspondence
+        {
             return Ok(prior);
         }
         let mut revision = DocsObservationRevision::new(
@@ -318,6 +396,9 @@ impl DocsObservationStore {
         }
         if let Some(report) = readme {
             revision = revision.with_claim_report(report)?;
+        }
+        if let Some(report) = correspondence {
+            revision = revision.with_correspondence(report)?;
         }
         let next = DocsObservationHead {
             revision_id: revision.revision_id.clone(),

@@ -7358,7 +7358,7 @@ mod tests {
         let harness = StewardshipHarness::new();
         std::fs::write(
             harness._workspace.path().join("lib.rs"),
-            "pub fn run() {}\n",
+            "pub fn run() {}\npub fn stop() {}\n",
         )
         .unwrap();
         std::fs::write(
@@ -7384,7 +7384,7 @@ mod tests {
         };
         let owner = DocsObservationActor::new(binding.as_ref().clone());
         let mut supervisor = harness.start_supervisor(&assembly);
-        for pass in 0..4 {
+        for pass in 0..5 {
             supervisor.tick(1_000 + pass * 10).unwrap();
         }
         let assessed = owner.current_revision().unwrap().unwrap();
@@ -7402,7 +7402,35 @@ mod tests {
         assert!(source_report.complete);
         assert_eq!(source_report.files.len(), 1);
         assert!(!source_report.files[0].claims.is_empty());
+        let correspondence = assessed
+            .correspondence
+            .as_ref()
+            .expect("native correspondence before Task");
+        assert!(correspondence.complete);
+        let omitted = source_report.files[0]
+            .claims
+            .iter()
+            .find(|claim| claim.statement.contains("`stop`"))
+            .unwrap();
+        assert!(correspondence.readmes[0]
+            .claims
+            .iter()
+            .any(|claim| claim.source_claim_id == omitted.claim_id
+                && claim.readme_claim_ids.is_empty()));
+        assert!(correspondence.readmes[0]
+            .claims
+            .iter()
+            .any(|claim| !claim.readme_claim_ids.is_empty()));
         let operation = assessed.publication().unwrap();
+        assert!(operation.batch.objects.iter().any(|object| object
+            .qualifications
+            .get("correspondence")
+            .is_some_and(|value| value == "missing")));
+        assert!(operation
+            .batch
+            .relations
+            .iter()
+            .any(|relation| relation.relation_type == "docs_correspondence_match"));
         assert!(operation
             .batch
             .objects
@@ -7469,7 +7497,7 @@ mod tests {
             "# run\n\n`run` exists.\n\n",
         )
         .unwrap();
-        for pass in 0..3 {
+        for pass in 0..4 {
             supervisor.tick(1_101 + pass).unwrap();
         }
         let readme_changed = owner.current_revision().unwrap().unwrap();
@@ -7481,6 +7509,10 @@ mod tests {
             judge.source_calls.load(std::sync::atomic::Ordering::SeqCst),
             source_calls
         );
+        assert_ne!(
+            readme_changed.correspondence.as_ref().unwrap().input_id,
+            correspondence.input_id
+        );
         std::fs::write(
             harness._workspace.path().join("lib.rs"),
             "pub fn replacement() {}\n",
@@ -7489,9 +7521,11 @@ mod tests {
         supervisor.tick(1_110).unwrap();
         let changed = owner.current_revision().unwrap().unwrap();
         assert!(changed.claim_report.is_none());
+        assert!(changed.correspondence.is_none());
         assert_eq!(changed.predecessor, Some(readme_changed.revision_id));
         supervisor.tick(1_120).unwrap();
         supervisor.tick(1_130).unwrap();
+        supervisor.tick(1_140).unwrap();
         let successor = owner.current_revision().unwrap().unwrap();
         assert!(
             matches!(&successor.claim_report.as_ref().unwrap().readmes[0].disposition, ObservedClaimDisposition::Assessed { report } if !report.accepted)
@@ -7500,6 +7534,10 @@ mod tests {
             std::fs::read_to_string(harness._workspace.path().join("README.md")).unwrap(),
             "# run\n\n`run` exists.\n\n"
         );
+        assert!(successor.correspondence.as_ref().unwrap().readmes[0]
+            .claims
+            .iter()
+            .all(|claim| claim.readme_claim_ids.is_empty()));
         supervisor.request_shutdown(1_200).unwrap();
         drop(supervisor);
         drop(owner);

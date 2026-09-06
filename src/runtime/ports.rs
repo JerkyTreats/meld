@@ -1214,6 +1214,19 @@ pub(crate) struct ProductionDocsClaimJudge {
 
 #[async_trait]
 impl crate::docs::claim_validation::DocsClaimJudge for ProductionDocsClaimJudge {
+    async fn correspond(
+        &self,
+        request: &crate::docs::correspondence::DocsCorrespondenceRequest<'_>,
+    ) -> Result<crate::docs::correspondence::ProposedCorrespondence, crate::error::ApiError> {
+        crate::docs::claim_validation::ProviderDocsClaimJudge {
+            api: self.api.as_ref(),
+            config: &self.config,
+            event_context: None,
+        }
+        .correspond(request)
+        .await
+    }
+
     async fn extract_source(
         &self,
         request: &crate::docs::source_claims::DocsSourceClaimRequest<'_>,

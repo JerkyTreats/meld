@@ -24,6 +24,8 @@ pub struct DocsObservationRevision {
     pub claim_report: Option<super::claim_observation::ObservedDocsClaimReport>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_claims: Option<super::source_claims::DocsSourceClaimReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub correspondence: Option<super::correspondence::DocsCorrespondenceReport>,
 }
 
 impl DocsObservationRevision {
@@ -57,6 +59,7 @@ impl DocsObservationRevision {
             evidence,
             claim_report: None,
             source_claims: None,
+            correspondence: None,
         })
     }
 
@@ -102,6 +105,35 @@ impl DocsObservationRevision {
         Ok(self)
     }
 
+    pub(crate) fn with_correspondence(
+        mut self,
+        report: super::correspondence::DocsCorrespondenceReport,
+    ) -> Result<Self, String> {
+        if !report.complete
+            || self
+                .claim_report
+                .as_ref()
+                .is_none_or(|claims| claims.policy_identity != report.policy_identity)
+        {
+            return Err(
+                "Docs correspondence requires completed source and README judgments".into(),
+            );
+        }
+        report
+            .validate_capture(
+                &self.evidence,
+                self.source_claims
+                    .as_ref()
+                    .ok_or("Docs source claims absent")?,
+            )
+            .map_err(|error| error.to_string())?;
+        let seed =
+            serde_json::to_vec(&(&self.revision_id, &report)).map_err(|error| error.to_string())?;
+        self.revision_id = format!("docs-revision::{}", blake3::hash(&seed).to_hex());
+        self.correspondence = Some(report);
+        Ok(self)
+    }
+
     pub fn publication(&self) -> Result<OwnerPublicationOperation, String> {
         let mut expected = Self::new(
             self.predecessor.clone(),
@@ -115,6 +147,9 @@ impl DocsObservationRevision {
         }
         if let Some(report) = &self.claim_report {
             expected = expected.with_claim_report(report.clone())?;
+        }
+        if let Some(report) = &self.correspondence {
+            expected = expected.with_correspondence(report.clone())?;
         }
         if &expected != self {
             return Err("Docs observation revision identity is invalid".into());
@@ -357,6 +392,76 @@ impl DocsObservationRevision {
                             ]),
                         );
                     }
+                }
+            }
+        }
+        if let Some(report) = &self.correspondence {
+            let set = add(
+                "claim_correspondence_set",
+                &report.report_id,
+                serde_json::to_value(report).map_err(|error| error.to_string())?,
+            )?;
+            relate("docs_compares_source_to_readme", set.clone(), root.clone());
+            for readme in &report.readmes {
+                let readme_key = format!("{}::{}", self.scope.scope_id, readme.path);
+                for claim in &readme.claims {
+                    let key = format!(
+                        "{}::{}::{}",
+                        report.report_id, readme.path, claim.source_claim_id
+                    );
+                    let object = add(
+                        "source_readme_correspondence",
+                        &key,
+                        serde_json::to_value(claim).map_err(|error| error.to_string())?,
+                    )?;
+                    relate("docs_correspondence_in_set", object.clone(), set.clone());
+                    relate(
+                        "docs_correspondence_source",
+                        object.clone(),
+                        DomainObjectRef::new(OWNER_ID, "source_claim", &claim.source_claim_id)
+                            .map_err(|error| error.to_string())?,
+                    );
+                    relate(
+                        "docs_correspondence_readme",
+                        object.clone(),
+                        DomainObjectRef::new(OWNER_ID, "readme_observation", &readme_key)
+                            .map_err(|error| error.to_string())?,
+                    );
+                    for observed_claim in &claim.readme_claim_ids {
+                        let observed_key = format!(
+                            "{readme_key}::{}::{observed_claim}",
+                            readme
+                                .content_hash
+                                .as_ref()
+                                .ok_or("matched README content hash absent")?
+                        );
+                        relate(
+                            "docs_correspondence_match",
+                            object.clone(),
+                            DomainObjectRef::new(OWNER_ID, "observed_claim", observed_key)
+                                .map_err(|error| error.to_string())?,
+                        );
+                    }
+                    semantic_qualifications.insert(
+                        object,
+                        BTreeMap::from([
+                            ("readme_path".into(), readme.path.clone()),
+                            (
+                                "correspondence".into(),
+                                if claim.readme_claim_ids.is_empty() {
+                                    "missing"
+                                } else {
+                                    "represented"
+                                }
+                                .into(),
+                            ),
+                            ("claim_policy".into(), report.policy_identity.clone()),
+                            (
+                                "comparison_contract".into(),
+                                report.contract_revision.clone(),
+                            ),
+                        ]),
+                    );
                 }
             }
         }

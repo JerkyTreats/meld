@@ -331,6 +331,15 @@ pub struct DocsClaimJudgmentRequest<'a> {
 
 #[async_trait::async_trait]
 pub trait DocsClaimJudge: Send + Sync {
+    async fn correspond(
+        &self,
+        _request: &super::correspondence::DocsCorrespondenceRequest<'_>,
+    ) -> Result<super::correspondence::ProposedCorrespondence, ApiError> {
+        Err(ApiError::ConfigError(
+            "Docs correspondence judgment is not bound".into(),
+        ))
+    }
+
     async fn extract_source(
         &self,
         _request: &super::source_claims::DocsSourceClaimRequest<'_>,
@@ -357,6 +366,13 @@ pub struct ProviderDocsClaimJudge<'a, P: ?Sized> {
 impl<P: ProviderValidationPort + ProviderExecutionPort + ?Sized> DocsClaimJudge
     for ProviderDocsClaimJudge<'_, P>
 {
+    async fn correspond(
+        &self,
+        request: &super::correspondence::DocsCorrespondenceRequest<'_>,
+    ) -> Result<super::correspondence::ProposedCorrespondence, ApiError> {
+        super::correspondence::provider_correspondence(self.api, self.config, request).await
+    }
+
     async fn extract_source(
         &self,
         request: &super::source_claims::DocsSourceClaimRequest<'_>,

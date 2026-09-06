@@ -291,7 +291,62 @@ impl DocsObservationActor {
                     report,
                 )?;
             } else if revision.claim_report.is_some() {
-                return Ok((false, source_error));
+                if revision.correspondence.is_some() {
+                    return Ok((false, source_error));
+                }
+                let source_claims = revision
+                    .source_claims
+                    .as_ref()
+                    .expect("source claims prepared");
+                let input = super::correspondence::input_identity(
+                    &policy.policy,
+                    &revision.evidence,
+                    source_claims,
+                )
+                .map_err(|error| error.to_string())?;
+                let prior = self
+                    .binding
+                    .store
+                    .correspondence_progress(&self.binding_id, &input)?;
+                let report = if let Some(report) = prior.as_ref().filter(|report| report.complete) {
+                    report
+                        .validate_capture(&revision.evidence, source_claims)
+                        .map_err(|error| error.to_string())?;
+                    report.clone()
+                } else {
+                    let judge = self
+                        .binding
+                        .claim_judge
+                        .current()
+                        .ok_or("Docs correspondence provider is not bound")?;
+                    let runtime = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|error| error.to_string())?;
+                    runtime
+                        .block_on(super::correspondence::advance_correspondence(
+                            judge.as_ref(),
+                            &policy.policy,
+                            &revision.evidence,
+                            source_claims,
+                            prior.as_ref(),
+                            1,
+                        ))
+                        .map_err(|error| error.to_string())?
+                };
+                self.binding.store.save_correspondence_progress(
+                    &self.binding_id,
+                    &revision.revision_id,
+                    &report,
+                )?;
+                if !report.complete {
+                    return Ok((true, source_error));
+                }
+                revision = self.binding.store.prepare_correspondence(
+                    &self.binding_id,
+                    &revision.revision_id,
+                    report,
+                )?;
             } else {
                 let observation_id = &revision
                     .evidence
@@ -441,9 +496,33 @@ impl DocsObservationActor {
             },
             None => None,
         };
+        let correspondence_progress = match current.as_ref().zip(self.binding.claim_policy.as_ref())
+        {
+            Some((revision, policy)) => match revision.source_claims.as_ref() {
+                Some(sources) => match super::correspondence::input_identity(
+                    &policy.policy,
+                    &revision.evidence,
+                    sources,
+                ) {
+                    Ok(input) => self
+                        .binding
+                        .store
+                        .correspondence_progress(&self.binding_id, &input)?,
+                    Err(_) => None,
+                },
+                None => None,
+            },
+            None => None,
+        };
         let checkpoint = identity(
             "docs-checkpoint",
-            &(&self.binding_id, &head, &claim_progress, &source_progress),
+            &(
+                &self.binding_id,
+                &head,
+                &claim_progress,
+                &source_progress,
+                &correspondence_progress,
+            ),
         )?;
         let pending = head.as_ref().filter(|head| head.publication.is_none());
         let claim_obligation = current
@@ -476,6 +555,21 @@ impl DocsObservationActor {
                         .is_none_or(|report| report.policy_identity != policy.content_identity)
             })
             .map(|(revision, policy)| (&revision.revision_id, &policy.content_identity));
+        let correspondence_obligation = current
+            .as_ref()
+            .zip(self.binding.claim_policy.as_ref())
+            .filter(|(revision, policy)| {
+                revision
+                    .evidence
+                    .observation
+                    .as_ref()
+                    .is_some_and(|observation| !observation.readmes.is_empty())
+                    && revision
+                        .correspondence
+                        .as_ref()
+                        .is_none_or(|report| report.policy_identity != policy.content_identity)
+            })
+            .map(|(revision, policy)| (&revision.revision_id, &policy.content_identity));
         let mut binding_refs = vec![self.binding_id.clone()];
         if let Some(config) = &self.binding.claim_config {
             binding_refs.push(identity(
@@ -494,7 +588,13 @@ impl DocsObservationActor {
                     self.binding
                         .claim_policy
                         .as_ref()
-                        .map(|_| super::source_claims::SOURCE_CLAIM_CONTRACT.into()),
+                        .into_iter()
+                        .flat_map(|_| {
+                            [
+                                super::source_claims::SOURCE_CLAIM_CONTRACT.into(),
+                                super::correspondence::CORRESPONDENCE_CONTRACT.into(),
+                            ]
+                        }),
                 )
                 .chain(
                     self.binding
@@ -508,7 +608,12 @@ impl DocsObservationActor {
             proof_position_ref: checkpoint,
             unresolved_operation_summary_ref: identity(
                 "docs-pending",
-                &(pending, claim_obligation, source_obligation),
+                &(
+                    pending,
+                    claim_obligation,
+                    source_obligation,
+                    correspondence_obligation,
+                ),
             )?,
         })
     }
@@ -690,6 +795,179 @@ mod tests {
             });
         if let Some(judge) = judge {
             assert!(owner.binding.claim_judge.bind(judge));
+        }
+    }
+
+    #[test]
+    fn correspondence_resumes_per_readme_and_publishes_omissions_without_repair() {
+        use super::super::claim_observation::test_support::FixtureJudge;
+        use std::sync::atomic::Ordering;
+        let source = tempfile::tempdir().unwrap();
+        let storage = tempfile::tempdir().unwrap();
+        for directory in [".", "child"] {
+            let root = source.path().join(directory);
+            std::fs::create_dir_all(&root).unwrap();
+            std::fs::write(root.join("lib.rs"), "pub fn run() {}\npub fn stop() {}\n").unwrap();
+            std::fs::write(root.join("README.md"), "`run` exists.\n").unwrap();
+        }
+        let authority = EventAuthority::open(
+            sled::open(storage.path().join("events")).unwrap(),
+            EventAuthorityOpenOptions::default(),
+        )
+        .unwrap();
+        let judge = Arc::new(FixtureJudge::default());
+        let mut first = actor(source.path(), &storage.path().join("docs"), &authority);
+        enable_claims(&mut first, Some(judge.clone()));
+        for _ in 0..5 {
+            let tick = first.tick(WorkBudget { max_items: 1 });
+            assert!(tick.retryable_errors.is_empty(), "{tick:?}");
+        }
+        let assessed = first.current_revision().unwrap().unwrap();
+        assert!(assessed.claim_report.is_some());
+        let checkpoint = first.evidence().unwrap().proof_position_ref;
+        first.tick(WorkBudget { max_items: 1 });
+        assert_eq!(judge.correspondence_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(first.current_revision().unwrap(), Some(assessed.clone()));
+        assert_ne!(first.evidence().unwrap().proof_position_ref, checkpoint);
+        drop(first);
+        let mut resumed = actor(source.path(), &storage.path().join("docs"), &authority);
+        enable_claims(&mut resumed, Some(judge.clone()));
+        let tick = resumed.tick(WorkBudget { max_items: 1 });
+        assert!(tick.retryable_errors.is_empty(), "{tick:?}");
+        assert_eq!(judge.correspondence_calls.load(Ordering::SeqCst), 2);
+        let completed = resumed.current_revision().unwrap().unwrap();
+        let report = completed.correspondence.as_ref().unwrap();
+        assert!(report.complete);
+        assert_eq!(report.readmes.len(), 2);
+        assert!(report.readmes.iter().all(|readme| readme
+            .claims
+            .iter()
+            .any(|claim| claim.readme_claim_ids.is_empty())));
+        let operation = completed.publication().unwrap();
+        assert!(operation.batch.objects.iter().any(|object| object
+            .qualifications
+            .get("correspondence")
+            .is_some_and(|value| value == "missing")));
+        assert!(operation
+            .batch
+            .relations
+            .iter()
+            .any(|relation| relation.relation_type == "docs_correspondence_match"));
+        assert_eq!(
+            std::fs::read_to_string(source.path().join("README.md")).unwrap(),
+            "`run` exists.\n"
+        );
+        resumed.tick(WorkBudget { max_items: 1 });
+        assert_eq!(judge.correspondence_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(resumed.current_revision().unwrap(), Some(completed.clone()));
+        assert!(resumed
+            .binding
+            .store
+            .save_correspondence_progress(&resumed.binding_id, &assessed.revision_id, report)
+            .is_err());
+        std::fs::write(
+            source.path().join("README.md"),
+            "`run` exists.\n`stop` exists.\n",
+        )
+        .unwrap();
+        resumed.tick(WorkBudget { max_items: 1 });
+        assert!(resumed
+            .current_revision()
+            .unwrap()
+            .unwrap()
+            .correspondence
+            .is_none());
+        assert_eq!(
+            resumed
+                .binding
+                .store
+                .revision(&completed.revision_id)
+                .unwrap(),
+            Some(completed)
+        );
+    }
+
+    #[test]
+    fn completed_correspondence_recovers_at_each_publication_boundary_without_a_judge() {
+        use super::super::claim_observation::test_support::FixtureJudge;
+        for boundary in 0..3 {
+            let source = tempfile::tempdir().unwrap();
+            let storage = tempfile::tempdir().unwrap();
+            std::fs::write(
+                source.path().join("lib.rs"),
+                "pub fn run() {}\npub fn stop() {}\n",
+            )
+            .unwrap();
+            std::fs::write(source.path().join("README.md"), "`run` exists.\n").unwrap();
+            let authority = EventAuthority::open(
+                sled::open(storage.path().join("events")).unwrap(),
+                EventAuthorityOpenOptions::default(),
+            )
+            .unwrap();
+            let mut first = actor(source.path(), &storage.path().join("docs"), &authority);
+            enable_claims(&mut first, Some(Arc::new(FixtureJudge::default())));
+            for _ in 0..3 {
+                first.tick(WorkBudget { max_items: 1 });
+            }
+            let assessed = first.current_revision().unwrap().unwrap();
+            assert!(assessed.claim_report.is_some());
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let report = runtime
+                .block_on(super::super::correspondence::advance_correspondence(
+                    &FixtureJudge::default(),
+                    &first.binding.claim_policy.as_ref().unwrap().policy,
+                    &assessed.evidence,
+                    assessed.source_claims.as_ref().unwrap(),
+                    None,
+                    1,
+                ))
+                .unwrap();
+            first
+                .binding
+                .store
+                .save_correspondence_progress(&first.binding_id, &assessed.revision_id, &report)
+                .unwrap();
+            let pending = if boundary > 0 {
+                let pending = first
+                    .binding
+                    .store
+                    .prepare_correspondence(
+                        &first.binding_id,
+                        &assessed.revision_id,
+                        report.clone(),
+                    )
+                    .unwrap();
+                if boundary == 2 {
+                    authority
+                        .append_capability()
+                        .append_durable_proven(
+                            pending.envelope("docs-observation-test").unwrap(),
+                            AppendMode::Idempotent,
+                        )
+                        .unwrap();
+                }
+                Some(pending)
+            } else {
+                None
+            };
+            drop(first);
+            let mut recovered = actor(source.path(), &storage.path().join("docs"), &authority);
+            enable_claims(&mut recovered, None);
+            let tick = recovered.tick(WorkBudget { max_items: 1 });
+            assert!(tick.retryable_errors.is_empty(), "{boundary}: {tick:?}");
+            assert_eq!(tick.items_committed, 1);
+            let resumed = recovered.current_revision().unwrap().unwrap();
+            assert_eq!(resumed.correspondence, Some(report));
+            if let Some(pending) = pending {
+                assert_eq!(resumed, pending);
+            }
+            assert_eq!(
+                authority.watermark_capability().snapshot().unwrap().tip_seq,
+                4
+            );
         }
     }
 

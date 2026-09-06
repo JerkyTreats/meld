@@ -261,9 +261,46 @@ pub(crate) mod test_support {
     pub struct FixtureJudge {
         pub calls: AtomicUsize,
         pub source_calls: AtomicUsize,
+        pub correspondence_calls: AtomicUsize,
     }
     #[async_trait::async_trait]
     impl DocsClaimJudge for FixtureJudge {
+        async fn correspond(
+            &self,
+            request: &super::super::correspondence::DocsCorrespondenceRequest<'_>,
+        ) -> Result<super::super::correspondence::ProposedCorrespondence, ApiError> {
+            use super::super::correspondence::{ProposedCorrespondence, SourceCorrespondence};
+            self.correspondence_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(ProposedCorrespondence {
+                complete: true,
+                claims: request
+                    .sources
+                    .iter()
+                    .map(|source| {
+                        let symbol = source.claim.statement.split('`').nth(1);
+                        SourceCorrespondence {
+                            source_claim_id: source.claim.claim_id.clone(),
+                            readme_claim_ids: request
+                                .readme_claims
+                                .iter()
+                                .filter(|claim| {
+                                    symbol.is_some_and(|symbol| {
+                                        claim
+                                            .literal_requirements
+                                            .iter()
+                                            .any(|literal| literal == symbol)
+                                    })
+                                })
+                                .map(|claim| claim.claim_id.clone())
+                                .collect(),
+                            confidence: 1.0,
+                            rationale: "controlled fixture matches exact declared symbol".into(),
+                        }
+                    })
+                    .collect(),
+            })
+        }
+
         async fn extract_source(
             &self,
             request: &super::super::source_claims::DocsSourceClaimRequest<'_>,

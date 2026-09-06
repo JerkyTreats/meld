@@ -8,6 +8,7 @@ pub mod capability;
 pub mod claim_observation;
 pub mod claim_validation;
 pub mod contribution;
+pub mod correspondence;
 pub mod observation;
 pub mod observation_store;
 /// Regression fixture for the retired hand-composed docs image.
