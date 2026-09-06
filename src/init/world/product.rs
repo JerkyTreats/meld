@@ -54,6 +54,7 @@ pub fn product_declaration(
     source_owners: &BTreeSet<String>,
 ) -> Result<ProductDeclarationV1, TheoryRouterError> {
     let participants = [
+        ("docs.observation", "docs", ParticipantKind::BoundedActor),
         (
             "workspace.source",
             "workspace",
@@ -101,8 +102,10 @@ pub fn product_declaration(
         ),
     ]
     .into_iter()
-    .filter(|(participant_id, _, _)| {
-        *participant_id != "workspace.source" || source_owners.contains("workspace_fs")
+    .filter(|(participant_id, _, _)| match *participant_id {
+        "workspace.source" => source_owners.contains("workspace_fs"),
+        "docs.observation" => source_owners.contains("docs"),
+        _ => true,
     })
     .map(
         |(participant_id, owner_domain, kind)| ActivationParticipantSpec {

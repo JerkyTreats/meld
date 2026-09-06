@@ -1,0 +1,205 @@
+//! Durable Docs observation history and its single pending publication per bound scope.
+
+use super::capability::DocsEvidenceBundle;
+use super::publication::DocsObservationRevision;
+use meld_events::{DomainObjectRef, LedgerCursor};
+use meld_world_model::world_state::graph::contracts::OwnerPublicationScope;
+use serde::{Deserialize, Serialize};
+
+pub struct DocsObservationStore {
+    db: sled::Db,
+    records: sled::Tree,
+    mutation: std::sync::Mutex<()>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocsObservationHead {
+    pub revision_id: String,
+    pub ledger_id: meld_events::LedgerIdentity,
+    pub publication: Option<LedgerCursor>,
+}
+
+impl DocsObservationStore {
+    pub fn new(db: sled::Db) -> Result<Self, String> {
+        let records = db
+            .open_tree("docs_observations_v1")
+            .map_err(|e| e.to_string())?;
+        Ok(Self {
+            db,
+            records,
+            mutation: std::sync::Mutex::new(()),
+        })
+    }
+
+    pub fn head(&self, binding_id: &str) -> Result<Option<DocsObservationHead>, String> {
+        self.read(&format!("head::{binding_id}"))
+    }
+
+    pub fn revision(&self, revision_id: &str) -> Result<Option<DocsObservationRevision>, String> {
+        let revision: Option<DocsObservationRevision> =
+            self.read(&format!("revision::{revision_id}"))?;
+        if let Some(value) = &revision {
+            if value.revision_id != revision_id {
+                return Err("Docs revision key disagrees with its body".into());
+            }
+            value.publication()?;
+        }
+        Ok(revision)
+    }
+
+    pub(crate) fn prepare(
+        &self,
+        binding_id: &str,
+        ledger_id: meld_events::LedgerIdentity,
+        subject: &DomainObjectRef,
+        scope: &OwnerPublicationScope,
+        evidence: DocsEvidenceBundle,
+    ) -> Result<DocsObservationRevision, String> {
+        let _guard = self
+            .mutation
+            .lock()
+            .map_err(|_| "Docs observation lock poisoned")?;
+        let head = self.head(binding_id)?;
+        if head
+            .as_ref()
+            .is_some_and(|head| head.ledger_id != ledger_id)
+        {
+            return Err("Docs scope is bound to another Event ledger".into());
+        }
+        let prior = match &head {
+            Some(head) => Some(
+                self.revision(&head.revision_id)?
+                    .ok_or("Docs head revision is absent")?,
+            ),
+            None => None,
+        };
+        if let Some(prior) = &prior {
+            if &prior.subject != subject || &prior.scope != scope {
+                return Err("Docs binding changed semantic scope".into());
+            }
+            if head.as_ref().is_some_and(|head| head.publication.is_none())
+                || prior.evidence == evidence
+            {
+                return Ok(prior.clone());
+            }
+        }
+        let sequence = prior.as_ref().map_or(Ok(1), |prior| {
+            prior
+                .sequence
+                .checked_add(1)
+                .ok_or("Docs sequence exhausted")
+        })?;
+        let revision = DocsObservationRevision::new(
+            prior.map(|prior| prior.revision_id),
+            sequence,
+            subject.clone(),
+            scope.clone(),
+            evidence,
+        )?;
+        let next = DocsObservationHead {
+            revision_id: revision.revision_id.clone(),
+            ledger_id,
+            publication: None,
+        };
+        self.commit_head(binding_id, head.as_ref(), &next, Some(&revision))?;
+        self.flush()?;
+        Ok(revision)
+    }
+
+    pub(crate) fn record_publication(
+        &self,
+        binding_id: &str,
+        revision_id: &str,
+        proof: &meld_events::EventAppendProof,
+    ) -> Result<(), String> {
+        let _guard = self
+            .mutation
+            .lock()
+            .map_err(|_| "Docs observation lock poisoned")?;
+        let mut head = self
+            .head(binding_id)?
+            .ok_or("Docs publication has no prepared head")?;
+        let expected_head = head.clone();
+        let revision = self
+            .revision(revision_id)?
+            .ok_or("Docs publication revision is absent")?;
+        if head.revision_id != revision_id
+            || proof.ledger_id() != head.ledger_id
+            || proof.record_id() != revision.publication()?.event_record_id()
+        {
+            return Err("Docs publication proof names another prepared observation".into());
+        }
+        let position = LedgerCursor {
+            ledger_id: proof.ledger_id(),
+            after_seq: proof.seq(),
+        };
+        if head
+            .publication
+            .as_ref()
+            .is_some_and(|prior| prior != &position)
+        {
+            return Err("Docs publication has a conflicting Event position".into());
+        }
+        head.publication = Some(position);
+        self.commit_head(binding_id, Some(&expected_head), &head, None)?;
+        self.flush()
+    }
+
+    fn commit_head(
+        &self,
+        binding_id: &str,
+        expected: Option<&DocsObservationHead>,
+        next: &DocsObservationHead,
+        revision: Option<&DocsObservationRevision>,
+    ) -> Result<(), String> {
+        let head_key = format!("head::{binding_id}");
+        let expected = expected.map(encode).transpose()?;
+        let next = encode(next)?;
+        let revision = revision
+            .map(|revision| {
+                Ok::<_, String>((
+                    format!("revision::{}", revision.revision_id),
+                    encode(revision)?,
+                ))
+            })
+            .transpose()?;
+        self.records
+            .transaction(|tree| {
+                if tree.get(head_key.as_bytes())?.as_deref() != expected.as_deref() {
+                    return Err(sled::transaction::ConflictableTransactionError::Abort(
+                        "Docs observation head advanced concurrently".to_string(),
+                    ));
+                }
+                if let Some((key, value)) = &revision {
+                    if tree
+                        .get(key.as_bytes())?
+                        .is_some_and(|existing| existing.as_ref() != value.as_slice())
+                    {
+                        return Err(sled::transaction::ConflictableTransactionError::Abort(
+                            "Docs revision body conflicts with history".to_string(),
+                        ));
+                    }
+                    tree.insert(key.as_bytes(), value.as_slice())?;
+                }
+                tree.insert(head_key.as_bytes(), next.as_slice())?;
+                Ok(())
+            })
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn flush(&self) -> Result<(), String> {
+        self.db.flush().map(|_| ()).map_err(|e| e.to_string())
+    }
+
+    fn read<T: serde::de::DeserializeOwned>(&self, key: &str) -> Result<Option<T>, String> {
+        self.records
+            .get(key)
+            .map_err(|e| e.to_string())?
+            .map(|bytes| serde_json::from_slice(&bytes).map_err(|e| e.to_string()))
+            .transpose()
+    }
+}
+
+fn encode(value: &impl Serialize) -> Result<Vec<u8>, String> {
+    serde_json::to_vec(value).map_err(|e| e.to_string())
+}

@@ -399,6 +399,8 @@ pub struct TraversalOwnerRequirement {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OwnerCurrentnessPolicy {
+    /// The newest publication at the requested Event position must be complete.
+    /// A newer incomplete publication cannot silently select older evidence.
     LatestComplete,
 }
 

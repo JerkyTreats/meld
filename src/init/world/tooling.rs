@@ -219,6 +219,26 @@ pub(crate) fn compile_product_initialization<'a>(
             source_owners.insert(template.template.source_owner_id);
         }
     }
+    for component in &package_receipt.components {
+        if component.owner_revision.registry
+            == meld_world_model::world_state::graph::admission::OWNER_EVENT_ROUTE_REGISTRY
+        {
+            let routes = stores
+                .traversal_store
+                .owner_event_routes()
+                .map_err(|e| world_init_error(e.to_string()))?;
+            let route = routes
+                .into_iter()
+                .find(|route| {
+                    route.revision_ref().is_ok_and(|reference| {
+                        reference.id == component.owner_revision.id
+                            && reference.content_hash == component.owner_revision.content_hash
+                    })
+                })
+                .ok_or_else(|| world_init_error("prepared Graph owner route is absent"))?;
+            source_owners.insert(route.owner_id);
+        }
+    }
     let declaration = super::product::product_declaration(
         &binding.package.expression,
         &binding.package.principal_id,

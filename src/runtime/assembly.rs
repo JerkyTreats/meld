@@ -675,6 +675,7 @@ fn activate_exact_capabilities(
 
 /// Stewardship values shared by the composed actor factories.
 struct ComposedStewardship {
+    workspace_root: Option<PathBuf>,
     lifecycle: Option<ActivationLifecycleStore>,
     bindings: StewardshipActorBindings,
     theory: HydratedStewardshipTheory,
@@ -874,6 +875,7 @@ struct PublicationFactory {
 
 #[derive(Clone)]
 enum RuntimeSemanticHandleFactory {
+    DocsObservation(Box<crate::docs::runtime::DocsObservationBinding>),
     None,
     GraphReplay { graph_runtime: Arc<GraphRuntime> },
     EventAppend { port: ProductEventAppendPort },
@@ -887,6 +889,7 @@ enum RuntimeSemanticHandleFactory {
 }
 
 enum RuntimeSemanticHandle {
+    DocsObservation(Box<crate::docs::runtime::DocsObservationActor>),
     None,
     GraphReplay(GraphReplayRuntimeHandle),
     EventAppend(EventAppendRuntimeHandle),
@@ -1005,7 +1008,7 @@ pub struct RuntimeHandleSafePointReport {
 }
 
 #[derive(Debug, Clone)]
-struct NativeOwnerLifecycleSnapshot {
+pub(crate) struct NativeOwnerLifecycleSnapshot {
     checkpoint_ref: String,
     installed_revision_refs: Vec<String>,
     binding_refs: Vec<String>,
@@ -1428,6 +1431,7 @@ impl ProductRuntimeAssembly {
                     })
                     .transpose()?;
                 Some(ComposedStewardship {
+                    workspace_root: composition.binding.workspace_root.clone(),
                     lifecycle,
                     dispatch_slot: DispatchRouteSlot::default(),
                     network,
@@ -1745,6 +1749,10 @@ impl RuntimeFactoryRegistry {
             RuntimeFactoryDescriptor::new("event.append", vec![EventAppend])?,
             RuntimeFactoryDescriptor::new("event.replay", vec![EventReplay])?,
             RuntimeFactoryDescriptor::new("workspace.source", vec![EventAppend, Workspace])?,
+            RuntimeFactoryDescriptor::new(
+                "docs.observation",
+                vec![EventAppend, Workspace, Theory, WorldModel],
+            )?,
             RuntimeFactoryDescriptor::new(
                 "world_model.graph_replay",
                 vec![EventAppend, EventReplay, EventConsumerRegistry, WorldModel],
@@ -2128,6 +2136,54 @@ impl RuntimeSemanticHandleFactory {
             Ok(RuntimeSemanticHandleFactory::None)
         }
         match runtime_id {
+            "docs.observation" => {
+                let Some(composed) = stewardship else {
+                    return Ok(Self::None);
+                };
+                let Some(root) = &composed.workspace_root else {
+                    return Ok(Self::None);
+                };
+                let Some(resolved) = composed.theory.resolved.as_ref() else {
+                    return Ok(Self::None);
+                };
+                let Some(store) = stores.docs_observations.opened() else {
+                    return Ok(Self::None);
+                };
+                let Some(agent) = stores
+                    .agent_store
+                    .get_agent(&composed.bindings.agent_id)
+                    .map_err(|e| RuntimeAssemblyError::RuntimeHandleConstruction(e.to_string()))?
+                else {
+                    return Ok(Self::None);
+                };
+                let Some(crate::runtime::theory::PreparedCurationSelection::Installed(rule)) =
+                    resolved
+                        .native_curation_selection(stores, &agent)
+                        .map_err(|e| {
+                            RuntimeAssemblyError::RuntimeHandleConstruction(e.to_string())
+                        })?
+                else {
+                    return Ok(Self::None);
+                };
+                let Some(route) = stores
+                    .traversal_store
+                    .owner_event_route("docs", crate::docs::publication::OBSERVATION_EVENT)
+                    .map_err(|e| RuntimeAssemblyError::RuntimeHandleConstruction(e.to_string()))?
+                else {
+                    return Ok(Self::None);
+                };
+                Ok(Self::DocsObservation(Box::new(
+                    crate::docs::runtime::DocsObservationBinding {
+                        root: root.clone(),
+                        subject: composed.bindings.subject.clone(),
+                        scope: rule.rule.scope.clone(),
+                        session_id: composed.bindings.session_id.clone(),
+                        store: Arc::clone(store),
+                        events: ports.event_append().append_capability(),
+                        route,
+                    },
+                )))
+            }
             "world_model.graph_replay" => match graph_runtime {
                 Some(graph_runtime) => Ok(Self::GraphReplay {
                     graph_runtime: Arc::clone(graph_runtime),
@@ -2838,6 +2894,9 @@ impl RuntimeSemanticHandleFactory {
 
     fn build_handle(&self) -> RuntimeSemanticHandle {
         match self {
+            Self::DocsObservation(binding) => RuntimeSemanticHandle::DocsObservation(Box::new(
+                crate::docs::runtime::DocsObservationActor::new(binding.as_ref().clone()),
+            )),
             Self::None => RuntimeSemanticHandle::None,
             Self::GraphReplay { graph_runtime } => {
                 RuntimeSemanticHandle::GraphReplay(GraphReplayRuntimeHandle {
@@ -3041,6 +3100,7 @@ impl RuntimeSemanticHandle {
     ) -> Result<OwnerReadinessReceiptV1, RuntimeAssemblyError> {
         match self {
             Self::None => Err(missing_native_lifecycle_owner()),
+            Self::DocsObservation(handle) => handle.native_readiness(context),
             Self::GraphReplay(handle) => handle.native_readiness(context),
             Self::EventAppend(handle) => handle.native_readiness(context),
             Self::BeliefAssessment(handle) => handle.native_readiness(context),
@@ -3056,6 +3116,7 @@ impl RuntimeSemanticHandle {
     fn tick(&mut self, budget: WorkBudget) -> Option<WorkerTickReport> {
         match self {
             Self::None => None,
+            Self::DocsObservation(handle) => Some(handle.tick(budget)),
             Self::GraphReplay(handle) => Some(handle.tick(budget)),
             Self::EventAppend(handle) => Some(handle.tick()),
             Self::BeliefAssessment(handle) => Some(handle.tick(budget)),
@@ -3074,6 +3135,7 @@ impl RuntimeSemanticHandle {
     ) -> Result<OwnerStopReceiptV1, RuntimeAssemblyError> {
         match self {
             Self::None => Err(missing_native_lifecycle_owner()),
+            Self::DocsObservation(handle) => handle.native_stop(context),
             Self::GraphReplay(handle) => handle.native_stop(context),
             Self::EventAppend(handle) => handle.native_stop(context),
             Self::BeliefAssessment(handle) => handle.native_stop(context),
@@ -3092,6 +3154,7 @@ impl RuntimeSemanticHandle {
     ) -> Result<OwnerSafePointReceiptV1, RuntimeAssemblyError> {
         match self {
             Self::None => Err(missing_native_lifecycle_owner()),
+            Self::DocsObservation(handle) => handle.native_safe_point(context),
             Self::GraphReplay(handle) => handle.native_safe_point(context),
             Self::EventAppend(handle) => handle.native_safe_point(context),
             Self::BeliefAssessment(handle) => handle.native_safe_point(context),
@@ -3110,6 +3173,7 @@ impl RuntimeSemanticHandle {
     ) -> Result<OwnerReleaseReceiptV1, RuntimeAssemblyError> {
         match self {
             Self::None => Err(missing_native_lifecycle_owner()),
+            Self::DocsObservation(handle) => handle.native_release(context),
             Self::GraphReplay(handle) => handle.native_release(context),
             Self::EventAppend(handle) => handle.native_release(context),
             Self::BeliefAssessment(handle) => handle.native_release(context),
@@ -3129,6 +3193,7 @@ impl RuntimeSemanticHandle {
     ) -> Result<OwnerWaitReceiptV1, RuntimeAssemblyError> {
         match self {
             Self::None => Err(missing_native_lifecycle_owner()),
+            Self::DocsObservation(handle) => handle.native_wait(context, report),
             Self::GraphReplay(handle) => handle.native_wait(context, report),
             Self::EventAppend(handle) => handle.native_wait(context, report),
             Self::BeliefAssessment(handle) => handle.native_wait(context, report),
@@ -3144,6 +3209,7 @@ impl RuntimeSemanticHandle {
     fn resolves_wake(&self, wake_ref: &StructuralWakeRef) -> Result<bool, RuntimeAssemblyError> {
         match self {
             Self::None => Ok(false),
+            Self::DocsObservation(handle) => handle.native_resolves_wake(wake_ref),
             Self::GraphReplay(handle) => handle.native_resolves_wake(wake_ref),
             Self::EventAppend(handle) => handle.native_resolves_wake(wake_ref),
             Self::BeliefAssessment(handle) => handle.native_resolves_wake(wake_ref),
@@ -3161,7 +3227,7 @@ fn missing_native_lifecycle_owner() -> RuntimeAssemblyError {
     RuntimeAssemblyError::SupervisorHandoff("native lifecycle owner is absent".to_string())
 }
 
-trait NativeTransitionProof {
+pub(crate) trait NativeTransitionProof {
     fn generation_id(&self) -> &str;
     fn incarnation_id(&self) -> &str;
     fn proof_ref(&self) -> &str;
@@ -3195,7 +3261,7 @@ impl NativeTransitionProof for meld_execution::lifecycle::NativeLifecycleTransit
     }
 }
 
-fn verified_native_transition<T: NativeTransitionProof>(
+pub(crate) fn verified_native_transition<T: NativeTransitionProof>(
     context: &ParticipantLifecycleContextV1,
     transition: T,
 ) -> Result<String, RuntimeAssemblyError> {
@@ -3210,7 +3276,7 @@ fn verified_native_transition<T: NativeTransitionProof>(
     Ok(transition.proof_ref().to_string())
 }
 
-trait NativeOwnerLifecycle {
+pub(crate) trait NativeOwnerLifecycle {
     fn native_snapshot(&self) -> Result<NativeOwnerLifecycleSnapshot, RuntimeAssemblyError>;
     fn native_readiness(
         &mut self,
@@ -3239,7 +3305,7 @@ trait NativeOwnerLifecycle {
     ) -> Result<bool, RuntimeAssemblyError>;
 }
 
-fn owner_readiness_receipt(
+pub(crate) fn owner_readiness_receipt(
     context: &ParticipantLifecycleContextV1,
     snapshot: NativeOwnerLifecycleSnapshot,
     transition_proof_ref: String,
@@ -3258,7 +3324,7 @@ fn owner_readiness_receipt(
         .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))
 }
 
-fn owner_wait_receipt(
+pub(crate) fn owner_wait_receipt(
     context: &ParticipantLifecycleContextV1,
     snapshot: NativeOwnerLifecycleSnapshot,
     report: &WorkerTickReport,
@@ -3305,7 +3371,7 @@ fn owner_wait_receipt(
     .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))
 }
 
-fn owner_safe_point_receipt(
+pub(crate) fn owner_safe_point_receipt(
     context: &ParticipantLifecycleContextV1,
     snapshot: NativeOwnerLifecycleSnapshot,
     transition_proof_ref: String,
@@ -3319,7 +3385,7 @@ fn owner_safe_point_receipt(
     .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))
 }
 
-fn owner_stop_receipt(
+pub(crate) fn owner_stop_receipt(
     context: &ParticipantLifecycleContextV1,
     snapshot: NativeOwnerLifecycleSnapshot,
     transition_proof_ref: String,
@@ -3328,7 +3394,7 @@ fn owner_stop_receipt(
         .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))
 }
 
-fn owner_release_receipt(
+pub(crate) fn owner_release_receipt(
     context: &ParticipantLifecycleContextV1,
     _snapshot: NativeOwnerLifecycleSnapshot,
     transition_proof_ref: String,
@@ -5166,7 +5232,7 @@ mod tests {
             assembly.supervisor_store().path(),
             temp.path().join("supervisor.sled")
         );
-        assert_eq!(assembly.registry().len(), 12);
+        assert_eq!(assembly.registry().len(), 13);
         assert!(assembly
             .registry()
             .contains(AGENT_RECONCILIATION_RUNTIME_ID));
@@ -5200,7 +5266,7 @@ mod tests {
             description.supervisor_store_path,
             expected_root.join("supervisor.sled")
         );
-        assert_eq!(description.desired_runtime_state.len(), 12);
+        assert_eq!(description.desired_runtime_state.len(), 13);
         assert!(!description.product_root.exists());
         assert!(!description.supervisor_store_path.exists());
     }
@@ -5217,7 +5283,7 @@ mod tests {
 
         assert_eq!(second.product_root(), temp.path());
         assert!(second.registry().contains("execution.publication"));
-        assert_eq!(second.desired_runtime_state().len(), 12);
+        assert_eq!(second.desired_runtime_state().len(), 13);
     }
 
     #[test]
@@ -5242,7 +5308,7 @@ mod tests {
                 .iter()
                 .filter(|state| state.enabled)
                 .count(),
-            10
+            11
         );
     }
 
@@ -6374,7 +6440,7 @@ mod tests {
         let package = assembly.supervisor_startup_package();
 
         assert_eq!(package.product_root, temp.path());
-        assert_eq!(package.handle_factories.len(), 12);
+        assert_eq!(package.handle_factories.len(), 13);
         assert_eq!(package.default_work_budget.max_items, 64);
         assert_eq!(package.lifecycle_config.heartbeat_interval_ms, 1_000);
         assert_eq!(package.lifecycle_config.lease_duration_ms, 15 * 60 * 1_000);
@@ -7055,6 +7121,178 @@ mod tests {
     }
 
     #[test]
+    fn installed_docs_publishes_current_observations_before_task_admission() {
+        use crate::docs::runtime::DocsObservationActor;
+        use meld_world_model::world_state::graph::contracts::{
+            TraversalCutRequest, TraversalCutStatus, TraversalOwnerRequirement,
+        };
+        let harness = StewardshipHarness::new();
+        std::fs::write(
+            harness._workspace.path().join("lib.rs"),
+            "pub fn run() {}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            harness._workspace.path().join("README.md"),
+            "# Tool\n\n`run` starts it.\n",
+        )
+        .unwrap();
+        {
+            let assembly = harness.assembly();
+            harness.run_world_genesis(&assembly);
+        }
+        let assembly = harness.assembly();
+        harness.bind_production_routes(&assembly);
+        assert_eq!(
+            assembly
+                .registration_set()
+                .unwrap()
+                .kind_of("docs.observation"),
+            Some(RegistrationKind::ActiveActor)
+        );
+        let RuntimeSemanticHandleFactory::DocsObservation(binding) = &assembly
+            .handle_factories()
+            .get("docs.observation")
+            .unwrap()
+            .semantic
+        else {
+            panic!("native Docs factory absent")
+        };
+        let owner = DocsObservationActor::new(binding.as_ref().clone());
+        assert!(owner.current_revision().unwrap().is_none());
+        let mut supervisor = harness.start_supervisor(&assembly);
+        for pass in 0..4 {
+            supervisor.tick(1_000 + pass * 10).unwrap();
+        }
+        let first = owner.current_revision().unwrap().unwrap();
+        assert_eq!(first.sequence, 1);
+        let operation = first.publication().unwrap();
+        assert!(operation
+            .batch
+            .objects
+            .iter()
+            .any(|object| object.object_ref.object_kind == "observed_claim"));
+        let cut_request = |position| {
+            TraversalCutRequest {
+            owners: vec![TraversalOwnerRequirement {
+                event_source: None,
+                owner_id: "docs".into(),
+                scope: first.scope.clone(),
+                required: true,
+            }],
+            scope: first.scope.clone(),
+            currentness: meld_world_model::world_state::graph::contracts::OwnerCurrentnessPolicy::LatestComplete,
+            event_position: position,
+        }
+        };
+        let cursor = assembly.graph_runtime().durable_event_cursor().unwrap();
+        let cut = meld_world_model::TraversalQuery::new(assembly.stores().traversal_store.as_ref())
+            .cut(&cut_request(cursor))
+            .unwrap();
+        assert_eq!(cut.status, TraversalCutStatus::Complete);
+        assert_eq!(cut.receipts[0].revision_id, first.revision_id);
+        let RuntimeSemanticHandleFactory::TaskAdmission(execution) = &assembly
+            .handle_factories()
+            .get("execution.task_admission")
+            .unwrap()
+            .semantic
+        else {
+            panic!("Execution factory absent")
+        };
+        assert!(execution
+            .network
+            .lock()
+            .unwrap()
+            .state()
+            .admissions
+            .is_empty());
+        std::fs::remove_file(harness._workspace.path().join("README.md")).unwrap();
+        for pass in 0..4 {
+            supervisor.tick(1_100 + pass * 10).unwrap();
+        }
+        let next = owner.current_revision().unwrap().unwrap();
+        assert_eq!(next.predecessor, Some(first.revision_id.clone()));
+        assert!(matches!(
+            next.evidence.observation.as_ref().unwrap().readmes[0].state,
+            crate::docs::observation::ObservedReadmeState::Missing
+        ));
+        let cursor = assembly.graph_runtime().durable_event_cursor().unwrap();
+        let cut = meld_world_model::TraversalQuery::new(assembly.stores().traversal_store.as_ref())
+            .cut(&cut_request(cursor))
+            .unwrap();
+        assert_eq!(cut.status, TraversalCutStatus::Complete);
+        assert_eq!(cut.receipts[0].revision_id, next.revision_id);
+        std::fs::remove_dir_all(harness._workspace.path()).unwrap();
+        for pass in 0..4 {
+            supervisor.tick(1_150 + pass * 10).unwrap();
+        }
+        let unavailable = owner.current_revision().unwrap().unwrap();
+        assert_eq!(unavailable.predecessor, Some(next.revision_id.clone()));
+        assert!(!unavailable
+            .publication()
+            .unwrap()
+            .batch
+            .completeness
+            .failures
+            .is_empty());
+        let cursor = assembly.graph_runtime().durable_event_cursor().unwrap();
+        let cut = meld_world_model::TraversalQuery::new(assembly.stores().traversal_store.as_ref())
+            .cut(&cut_request(cursor))
+            .unwrap();
+        assert_eq!(cut.status, TraversalCutStatus::Incomplete);
+        assert!(cut.receipts.is_empty());
+        std::fs::create_dir(harness._workspace.path()).unwrap();
+        std::fs::write(
+            harness._workspace.path().join("lib.rs"),
+            "pub fn run() {}\n",
+        )
+        .unwrap();
+        supervisor.request_shutdown(1_200).unwrap();
+        drop(supervisor);
+        drop(owner);
+        drop(assembly);
+        let reopened = harness.assembly();
+        let RuntimeSemanticHandleFactory::DocsObservation(binding) = &reopened
+            .handle_factories()
+            .get("docs.observation")
+            .unwrap()
+            .semantic
+        else {
+            panic!("reopened Docs factory absent")
+        };
+        let owner = DocsObservationActor::new(binding.as_ref().clone());
+        assert_eq!(owner.current_revision().unwrap(), Some(unavailable.clone()));
+        harness.bind_production_routes(&reopened);
+        let mut command = SupervisorStartCommand::new("docs-reopened", 2_000);
+        command.registration_set = reopened.registration_set().cloned();
+        let mut successor =
+            RuntimeSupervisor::start(reopened.supervisor_startup_package(), command).unwrap();
+        for pass in 0..4 {
+            successor.tick(2_100 + pass * 10).unwrap();
+        }
+        let restored = owner.current_revision().unwrap().unwrap();
+        assert_eq!(restored.sequence, unavailable.sequence + 1);
+        assert_eq!(restored.predecessor, Some(unavailable.revision_id.clone()));
+        assert_eq!(restored.evidence, next.evidence);
+        assert_ne!(restored.revision_id, next.revision_id);
+        let cursor = reopened.graph_runtime().durable_event_cursor().unwrap();
+        let cut = meld_world_model::TraversalQuery::new(reopened.stores().traversal_store.as_ref())
+            .cut(&cut_request(cursor))
+            .unwrap();
+        assert_eq!(cut.status, TraversalCutStatus::Complete);
+        assert_eq!(cut.receipts[0].revision_id, restored.revision_id);
+        successor.request_shutdown(2_200).unwrap();
+        assert_eq!(
+            binding.store.revision(&unavailable.revision_id).unwrap(),
+            Some(unavailable)
+        );
+        assert_eq!(
+            binding.store.revision(&first.revision_id).unwrap(),
+            Some(first)
+        );
+    }
+
+    #[test]
     fn installed_startup_executes_confirms_and_accepts_belief_before_goal_satisfaction() {
         prove_installed_startup(StartupCallback::Normal);
     }
@@ -7729,12 +7967,13 @@ mod tests {
 
         let set = assembly.registration_set().unwrap();
 
-        assert_eq!(set.registrations.len(), 9);
+        assert_eq!(set.registrations.len(), 10);
         assert_eq!(
             set.kind_of("workspace.source"),
             Some(RegistrationKind::PassiveService)
         );
         for active in [
+            "docs.observation",
             "world_model.graph_replay",
             "world_model.belief_assessment",
             "world_model.evidence_ingestion",
@@ -8145,6 +8384,7 @@ mod tests {
         );
 
         let bound = [
+            "docs.observation",
             "world_model.graph_replay",
             "world_model.belief_assessment",
             "world_model.evidence_ingestion",
@@ -8208,7 +8448,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(current.admission_open());
-        assert_eq!(current.readiness.len(), 9);
+        assert_eq!(current.readiness.len(), 10);
         assert!(current.readiness.values().all(|receipt| {
             !receipt.native_evidence.installed_revision_refs.is_empty()
                 && !receipt.native_evidence.binding_refs.is_empty()
@@ -8310,15 +8550,15 @@ mod tests {
             .all(|generation| generation.status
                 == crate::runtime::lifecycle::ActivationGenerationStatus::Retired));
         let retired = &lifecycle.generations[&generation_id];
-        assert_eq!(retired.stop_receipts.len(), 9);
-        assert_eq!(retired.release_receipts.len(), 9);
-        assert_eq!(retired.safe_points.len(), 8);
+        assert_eq!(retired.stop_receipts.len(), 10);
+        assert_eq!(retired.release_receipts.len(), 10);
+        assert_eq!(retired.safe_points.len(), 9);
         assert_eq!(retired.passive_fences.len(), 1);
         assert!(retired
             .retirement
             .as_ref()
             .is_some_and(
-                |receipt| receipt.stop_receipts.len() == 9 && receipt.release_receipts.len() == 9
+                |receipt| receipt.stop_receipts.len() == 10 && receipt.release_receipts.len() == 10
             ));
     }
 

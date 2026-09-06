@@ -438,6 +438,10 @@ impl RuntimeAdapterPorts {
 }
 
 impl ProductEventAppendPort {
+    pub(crate) fn append_capability(&self) -> meld_events::EventAppendCapability {
+        self.append.clone()
+    }
+
     pub fn watermark_capability(&self) -> EventWatermarkCapability {
         self.watermark.clone()
     }

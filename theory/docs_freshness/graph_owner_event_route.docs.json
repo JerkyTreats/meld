@@ -1,0 +1,7 @@
+{
+  "route_id": "docs-owner-observation",
+  "owner_id": "docs",
+  "event_type": "docs.observation",
+  "enumeration_rule_revision": "docs.observation.v1",
+  "complete_event_source": false
+}

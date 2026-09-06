@@ -48,7 +48,8 @@ impl<'a> TraversalQuery<'a> {
         Self { store }
     }
 
-    /// Select the latest complete revision for every explicit owner scope.
+    /// Select the newest revision at the requested Event position for each owner scope.
+    /// A newer incomplete publication prevents using earlier evidence as current.
     pub fn cut(&self, request: &TraversalCutRequest) -> Result<TraversalCut, StorageError> {
         request.validate()?;
         let request = request.normalized();
@@ -98,8 +99,6 @@ impl<'a> TraversalQuery<'a> {
                             .event_source
                             .as_ref()
                             .is_none_or(|source| publication.source_route.as_ref() == Some(source))
-                        && (requirement.event_source.is_some()
-                            || batch.completeness.status == OwnerCompletenessStatus::Complete)
                 })
                 .max_by(|left, right| {
                     (left.source_event.seq, &left.operation.operation_id)
@@ -806,12 +805,12 @@ mod owner_publication_tests {
     }
 
     #[test]
-    fn latest_complete_ignores_newer_incomplete_and_raw_events_cannot_satisfy_a_cut() {
+    fn newer_incomplete_owner_blocks_current_cut_but_preserves_historical_evidence() {
         let temp = tempfile::tempdir().unwrap();
         let fixture = GraphRuntimeTestFixture::open(sled::open(temp.path()).unwrap()).unwrap();
         let complete = operation("dependency_security", "repo-a", "revision-1", true);
         let incomplete = operation("dependency_security", "repo-a", "revision-2", false);
-        fixture
+        let first = fixture
             .append(owner_publication_envelope("session-a", &complete).unwrap())
             .unwrap();
         let latest = fixture
@@ -842,8 +841,20 @@ mod owner_publication_tests {
         let cut = query
             .cut(&cut_request("dependency_security", "repo-a", position))
             .unwrap();
-        assert_eq!(cut.status, TraversalCutStatus::Complete);
-        assert_eq!(cut.receipts[0].revision_id, "revision-1");
+        assert_eq!(cut.status, TraversalCutStatus::Incomplete);
+        assert!(cut.receipts.is_empty());
+        let historical = query
+            .cut(&cut_request(
+                "dependency_security",
+                "repo-a",
+                LedgerCursor {
+                    ledger_id: fixture.ledger_identity(),
+                    after_seq: first.seq,
+                },
+            ))
+            .unwrap();
+        assert_eq!(historical.status, TraversalCutStatus::Complete);
+        assert_eq!(historical.receipts[0].revision_id, "revision-1");
         let missing = query
             .cut(&cut_request("workspace_fs", "scope-a", position))
             .unwrap();

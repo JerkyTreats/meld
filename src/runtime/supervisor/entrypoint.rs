@@ -2109,7 +2109,7 @@ mod tests {
         assert_eq!(status.instance_id, "instance-a");
         assert_eq!(status.product_root, temp.path());
         assert_eq!(status.instance_status, RuntimeInstanceStatus::Running);
-        assert_eq!(status.runtimes.len(), 12);
+        assert_eq!(status.runtimes.len(), 13);
         // Only the two roles with concrete semantic
         // bodies start; the remaining enabled roles stay unresolved instead
         // of leasing as healthy no-op placeholders.
@@ -2162,7 +2162,7 @@ mod tests {
             .iter()
             .filter(|runtime| runtime.desired_enabled && !runtime.handle_started)
             .collect::<Vec<_>>();
-        assert_eq!(body_less.len(), 9);
+        assert_eq!(body_less.len(), 10);
         for runtime in body_less {
             assert_ne!(
                 runtime.health_status,

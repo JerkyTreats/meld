@@ -205,6 +205,9 @@ pub struct OpenProductStores {
     pub authority_policy_registry: ScopedResource<Arc<AuthorityPolicyRegistryStore>>,
     /// Docs-owned exact claim-policy registry.
     pub claim_policy_registry: ScopedResource<Arc<DocsClaimPolicyRegistryStore>>,
+    /// Docs-owned observation history and pending native publications.
+    pub docs_observations:
+        ScopedResource<Arc<crate::docs::observation_store::DocsObservationStore>>,
     /// Read-only historical root installation receipts resolved by exact id.
     pub theory_receipts: ScopedResource<Arc<TheoryInstallationReceiptStore>>,
     /// Generic append-only PDS package receipts and selection heads.
@@ -418,6 +421,7 @@ impl OpenProductStores {
             capability_contract_registry,
             authority_policy_registry,
             claim_policy_registry,
+            docs_observations,
             theory_receipts,
             pds_packages,
             pds_products,
@@ -446,6 +450,15 @@ impl OpenProductStores {
                     ),
                 ),
                 ScopedResource::open(
+                    "docs_observations",
+                    Arc::new(
+                        crate::docs::observation_store::DocsObservationStore::new(
+                            theory_db.clone(),
+                        )
+                        .map_err(ProductStorageError::Io)?,
+                    ),
+                ),
+                ScopedResource::open(
                     "theory_receipts",
                     Arc::new(
                         TheoryInstallationReceiptStore::new(theory_db.clone())
@@ -467,6 +480,7 @@ impl OpenProductStores {
                 ScopedResource::closed("capability_contract_registry"),
                 ScopedResource::closed("authority_policy_registry"),
                 ScopedResource::closed("claim_policy_registry"),
+                ScopedResource::closed("docs_observations"),
                 ScopedResource::closed("theory_receipts"),
                 ScopedResource::closed("pds_packages"),
                 ScopedResource::closed("pds_products"),
@@ -534,6 +548,7 @@ impl OpenProductStores {
             capability_contract_registry,
             authority_policy_registry,
             claim_policy_registry,
+            docs_observations,
             theory_receipts,
             pds_packages,
             pds_products,

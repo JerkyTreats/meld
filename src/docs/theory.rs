@@ -43,7 +43,7 @@ mod tests {
             OpenProductStores::open(&ProductStorageLayout::from_root(root.path())).unwrap();
         let receipt = install_package(&stores, &package_root(), 1).unwrap();
         assert_eq!(receipt.package_id, DOCS_PACKAGE_ID);
-        assert_eq!(receipt.components.len(), 13);
+        assert_eq!(receipt.components.len(), 14);
 
         let catalog = current_product_route_catalog(&stores).unwrap();
         let package_store =
@@ -52,7 +52,7 @@ mod tests {
             .resolve(&receipt.receipt_id)
             .unwrap();
         assert_eq!(resolved.receipt, receipt);
-        assert_eq!(resolved.components_by_route.len(), 9);
+        assert_eq!(resolved.components_by_route.len(), 10);
         assert_eq!(
             resolved
                 .components_by_route
@@ -121,7 +121,7 @@ mod tests {
             "docs-belief-family",
             "steward documentation freshness",
             "docs_workspace_local",
-            &std::collections::BTreeSet::from(["workspace_fs".into()]),
+            &std::collections::BTreeSet::from(["workspace_fs".into(), "docs".into()]),
         )
         .unwrap();
         assert!(ProductCompilationReceiptV1::compile(&declaration, Vec::new(), 1).is_err());

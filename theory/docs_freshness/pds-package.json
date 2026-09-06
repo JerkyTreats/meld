@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "package_id": "meld.docs-freshness",
-  "package_version": "1.1.0",
+  "package_version": "1.2.0",
   "description": "Documentation freshness stewardship theory",
   "imports": [],
   "components": [
@@ -353,6 +353,22 @@
         "kind": "relative_file",
         "path": "epistemic_rule.docs_freshness.json",
         "content_hash": "4ea17c286bc3c353a4497609dd8472fb3860d3d3be0b3a05e61889f48037031d"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "docs-graph-event-route",
+      "owner_component_id": "docs-owner-observation",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "graph-owner-event-route",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "graph_owner_event_route.docs.json",
+        "content_hash": "da068b96a0ed048f3e4a28d8755138eaed62ac712c18bbdb1838f8e81e780bec"
       },
       "requires": []
     }
