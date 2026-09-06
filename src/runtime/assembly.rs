@@ -5474,6 +5474,224 @@ mod tests {
     }
 
     #[test]
+    fn reopened_agent_does_not_first_admit_a_task_from_a_stale_plan() {
+        for (changed, admitted) in [(true, false), (false, false), (true, true)] {
+            let harness = StewardshipHarness::new();
+            let subject = stewardship_subject_ref(&harness.binding).unwrap();
+            {
+                let assembly = harness.assembly();
+                harness.run_world_genesis(&assembly);
+                assembly
+                    .ports()
+                    .event_append()
+                    .append_envelope_idempotent(workspace_owner_publication(
+                        subject.clone(),
+                        "workspace-before-interruption",
+                    ))
+                    .unwrap();
+                assembly
+                    .graph_runtime()
+                    .catch_up_bounded(GraphCatchUpBudget { max_items: 128 })
+                    .unwrap();
+            }
+            let attempted = Arc::new(Mutex::new(None));
+            let (authorization, predecessor, fence) = {
+                let mut assembly = harness.assembly();
+                let RuntimeSemanticHandleFactory::AgentActor(factory) = &mut assembly
+                    .handle_factories
+                    .factories
+                    .get_mut(AGENT_RECONCILIATION_RUNTIME_ID)
+                    .unwrap()
+                    .semantic
+                else {
+                    unreachable!()
+                };
+                factory.execution = Arc::new(InterruptedTaskOffer {
+                    inner: factory.execution.clone(),
+                    attempted: attempted.clone(),
+                    admitted,
+                });
+                let _supervisor = harness.start_supervisor(&assembly);
+                let mut handles: Vec<_> = [
+                    "world_model.belief_assessment",
+                    "world_model.standing_curation",
+                    AGENT_RECONCILIATION_RUNTIME_ID,
+                ]
+                .into_iter()
+                .map(|id| {
+                    let mut handle = assembly.handle_factories().get(id).unwrap().build_handle();
+                    handle
+                        .start_after_lease(RuntimeLeaseContext {
+                            runtime_id: id.into(),
+                            lease_id: format!("interrupted-offer::{id}"),
+                        })
+                        .unwrap();
+                    handle
+                })
+                .collect();
+                for _ in 0..40 {
+                    assembly
+                        .graph_runtime()
+                        .catch_up_bounded(GraphCatchUpBudget { max_items: 128 })
+                        .unwrap();
+                    for handle in &mut handles {
+                        handle.tick(WorkBudget { max_items: 8 }).unwrap();
+                    }
+                    if attempted.lock().unwrap().is_some() {
+                        break;
+                    }
+                }
+                let authorization = attempted
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .expect("Agent must persist a Task offer before interruption");
+                let predecessor = assembly
+                    .stores()
+                    .agent_store
+                    .current_reconciliation_plan(&authorization.goal_id)
+                    .unwrap()
+                    .unwrap();
+                let RuntimeSemanticHandleFactory::AgentActor(factory) = &assembly
+                    .handle_factories()
+                    .get(AGENT_RECONCILIATION_RUNTIME_ID)
+                    .unwrap()
+                    .semantic
+                else {
+                    unreachable!()
+                };
+                let fence = factory.authority_port.observe().unwrap().unwrap();
+                assembly.flush_product_boundary().unwrap();
+                (authorization, predecessor, fence)
+            };
+            let assembly = harness.assembly();
+            let RuntimeSemanticHandleFactory::AgentActor(factory) = &assembly
+                .handle_factories()
+                .get(AGENT_RECONCILIATION_RUNTIME_ID)
+                .unwrap()
+                .semantic
+            else {
+                unreachable!()
+            };
+            assert_eq!(factory.authority_port.observe().unwrap(), Some(fence));
+            if changed {
+                assembly
+                    .ports()
+                    .event_append()
+                    .append_envelope_idempotent(workspace_owner_publication(
+                        subject,
+                        "workspace-after-interruption",
+                    ))
+                    .unwrap();
+                assembly
+                    .graph_runtime()
+                    .catch_up_bounded(GraphCatchUpBudget { max_items: 128 })
+                    .unwrap();
+            }
+            let mut handle = assembly
+                .handle_factories()
+                .get(AGENT_RECONCILIATION_RUNTIME_ID)
+                .unwrap()
+                .build_handle();
+            handle
+                .start_after_lease(RuntimeLeaseContext {
+                    runtime_id: AGENT_RECONCILIATION_RUNTIME_ID.into(),
+                    lease_id: "resumed-offer".into(),
+                })
+                .unwrap();
+            let report = handle.tick(WorkBudget { max_items: 8 }).unwrap();
+            assert!(report.fatal_errors.is_empty(), "{report:?}");
+            let RuntimeSemanticHandleFactory::TaskAdmission(execution) = &assembly
+                .handle_factories()
+                .get("execution.task_admission")
+                .unwrap()
+                .semantic
+            else {
+                unreachable!()
+            };
+            let network = execution.network.lock().unwrap();
+            let old_admissions: Vec<_> = network
+                .state()
+                .admissions
+                .values()
+                .filter(|record| {
+                    record.request.lineage.authorization_id == authorization.authorization_id
+                })
+                .collect();
+            let current = assembly
+                .stores()
+                .agent_store
+                .current_reconciliation_plan(&authorization.goal_id)
+                .unwrap()
+                .unwrap();
+            if changed && !admitted {
+                assert!(
+                    old_admissions.is_empty(),
+                    "stale recovery created the first predecessor admission"
+                );
+                assert!(network.state().tasks.is_empty());
+                assert!(network.state().claims.is_empty());
+                assert!(network.state().outcomes.is_empty());
+                assert_ne!(
+                    current.plan_revision_id, predecessor.plan_revision_id,
+                    "{report:?}"
+                );
+                assert_eq!(
+                    current.predecessor_plan_revision_id.as_ref(),
+                    Some(&predecessor.plan_revision_id)
+                );
+            } else {
+                assert_eq!(
+                    old_admissions.len(),
+                    1,
+                    "current offers recover and admitted predecessors remain observable"
+                );
+                assert_eq!(current.plan_revision_id, predecessor.plan_revision_id);
+            }
+        }
+    }
+
+    struct InterruptedTaskOffer {
+        inner: Arc<dyn meld_world_model::AgentExecutionPort>,
+        attempted: Arc<Mutex<Option<meld_world_model::AgentProductAuthorization>>>,
+        admitted: bool,
+    }
+
+    impl meld_world_model::AgentExecutionPort for InterruptedTaskOffer {
+        fn submit(
+            &self,
+            authorization: &meld_world_model::AgentProductAuthorization,
+        ) -> Result<meld_world_model::AgentExecutionPosition, meld_world_model::error::StorageError>
+        {
+            if self.admitted {
+                self.inner.submit(authorization)?;
+            }
+            *self.attempted.lock().unwrap() = Some(authorization.clone());
+            Err(meld_world_model::error::StorageError::InvalidPath(
+                "injected interruption at the consumer boundary".into(),
+            ))
+        }
+
+        fn advance(
+            &self,
+            authorization: &meld_world_model::AgentProductAuthorization,
+        ) -> Result<meld_world_model::AgentExecutionPosition, meld_world_model::error::StorageError>
+        {
+            self.inner.advance(authorization)
+        }
+
+        fn observe(
+            &self,
+            authorization: &meld_world_model::AgentProductAuthorization,
+        ) -> Result<
+            Option<meld_world_model::AgentExecutionPosition>,
+            meld_world_model::error::StorageError,
+        > {
+            self.inner.observe(authorization)
+        }
+    }
+
+    #[test]
     fn root_handle_drives_agent_task_through_execution_terminal_absorption() {
         use meld_world_model::agent::AgentActivationRecord;
 

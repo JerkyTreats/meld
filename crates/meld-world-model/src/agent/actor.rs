@@ -2081,7 +2081,16 @@ impl GoalReconciliation<'_, '_> {
             ));
             return Ok(());
         }
-        let position = self.execution.advance(authorization)?;
+        let position = if cut.cut_id != plan.planner_cut_id {
+            // An old authorization may never have reached its consumer. Observing
+            // predecessor work must not create its first admission after invalidation.
+            let Some(position) = self.execution.observe(authorization)? else {
+                return Ok(());
+            };
+            position
+        } else {
+            self.execution.advance(authorization)?
+        };
         self.persist_execution_position(authorization, &position)?;
         self.project_execution_wait(cut, plan, task, &position, report)
     }
@@ -2473,6 +2482,13 @@ mod tests {
     }
 
     impl AgentExecutionPort for PendingExecution {
+        fn observe(
+            &self,
+            authorization: &AgentProductAuthorization,
+        ) -> Result<Option<AgentExecutionPosition>, StorageError> {
+            Self::position(authorization).map(Some)
+        }
+
         fn submit(
             &self,
             authorization: &AgentProductAuthorization,
