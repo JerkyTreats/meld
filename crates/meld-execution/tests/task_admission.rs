@@ -47,6 +47,7 @@ fn request(authorization_id: &str, generation: &str) -> TaskAdmissionRequest {
             admission_epoch: None,
         },
         task: ExecutionTask {
+            execution_subject: None,
             initial_inputs: Vec::new(),
             task_id: task_id.clone(),
             composition,
@@ -112,6 +113,7 @@ fn dataflow_request(with_edge: bool) -> TaskAdmissionRequest {
             admission_epoch: None,
         },
         task: ExecutionTask {
+            execution_subject: None,
             initial_inputs: Vec::new(),
             task_id: task_id.clone(),
             composition,
@@ -176,6 +178,7 @@ fn duplicate_optional_dataflow_request() -> TaskAdmissionRequest {
             admission_epoch: None,
         },
         task: ExecutionTask {
+            execution_subject: None,
             initial_inputs: Vec::new(),
             task_id: task_id.clone(),
             composition,
@@ -393,6 +396,30 @@ fn two_authorizations_commit_distinct_attributed_operational_regions() {
     let reopened = SledTaskNetworkStore::open(db, "network-docs").unwrap();
     assert_eq!(reopened.state().tasks.len(), 2);
     assert_eq!(reopened.state().admissions.len(), 2);
+}
+
+#[test]
+fn admission_rejects_an_execution_subject_outside_the_exact_grant() {
+    let catalog = task_network_support::catalog();
+    let mut store = InMemoryTaskNetworkStore::new("network-docs");
+    let mut offered = request("authorization-foreign-subject", "generation-v1");
+    offered.task.execution_subject = Some(
+        meld_events::DomainObjectRef::new("curation", "expectation", "different-subject").unwrap(),
+    );
+    let record = TaskAdmissionApi::new(
+        &mut store,
+        &catalog,
+        "generation-v1",
+        "policy-content-docs-v1",
+    )
+    .admit(offered)
+    .unwrap();
+    let TaskAdmissionDecision::Rejected { grounds } = record.decision else {
+        panic!("foreign subject admitted")
+    };
+    assert!(grounds
+        .iter()
+        .any(|ground| ground.contains("execution subject")));
 }
 
 #[test]

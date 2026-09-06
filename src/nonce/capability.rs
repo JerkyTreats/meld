@@ -143,7 +143,7 @@ impl CapabilityInvoker for NonceEmitter {
             .effect_authority
             .as_ref()
             .ok_or_else(|| invalid("nonce emission has no admitted effect authority"))?;
-        if authority.principal_id != request.issuer_ref
+        if authority.issuer_ref != request.issuer_ref
             || authority.subject != request.subject_ref
             || authority.fence_ref != request.fence_ref
         {

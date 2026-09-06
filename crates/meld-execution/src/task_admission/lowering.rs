@@ -810,6 +810,10 @@ fn task_instance_id(network_id: &str, admission_id: &str, step_id: &str) -> Stri
 }
 
 fn scope_ref(bindings: &Bindings, admission: &TaskAdmissionRecord) -> Result<String, String> {
+    if let Some(subject) = &admission.request.task.execution_subject {
+        return Ok(subject.object_id.clone());
+    }
+    // Persisted Tasks predating the explicit subject retain their original lowering.
     for candidate in ["?subject", "subject", "?node", "node", "?scope", "scope"] {
         if let Some(term) = bindings.get(candidate) {
             return Ok(term_to_scope_ref(term));

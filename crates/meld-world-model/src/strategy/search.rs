@@ -670,10 +670,15 @@ fn finish_candidate(
     } else {
         stable_id("strategy-task-inputs-v1", &(&task_id, &initial_inputs))
     };
+    let task_id = stable_id(
+        "strategy-task-subject-v1",
+        &(&task_id, &request.problem.planner_cut.context.subject),
+    );
     let return_milestone = PlanMilestoneRequirement::ExecutionTerminal {
         task_id: task_id.clone(),
     };
     let task = StrategyTask {
+        execution_subject: Some(request.problem.planner_cut.context.subject.clone()),
         initial_inputs,
         task_id: task_id.clone(),
         composition: composition.clone(),

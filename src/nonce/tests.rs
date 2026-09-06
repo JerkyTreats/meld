@@ -219,6 +219,7 @@ async fn capability_requires_exact_effect_authority_and_returns_a_proven_append_
     let context = crate::execution::ExecutionEventContext {
         session_id: "emitter-proof".into(),
         effect_authority: Some(meld_execution::ExecutionEffectAuthority {
+            issuer_ref: request.issuer_ref.clone(),
             principal_id: request.issuer_ref.clone(),
             subject: request.subject_ref.clone(),
             fence_ref: request.fence_ref.clone(),
@@ -241,7 +242,7 @@ async fn capability_requires_exact_effect_authority_and_returns_a_proven_append_
         let mut wrong = context.clone();
         let grant = wrong.effect_authority.as_mut().unwrap();
         match field {
-            0 => grant.principal_id = "foreign-issuer".into(),
+            0 => grant.issuer_ref = "foreign-issuer".into(),
             1 => grant.subject.object_id = "foreign-subject".into(),
             _ => grant.fence_ref = "foreign-fence".into(),
         }
@@ -354,7 +355,7 @@ async fn admitted_nonce_task_reaches_graph_before_outcome_and_recovers_one_durab
     let contract = capability::contract();
     let policy = AuthorityPolicy {
         policy_id: "nonce-policy".into(),
-        principal_id: nonce.issuer_ref.clone(),
+        principal_id: "granting-principal".into(),
         subject: nonce.subject_ref.clone(),
         principal_granted_action_ids: vec![capability::EMIT.into()],
         runtime_allowed_action_ids: vec![capability::EMIT.into()],
@@ -363,6 +364,7 @@ async fn admitted_nonce_task_reaches_graph_before_outcome_and_recovers_one_durab
     let policy =
         AuthorityPolicyBinding::new(policy.clone(), policy.content_hash().unwrap()).unwrap();
     let task = ExecutionTask {
+        execution_subject: None,
         task_id: "nonce-task".into(),
         initial_inputs: vec![TaskInput {
             step_id: "emit".into(),
@@ -425,7 +427,7 @@ async fn admitted_nonce_task_reaches_graph_before_outcome_and_recovers_one_durab
                     authority_decision: Some(AuthorityDecision {
                         policy_id: policy.policy.policy_id.clone(),
                         policy_content_hash: policy.content_hash.clone(),
-                        principal_id: nonce.issuer_ref.clone(),
+                        principal_id: policy.policy.principal_id.clone(),
                         subject: nonce.subject_ref.clone(),
                         requested_action_ids: vec![capability::EMIT.into()],
                         authorized_action_ids: vec![capability::EMIT.into()],

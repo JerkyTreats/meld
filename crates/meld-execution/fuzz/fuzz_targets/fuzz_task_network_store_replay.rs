@@ -59,6 +59,7 @@ fn admission(index: usize, byte: u8) -> TaskAdmissionRequest {
             admission_epoch: None,
         },
         task: ExecutionTask {
+            execution_subject: None,
             initial_inputs: Vec::new(),
             task_id: task_id.clone(),
             composition: Composition {

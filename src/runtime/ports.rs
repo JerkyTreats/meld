@@ -131,6 +131,85 @@ pub struct ProductAgentPlannerPort {
     request: PlannerCurrentAssemblyRequest,
 }
 
+/// Structural Planner inputs known before native Agent selects an epoch observation.
+#[derive(Clone)]
+pub struct ProductEpochPlannerBinding {
+    pub context: meld_world_model::planner::PlannerDecisionContext,
+    pub policy: meld_world_model::planner::PlannerAssemblyPolicy,
+    pub belief_key: meld_world_model::belief::BeliefKey,
+    pub unanchored_belief: bool,
+    pub source_positions: Vec<meld_world_model::planner::PlannerSourcePosition>,
+}
+
+pub struct ProductEpochAgentPlannerPort {
+    belief_store: Arc<BeliefStore>,
+    traversal_store: Arc<TraversalStore>,
+    event_append: ProductEventAppendPort,
+    binding: ProductEpochPlannerBinding,
+}
+
+impl ProductEpochAgentPlannerPort {
+    pub fn new(
+        belief_store: Arc<BeliefStore>,
+        traversal_store: Arc<TraversalStore>,
+        event_append: ProductEventAppendPort,
+        binding: ProductEpochPlannerBinding,
+    ) -> Self {
+        Self {
+            belief_store,
+            traversal_store,
+            event_append,
+            binding,
+        }
+    }
+}
+
+impl AgentPlannerPort for ProductEpochAgentPlannerPort {
+    fn assemble(&self) -> PlannerAssemblyOutcome {
+        PlannerAssemblyOutcome::Refused(meld_world_model::PlannerRefusal {
+            request_context_id: self.binding.context.context_id.clone(),
+            grounds: vec![meld_world_model::PlannerRefusalGround::InvalidInput {
+                detail: "Planner requires native epoch products for this observation".into(),
+            }],
+        })
+    }
+
+    fn assemble_epoch(
+        &self,
+        products: &meld_world_model::agent::AgentEpochProducts,
+    ) -> PlannerAssemblyOutcome {
+        let current = match self.event_append.watermark() {
+            Ok(current) => current,
+            Err(error) => {
+                return PlannerAssemblyOutcome::Refused(meld_world_model::PlannerRefusal {
+                    request_context_id: self.binding.context.context_id.clone(),
+                    grounds: vec![meld_world_model::PlannerRefusalGround::InvalidInput {
+                        detail: error.to_string(),
+                    }],
+                })
+            }
+        };
+        let request = PlannerCurrentAssemblyRequest {
+            context: self.binding.context.clone(), policy: self.binding.policy.clone(),
+            belief_key: self.binding.belief_key.clone(), unanchored_belief: self.binding.unanchored_belief,
+            source_positions: self.binding.source_positions.clone(),
+            traversal_request: products.curation_rule.rule.traversal_request(),
+            traversal_cut_request: TraversalCutRequest {
+                owners: vec![], scope: products.curation_rule.rule.scope.clone(),
+                currentness: meld_world_model::world_state::graph::contracts::OwnerCurrentnessPolicy::LatestComplete,
+                event_position: LedgerCursor { ledger_id: current.ledger_id, after_seq: current.committed_seq },
+            },
+        };
+        ProductAgentPlannerPort::new(
+            self.belief_store.clone(),
+            self.traversal_store.clone(),
+            self.event_append.clone(),
+            request,
+        )
+        .assemble_epoch(products)
+    }
+}
+
 /// Read-only live activation and authority-policy observer for Agent.
 #[derive(Clone)]
 pub(crate) struct ProductAgentAuthorityPort {
@@ -347,6 +426,9 @@ impl RuntimeAdapterPorts {
 }
 
 impl ProductEventAppendPort {
+    pub fn watermark_capability(&self) -> EventWatermarkCapability {
+        self.watermark.clone()
+    }
     /// Bind the port to capabilities derived from one event authority.
     pub fn new(authority: &EventAuthority) -> Self {
         Self {
@@ -719,6 +801,7 @@ impl ProductAgentExecutionPort {
                 admission_epoch: authorization.admission_epoch.clone(),
             },
             task: ExecutionTask {
+                execution_subject: task.execution_subject.clone(),
                 initial_inputs: task.initial_inputs.clone(),
                 task_id: task.task_id.clone(),
                 composition: task.composition.clone(),
@@ -1156,6 +1239,7 @@ impl ClaimedTaskInvoker for CompiledTaskClaimInvoker {
                     .and_then(|(admission, decision)| {
                         admission.admission_epoch.as_ref().map(|epoch| {
                             meld_execution::ExecutionEffectAuthority {
+                                issuer_ref: admission.agent_id.clone(),
                                 principal_id: decision.principal_id.clone(),
                                 subject: decision.subject.clone(),
                                 fence_ref: epoch.clone(),

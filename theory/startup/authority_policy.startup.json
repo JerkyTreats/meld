@@ -1,0 +1,16 @@
+{
+  "policy_id": "startup_nonce_local",
+  "principal_id": "workspace-owner",
+  "subject": {
+    "domain_id": "workspace_fs",
+    "object_kind": "node",
+    "object_id": "startup"
+  },
+  "principal_granted_action_ids": [
+    "nonce.emit"
+  ],
+  "runtime_allowed_action_ids": [
+    "nonce.emit"
+  ],
+  "restricted_action_ids": []
+}

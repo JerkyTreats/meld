@@ -434,6 +434,8 @@ impl<'a> WorldInitPipeline<'a> {
             let mut agent_owner_revisions = installed_owner_revisions.clone();
             for template in installed_owner_revisions.iter().filter(|reference| {
                 reference.registry == meld_world_model::curation::CURATION_TEMPLATE_REGISTRY_ID
+                    && maintained.condition.observation_scope
+                        == meld_world_model::agent::AgentObservationScope::AssignedSubject
             }) {
                 let prepared = product.curation_store.prepare_rule(template,
                     &meld_world_model::curation::CurationRuleBinding {

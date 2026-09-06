@@ -1,0 +1,8 @@
+{
+  "maintained_condition_id": "startup_realization",
+  "dimension_id": "startup_realization",
+  "threshold": 0.7,
+  "priority_urgency": 50,
+  "desired_summary": "the current epoch nonce is confirmed",
+  "source_kind": "belief_divergence"
+}

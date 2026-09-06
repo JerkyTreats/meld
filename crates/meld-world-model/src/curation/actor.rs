@@ -146,7 +146,23 @@ impl StandingCurationActor {
                 "curation-rule",
                 &rule.revision_ref(),
             )?],
-            super::CurationRuleSource::Producer(_) => Vec::new(),
+            super::CurationRuleSource::Producer(port) => {
+                let mut refs = Vec::new();
+                for reference in port.template_refs().map_err(|error| error.to_string())? {
+                    let template = self
+                        .store
+                        .resolve_template(&reference)
+                        .map_err(|error| error.to_string())?
+                        .ok_or_else(|| {
+                            "Curation producer cites an uninstalled template".to_string()
+                        })?;
+                    refs.push(crate::lifecycle::evidence_ref(
+                        "curation-template",
+                        &template.revision_ref(),
+                    )?);
+                }
+                refs
+            }
         };
         let current_authority = match &self.authority_port {
             Some(port) => port.observe().map_err(|error| error.to_string())?,

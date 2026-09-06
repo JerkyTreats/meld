@@ -9,6 +9,9 @@ use std::collections::BTreeSet;
 /// Complete Task body accepted by Execution without semantic reconstruction.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExecutionTask {
+    /// Exact operational subject, separate from values used to reason about knowledge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_subject: Option<meld_events::DomainObjectRef>,
     /// Exact frozen inputs available to the selected Task steps.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub initial_inputs: Vec<meld_lang::TaskInput>,
@@ -315,8 +318,25 @@ fn validation_grounds(request: &TaskAdmissionRequest, catalog: &CapabilityCatalo
     if request.idempotency_key != request.task.idempotency_key {
         grounds.push("admission and Task idempotency keys differ".to_string());
     }
+    if request
+        .task
+        .execution_subject
+        .as_ref()
+        .is_some_and(|subject| subject.validate().is_err())
+    {
+        grounds.push("Task execution subject is invalid".into());
+    }
     match &request.lineage.authority_decision {
         Some(decision) => {
+            if request
+                .task
+                .execution_subject
+                .as_ref()
+                .is_some_and(|subject| subject != &decision.subject)
+            {
+                grounds
+                    .push("Task execution subject differs from its exact authority subject".into());
+            }
             if let Err(error) = decision.validate() {
                 grounds.push(format!("Task authority decision is invalid: {error}"));
             }

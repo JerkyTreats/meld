@@ -645,11 +645,23 @@ fn frozen_task_input_is_carried_and_verified_against_the_planning_request() {
     assert_eq!(plan.tasks[0].composition.steps.len(), 1);
     assert!(plan.tasks[0].composition.edges.is_empty());
     assert_eq!(plan.tasks[0].initial_inputs, request.problem.task_inputs);
+    assert_eq!(
+        plan.tasks[0].execution_subject.as_ref(),
+        Some(&request.problem.planner_cut.context.subject)
+    );
     assert!(matches!(
         verify_plan(&request.problem, &plan),
         PlanVerification::Valid { .. }
     ));
 
+    let mut tampered = plan.clone();
+    tampered.tasks[0].execution_subject =
+        Some(meld_events::DomainObjectRef::new("foreign", "subject", "other").unwrap());
+    tampered.plan_revision_id = super::search::plan_revision_identity(&tampered);
+    assert!(matches!(
+        verify_plan(&request.problem, &tampered),
+        PlanVerification::Invalid { .. }
+    ));
     let mut tampered = plan.clone();
     tampered.tasks[0].initial_inputs[0].content = serde_json::json!({"text": "substituted"});
     tampered.plan_revision_id = super::search::plan_revision_identity(&tampered);

@@ -1,0 +1,201 @@
+{
+  "schema_version": 1,
+  "package_id": "meld.startup",
+  "package_version": "1.0.0",
+  "description": "Epoch-specific nonce observation and confirmation through native reconciliation owners",
+  "imports": [],
+  "components": [
+    {
+      "component_id": "startup-belief-family",
+      "owner_component_id": "startup_realization",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "belief-family",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "belief_family.startup_realization.json",
+        "content_hash": "a45c1d74f4e287bcec762aa2b891214646e50e64f9ca18e5a12b5533019d4a9e"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "startup-evidence-mapping",
+      "owner_component_id": "startup_realization_v1",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "outcome-mapping",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "evidence_mapping.startup_realization.json",
+        "content_hash": "e93b400e367e4b5f8031c06c8e310420dd52ac6f08a592a167f9a200422fda53"
+      },
+      "requires": [
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "startup-belief-family",
+          "required_route": null
+        }
+      ]
+    },
+    {
+      "component_id": "startup-maintained-condition",
+      "owner_component_id": "startup_realization",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "agent-maintained-condition",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "maintained_condition.startup.json",
+        "content_hash": "7222953757285aa3553c47b977689dea0401bf964ebd5738d5d8585faa8cd024"
+      },
+      "requires": [
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "startup-belief-family",
+          "required_route": null
+        }
+      ]
+    },
+    {
+      "component_id": "startup-curation-rule",
+      "owner_component_id": "startup_realization",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "agent-curation-rule",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "curation_rule.startup.json",
+        "content_hash": "61bf1e4b9a632caa3af040811d6c2f9a648d72c1b97e13637dc12b70188d92ef"
+      },
+      "requires": [
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "startup-maintained-condition",
+          "required_route": null
+        }
+      ]
+    },
+    {
+      "component_id": "startup-epistemic-rule",
+      "owner_component_id": "startup-confirmation",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "epistemic-curation-rule",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "epistemic_rule.startup.json",
+        "content_hash": "2f72aa3d44fb85e11b2cecf19515174cfa84e02948c3fae470554f4552454ca3"
+      },
+      "requires": [
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "nonce-graph-event-route",
+          "required_route": null
+        }
+      ]
+    },
+    {
+      "component_id": "startup-strategy",
+      "owner_component_id": "startup_realization",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "strategy-theory",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "strategy_theory.startup.json",
+        "content_hash": "f486a06a2a1866e15d3bc4fa7c1992ddd4d8b96ee08c20dfccc10b53716acf52"
+      },
+      "requires": [
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "startup-belief-family",
+          "required_route": null
+        },
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "nonce-capability-emit",
+          "required_route": null
+        }
+      ]
+    },
+    {
+      "component_id": "startup-authority",
+      "owner_component_id": "startup_nonce_local",
+      "route": {
+        "owner_domain": "execution",
+        "component_kind": "authority-policy",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "authority_policy.startup.json",
+        "content_hash": "342853cba9e7a486ae287c5b17bae9eff5f001b6470c5e1919331c32210a577f"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "nonce-capability-emit",
+      "owner_component_id": "nonce.emit.v1",
+      "route": {
+        "owner_domain": "execution",
+        "component_kind": "capability-contract",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "published_exact",
+        "publisher": "execution.capability-contract.v1",
+        "id": "nonce.emit.v1",
+        "content_identity": "capability-contract-3af04c2c31095381045d19cf8729b16951e60d61d486219e0a77f8f9b5ea4cbe"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "nonce-graph-event-route",
+      "owner_component_id": "nonce-owner-publication",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "graph-owner-event-route",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "graph_owner_event_route.nonce.json",
+        "content_hash": "14f6700b3ba04653e385593127376f460fead355b755c6abea4584a992faa421"
+      },
+      "requires": []
+    }
+  ]
+}

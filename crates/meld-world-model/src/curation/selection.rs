@@ -15,6 +15,7 @@ pub enum CurationRuleSelection {
 pub trait CurationRuleSelectionPort: Send + Sync {
     fn select(&self, authority: &CurationAuthority) -> Result<CurationRuleSelection, StorageError>;
     fn binding_refs(&self) -> Result<Vec<String>, StorageError>;
+    fn template_refs(&self) -> Result<Vec<crate::belief::TheoryRevisionRef>, StorageError>;
     fn resolves_wake(&self, wake: &StructuralWakeAddress) -> Result<bool, String>;
 }
 

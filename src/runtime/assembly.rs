@@ -52,7 +52,7 @@ use meld_world_model::PerspectiveKey;
 use meld_world_model::{
     CurationAuthority, CurationEventPort, CurationStepReport, CurationStore, CurationTraversalPort,
     PlannerAssemblyPolicy, PlannerCurrentAssemblyRequest, PlannerDecisionContext,
-    PlannerSourceKind, PlannerSourcePosition, StandingCurationActor, StandingCurationRuleRevision,
+    PlannerSourceKind, PlannerSourcePosition, StandingCurationActor,
 };
 use serde::{Deserialize, Serialize};
 
@@ -830,7 +830,7 @@ struct StandingCurationFactory {
     runtime_id: String,
     session_id: String,
     authority: CurationAuthority,
-    rule: StandingCurationRuleRevision,
+    rule: meld_world_model::curation::CurationRuleSource,
     store: Arc<CurationStore>,
     traversal: ProductCurationTraversalPort,
     events: ProductEventAppendPort,
@@ -848,7 +848,7 @@ struct AgentActorFactory {
     execution: Arc<dyn meld_world_model::AgentExecutionPort>,
     strategy: meld_world_model::AgentStrategyRuntimeConfig,
     authority: CurationAuthority,
-    rule: StandingCurationRuleRevision,
+    preparation: meld_world_model::agent::AgentPreparation,
     #[cfg(test)]
     planner_source_positions: Vec<PlannerSourcePosition>,
 }
@@ -2197,7 +2197,7 @@ impl RuntimeSemanticHandleFactory {
                             "Curation requires prepared product theory".into(),
                         )
                     })?
-                    .native_curation_rule(stores, &agent)
+                    .native_curation_selection(stores, &agent)
                 {
                     Ok(Some(rule)) => rule,
                     Ok(None) => {
@@ -2238,9 +2238,22 @@ impl RuntimeSemanticHandleFactory {
                 authority.validate().map_err(|error| {
                     RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
                 })?;
-                rule.rule.validate().map_err(|error| {
-                    RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
-                })?;
+                let rule = match rule {
+                    crate::runtime::theory::PreparedCurationSelection::Installed(rule) => {
+                        (*rule).into()
+                    }
+                    crate::runtime::theory::PreparedCurationSelection::Epoch(_) => {
+                        meld_world_model::curation::CurationRuleSource::Producer(Arc::new(
+                            meld_world_model::agent::AgentEpochCurationSource::new(
+                                Arc::clone(agent_store),
+                                authority.agent_id.clone(),
+                            )
+                            .map_err(|error| {
+                                RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
+                            })?,
+                        ))
+                    }
+                };
                 Ok(Self::StandingCuration(Box::new(StandingCurationFactory {
                     authority_port: Arc::new(ProductCurationAuthorityPort {
                         admission: composed.admission_observer(Arc::clone(agent_store))?,
@@ -2459,7 +2472,7 @@ impl RuntimeSemanticHandleFactory {
                         )
                     })?;
                 let rule = resolved
-                    .native_curation_rule(stores, &agent)
+                    .native_curation_selection(stores, &agent)
                     .map_err(|error| {
                         RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
                     })?
@@ -2486,7 +2499,14 @@ impl RuntimeSemanticHandleFactory {
                     agent_id: agent_id.clone(),
                     goal_id,
                     subject: agent.subject.clone(),
-                    scope_id: rule.rule.scope.scope_id.clone(),
+                    scope_id: match &rule {
+                        crate::runtime::theory::PreparedCurationSelection::Installed(rule) => {
+                            rule.rule.scope.scope_id.clone()
+                        }
+                        crate::runtime::theory::PreparedCurationSelection::Epoch(_) => {
+                            agent.subject.object_id.clone()
+                        }
+                    },
                     branch_id: agent.branch_scope.branch_id.clone(),
                     perspective_id: agent.perspective_key.perspective_id.clone(),
                     authority_scope_id: authority_scope_id.clone(),
@@ -2518,7 +2538,10 @@ impl RuntimeSemanticHandleFactory {
                     blake3::hash(&bytes).to_hex().to_string()
                 };
                 let family_revision = registry
-                    .current(&composed.bindings.belief_family_id)
+                    .resolve(
+                        &resolved.belief_family.family_id,
+                        &resolved.belief_family.content_hash,
+                    )
                     .map_err(|error| {
                         RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
                     })?
@@ -2536,6 +2559,14 @@ impl RuntimeSemanticHandleFactory {
                 let current = ports.event_append().watermark().map_err(|error| {
                     RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
                 })?;
+                let curation_ref = match &rule {
+                    crate::runtime::theory::PreparedCurationSelection::Installed(rule) => {
+                        rule.revision_ref()
+                    }
+                    crate::runtime::theory::PreparedCurationSelection::Epoch(template) => {
+                        template.revision_ref()
+                    }
+                };
                 let planner_source_positions = vec![
                     source(
                         PlannerSourceKind::Directive,
@@ -2561,9 +2592,9 @@ impl RuntimeSemanticHandleFactory {
                     source(
                         PlannerSourceKind::CurationCatalog,
                         "curation",
-                        &rule.rule_id,
-                        &rule.content_hash,
-                        &rule.content_hash,
+                        &curation_ref.id,
+                        &curation_ref.content_hash,
+                        &curation_ref.content_hash,
                     ),
                     source(
                         PlannerSourceKind::StrategyPolicy,
@@ -2573,58 +2604,124 @@ impl RuntimeSemanticHandleFactory {
                         &resolved.strategy_theory.content_hash,
                     ),
                 ];
-                let planner_request = PlannerCurrentAssemblyRequest {
-                    context: context.clone(),
-                    policy: PlannerAssemblyPolicy {
-                        policy_revision_id: format!(
-                            "reasoning-policy::{}",
-                            product_compilation_receipt_id
-                        ),
-                        required_sources: vec![
-                            PlannerSourceKind::Graph,
-                            PlannerSourceKind::Belief,
-                            PlannerSourceKind::Directive,
-                            PlannerSourceKind::MaintainedCondition,
-                            PlannerSourceKind::CapabilityCatalog,
-                            PlannerSourceKind::CurationCatalog,
-                            PlannerSourceKind::StrategyPolicy,
-                        ],
-                        explicitly_not_required: vec![
-                            PlannerSourceKind::Causation,
-                            PlannerSourceKind::Regime,
-                        ],
-                    },
-                    traversal_cut_request: TraversalCutRequest {
-                        owners: {
-                            let mut owners = vec![
-                                TraversalOwnerRequirement {
-                                    event_source: None,
-                                    owner_id: rule.rule.source_owner_id.clone(),
-                                    scope: rule.rule.scope.clone(),
-                                    required: true,
+                let planner_policy = PlannerAssemblyPolicy {
+                    policy_revision_id: format!(
+                        "reasoning-policy::{}",
+                        product_compilation_receipt_id
+                    ),
+                    required_sources: vec![
+                        PlannerSourceKind::Graph,
+                        PlannerSourceKind::Belief,
+                        PlannerSourceKind::Directive,
+                        PlannerSourceKind::MaintainedCondition,
+                        PlannerSourceKind::CapabilityCatalog,
+                        PlannerSourceKind::CurationCatalog,
+                        PlannerSourceKind::StrategyPolicy,
+                    ],
+                    explicitly_not_required: vec![
+                        PlannerSourceKind::Causation,
+                        PlannerSourceKind::Regime,
+                    ],
+                };
+                let (planner, preparation): (
+                    Arc<dyn meld_world_model::AgentPlannerPort>,
+                    meld_world_model::agent::AgentPreparation,
+                ) = match rule {
+                    crate::runtime::theory::PreparedCurationSelection::Installed(rule) => {
+                        let planner_request = PlannerCurrentAssemblyRequest {
+                            context: context.clone(),
+                            policy: planner_policy,
+                            traversal_cut_request: TraversalCutRequest {
+                                owners: {
+                                    let mut owners = vec![
+                                        TraversalOwnerRequirement {
+                                            event_source: None,
+                                            owner_id: rule.rule.source_owner_id.clone(),
+                                            scope: rule.rule.scope.clone(),
+                                            required: true,
+                                        },
+                                        TraversalOwnerRequirement {
+                                            event_source: None,
+                                            owner_id: meld_world_model::CURATION_OWNER_ID
+                                                .to_string(),
+                                            scope: rule.rule.scope.clone(),
+                                            required: false,
+                                        },
+                                    ];
+                                    owners.sort();
+                                    owners
                                 },
-                                TraversalOwnerRequirement {
-                                    event_source: None,
-                                    owner_id: meld_world_model::CURATION_OWNER_ID.to_string(),
-                                    scope: rule.rule.scope.clone(),
-                                    required: false,
+                                scope: rule.rule.scope.clone(),
+                                currentness: OwnerCurrentnessPolicy::LatestComplete,
+                                event_position: meld_events::LedgerCursor {
+                                    ledger_id: current.ledger_id,
+                                    after_seq: current.committed_seq,
                                 },
-                            ];
-                            owners.sort();
-                            owners
-                        },
-                        scope: rule.rule.scope.clone(),
-                        currentness: OwnerCurrentnessPolicy::LatestComplete,
-                        event_position: meld_events::LedgerCursor {
-                            ledger_id: current.ledger_id,
-                            after_seq: current.committed_seq,
-                        },
-                    },
-                    traversal_request: rule.rule.traversal_request(),
-                    belief_key,
-                    unanchored_belief: family_revision.config.anchor_requirement
-                        == meld_world_model::belief::AnchorRequirement::Unanchored,
-                    source_positions: planner_source_positions.clone(),
+                            },
+                            traversal_request: rule.rule.traversal_request(),
+                            belief_key,
+                            unanchored_belief: family_revision.config.anchor_requirement
+                                == meld_world_model::belief::AnchorRequirement::Unanchored,
+                            source_positions: planner_source_positions.clone(),
+                        };
+                        (
+                            Arc::new(ProductAgentPlannerPort::new(
+                                Arc::clone(belief),
+                                Arc::clone(traversal),
+                                ports.event_append().clone(),
+                                planner_request,
+                            )),
+                            (*rule).into(),
+                        )
+                    }
+                    crate::runtime::theory::PreparedCurationSelection::Epoch(template) => {
+                        if template.template.source_owner_id != crate::nonce::OWNER_ID {
+                            return unresolved(
+                                diagnostics,
+                                "epoch_source_unresolved",
+                                format!(
+                                    "no epoch preparation adapter for source owner '{}'",
+                                    template.template.source_owner_id
+                                ),
+                            );
+                        }
+                        let products = crate::runtime::epoch::ProductNonceEpochPreparation::new(
+                            Arc::clone(curation_store),
+                            Arc::clone(traversal),
+                            template.revision_ref(),
+                            &strategy.package,
+                            ports.event_append().watermark_capability(),
+                        )
+                        .map_err(|error| {
+                            RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
+                        })?;
+                        let planner = crate::runtime::ports::ProductEpochAgentPlannerPort::new(
+                            Arc::clone(belief),
+                            Arc::clone(traversal),
+                            ports.event_append().clone(),
+                            crate::runtime::ports::ProductEpochPlannerBinding {
+                                context: context.clone(),
+                                policy: planner_policy,
+                                belief_key,
+                                unanchored_belief: family_revision.config.anchor_requirement
+                                    == meld_world_model::belief::AnchorRequirement::Unanchored,
+                                source_positions: planner_source_positions.clone(),
+                            },
+                        );
+                        (
+                            Arc::new(planner),
+                            meld_world_model::agent::AgentPreparation::Epoch {
+                                products: Arc::new(products),
+                                subscriptions: Arc::new(
+                                    meld_world_model::belief::BeliefSubscriptionSource::new(
+                                        Arc::clone(belief),
+                                        Arc::clone(registry)
+                                            as Arc<dyn BeliefFamilyRegistry + Send + Sync>,
+                                    ),
+                                ),
+                            },
+                        )
+                    }
                 };
                 let authority = CurationAuthority {
                     agent_id: agent_id.clone(),
@@ -2653,12 +2750,7 @@ impl RuntimeSemanticHandleFactory {
                     runtime_id: runtime_id.to_string(),
                     intent,
                     store: Arc::clone(agent_store),
-                    planner: Arc::new(ProductAgentPlannerPort::new(
-                        Arc::clone(belief),
-                        Arc::clone(traversal),
-                        ports.event_append().clone(),
-                        planner_request,
-                    )),
+                    planner,
                     authority_port: Arc::clone(&authority_port),
                     frozen_authority: frozen_authority.clone(),
                     curation: Arc::new(ProductPlannedCurationPort::new(Arc::clone(curation_store))),
@@ -2670,7 +2762,7 @@ impl RuntimeSemanticHandleFactory {
                     )),
                     strategy,
                     authority,
-                    rule,
+                    preparation,
                     #[cfg(test)]
                     planner_source_positions,
                 })))
@@ -2855,7 +2947,7 @@ impl RuntimeSemanticHandleFactory {
                     Arc::clone(&factory.execution),
                     factory.strategy.clone(),
                     factory.authority.clone(),
-                    factory.rule.clone(),
+                    factory.preparation.clone(),
                 )
                 .expect("Agent reconciliation factory holds validated exact bindings");
                 RuntimeSemanticHandle::AgentActor(Box::new(AgentActorHandle {
@@ -5909,6 +6001,26 @@ mod tests {
         );
         assert!(graph_report.fatal_errors.is_empty(), "{graph_report:#?}");
         assert!(graph_report.output_event_seq > graph_report.input_event_seq);
+        for _ in 0..8 {
+            let report = assembly
+                .graph_runtime()
+                .catch_up_bounded(GraphCatchUpBudget { max_items: 32 })
+                .unwrap();
+            assert!(
+                report.fatal_errors.is_empty() && report.retryable_errors.is_empty(),
+                "{report:?}"
+            );
+            if report.output_event_seq
+                == assembly
+                    .event_authority()
+                    .watermark_capability()
+                    .snapshot()
+                    .unwrap()
+                    .committed_seq
+            {
+                break;
+            }
+        }
         let terminal_return = handle.tick(WorkBudget { max_items: 8 }).unwrap();
         assert!(
             terminal_return.fatal_errors.is_empty(),
@@ -6506,6 +6618,8 @@ mod tests {
                 Arc::new(crate::concurrency::NodeLockManager::new()),
                 self.binding.workspace_root.clone(),
             ));
+            api.bind_event_append(assembly.event_authority().append_capability())
+                .unwrap();
             let seed = assembly.dispatch_route_seed().unwrap().clone();
             let capability_runtime = assembly.capability_runtime().unwrap().clone();
             assert!(capability_runtime
@@ -6602,7 +6716,8 @@ mod tests {
         fn run_world_genesis_from(&self, assembly: &ProductRuntimeAssembly, package_root: &Path) {
             let stores = assembly.stores();
             let package_receipt =
-                crate::docs::theory::install_package(stores, package_root, 5).unwrap();
+                crate::init::world::product::install_package(stores, package_root, None, 5)
+                    .unwrap();
             let mut registry = stores.belief_family_registry.as_ref().clone();
             let product = crate::init::world::tooling::compile_product_initialization(
                 stores,
@@ -6650,7 +6765,7 @@ mod tests {
             }));
             let agent = stores
                 .agent_store
-                .get_agent(STEWARD_AGENT_ID)
+                .get_agent(&self.binding.agent_id)
                 .unwrap()
                 .unwrap();
             assert_eq!(agent.subject, assignment_subject);
@@ -6658,6 +6773,102 @@ mod tests {
             assert_eq!(agent.branch_scope.branch_id, assignment_branch);
             assembly.flush_product_boundary().unwrap();
         }
+    }
+
+    #[test]
+    fn installed_startup_selects_native_epoch_products_and_emits_through_execution() {
+        let mut harness = StewardshipHarness::new();
+        harness.binding.subject = "startup".into();
+        harness.binding.agent_id = "startup-agent".into();
+        harness.binding.package = crate::config::SelectedStewardshipPackage {
+            expression: "startup".into(),
+            principal_id: "workspace-owner".into(),
+            belief_family_id: "startup_realization".into(),
+            evidence_mapping_id: "startup_realization_v1".into(),
+            curation_rule_id: "startup_realization".into(),
+            maintained_condition_id: "startup_realization".into(),
+            strategy_theory_id: "startup_realization".into(),
+            authority_policy_id: "startup_nonce_local".into(),
+            claim_policy_id: String::new(),
+        };
+        let assembly = harness.assembly();
+        harness.run_world_genesis_from(
+            &assembly,
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/startup"),
+        );
+        let prepared = assembly
+            .stores()
+            .pds_products
+            .prepared_head("startup")
+            .unwrap()
+            .unwrap();
+        let prepared = assembly
+            .stores()
+            .pds_products
+            .prepared_closure(&prepared.prepared_id)
+            .unwrap()
+            .unwrap();
+        let receipts = assembly
+            .stores()
+            .agent_store
+            .genesis_receipts_for_assignment(&prepared.assignment.assignment_id)
+            .unwrap();
+        assert!(receipts.iter().all(|receipt| !receipt
+            .installed_owner_revisions
+            .iter()
+            .any(|reference| reference.registry
+                == meld_world_model::curation::CURATION_RULE_REGISTRY_ID)));
+        let mut registry = assembly.stores().belief_family_registry.as_ref().clone();
+        let mut unrelated_head = registry
+            .current("startup_realization")
+            .unwrap()
+            .unwrap()
+            .config;
+        unrelated_head.dimension_id = "unselected-realization-dimension".into();
+        registry.install(unrelated_head, 6).unwrap();
+        drop(registry);
+        drop(assembly);
+        let assembly = harness.assembly();
+        harness.bind_production_routes(&assembly);
+        let RuntimeSemanticHandleFactory::AgentActor(factory) = &assembly
+            .handle_factories()
+            .get(AGENT_RECONCILIATION_RUNTIME_ID)
+            .unwrap()
+            .semantic
+        else {
+            panic!("Startup Agent factory unresolved")
+        };
+        assert!(matches!(
+            factory.preparation,
+            meld_world_model::agent::AgentPreparation::Epoch { .. }
+        ));
+        let mut supervisor = harness.start_supervisor(&assembly);
+        let mut reports = Vec::new();
+        for pass in 0..40 {
+            reports.push(supervisor.tick(1_100 + pass * 10).unwrap());
+        }
+        let watermark = harness.authority.watermark_capability().snapshot().unwrap();
+        let events = harness
+            .authority
+            .replay_capability()
+            .replay(meld_events::ReplayRequest {
+                cursor: meld_events::LedgerCursor {
+                    ledger_id: watermark.ledger_id,
+                    after_seq: 0,
+                },
+                limit: 1024,
+            })
+            .unwrap()
+            .records;
+        let nonces: Vec<_> = events
+            .iter()
+            .filter(|record| record.event_type == crate::nonce::EVENT_TYPE)
+            .collect();
+        assert_eq!(
+            nonces.len(),
+            1,
+            "Startup did not emit one nonce through production Execution: {events:#?}"
+        );
     }
 
     fn lifecycle_of(
@@ -6970,7 +7181,12 @@ mod tests {
         let RuntimeSemanticHandleFactory::AgentActor(native_agent) = &factory.semantic else {
             panic!("Agent factory unresolved");
         };
-        assert_eq!(native_agent.rule.revision_ref(), expected);
+        let meld_world_model::agent::AgentPreparation::InstalledRule(rule) =
+            &native_agent.preparation
+        else {
+            panic!("static observation must retain its exact prepared rule")
+        };
+        assert_eq!(rule.revision_ref(), expected);
         let mut agent = assembly
             .handle_factories()
             .get(AGENT_RECONCILIATION_RUNTIME_ID)

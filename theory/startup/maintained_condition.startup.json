@@ -1,0 +1,17 @@
+{
+  "condition_id": "startup_realization",
+  "dimension_id": "startup_realization",
+  "desired": {
+    "Above": {
+      "Literal": {
+        "Number": 0.7
+      }
+    }
+  },
+  "goal_priority": {
+    "urgency": 50,
+    "cost_ceiling": null
+  },
+  "desired_summary": "the current epoch nonce is confirmed",
+  "observation_scope": "AdmissionEpoch"
+}

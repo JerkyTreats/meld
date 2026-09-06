@@ -64,6 +64,11 @@ impl AgentEpochSpecification {
             ));
         };
         condition.validate()?;
+        if condition.condition.observation_scope != super::AgentObservationScope::AdmissionEpoch {
+            return Err(invalid(
+                "maintained condition does not declare an epoch observation",
+            ));
+        }
         let canonical_genesis = AgentGenesisIntentV1::new(
             self.genesis.assignment_id.clone(),
             self.genesis.product_compilation_receipt_id.clone(),

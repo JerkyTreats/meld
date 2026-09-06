@@ -223,6 +223,12 @@ pub struct ResolvedStewardshipTheory {
     pub claim_policy: Option<DocsClaimPolicyRevision>,
 }
 
+#[derive(Clone)]
+pub enum PreparedCurationSelection {
+    Installed(Box<meld_world_model::StandingCurationRuleRevision>),
+    Epoch(Box<meld_world_model::curation::CurationTemplateRevision>),
+}
+
 impl ResolvedStewardshipTheory {
     /// Validate this exact image against one physical activation binding.
     pub fn validate_activation(
@@ -450,15 +456,21 @@ impl ResolvedStewardshipTheory {
     }
 
     /// Resolve the native rule named by the prepared Agent genesis receipt.
-    pub fn native_curation_rule(
+    pub fn native_curation_selection(
         &self,
         stores: &OpenProductStores,
         agent: &meld_world_model::agent::AgentRecord,
-    ) -> Result<Option<meld_world_model::StandingCurationRuleRevision>, TheoryResolutionError> {
+    ) -> Result<Option<PreparedCurationSelection>, TheoryResolutionError> {
+        let epoch = self.maintained_condition.condition.observation_scope
+            == meld_world_model::agent::AgentObservationScope::AdmissionEpoch;
         let Some(closure) = &self.prepared_closure else {
+            if epoch {
+                return Err(missing("epoch observation prepared closure"));
+            }
             return stores
                 .curation_store
                 .active_rule(&agent.agent_id)
+                .map(|rule| rule.map(|rule| PreparedCurationSelection::Installed(Box::new(rule))))
                 .map_err(owner_error);
         };
         let compilation = stores
@@ -475,11 +487,15 @@ impl ResolvedStewardshipTheory {
             })
             .collect();
         if templates.is_empty() {
+            if epoch {
+                return Err(missing("epoch observation Curation template"));
+            }
             // Existing packages predate native Curation installation. Their explicit
             // active selection remains readable until those products are migrated.
             return stores
                 .curation_store
                 .active_rule(&agent.agent_id)
+                .map(|rule| rule.map(|rule| PreparedCurationSelection::Installed(Box::new(rule))))
                 .map_err(owner_error);
         }
         if templates.len() != 1 {
@@ -507,6 +523,17 @@ impl ResolvedStewardshipTheory {
         if genesis.len() != 1 {
             return Err(missing("exact Agent genesis Curation binding"));
         }
+        if epoch {
+            if !genesis[0].installed_owner_revisions.contains(&template_ref) {
+                return Err(missing("epoch genesis Curation template"));
+            }
+            let template = stores
+                .curation_store
+                .resolve_template(&template_ref)
+                .map_err(owner_error)?
+                .ok_or_else(|| missing("installed epoch Curation template"))?;
+            return Ok(Some(PreparedCurationSelection::Epoch(Box::new(template))));
+        }
         let rules: Vec<_> = genesis[0]
             .installed_owner_revisions
             .iter()
@@ -533,7 +560,7 @@ impl ResolvedStewardshipTheory {
                 },
                 rules[0],
             )
-            .map(Some)
+            .map(|rule| Some(PreparedCurationSelection::Installed(Box::new(rule))))
             .map_err(owner_error)
     }
 

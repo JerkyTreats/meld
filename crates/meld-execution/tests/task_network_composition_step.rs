@@ -192,6 +192,7 @@ fn fanout_composition(task_id: &str, steps: Vec<Step>, edges: Vec<Edge>) -> Exec
         .collect::<Vec<_>>();
     capability_contract_ids.sort();
     ExecutionTask {
+        execution_subject: None,
         initial_inputs: Vec::new(),
         task_id: task_id.to_string(),
         composition: Composition { steps, edges },

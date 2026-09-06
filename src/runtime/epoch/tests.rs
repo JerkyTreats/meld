@@ -102,6 +102,7 @@ fn native_epoch_specification_drives_curation_and_preserves_distinct_observation
                     cost_ceiling: None,
                 },
                 desired_summary: "this epoch is confirmed".into(),
+                observation_scope: AgentObservationScope::AdmissionEpoch,
             },
             1,
         )

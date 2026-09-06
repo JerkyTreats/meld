@@ -627,6 +627,7 @@ fn task(
         .collect::<Vec<_>>();
     capability_contract_ids.sort();
     ExecutionTask {
+        execution_subject: None,
         initial_inputs: Vec::new(),
         task_id: task_id.to_string(),
         composition,

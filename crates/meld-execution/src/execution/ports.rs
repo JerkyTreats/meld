@@ -13,6 +13,8 @@ use crate::generation::{
 /// Exact effect boundary derived from an admitted Task's authority.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionEffectAuthority {
+    /// Issuer of the admitted Task, distinct from the principal granting its authority.
+    pub issuer_ref: String,
     /// Principal whose effect grant Execution validated.
     pub principal_id: String,
     /// Exact object within the admitted grant.

@@ -1,0 +1,108 @@
+{
+  "snapshot": {
+    "theory_id": "startup_realization",
+    "settlement_rules": [
+      {
+        "goal_pattern": {
+          "Holds": {
+            "subject": {
+              "Variable": "?subject"
+            },
+            "dimension": {
+              "Dimension": "startup_realization"
+            },
+            "condition": {
+              "Above": {
+                "Variable": "?threshold"
+              }
+            }
+          }
+        },
+        "settlement_obligation": {
+          "Exists": {
+            "scope": {
+              "Variable": "?subject"
+            },
+            "artifact_type": {
+              "ArtifactType": "nonce_emission_receipt"
+            }
+          }
+        },
+        "evidence_route": {
+          "route_id": "startup-realization-route-v1",
+          "dimension_id": "startup_realization",
+          "outcome_contract_id": "nonce.emitted.v1",
+          "evidence_schema_id": "curation_realization_v1"
+        },
+        "epistemic_placement": "confirmation"
+      }
+    ]
+  },
+  "capabilities": [
+    {
+      "contract_id": "capability-contract-3af04c2c31095381045d19cf8729b16951e60d61d486219e0a77f8f9b5ea4cbe",
+      "operator": {
+        "operator_id": "emit-requested-nonce",
+        "preconditions": [],
+        "effects": [
+          {
+            "Assert": {
+              "Exists": {
+                "scope": {
+                  "Variable": "?subject"
+                },
+                "artifact_type": {
+                  "ArtifactType": "nonce_emission_receipt"
+                }
+              }
+            }
+          }
+        ],
+        "cost": {
+          "time_ms": 100,
+          "money_microdollars": 0,
+          "provider_calls": 0
+        },
+        "resolution": {
+          "requires_inputs": [
+            {
+              "artifact_type": {
+                "ArtifactType": "nonce_request"
+              },
+              "required": true
+            }
+          ],
+          "requires_outputs": [
+            {
+              "artifact_type": {
+                "ArtifactType": "nonce_emission_receipt"
+              },
+              "required": true
+            }
+          ],
+          "scope_kind": "domain_object",
+          "tags": [],
+          "specific": {
+            "capability_type_id": "nonce.emit",
+            "capability_version": 1
+          }
+        }
+      },
+      "outcome_contract_id": "nonce.emitted.v1"
+    }
+  ],
+  "evaluation_policy": {
+    "policy_id": "minimal-capability-chain-v1",
+    "prefer_fewer_steps": true
+  },
+  "search_bounds": {
+    "max_expansions": 32,
+    "max_depth": 8
+  },
+  "requested_dimensions": [
+    "startup_realization"
+  ],
+  "requested_authority": [
+    "nonce.emit"
+  ]
+}

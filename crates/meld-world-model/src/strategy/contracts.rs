@@ -187,6 +187,9 @@ pub enum PlanMilestoneRequirement {
 /// One independently complete executable product retained by Agent only.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StrategyTask {
+    /// Subject on which Execution acts, independent of the Goal's observation subject.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_subject: Option<meld_events::DomainObjectRef>,
     /// Exact frozen inputs available to the selected Task steps.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub initial_inputs: Vec<meld_lang::TaskInput>,

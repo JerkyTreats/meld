@@ -95,6 +95,17 @@ impl CurationRuleSelectionPort for AgentEpochCurationSource {
         ])
     }
 
+    fn template_refs(&self) -> Result<Vec<crate::belief::TheoryRevisionRef>, StorageError> {
+        Ok(self
+            .genesis()?
+            .installed_owner_revisions
+            .into_iter()
+            .filter(|reference| {
+                reference.registry == crate::curation::CURATION_TEMPLATE_REGISTRY_ID
+            })
+            .collect())
+    }
+
     fn resolves_wake(&self, wake: &StructuralWakeAddress) -> Result<bool, String> {
         let StructuralWakeAddress::OwnerRevision(value) = wake else {
             return Ok(false);

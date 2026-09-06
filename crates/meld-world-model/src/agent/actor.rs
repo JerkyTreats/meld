@@ -159,6 +159,16 @@ impl AgentReconciliationActor {
         }
         curation_authority.validate()?;
         let preparation = preparation.into();
+        if let crate::agent::AgentReconciliationIntent::MaintainedCondition(binding) = &intent {
+            let declared_epoch = binding.condition.observation_scope
+                == crate::agent::AgentObservationScope::AdmissionEpoch;
+            if declared_epoch != matches!(preparation, crate::agent::AgentPreparation::Epoch { .. })
+            {
+                return Err(StorageError::InvalidPath(
+                    "Agent preparation differs from its declared observation scope".into(),
+                ));
+            }
+        }
         match &preparation {
             crate::agent::AgentPreparation::InstalledRule(rule) => rule.validate()?,
             crate::agent::AgentPreparation::Epoch { .. }
@@ -3207,6 +3217,7 @@ mod tests {
                     desired: Condition::Above(Term::Literal(Literal::Number(0.7))),
                     goal_priority: fixture.goal.priority.clone(),
                     desired_summary: "current epoch evidence".into(),
+                    observation_scope: crate::agent::AgentObservationScope::AdmissionEpoch,
                 },
                 1,
             )
@@ -3449,6 +3460,7 @@ mod tests {
             desired: Condition::Above(Term::Literal(Literal::Number(0.7))),
             goal_priority: fixture.goal.priority.clone(),
             desired_summary: "current docs".into(),
+            observation_scope: crate::agent::AgentObservationScope::AssignedSubject,
         };
         let (_, revision) =
             crate::agent::AgentMaintainedConditionRegistryStore::new(fixture.db.clone())
@@ -3563,6 +3575,7 @@ mod tests {
             desired: Condition::Above(Term::Literal(Literal::Number(0.7))),
             goal_priority: fixture.goal.priority.clone(),
             desired_summary: "current documentation is established".into(),
+            observation_scope: crate::agent::AgentObservationScope::AssignedSubject,
         };
         let (_, revision) =
             crate::agent::AgentMaintainedConditionRegistryStore::new(fixture.db.clone())

@@ -235,6 +235,9 @@ fn verify_with_history(
     }
     // Required inputs must be wired inside each Task or carried as frozen values.
     for task in &candidate.tasks {
+        if task.execution_subject.as_ref() != Some(&problem.planner_cut.context.subject) {
+            grounds.push(StrategyRejectionGround::IdentityMismatch);
+        }
         let mut expected_inputs: Vec<_> = problem
             .task_inputs
             .iter()

@@ -26,6 +26,22 @@ pub struct AgentMaintainedCondition {
     pub goal_priority: GoalPriority,
     /// Human-readable desired state copied into Goal provenance.
     pub desired_summary: String,
+    /// Whether the observation belongs to the assigned subject or a fresh admission epoch.
+    #[serde(default, skip_serializing_if = "AgentObservationScope::is_default")]
+    pub observation_scope: AgentObservationScope,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AgentObservationScope {
+    #[default]
+    AssignedSubject,
+    AdmissionEpoch,
+}
+
+impl AgentObservationScope {
+    fn is_default(&self) -> bool {
+        *self == Self::AssignedSubject
+    }
 }
 
 impl AgentMaintainedCondition {
@@ -69,6 +85,7 @@ impl AgentMaintainedCondition {
                 cost_ceiling: None,
             },
             desired_summary: rule.desired_summary.clone(),
+            observation_scope: AgentObservationScope::AssignedSubject,
         })
     }
 }
@@ -265,6 +282,7 @@ mod tests {
                 cost_ceiling: None,
             },
             desired_summary: "confidence above threshold".into(),
+            observation_scope: AgentObservationScope::AssignedSubject,
         }
     }
 
