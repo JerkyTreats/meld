@@ -62,6 +62,8 @@ pub struct ContextApi {
     lock_manager: Arc<NodeLockManager>,
     /// Workspace root for persistence (optional)
     workspace_root: Option<PathBuf>,
+    /// Neutral Event append capability bound by product composition.
+    event_append: Arc<parking_lot::RwLock<Option<meld_events::EventAppendCapability>>>,
     /// Optional ledger emitter context for canonical context facts.
     progress_context: Arc<parking_lot::RwLock<Option<ProgressEmitterContext>>>,
     /// Optional world model query service for graph backed cross domain reads.
@@ -98,6 +100,7 @@ impl ContextApi {
             provider_registry,
             lock_manager,
             workspace_root: None,
+            event_append: Arc::new(parking_lot::RwLock::new(None)),
             progress_context: Arc::new(parking_lot::RwLock::new(None)),
             world_model_queries: Arc::new(parking_lot::RwLock::new(None)),
             belief_store: Arc::new(parking_lot::RwLock::new(None)),
@@ -126,11 +129,34 @@ impl ContextApi {
             provider_registry,
             lock_manager,
             workspace_root: Some(workspace_root),
+            event_append: Arc::new(parking_lot::RwLock::new(None)),
             progress_context: Arc::new(parking_lot::RwLock::new(None)),
             world_model_queries: Arc::new(parking_lot::RwLock::new(None)),
             belief_store: Arc::new(parking_lot::RwLock::new(None)),
             workflow_registry: Arc::new(parking_lot::RwLock::new(None)),
         }
+    }
+
+    /// Bind domain effects to one product ledger independently from telemetry sessions.
+    pub fn bind_event_append(
+        &self,
+        append: meld_events::EventAppendCapability,
+    ) -> Result<(), ApiError> {
+        let mut bound = self.event_append.write();
+        if bound
+            .as_ref()
+            .is_some_and(|prior| prior.ledger_identity() != append.ledger_identity())
+        {
+            return Err(ApiError::ConfigError(
+                "execution Event binding names a different product ledger".into(),
+            ));
+        }
+        *bound = Some(append);
+        Ok(())
+    }
+
+    pub(crate) fn durable_event_append(&self) -> Option<meld_events::EventAppendCapability> {
+        self.event_append.read().clone()
     }
 
     pub fn set_progress_context(

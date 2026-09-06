@@ -37,9 +37,9 @@ use meld_world_model::world_state::graph::{
 };
 use meld_world_model::TraversalQuery;
 use meld_world_model::{
-    AgentActivationStatus, AgentAuthorityPort, AgentAuthorizationFence, AgentAuthorizedProduct,
-    AgentCurationPort, AgentExecutionAdmissionDecision, AgentExecutionPort, AgentExecutionPosition,
-    AgentPlannerPort, AgentProductAuthorization, AgentStatus, AgentStore, BeliefQuery, BeliefStore,
+    AgentAuthorityPort, AgentAuthorizationFence, AgentAuthorizedProduct, AgentCurationPort,
+    AgentExecutionAdmissionDecision, AgentExecutionPort, AgentExecutionPosition, AgentPlannerPort,
+    AgentProductAuthorization, AgentStatus, AgentStore, BeliefQuery, BeliefStore,
     CurationAcceptanceRecord, CurationEventPort, CurationOperation, CurationResult, CurationStore,
     CurationTraversalPort,
 };
@@ -134,15 +134,43 @@ pub struct ProductAgentPlannerPort {
 /// Read-only live activation and authority-policy observer for Agent.
 #[derive(Clone)]
 pub(crate) struct ProductAgentAuthorityPort {
-    agent_store: Arc<AgentStore>,
+    admission: ProductAdmissionGenerationObserver,
     agent_id: String,
     authority_policy_content_hash: String,
 }
 
-/// Read-only root adapter from the Agent activation store to dispatch fencing.
+/// Read-only adapter from the prepared assignment lifecycle to consumer admission fencing.
 #[derive(Clone)]
 pub struct ProductAdmissionGenerationObserver {
     agent_store: Arc<AgentStore>,
+    lifecycle: crate::runtime::lifecycle::ActivationLifecycleStore,
+    assignment_id: String,
+    activation_id: String,
+    prepared_id: String,
+}
+
+#[derive(Clone)]
+pub(crate) struct ProductCurationAuthorityPort {
+    pub admission: ProductAdmissionGenerationObserver,
+    pub authority: meld_world_model::CurationAuthority,
+}
+
+impl meld_world_model::curation::CurationAuthorityPort for ProductCurationAuthorityPort {
+    fn observe(
+        &self,
+    ) -> Result<Option<meld_world_model::CurationAuthority>, meld_world_model::error::StorageError>
+    {
+        Ok(self
+            .admission
+            .observe_epoch(&self.authority.agent_id)
+            .map_err(meld_world_model::error::StorageError::InvalidPath)?
+            .map(|epoch| {
+                let mut authority = self.authority.clone();
+                authority.activation_generation = epoch.generation_id;
+                authority.admission_epoch = Some(epoch.epoch_id);
+                authority
+            }))
+    }
 }
 
 /// Planned Curation intake over the canonical Curation store and actor authority.
@@ -156,7 +184,7 @@ pub struct ProductPlannedCurationPort {
 pub struct ProductAgentExecutionPort {
     network: Arc<Mutex<SledTaskNetworkStore>>,
     catalog: meld_execution::capability::CapabilityCatalog,
-    live_generation: String,
+    authority: Arc<dyn AgentAuthorityPort>,
     authority_policy_content_hash: String,
 }
 
@@ -486,6 +514,16 @@ impl GraphDerivedEventSink for ProductEventAppendPort {
 }
 
 impl GraphConsumerCursorReporter for ProductGraphCursorPort {
+    fn report_owner_source_cursor(
+        &self,
+        source: &meld_world_model::world_state::graph::admission::OwnerEventSourceRef,
+        cursor: LedgerCursor,
+    ) -> Result<(), EventAuthorityError> {
+        self.registry
+            .report(&source.consumer_id(), cursor)
+            .map(|_| ())
+    }
+
     fn ledger_identity(&self) -> LedgerIdentity {
         self.registry.ledger_identity()
     }
@@ -515,7 +553,101 @@ impl ProductAgentPlannerPort {
 
 impl AgentPlannerPort for ProductAgentPlannerPort {
     fn assemble(&self) -> PlannerAssemblyOutcome {
+        self.assemble_request(self.request.clone())
+    }
+
+    fn assemble_for(
+        &self,
+        goal_id: &str,
+        fence: &AgentAuthorizationFence,
+    ) -> PlannerAssemblyOutcome {
         let mut request = self.request.clone();
+        request.context.goal_id = goal_id.to_string();
+        request.context.context_id = format!("agent-context::{goal_id}");
+        request.context.activation_generation = fence.activation_generation.clone();
+        request.context.admission_epoch = fence.admission_epoch.clone();
+        self.assemble_request(request)
+    }
+
+    fn assemble_epoch(
+        &self,
+        products: &meld_world_model::agent::AgentEpochProducts,
+    ) -> PlannerAssemblyOutcome {
+        let validation = products.validate().and_then(|()| {
+            let authority = &products.specification.authority;
+            let context = &self.request.context;
+            if authority.agent_id != context.agent_id
+                || authority.subject != context.subject
+                || authority.perspective != self.request.belief_key.perspective
+                || authority.branch_scope != self.request.belief_key.branch_scope
+            {
+                Err(meld_world_model::error::StorageError::InvalidPath(
+                    "epoch specification belongs to another bound Planner participant".into(),
+                ))
+            } else {
+                Ok(())
+            }
+        });
+        if let Err(error) = validation {
+            return PlannerAssemblyOutcome::Refused(meld_world_model::PlannerRefusal {
+                request_context_id: self.request.context.context_id.clone(),
+                grounds: vec![meld_world_model::PlannerRefusalGround::InvalidInput {
+                    detail: error.to_string(),
+                }],
+            });
+        }
+        let specification = &products.specification;
+        let rule = &products.curation_rule;
+        let mut request = self.request.clone();
+        request.context.goal_id = specification.goal_id.clone();
+        request.context.context_id = format!("agent-context::{}", specification.goal_id);
+        request.context.activation_generation = specification.fence.activation_generation.clone();
+        request.context.admission_epoch = specification.fence.admission_epoch.clone();
+        request.context.scope_id = rule.rule.scope.scope_id.clone();
+        request.context.observation_subject = Some(products.observation_subject.clone());
+        request.belief_key.subject = products.observation_subject.clone();
+        request.traversal_request = rule.rule.traversal_request();
+        request.traversal_cut_request.scope = rule.rule.scope.clone();
+        request.traversal_cut_request.owners = vec![
+            meld_world_model::world_state::graph::contracts::TraversalOwnerRequirement {
+                owner_id: rule.rule.source_owner_id.clone(),
+                scope: rule.rule.scope.clone(),
+                required: true,
+                event_source: rule.rule.source_event_route.clone(),
+            },
+            meld_world_model::world_state::graph::contracts::TraversalOwnerRequirement {
+                owner_id: meld_world_model::CURATION_OWNER_ID.into(),
+                scope: rule.rule.scope.clone(),
+                required: false,
+                event_source: None,
+            },
+        ];
+        request.traversal_cut_request.owners.sort();
+        for source in &mut request.source_positions {
+            source.scope_id = request.context.scope_id.clone();
+            match source.kind {
+                meld_world_model::PlannerSourceKind::Directive => {
+                    source.source_id = specification.specification_id.clone();
+                    source.revision_id = specification.specification_id.clone();
+                    source.content_hash = specification.specification_id.clone();
+                }
+                meld_world_model::PlannerSourceKind::CurationCatalog => {
+                    source.source_id = rule.rule_id.clone();
+                    source.revision_id = rule.content_hash.clone();
+                    source.content_hash = rule.content_hash.clone();
+                }
+                _ => {}
+            }
+        }
+        self.assemble_request(request)
+    }
+}
+
+impl ProductAgentPlannerPort {
+    fn assemble_request(
+        &self,
+        mut request: PlannerCurrentAssemblyRequest,
+    ) -> PlannerAssemblyOutcome {
         match self.event_append.watermark() {
             Ok(watermark) => {
                 request.traversal_cut_request.event_position = LedgerCursor {
@@ -532,11 +664,11 @@ impl AgentPlannerPort for ProductAgentPlannerPort {
                 })
             }
         }
-        PlannerQuery::new(
+        let query = PlannerQuery::new(
             BeliefQuery::new(self.belief_store.as_ref()),
             TraversalQuery::new(self.traversal_store.as_ref()),
-        )
-        .assemble_current(request)
+        );
+        query.assemble_current(request)
     }
 }
 
@@ -551,13 +683,13 @@ impl ProductAgentExecutionPort {
     pub fn new(
         network: Arc<Mutex<SledTaskNetworkStore>>,
         catalog: meld_execution::capability::CapabilityCatalog,
-        live_generation: String,
+        authority: Arc<dyn AgentAuthorityPort>,
         authority_policy_content_hash: String,
     ) -> Self {
         Self {
             network,
             catalog,
-            live_generation,
+            authority,
             authority_policy_content_hash,
         }
     }
@@ -565,7 +697,8 @@ impl ProductAgentExecutionPort {
     fn position(
         &self,
         authorization: &AgentProductAuthorization,
-    ) -> Result<AgentExecutionPosition, meld_world_model::error::StorageError> {
+        allow_intake: bool,
+    ) -> Result<Option<AgentExecutionPosition>, meld_world_model::error::StorageError> {
         let AgentAuthorizedProduct::Task(task) = &authorization.product else {
             return Err(meld_world_model::error::StorageError::InvalidPath(
                 "Execution port accepts only Agent-authorized Tasks".to_string(),
@@ -583,8 +716,10 @@ impl ProductAgentExecutionPort {
                 authority_policy_content_hash: authorization.authority_policy_content_hash.clone(),
                 authority_decision: authorization.authority_decision.clone(),
                 activation_generation: authorization.activation_generation.clone(),
+                admission_epoch: authorization.admission_epoch.clone(),
             },
             task: ExecutionTask {
+                initial_inputs: task.initial_inputs.clone(),
                 task_id: task.task_id.clone(),
                 composition: task.composition.clone(),
                 bindings: task.bindings.clone(),
@@ -609,14 +744,26 @@ impl ProductAgentExecutionPort {
                         "durable admission identity contains a different Task offer".to_string(),
                     ))
                 }
-                None => TaskAdmissionApi::new(
-                    &mut *network,
-                    &self.catalog,
-                    &self.live_generation,
-                    &self.authority_policy_content_hash,
-                )
-                .admit(request)
-                .map_err(meld_world_model::error::StorageError::InvalidPath)?,
+                None if !allow_intake => return Ok(None),
+                None => {
+                    let fence = self.authority.observe()?;
+                    let generation = fence
+                        .as_ref()
+                        .map(|fence| fence.activation_generation.as_str())
+                        .unwrap_or("");
+                    let epoch = fence
+                        .as_ref()
+                        .and_then(|fence| fence.admission_epoch.as_deref());
+                    TaskAdmissionApi::new(
+                        &mut *network,
+                        &self.catalog,
+                        generation,
+                        &self.authority_policy_content_hash,
+                    )
+                    .with_admission_epoch(epoch)
+                    .admit(request)
+                    .map_err(meld_world_model::error::StorageError::InvalidPath)?
+                }
             };
             let network_commit_revision = network.journal().iter().find_map(|record| {
                 let JournalRecord::Commit(commit) = record else {
@@ -673,7 +820,7 @@ impl ProductAgentExecutionPort {
             }
             TaskAdmissionDecision::StaleFence { .. } => AgentExecutionAdmissionDecision::StaleFence,
         };
-        Ok(AgentExecutionPosition {
+        Ok(Some(AgentExecutionPosition {
             authorization_id: authorization.authorization_id.clone(),
             admission_id: admission.admission_id,
             admission_decision: decision,
@@ -681,19 +828,30 @@ impl ProductAgentExecutionPort {
             network_commit_revision,
             outcome_id,
             execution_publication_position_id,
-        })
+        }))
     }
 }
 
 impl ProductAdmissionGenerationObserver {
-    /// Bind live dispatch fencing to the canonical Agent activation store.
-    pub fn new(agent_store: Arc<AgentStore>) -> Self {
-        Self { agent_store }
+    /// Observe only the exact prepared assignment through its canonical lifecycle authority.
+    pub fn new(
+        agent_store: Arc<AgentStore>,
+        lifecycle: crate::runtime::lifecycle::ActivationLifecycleStore,
+        prepared: &crate::theory::PreparedActivationClosureV1,
+    ) -> Self {
+        Self {
+            agent_store,
+            lifecycle,
+            assignment_id: prepared.assignment.assignment_id.clone(),
+            activation_id: prepared.activation.activation_id.clone(),
+            prepared_id: prepared.prepared_id.clone(),
+        }
     }
-}
 
-impl AdmissionGenerationObserver for ProductAdmissionGenerationObserver {
-    fn active_generation(&self, agent_id: &str) -> Result<Option<String>, String> {
+    fn observe_epoch(
+        &self,
+        agent_id: &str,
+    ) -> Result<Option<crate::runtime::lifecycle::AdmissionEpochV1>, String> {
         let Some(agent) = self
             .agent_store
             .get_agent(agent_id)
@@ -704,16 +862,47 @@ impl AdmissionGenerationObserver for ProductAdmissionGenerationObserver {
         if agent.status != AgentStatus::Operational {
             return Ok(None);
         }
-        self.agent_store
-            .activations_for_agent(agent_id)
-            .map_err(|error| error.to_string())
-            .map(|activations| {
-                activations
-                    .into_iter()
-                    .next_back()
-                    .filter(|activation| activation.status == AgentActivationStatus::Activated)
-                    .map(|activation| activation.activation_id)
-            })
+        let receipts = self
+            .agent_store
+            .genesis_receipts_for_assignment(&self.assignment_id)
+            .map_err(|error| error.to_string())?;
+        if !receipts.iter().any(|receipt| receipt.agent_id == agent_id) {
+            return Ok(None);
+        }
+        let Some(generation) = self
+            .lifecycle
+            .current_generation(&self.assignment_id)
+            .map_err(|error| error.to_string())?
+        else {
+            return Ok(None);
+        };
+        if !generation.admission_open()
+            || generation.activation_id != self.activation_id
+            || generation.prepared_id != self.prepared_id
+        {
+            return Ok(None);
+        }
+        Ok(generation.current_admission_epoch().cloned())
+    }
+}
+
+impl AdmissionGenerationObserver for ProductAdmissionGenerationObserver {
+    fn active_generation(&self, agent_id: &str) -> Result<Option<String>, String> {
+        Ok(self
+            .observe_epoch(agent_id)?
+            .map(|epoch| epoch.generation_id))
+    }
+
+    fn validates_admission(
+        &self,
+        attribution: &meld_execution::task_network::TaskAdmissionAttribution,
+    ) -> Result<bool, String> {
+        Ok(self
+            .observe_epoch(&attribution.agent_id)?
+            .is_some_and(|epoch| {
+                epoch.generation_id == attribution.activation_generation
+                    && Some(&epoch.epoch_id) == attribution.admission_epoch.as_ref()
+            }))
     }
 }
 
@@ -722,25 +911,39 @@ impl AgentExecutionPort for ProductAgentExecutionPort {
         &self,
         authorization: &AgentProductAuthorization,
     ) -> Result<AgentExecutionPosition, meld_world_model::error::StorageError> {
-        self.position(authorization)
+        self.position(authorization, true)?.ok_or_else(|| {
+            meld_world_model::error::StorageError::InvalidPath(
+                "Task intake returned no decision".into(),
+            )
+        })
     }
 
     fn advance(
         &self,
         authorization: &AgentProductAuthorization,
     ) -> Result<AgentExecutionPosition, meld_world_model::error::StorageError> {
-        self.position(authorization)
+        self.position(authorization, true)?.ok_or_else(|| {
+            meld_world_model::error::StorageError::InvalidPath(
+                "Task intake returned no decision".into(),
+            )
+        })
+    }
+    fn observe(
+        &self,
+        authorization: &AgentProductAuthorization,
+    ) -> Result<Option<AgentExecutionPosition>, meld_world_model::error::StorageError> {
+        self.position(authorization, false)
     }
 }
 
 impl ProductAgentAuthorityPort {
     pub(crate) fn new(
-        agent_store: Arc<AgentStore>,
+        admission: ProductAdmissionGenerationObserver,
         agent_id: String,
         authority_policy_content_hash: String,
     ) -> Self {
         Self {
-            agent_store,
+            admission,
             agent_id,
             authority_policy_content_hash,
         }
@@ -751,31 +954,26 @@ impl AgentAuthorityPort for ProductAgentAuthorityPort {
     fn observe(
         &self,
     ) -> Result<Option<AgentAuthorizationFence>, meld_world_model::error::StorageError> {
-        let Some(agent) = self.agent_store.get_agent(&self.agent_id)? else {
-            return Ok(None);
-        };
-        if agent.status != AgentStatus::Operational {
-            return Ok(None);
-        }
-        let Some(activation) = self
-            .agent_store
-            .activations_for_agent(&self.agent_id)?
-            .into_iter()
-            .next_back()
-        else {
-            return Ok(None);
-        };
-        if activation.status != AgentActivationStatus::Activated {
-            return Ok(None);
-        }
-        Ok(Some(AgentAuthorizationFence {
-            activation_generation: activation.activation_id,
-            authority_policy_content_hash: self.authority_policy_content_hash.clone(),
-        }))
+        Ok(self
+            .admission
+            .observe_epoch(&self.agent_id)
+            .map_err(meld_world_model::error::StorageError::InvalidPath)?
+            .map(|epoch| AgentAuthorizationFence {
+                activation_generation: epoch.generation_id,
+                admission_epoch: Some(epoch.epoch_id),
+                authority_policy_content_hash: self.authority_policy_content_hash.clone(),
+            }))
     }
 }
 
 impl AgentCurationPort for ProductPlannedCurationPort {
+    fn resolve_operation(
+        &self,
+        candidate: CurationOperation,
+    ) -> Result<CurationOperation, meld_world_model::error::StorageError> {
+        self.store.resolve_operation(candidate)
+    }
+
     fn submit(
         &self,
         operation: CurationOperation,
@@ -950,6 +1148,20 @@ impl ClaimedTaskInvoker for CompiledTaskClaimInvoker {
         // composed actors share, so the claimed route publishes under it.
         let event_context = self.core.session_id.as_ref().map(|session_id| {
             crate::execution::ExecutionEventContext {
+                effect_authority: node
+                    .lineage
+                    .admission
+                    .as_ref()
+                    .zip(node.lineage.authority_decision.as_ref())
+                    .and_then(|(admission, decision)| {
+                        admission.admission_epoch.as_ref().map(|epoch| {
+                            meld_execution::ExecutionEffectAuthority {
+                                principal_id: decision.principal_id.clone(),
+                                subject: decision.subject.clone(),
+                                fence_ref: epoch.clone(),
+                            }
+                        })
+                    }),
                 session_id: session_id.clone(),
             }
         });

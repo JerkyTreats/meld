@@ -36,6 +36,7 @@ pub struct SelectedStewardshipPackage {
     /// Effective-authority policy identity.
     pub authority_policy_id: String,
     /// Docs claim policy identity.
+    #[serde(default)]
     pub claim_policy_id: String,
 }
 

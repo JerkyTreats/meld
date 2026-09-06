@@ -1,6 +1,6 @@
 //! Explicit root supervisor lifecycle entrypoint.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use thiserror::Error;
@@ -14,7 +14,15 @@ use crate::runtime::contracts::{
     WorkBudget, WorkerTickReport,
 };
 use crate::runtime::error::RuntimeAssemblyError;
+use crate::runtime::lifecycle::{
+    ActivationGenerationStatus, ActivationLifecycleRequestV1, ActivationLifecycleStore,
+    AssignmentLifecycleProjectionV1, LifecycleAcceptanceOutcome, LifecycleAction, LifecycleError,
+    OwnerReadinessReceiptV1, OwnerWaitReceiptV1, ParticipantIncarnationV1,
+    ParticipantLifecycleContextV1,
+};
 use crate::runtime::registration::{RegistrationKind, RegistrationLifecycle, RegistrationSet};
+use crate::theory::{ParticipantKind, PreparedActivationClosureV1};
+use crate::workspace::lifecycle::WorkspaceSourceLifecycle;
 
 use super::contracts::{
     RestartCause, RestartPolicy, RuntimeDesiredState, RuntimeDiagnosticSummary, RuntimeHealth,
@@ -46,6 +54,9 @@ pub enum SupervisorRuntimeError {
     /// Runtime assembly handoff failed.
     #[error("runtime assembly error: {0}")]
     Assembly(#[from] RuntimeAssemblyError),
+    /// Canonical activation lifecycle transition failed.
+    #[error("activation lifecycle error: {0}")]
+    Lifecycle(#[from] LifecycleError),
     /// The caller supplied an invalid lifecycle command.
     #[error("invalid supervisor command: {0}")]
     InvalidCommand(String),
@@ -85,6 +96,8 @@ pub struct SupervisorStatusSnapshot {
     pub instance_status: RuntimeInstanceStatus,
     /// Runtime status rows in stable runtime id order.
     pub runtimes: Vec<SupervisorRuntimeStatus>,
+    /// Activation-wide lifecycle state derived from durable owner waits and resolvers.
+    pub activation_liveness: Option<AssignmentLifecycleProjectionV1>,
 }
 
 /// Operator status row for one supervised runtime id.
@@ -193,6 +206,13 @@ pub struct RuntimeSupervisor<'a> {
     restart_attempt_limit: u64,
     restart_backoff_ms: u64,
     shutdown_completed: bool,
+    registration_set: Option<RegistrationSet>,
+    lifecycle_store: Option<&'a ActivationLifecycleStore>,
+    prepared_activation: Option<&'a PreparedActivationClosureV1>,
+    generation_id: Option<String>,
+    incarnations: BTreeMap<String, ParticipantIncarnationV1>,
+    passive_sources: BTreeMap<String, WorkspaceSourceLifecycle>,
+    event_append: crate::runtime::ports::ProductEventAppendPort,
 }
 
 /// Root classification for one desired runtime id.
@@ -211,6 +231,13 @@ enum RuntimeClassification {
     ActiveUnresolved,
     /// Passive service: never leased, never ticked, no actor health rows.
     Passive,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActivationStartMode {
+    None,
+    Publish,
+    Recover,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -253,10 +280,22 @@ impl<'a> RuntimeSupervisor<'a> {
             ));
         }
 
+        let registration_set = command
+            .registration_set
+            .clone()
+            .or_else(|| package.registration_set.cloned());
+        if package.prepared_activation.is_some()
+            && registration_set.as_ref() != package.registration_set
+        {
+            return Err(SupervisorRuntimeError::InvalidCommand(
+                "supervisor registrations differ from the prepared participant projection"
+                    .to_string(),
+            ));
+        }
         let desired = desired_runtime_map(
             package.desired_runtime_state,
             command.default_restart_policy,
-            command.registration_set.as_ref(),
+            registration_set.as_ref(),
             package.handle_factories,
         )?;
         let report_store = SupervisorReportStore::open(package.supervisor_store)?;
@@ -277,12 +316,21 @@ impl<'a> RuntimeSupervisor<'a> {
             restart_attempt_limit: command.restart_attempt_limit,
             restart_backoff_ms: command.restart_backoff_ms,
             shutdown_completed: false,
+            registration_set,
+            lifecycle_store: package.lifecycle_store,
+            prepared_activation: package.prepared_activation,
+            generation_id: None,
+            incarnations: BTreeMap::new(),
+            passive_sources: BTreeMap::new(),
+            event_append: package.ports.event_append().clone(),
         };
 
         supervisor.register_instance()?;
         supervisor.persist_desired_state()?;
         supervisor.recover_expired_leases(command.started_at_ms)?;
+        let activation_mode = supervisor.prepare_activation()?;
         supervisor.start_enabled_runtimes(command.started_at_ms)?;
+        supervisor.publish_activation(activation_mode)?;
         supervisor.mark_instance(RuntimeInstanceStatus::Running, None, command.started_at_ms)?;
         supervisor.supervisor_store.flush()?;
         Ok(supervisor)
@@ -379,9 +427,17 @@ impl<'a> RuntimeSupervisor<'a> {
                 .map(|diagnostic| diagnostic.actor_id.clone());
             // Idle-versus-working detail comes from the preserved durable
             // report, not from a supervisor-side shadow of domain meaning.
-            let latest_action = self
+            let mut latest_action = self
                 .report_store
                 .latest_action_for_runtime(desired.runtime_id.as_str())?;
+            if let (Some(generation_id), Some(incarnation)) = (
+                self.generation_id.as_deref(),
+                self.incarnations.get(desired.runtime_id.as_str()),
+            ) {
+                latest_action = latest_action.filter(|record| {
+                    action_matches_lifecycle(record, generation_id, &incarnation.incarnation_id)
+                });
+            }
             let registration_kind = match desired.classification {
                 RuntimeClassification::Passive => RegistrationKind::PassiveService,
                 _ => RegistrationKind::ActiveActor,
@@ -418,12 +474,110 @@ impl<'a> RuntimeSupervisor<'a> {
             });
         }
 
+        let activation_liveness = self.activation_liveness_projection()?;
         Ok(SupervisorStatusSnapshot {
             instance_id: instance.instance_id,
             product_root: instance.product_root,
             instance_status: instance.status,
             runtimes,
+            activation_liveness,
         })
+    }
+
+    fn activation_liveness_projection(
+        &self,
+    ) -> Result<Option<AssignmentLifecycleProjectionV1>, SupervisorRuntimeError> {
+        let (Some(store), Some(prepared), Some(generation_id)) = (
+            self.lifecycle_store,
+            self.prepared_activation,
+            self.generation_id.as_deref(),
+        ) else {
+            return Ok(None);
+        };
+        let generation = store
+            .generation(&prepared.assignment.assignment_id, generation_id)?
+            .ok_or_else(|| {
+                SupervisorRuntimeError::InvalidCommand(
+                    "activation generation is absent during liveness projection".to_string(),
+                )
+            })?;
+        let mut working_participants = BTreeSet::new();
+        let mut idle_participants = BTreeSet::new();
+        let mut failed_participants = BTreeSet::new();
+        for participant_id in self.handles.keys() {
+            let current_incarnation = generation.incarnations.get(participant_id);
+            let action = self
+                .report_store
+                .latest_action_for_runtime(participant_id)?;
+            let activity = current_incarnation
+                .map(|incarnation| {
+                    current_owner_activity(
+                        action.as_ref(),
+                        generation_id,
+                        &incarnation.incarnation_id,
+                    )
+                })
+                .unwrap_or(CurrentOwnerActivity::Missing);
+            match activity {
+                CurrentOwnerActivity::Working => {
+                    working_participants.insert(participant_id.clone());
+                }
+                CurrentOwnerActivity::Idle => {
+                    idle_participants.insert(participant_id.clone());
+                }
+                CurrentOwnerActivity::Failed => {
+                    failed_participants.insert(participant_id.clone());
+                }
+                CurrentOwnerActivity::Missing => {}
+            }
+        }
+        let mut resolvable_wakes = BTreeSet::new();
+        for wait in generation.waits.values() {
+            for wake_ref in &wait.wake_refs {
+                let mut active_resolver = false;
+                for (participant_id, runtime) in &self.handles {
+                    let Some(incarnation) = generation.incarnations.get(participant_id) else {
+                        continue;
+                    };
+                    if runtime.actor.resolves_lifecycle_wake(
+                        generation_id,
+                        &incarnation.incarnation_id,
+                        wake_ref,
+                    )? {
+                        active_resolver = true;
+                        break;
+                    }
+                }
+                let mut passive_resolver = false;
+                if !active_resolver {
+                    for (participant_id, source) in &self.passive_sources {
+                        if self.incarnations.get(participant_id)
+                            != generation.incarnations.get(participant_id)
+                        {
+                            continue;
+                        }
+                        if source.resolves_wake(wake_ref)? {
+                            passive_resolver = true;
+                            break;
+                        }
+                    }
+                }
+                if active_resolver || passive_resolver {
+                    resolvable_wakes.insert(wake_ref.clone());
+                }
+            }
+        }
+        store
+            .project_liveness(
+                &prepared.assignment.assignment_id,
+                generation_id,
+                &working_participants,
+                &idle_participants,
+                &failed_participants,
+                &resolvable_wakes,
+            )
+            .map(Some)
+            .map_err(Into::into)
     }
 
     /// Evaluate conservative restart policy for expired or retryable runtimes.
@@ -518,6 +672,24 @@ impl<'a> RuntimeSupervisor<'a> {
     /// persisted as an action record before the lifecycle summary derives
     /// from it.
     pub fn tick(&mut self, now_ms: u64) -> Result<SupervisorTickReport, SupervisorRuntimeError> {
+        if let (Some(store), Some(prepared), Some(generation_id)) = (
+            self.lifecycle_store,
+            self.prepared_activation,
+            self.generation_id.as_deref(),
+        ) {
+            let generation = store
+                .generation(&prepared.assignment.assignment_id, generation_id)?
+                .ok_or_else(|| {
+                    SupervisorRuntimeError::InvalidCommand(
+                        "activation generation is absent before tick".to_string(),
+                    )
+                })?;
+            if !generation.admission_open() {
+                return Err(SupervisorRuntimeError::InvalidCommand(
+                    "activation admission is closed".to_string(),
+                ));
+            }
+        }
         let owners = self
             .handles
             .values()
@@ -545,6 +717,7 @@ impl<'a> RuntimeSupervisor<'a> {
             renewed_runtime_ids.push(owner.runtime_id.to_string());
 
             let budget = self.default_work_budget.clone();
+            let lifecycle_context = self.lifecycle_context(owner.runtime_id.as_str())?;
             let Some(runtime) = self.handles.get_mut(owner.runtime_id.as_str()) else {
                 continue;
             };
@@ -563,11 +736,24 @@ impl<'a> RuntimeSupervisor<'a> {
                     )
                 });
             let health_status = health_status_from_tick_report(&report);
+            let native_wait = if !report.made_progress()
+                && report.retryable_errors.is_empty()
+                && report.fatal_errors.is_empty()
+                && !report.budget_exhausted
+            {
+                lifecycle_context
+                    .as_ref()
+                    .map(|context| runtime.actor.lifecycle_wait(context, &report))
+                    .transpose()?
+            } else {
+                None
+            };
+            self.record_tick_liveness(owner.runtime_id.as_str(), &report, native_wait)?;
 
             // Persist the full report first; heartbeat and health snapshot
             // are summaries derived from this durable record.
             self.action_sequence += 1;
-            let action = RuntimeActionRecord::from_worker_tick(
+            let mut action = RuntimeActionRecord::from_worker_tick(
                 format!(
                     "action:{}:{}:{}:{:020}",
                     self.instance_id, owner.runtime_id, now_ms, self.action_sequence
@@ -576,6 +762,12 @@ impl<'a> RuntimeSupervisor<'a> {
                 now_ms,
                 report.clone(),
             );
+            if let Some(context) = lifecycle_context.as_ref() {
+                action = action.bind_lifecycle(
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                );
+            }
             self.report_store.publish_action(&action)?;
             actions.push(action);
 
@@ -594,7 +786,7 @@ impl<'a> RuntimeSupervisor<'a> {
                 .get_health_snapshot(&owner.runtime_id)?;
             self.write_health_snapshot(
                 &owner.runtime_id,
-                Some(owner.lease_id),
+                Some(owner.lease_id.clone()),
                 health_status,
                 now_ms,
                 existing_health
@@ -649,16 +841,73 @@ impl<'a> RuntimeSupervisor<'a> {
             Some("shutdown requested".to_string()),
         )?;
 
+        let activation_context = match (
+            self.lifecycle_store.cloned(),
+            self.prepared_activation.cloned(),
+            self.generation_id.clone(),
+        ) {
+            (Some(store), Some(prepared), Some(generation_id)) => {
+                store.begin_drain(&prepared.assignment.assignment_id, &generation_id)?;
+                Some((store, prepared, generation_id))
+            }
+            _ => None,
+        };
+        let stop_order = activation_context
+            .as_ref()
+            .map(|(_, prepared, _)| reverse_participant_order(prepared))
+            .unwrap_or_else(|| self.handles.keys().cloned().collect());
+
         let mut stop_reports = Vec::new();
         let mut flush_reports = Vec::new();
-        for runtime in self.handles.values_mut() {
-            stop_reports.push(runtime.actor.request_stop());
-            let safe_point = runtime.actor.wait_for_safe_point();
+        for runtime_id in &stop_order {
+            let lifecycle_context = self.lifecycle_context(runtime_id)?;
+            if let Some(source) = self.passive_sources.get_mut(runtime_id) {
+                let context = lifecycle_context.as_ref().ok_or_else(|| {
+                    SupervisorRuntimeError::InvalidCommand(format!(
+                        "passive source '{runtime_id}' has no lifecycle context"
+                    ))
+                })?;
+                let fence = source.fence(context)?;
+                if let Some((store, prepared, generation_id)) = &activation_context {
+                    store.record_passive_fence(
+                        &prepared.assignment.assignment_id,
+                        generation_id,
+                        fence,
+                    )?;
+                }
+                continue;
+            }
+            let Some(runtime) = self.handles.get_mut(runtime_id) else {
+                return Err(SupervisorRuntimeError::InvalidCommand(format!(
+                    "participant '{runtime_id}' has no native lifecycle owner"
+                )));
+            };
+            let safe_point = match lifecycle_context.as_ref() {
+                Some(context) => runtime.actor.wait_for_lifecycle_safe_point(context)?,
+                None => {
+                    let stop_report = runtime.actor.request_stop();
+                    let safe_point = runtime.actor.wait_for_safe_point();
+                    stop_reports.push(stop_report);
+                    safe_point
+                }
+            };
             if !safe_point.safe_for_flush {
                 return Err(SupervisorRuntimeError::InvalidCommand(format!(
                     "runtime '{}' did not reach a safe point",
                     safe_point.runtime_id
                 )));
+            }
+            if let Some((store, prepared, generation_id)) = &activation_context {
+                let receipt = safe_point.owner_safe_point.clone().ok_or_else(|| {
+                    SupervisorRuntimeError::InvalidCommand(format!(
+                        "runtime '{runtime_id}' supplied no native safe point"
+                    ))
+                })?;
+                store.record_safe_point(
+                    &prepared.assignment.assignment_id,
+                    generation_id,
+                    receipt,
+                )?;
             }
             flush_reports.push(runtime.actor.flush_resources()?);
         }
@@ -667,13 +916,48 @@ impl<'a> RuntimeSupervisor<'a> {
             .flush_boundary()
             .map_err(RuntimeAssemblyError::from)?;
 
-        let stopped = self.handles.keys().cloned().collect::<Vec<_>>();
-        let owners = self
-            .handles
-            .values()
-            .map(|runtime| runtime.owner.clone())
-            .collect::<Vec<_>>();
+        if let Some((store, prepared, generation_id)) = &activation_context {
+            store.commit_fenced_quiescence(&prepared.assignment.assignment_id, generation_id)?;
 
+            for runtime_id in &stop_order {
+                let context = self.lifecycle_context(runtime_id)?.ok_or_else(|| {
+                    SupervisorRuntimeError::InvalidCommand(format!(
+                        "participant '{runtime_id}' has no lifecycle context at stop"
+                    ))
+                })?;
+                if let Some(source) = self.passive_sources.get_mut(runtime_id) {
+                    let stop = source.stop(&context)?;
+                    store.record_stop(&prepared.assignment.assignment_id, generation_id, stop)?;
+                    continue;
+                }
+                let runtime = self.handles.get_mut(runtime_id).ok_or_else(|| {
+                    SupervisorRuntimeError::InvalidCommand(format!(
+                        "participant '{runtime_id}' has no native stop hook"
+                    ))
+                })?;
+                let stop_report = runtime.actor.request_lifecycle_stop(&context)?;
+                let stop = stop_report.owner_stop.clone().ok_or_else(|| {
+                    SupervisorRuntimeError::InvalidCommand(format!(
+                        "runtime '{runtime_id}' supplied no native stop receipt"
+                    ))
+                })?;
+                store.record_stop(&prepared.assignment.assignment_id, generation_id, stop)?;
+                stop_reports.push(stop_report);
+            }
+        }
+
+        let stopped = stop_reports
+            .iter()
+            .map(|report| report.runtime_id.clone())
+            .collect::<Vec<_>>();
+        let owners = stop_order
+            .iter()
+            .filter_map(|runtime_id| {
+                self.handles
+                    .get(runtime_id)
+                    .map(|runtime| runtime.owner.clone())
+            })
+            .collect::<Vec<_>>();
         for owner in owners {
             self.write_runtime_heartbeat(&owner, RuntimeHealthStatus::Stopped, now_ms, None)?;
             self.supervisor_store
@@ -687,12 +971,56 @@ impl<'a> RuntimeSupervisor<'a> {
             )?;
             self.write_health_snapshot(
                 &owner.runtime_id,
-                Some(owner.lease_id),
+                Some(owner.lease_id.clone()),
                 RuntimeHealthStatus::Stopped,
                 now_ms,
                 NO_RESTART_ATTEMPTS,
                 None,
             )?;
+            if let Some((store, prepared, generation_id)) = &activation_context {
+                let context = self
+                    .lifecycle_context(owner.runtime_id.as_str())?
+                    .ok_or_else(|| {
+                        SupervisorRuntimeError::InvalidCommand(format!(
+                            "runtime '{}' has no lifecycle context at release",
+                            owner.runtime_id
+                        ))
+                    })?;
+                let receipt = self
+                    .handles
+                    .get_mut(owner.runtime_id.as_str())
+                    .ok_or_else(|| {
+                        SupervisorRuntimeError::InvalidCommand(format!(
+                            "runtime '{}' disappeared before native release",
+                            owner.runtime_id
+                        ))
+                    })?
+                    .actor
+                    .release_lifecycle(&context)?;
+                store.record_release(&prepared.assignment.assignment_id, generation_id, receipt)?;
+            }
+        }
+
+        if let Some((store, prepared, generation_id)) = &activation_context {
+            for runtime_id in &stop_order {
+                let context = self.lifecycle_context(runtime_id)?.ok_or_else(|| {
+                    SupervisorRuntimeError::InvalidCommand(format!(
+                        "passive source '{runtime_id}' has no lifecycle context at release"
+                    ))
+                })?;
+                let Some(source) = self.passive_sources.get(runtime_id) else {
+                    continue;
+                };
+                store.record_release(
+                    &prepared.assignment.assignment_id,
+                    generation_id,
+                    source.release(&context)?,
+                )?;
+            }
+        }
+
+        if let Some((store, prepared, generation_id)) = &activation_context {
+            store.retire(&prepared.assignment.assignment_id, generation_id)?;
         }
 
         self.handles.clear();
@@ -721,6 +1049,295 @@ impl<'a> RuntimeSupervisor<'a> {
             stop_reports,
             flush_reports,
         })
+    }
+
+    fn prepare_activation(&mut self) -> Result<ActivationStartMode, SupervisorRuntimeError> {
+        let (Some(store), Some(prepared), Some(registrations)) = (
+            self.lifecycle_store.cloned(),
+            self.prepared_activation.cloned(),
+            self.registration_set.clone(),
+        ) else {
+            return Ok(ActivationStartMode::None);
+        };
+        let assignment_id = prepared.assignment.assignment_id.clone();
+        let current = store.current_generation(&assignment_id)?;
+        let (action, expected_prior_generation, mode) = match current.as_ref() {
+            Some(current) if current.prepared_id == prepared.prepared_id => {
+                if current.admission_open() {
+                    store.interrupt(&assignment_id, &current.generation_id)?;
+                }
+                (
+                    LifecycleAction::Recover,
+                    Some(current.generation_id.clone()),
+                    ActivationStartMode::Recover,
+                )
+            }
+            Some(current) => (
+                LifecycleAction::Replace,
+                Some(current.generation_id.clone()),
+                ActivationStartMode::Publish,
+            ),
+            None => (
+                LifecycleAction::Activate,
+                None,
+                ActivationStartMode::Publish,
+            ),
+        };
+        let acceptance = store.accept(ActivationLifecycleRequestV1::new(
+            format!(
+                "supervisor-start::{}::{}::{}::{}",
+                self.instance_id,
+                lifecycle_action_key(action),
+                prepared.prepared_id,
+                expected_prior_generation.as_deref().unwrap_or("initial")
+            ),
+            action,
+            prepared.clone(),
+            expected_prior_generation,
+        )?)?;
+        if !matches!(
+            acceptance.outcome,
+            LifecycleAcceptanceOutcome::Accepted | LifecycleAcceptanceOutcome::Duplicate
+        ) {
+            return Err(SupervisorRuntimeError::InvalidCommand(format!(
+                "activation lifecycle request was {:?}",
+                acceptance.outcome
+            )));
+        }
+        let generation_id = acceptance.decision.generation_id.ok_or_else(|| {
+            SupervisorRuntimeError::InvalidCommand(
+                "accepted activation has no generation identity".to_string(),
+            )
+        })?;
+        let available_implementations = registrations
+            .registrations
+            .iter()
+            .filter(|registration| {
+                registration.kind == RegistrationKind::PassiveService
+                    || self
+                        .handle_factories
+                        .get(&registration.runtime_id)
+                        .is_some_and(|factory| factory.has_semantic_body())
+            })
+            .map(|registration| registration.runtime_id.clone())
+            .collect();
+        store.realize(
+            &prepared,
+            &generation_id,
+            &registrations,
+            &available_implementations,
+        )?;
+        self.generation_id = Some(generation_id.clone());
+
+        for participant in prepared
+            .participant_plan
+            .participants
+            .iter()
+            .filter(|participant| participant.kind == ParticipantKind::PassiveSource)
+        {
+            if participant.participant_id != "workspace.source" {
+                return Err(SupervisorRuntimeError::InvalidCommand(format!(
+                    "passive participant '{}' has no native lifecycle owner",
+                    participant.participant_id
+                )));
+            }
+            let source = WorkspaceSourceLifecycle::new(
+                self.event_append.clone(),
+                format!("workspace-source::{}", self.product_root.display()),
+            );
+            let incarnation = store.create_incarnation(
+                &assignment_id,
+                &generation_id,
+                &participant.participant_id,
+                source.binding_ref().to_string(),
+            )?;
+            let generation = store
+                .generation(&assignment_id, &generation_id)?
+                .ok_or_else(|| {
+                    SupervisorRuntimeError::InvalidCommand(
+                        "activation generation disappeared during realization".to_string(),
+                    )
+                })?;
+            let realization = &generation.realizations[&participant.participant_id];
+            let context =
+                ParticipantLifecycleContextV1::new(participant, realization, &incarnation)?;
+            store.record_readiness(
+                &assignment_id,
+                &generation_id,
+                &participant.participant_id,
+                source.readiness(&context)?,
+                &prepared,
+            )?;
+            store.record_wait(
+                &assignment_id,
+                &generation_id,
+                &participant.participant_id,
+                source.wait(&context)?,
+            )?;
+            self.incarnations
+                .insert(participant.participant_id.clone(), incarnation);
+            self.passive_sources
+                .insert(participant.participant_id.clone(), source);
+        }
+        Ok(mode)
+    }
+
+    fn publish_activation(
+        &mut self,
+        mode: ActivationStartMode,
+    ) -> Result<(), SupervisorRuntimeError> {
+        if mode == ActivationStartMode::None {
+            return Ok(());
+        }
+        let store = self.lifecycle_store.ok_or_else(|| {
+            SupervisorRuntimeError::InvalidCommand("activation store is absent".to_string())
+        })?;
+        let prepared = self.prepared_activation.ok_or_else(|| {
+            SupervisorRuntimeError::InvalidCommand("prepared activation is absent".to_string())
+        })?;
+        let generation_id = self.generation_id.as_deref().ok_or_else(|| {
+            SupervisorRuntimeError::InvalidCommand("activation generation is absent".to_string())
+        })?;
+        let generation = store
+            .generation(&prepared.assignment.assignment_id, generation_id)?
+            .ok_or_else(|| {
+                SupervisorRuntimeError::InvalidCommand(
+                    "activation generation disappeared before publication".to_string(),
+                )
+            })?;
+        match mode {
+            ActivationStartMode::Publish
+                if generation.status == ActivationGenerationStatus::Ready =>
+            {
+                store.publish_current(&prepared.assignment.assignment_id, generation_id)?;
+            }
+            ActivationStartMode::Recover
+                if generation.status == ActivationGenerationStatus::Interrupted =>
+            {
+                store.reopen(&prepared.assignment.assignment_id, generation_id, prepared)?;
+            }
+            _ => {
+                return Err(SupervisorRuntimeError::InvalidCommand(format!(
+                    "activation generation is not publishable from {:?}",
+                    generation.status
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn create_runtime_lifecycle_context(
+        &mut self,
+        runtime_id: &str,
+        lease_ref: &str,
+    ) -> Result<Option<ParticipantLifecycleContextV1>, SupervisorRuntimeError> {
+        let (Some(store), Some(prepared), Some(generation_id)) = (
+            self.lifecycle_store,
+            self.prepared_activation,
+            self.generation_id.as_deref(),
+        ) else {
+            return Ok(None);
+        };
+        let participant = prepared
+            .participant_plan
+            .participants
+            .iter()
+            .find(|participant| participant.participant_id == runtime_id)
+            .ok_or_else(|| {
+                SupervisorRuntimeError::InvalidCommand(format!(
+                    "runtime '{runtime_id}' is absent from the participant plan"
+                ))
+            })?;
+        let incarnation = store.create_incarnation(
+            &prepared.assignment.assignment_id,
+            generation_id,
+            runtime_id,
+            lease_ref.to_string(),
+        )?;
+        let generation = store
+            .generation(&prepared.assignment.assignment_id, generation_id)?
+            .ok_or_else(|| {
+                SupervisorRuntimeError::InvalidCommand(
+                    "activation generation disappeared during readiness".to_string(),
+                )
+            })?;
+        let realization = &generation.realizations[runtime_id];
+        let context = ParticipantLifecycleContextV1::new(participant, realization, &incarnation)?;
+        self.incarnations
+            .insert(runtime_id.to_string(), incarnation);
+        Ok(Some(context))
+    }
+
+    fn record_runtime_readiness(
+        &self,
+        runtime_id: &str,
+        receipt: Option<OwnerReadinessReceiptV1>,
+    ) -> Result<(), SupervisorRuntimeError> {
+        let (Some(store), Some(prepared), Some(generation_id)) = (
+            self.lifecycle_store,
+            self.prepared_activation,
+            self.generation_id.as_deref(),
+        ) else {
+            return Ok(());
+        };
+        let receipt = receipt.ok_or_else(|| {
+            SupervisorRuntimeError::InvalidCommand(format!(
+                "runtime '{runtime_id}' supplied no native owner readiness"
+            ))
+        })?;
+        store.record_readiness(
+            &prepared.assignment.assignment_id,
+            generation_id,
+            runtime_id,
+            receipt,
+            prepared,
+        )?;
+        Ok(())
+    }
+
+    fn lifecycle_context(
+        &self,
+        participant_id: &str,
+    ) -> Result<Option<ParticipantLifecycleContextV1>, SupervisorRuntimeError> {
+        let (Some(store), Some(prepared), Some(generation_id)) = (
+            self.lifecycle_store,
+            self.prepared_activation,
+            self.generation_id.as_deref(),
+        ) else {
+            return Ok(None);
+        };
+        let participant = prepared
+            .participant_plan
+            .participants
+            .iter()
+            .find(|participant| participant.participant_id == participant_id)
+            .ok_or_else(|| {
+                SupervisorRuntimeError::InvalidCommand(format!(
+                    "participant '{participant_id}' is absent from the accepted plan"
+                ))
+            })?;
+        let generation = store
+            .generation(&prepared.assignment.assignment_id, generation_id)?
+            .ok_or_else(|| {
+                SupervisorRuntimeError::InvalidCommand(
+                    "activation generation disappeared during lifecycle transition".to_string(),
+                )
+            })?;
+        let realization = generation.realizations.get(participant_id).ok_or_else(|| {
+            SupervisorRuntimeError::InvalidCommand(format!(
+                "participant '{participant_id}' has no realization"
+            ))
+        })?;
+        let incarnation = self.incarnations.get(participant_id).ok_or_else(|| {
+            SupervisorRuntimeError::InvalidCommand(format!(
+                "participant '{participant_id}' has no current incarnation"
+            ))
+        })?;
+        Ok(Some(ParticipantLifecycleContextV1::new(
+            participant,
+            realization,
+            incarnation,
+        )?))
     }
 
     fn register_instance(&mut self) -> Result<(), SupervisorRuntimeError> {
@@ -890,11 +1507,18 @@ impl<'a> RuntimeSupervisor<'a> {
         )?;
 
         let mut handle = factory.build_handle();
-        handle.start_after_lease(RuntimeLeaseContext {
+        let owner = lease.owner();
+        let lifecycle_context =
+            self.create_runtime_lifecycle_context(runtime_id, &owner.lease_id)?;
+        let lease_context = RuntimeLeaseContext {
             runtime_id: runtime_id.to_string(),
             lease_id: lease.lease_id.clone(),
-        })?;
-        let owner = lease.owner();
+        };
+        let start_report = match lifecycle_context.as_ref() {
+            Some(context) => handle.start_after_lifecycle_lease(lease_context, context)?,
+            None => handle.start_after_lease(lease_context)?,
+        };
+        self.record_runtime_readiness(runtime_id, start_report.owner_readiness)?;
         // A started actor has not proven health yet: only a real bounded
         // tick report may promote it past starting.
         self.write_runtime_heartbeat(&owner, RuntimeHealthStatus::Starting, now_ms, None)?;
@@ -971,10 +1595,44 @@ impl<'a> RuntimeSupervisor<'a> {
             SupervisorLifecycleEventType::RestartScheduled,
             Some("restart scheduled".to_string()),
         )?;
+        let activation_recovery = match (
+            self.lifecycle_store,
+            self.prepared_activation,
+            self.generation_id.as_deref(),
+        ) {
+            (Some(store), Some(prepared), Some(generation_id)) => {
+                let generation = store
+                    .generation(&prepared.assignment.assignment_id, generation_id)?
+                    .ok_or_else(|| {
+                        SupervisorRuntimeError::InvalidCommand(
+                            "activation generation is absent before restart".to_string(),
+                        )
+                    })?;
+                if generation.admission_open() {
+                    store.interrupt(&prepared.assignment.assignment_id, generation_id)?;
+                }
+                true
+            }
+            _ => false,
+        };
         self.handles.remove(runtime_id);
-        Ok(self
+        let restarted = self
             .start_runtime(runtime_id, now_ms, attempt, Some(cause))?
-            .is_some())
+            .is_some();
+        if restarted && activation_recovery {
+            let store = self
+                .lifecycle_store
+                .expect("activation store checked above");
+            let prepared = self
+                .prepared_activation
+                .expect("prepared activation checked above");
+            let generation_id = self
+                .generation_id
+                .as_deref()
+                .expect("generation checked above");
+            store.reopen(&prepared.assignment.assignment_id, generation_id, prepared)?;
+        }
+        Ok(restarted)
     }
 
     fn recover_expired_leases(
@@ -1040,6 +1698,39 @@ impl<'a> RuntimeSupervisor<'a> {
             }),
         };
         self.supervisor_store.write_runtime_heartbeat(&heartbeat)?;
+        Ok(())
+    }
+
+    fn record_tick_liveness(
+        &self,
+        runtime_id: &str,
+        report: &WorkerTickReport,
+        native_wait: Option<OwnerWaitReceiptV1>,
+    ) -> Result<(), SupervisorRuntimeError> {
+        let (Some(store), Some(prepared), Some(generation_id), Some(_incarnation)) = (
+            self.lifecycle_store,
+            self.prepared_activation,
+            self.generation_id.as_deref(),
+            self.incarnations.get(runtime_id),
+        ) else {
+            return Ok(());
+        };
+        let assignment_id = &prepared.assignment.assignment_id;
+        if report.made_progress()
+            || !report.retryable_errors.is_empty()
+            || !report.fatal_errors.is_empty()
+            || report.budget_exhausted
+        {
+            return store
+                .clear_wait(assignment_id, generation_id, runtime_id)
+                .map_err(Into::into);
+        }
+        let native_wait = native_wait.ok_or_else(|| {
+            SupervisorRuntimeError::InvalidCommand(format!(
+                "runtime '{runtime_id}' supplied no native wait for a clean no-work step"
+            ))
+        })?;
+        store.record_wait(assignment_id, generation_id, runtime_id, native_wait)?;
         Ok(())
     }
 
@@ -1149,6 +1840,52 @@ fn desired_runtime_map(
     Ok(desired)
 }
 
+fn reverse_participant_order(prepared: &PreparedActivationClosureV1) -> Vec<String> {
+    fn visit(
+        participant_id: &str,
+        specifications: &BTreeMap<&str, &crate::theory::ActivationParticipantSpec>,
+        visited: &mut std::collections::BTreeSet<String>,
+        ordered: &mut Vec<String>,
+    ) {
+        if !visited.insert(participant_id.to_string()) {
+            return;
+        }
+        if let Some(specification) = specifications.get(participant_id) {
+            for dependency in &specification.depends_on {
+                visit(dependency, specifications, visited, ordered);
+            }
+        }
+        ordered.push(participant_id.to_string());
+    }
+
+    let specifications = prepared
+        .participant_plan
+        .participants
+        .iter()
+        .map(|participant| (participant.participant_id.as_str(), participant))
+        .collect::<BTreeMap<_, _>>();
+    let mut visited = std::collections::BTreeSet::new();
+    let mut ordered = Vec::new();
+    for participant in &prepared.participant_plan.participants {
+        visit(
+            &participant.participant_id,
+            &specifications,
+            &mut visited,
+            &mut ordered,
+        );
+    }
+    ordered.reverse();
+    ordered
+}
+
+fn lifecycle_action_key(action: LifecycleAction) -> &'static str {
+    match action {
+        LifecycleAction::Activate => "activate",
+        LifecycleAction::Replace => "replace",
+        LifecycleAction::Recover => "recover",
+    }
+}
+
 /// Classify one runtime id from its declared kind and bound body.
 ///
 /// A declared passive service wins unconditionally. A declared or assumed
@@ -1232,6 +1969,48 @@ fn lifecycle_projection(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CurrentOwnerActivity {
+    Working,
+    Idle,
+    Failed,
+    Missing,
+}
+
+fn current_owner_activity(
+    record: Option<&RuntimeActionRecord>,
+    generation_id: &str,
+    incarnation_id: &str,
+) -> CurrentOwnerActivity {
+    let Some(record) =
+        record.filter(|record| action_matches_lifecycle(record, generation_id, incarnation_id))
+    else {
+        return CurrentOwnerActivity::Missing;
+    };
+    match record.outcome {
+        RuntimeActionOutcome::Started | RuntimeActionOutcome::Succeeded => {
+            CurrentOwnerActivity::Working
+        }
+        RuntimeActionOutcome::NoWork | RuntimeActionOutcome::Duplicate => {
+            CurrentOwnerActivity::Idle
+        }
+        RuntimeActionOutcome::Rejected
+        | RuntimeActionOutcome::Blocked
+        | RuntimeActionOutcome::RetryableFailure
+        | RuntimeActionOutcome::FatalFailure
+        | RuntimeActionOutcome::Cancelled => CurrentOwnerActivity::Failed,
+    }
+}
+
+fn action_matches_lifecycle(
+    record: &RuntimeActionRecord,
+    generation_id: &str,
+    incarnation_id: &str,
+) -> bool {
+    record.generation_id.as_deref() == Some(generation_id)
+        && record.incarnation_id.as_deref() == Some(incarnation_id)
+}
+
 /// Project one preserved action record onto the registration lifecycle.
 fn lifecycle_from_action_record(record: &RuntimeActionRecord) -> RegistrationLifecycle {
     match record.outcome {
@@ -1263,6 +2042,50 @@ mod tests {
     use super::*;
 
     #[test]
+    fn activation_activity_rejects_failure_and_predecessor_reports() {
+        let fatal = WorkerTickReport::fatal(
+            "execution.task_admission",
+            "execution",
+            Some("planning"),
+            "task_network_revision",
+            "planning_failed",
+            "planning failed",
+        );
+        let current = RuntimeActionRecord::from_worker_tick(
+            "action-fatal",
+            "execution.task_admission",
+            10,
+            fatal,
+        )
+        .bind_lifecycle("generation-1".into(), "incarnation-2".into());
+        assert_eq!(
+            current_owner_activity(Some(&current), "generation-1", "incarnation-2"),
+            CurrentOwnerActivity::Failed
+        );
+        assert_eq!(
+            current_owner_activity(Some(&current), "generation-1", "incarnation-3"),
+            CurrentOwnerActivity::Missing
+        );
+        assert_eq!(
+            current_owner_activity(Some(&current), "generation-2", "incarnation-2"),
+            CurrentOwnerActivity::Missing
+        );
+
+        let mut succeeded = current.clone();
+        succeeded.outcome = RuntimeActionOutcome::Succeeded;
+        assert_eq!(
+            current_owner_activity(Some(&succeeded), "generation-1", "incarnation-2"),
+            CurrentOwnerActivity::Working
+        );
+        let mut idle = current;
+        idle.outcome = RuntimeActionOutcome::NoWork;
+        assert_eq!(
+            current_owner_activity(Some(&idle), "generation-1", "incarnation-2"),
+            CurrentOwnerActivity::Idle
+        );
+    }
+
+    #[test]
     fn supervisor_start_registers_instance_starts_enabled_runtimes_and_reports_status() {
         let temp = tempfile::tempdir().unwrap();
         let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
@@ -1278,7 +2101,7 @@ mod tests {
         assert_eq!(status.product_root, temp.path());
         assert_eq!(status.instance_status, RuntimeInstanceStatus::Running);
         assert_eq!(status.runtimes.len(), 12);
-        // Truthfulness fix: only the three roles with concrete semantic
+        // Only the two roles with concrete semantic
         // bodies start; the remaining enabled roles stay unresolved instead
         // of leasing as healthy no-op placeholders.
         assert_eq!(
@@ -1287,7 +2110,7 @@ mod tests {
                 .iter()
                 .filter(|runtime| runtime.desired_enabled && runtime.handle_started)
                 .count(),
-            3
+            2
         );
         let event_append = runtime_status(&status, "event.append");
         assert!(event_append.desired_enabled);
@@ -1330,7 +2153,7 @@ mod tests {
             .iter()
             .filter(|runtime| runtime.desired_enabled && !runtime.handle_started)
             .collect::<Vec<_>>();
-        assert_eq!(body_less.len(), 8);
+        assert_eq!(body_less.len(), 9);
         for runtime in body_less {
             assert_ne!(
                 runtime.health_status,

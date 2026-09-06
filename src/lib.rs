@@ -26,6 +26,7 @@ pub mod init;
 pub mod logging;
 pub mod merkle_traversal;
 pub mod metadata;
+pub mod nonce;
 pub mod prompt_context;
 pub mod provider;
 pub mod runtime;

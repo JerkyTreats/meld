@@ -242,13 +242,13 @@ fn runtime_run_rejects_unknown_restart_policy() {
 }
 
 #[test]
-fn runtime_run_accounts_distinguish_work_from_quiescence() {
+fn runtime_run_accounts_distinguish_work_from_active_idle() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
         let workspace_root = workspace(&temp_dir);
         let assembly = open_bound_assembly(&workspace_root);
         // One committed graph event makes the first maintenance pass a
-        // working pass; later passes are truthfully quiescent.
+        // working pass; later passes are truthfully active-idle.
         assembly
             .event_authority()
             .append_capability()
@@ -288,7 +288,7 @@ fn runtime_run_accounts_distinguish_work_from_quiescence() {
             assert_eq!(account["instance_id"], "runtime-cli-account");
         }
         let working_pass = accounts.iter().find(|account| {
-            account["quiescent"] == false
+            account["active_idle"] == false
                 && account["actors"].as_array().unwrap().iter().any(|actor| {
                     actor["runtime_id"] == "world_model.graph_replay"
                         && actor["items_committed"].as_u64().unwrap() >= 1
@@ -299,8 +299,8 @@ fn runtime_run_accounts_distinguish_work_from_quiescence() {
             working_pass.is_some(),
             "no working pass observed in accounts: {lines}"
         );
-        let quiescent_pass = accounts.iter().find(|account| {
-            account["quiescent"] == true
+        let active_idle_pass = accounts.iter().find(|account| {
+            account["active_idle"] == true
                 && account["actors"]
                     .as_array()
                     .unwrap()
@@ -308,8 +308,8 @@ fn runtime_run_accounts_distinguish_work_from_quiescence() {
                     .all(|actor| actor["outcome"] == "no_work")
         });
         assert!(
-            quiescent_pass.is_some(),
-            "no quiescent pass observed in accounts: {lines}"
+            active_idle_pass.is_some(),
+            "no active-idle pass observed in accounts: {lines}"
         );
     });
 }
@@ -515,6 +515,26 @@ fn prepared_product_activates_routes_and_ignores_loose_owner_heads() {
             Some(&receipt.maintained_condition)
         );
         assert!(agent.curation_rule.is_none());
+        assert!(product
+            .stores()
+            .agent_store
+            .activations_for_agent("docs-writer")
+            .unwrap()
+            .is_empty());
+        assert!(
+            product
+                .stores()
+                .curation_store
+                .active_rule("docs-writer")
+                .unwrap()
+                .is_none(),
+            "native Curation must come from prepared genesis, without an active-rule override"
+        );
+        product.flush_product_boundary().unwrap();
+        drop(run_context);
+
+        let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
+        let product = run_context.product_runtime();
         // The stewardship composition carries the route seed but stays a
         // truthful unresolved binding until the foreground run composes the
         // production routes.

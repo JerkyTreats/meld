@@ -15,6 +15,8 @@ use crate::runtime::contracts::{
     ActorBoundedStep, ActorBoundedStepError, WorkBudget, WorkerTickReport,
 };
 use crate::runtime::error::RuntimeAssemblyError;
+use crate::runtime::lifecycle::{OwnerReleaseReceiptV1, ParticipantLifecycleContextV1};
+use crate::runtime::lifecycle::{OwnerWaitReceiptV1, StructuralWakeRef};
 
 /// One supervised active actor driven through the bounded-step contract.
 ///
@@ -50,9 +52,53 @@ impl BoundedActorHandle {
         self.handle.request_stop()
     }
 
+    /// Request native-owner stop evidence for an exact lifecycle incarnation.
+    pub fn request_lifecycle_stop(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<RuntimeHandleStopReport, RuntimeAssemblyError> {
+        self.handle.request_lifecycle_stop(context)
+    }
+
     /// Wait for the actor's safe point.
     pub fn wait_for_safe_point(&self) -> RuntimeHandleSafePointReport {
         self.handle.wait_for_safe_point()
+    }
+
+    /// Wait for native-owner safe-point evidence after the exact stop receipt.
+    pub fn wait_for_lifecycle_safe_point(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<RuntimeHandleSafePointReport, RuntimeAssemblyError> {
+        self.handle.wait_for_lifecycle_safe_point(context)
+    }
+
+    /// Ask the native owner to acknowledge release of its exact lease.
+    pub fn release_lifecycle(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerReleaseReceiptV1, RuntimeAssemblyError> {
+        self.handle.release_lifecycle(context)
+    }
+
+    /// Ask the native owner to author its exact wait and typed wake references.
+    pub fn lifecycle_wait(
+        &self,
+        context: &ParticipantLifecycleContextV1,
+        report: &WorkerTickReport,
+    ) -> Result<OwnerWaitReceiptV1, RuntimeAssemblyError> {
+        self.handle.lifecycle_wait(context, report)
+    }
+
+    /// Return whether the native owner can resolve one structural wake address.
+    pub fn resolves_lifecycle_wake(
+        &self,
+        generation_id: &str,
+        incarnation_id: &str,
+        wake_ref: &StructuralWakeRef,
+    ) -> Result<bool, RuntimeAssemblyError> {
+        self.handle
+            .resolves_lifecycle_wake(generation_id, incarnation_id, wake_ref)
     }
 
     /// Flush per-handle resources.
@@ -126,7 +172,7 @@ mod tests {
     }
 
     #[test]
-    fn body_less_handle_fails_the_step_instead_of_reporting_health() {
+    fn body_less_handle_cannot_claim_owner_readiness() {
         let temp = tempfile::tempdir().unwrap();
         let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
         let mut handle = assembly
@@ -134,20 +180,14 @@ mod tests {
             .get("execution.task_admission")
             .unwrap()
             .build_handle();
-        handle
+        let error = handle
             .start_after_lease(RuntimeLeaseContext {
                 runtime_id: "execution.task_admission".to_string(),
                 lease_id: "lease-a".to_string(),
             })
-            .unwrap();
-        let mut actor = BoundedActorHandle::new(handle);
-
-        let error = actor
-            .bounded_step(100, &WorkBudget { max_items: 8 })
             .unwrap_err();
 
-        assert!(!actor.has_semantic_body());
-        assert!(!error.retryable);
-        assert!(error.message.contains("no bounded tick report"));
+        assert!(!handle.has_semantic_body());
+        assert!(error.to_string().contains("no owner readiness evidence"));
     }
 }

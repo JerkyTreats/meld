@@ -1,12 +1,14 @@
 # World Model Reconciliation Source Delivery Program Ledger
 
-Date: 2026-09-04
+> Authority withdrawn by the program owner on 2026-09-06. This program, its slice boundaries, gates, advancement restrictions, and completion claims are directional historical evidence. They do not bind the outcome audit or implementation now authorized to complete world model reconciliation. Repository runtime ownership and contribution policies still apply. The current [outcome audit and implementation account](reconciliation_outcome_audit.md) compares original intent with actual source and records work against observable behavior. No percentage of architectural completion follows from prior slice acceptance.
+
+Date: 2026-09-05
 
 Mode: embedded phased delivery
 
-Readiness: `VC-05 accepted and closed; commit and push authorized`
+Readiness: `VC-06 third corrected successor implemented; fresh Logical Review required`
 
-Program state: first five verticals accepted; fifth slice closed at its exact style successor
+Program state: first five verticals accepted; sixth slice implemented and awaiting fresh Logical Review
 
 Canonical initiative: World Model Reconciliation
 
@@ -18,7 +20,9 @@ A new agent begins here. The user accepted `WMR-VC-01` on 2026-08-28 and it is c
 
 `WMR-VC-04-R1` now preserves the verified Task route and retires the superseded Execution planner, Goal writer, package-plan handoff, planner projection adapter and resource, old runtime identities, exports, and exclusive support surface. Exact revision 4 candidate `WMR-VC-04-R1::5308f0ba6ce873bd1e00b4ba283d60eefc9df996f9ba261461fc44929c86c430` passed fresh logical review, dedicated Style Assurance, and Gate Acceptance in order. Program-owner authority then closed the slice and separately authorized commit and push. The [VC-04-R retirement design](wmr_vc_04_r_execution_retirement.md) records the completed correction.
 
-`WMR-VC-05` is closed at exact candidate `WMR-VC-05::5c866f0fe0ad82033deba8191aad80972703cdff13d8f3e75e016de7bef25186`. Three logical reviews failed before the fourth corrected ownership candidate sealed the remaining Belief and runtime theory escapes. Candidate `WMR-VC-05::2a8c32ed802b48275b711c916b4e7a410874c99f7a2323dfcfc0a265391dc850` passed fresh logical review, but contradictory rustdoc evidence later reopened Style Assurance and invalidated its gate projection. The exact documentation successor passed narrow logical confirmation, corrected Style Assurance, and Gate Acceptance in order. Separate user authority authorizes cleanup, commit, and push. Deployment, `WMR-VC-06`, and every later slice remain unauthorized.
+`WMR-VC-05` is closed at exact candidate `WMR-VC-05::5c866f0fe0ad82033deba8191aad80972703cdff13d8f3e75e016de7bef25186`. Three logical reviews failed before the fourth corrected ownership candidate sealed the remaining Belief and runtime theory escapes. Candidate `WMR-VC-05::2a8c32ed802b48275b711c916b4e7a410874c99f7a2323dfcfc0a265391dc850` passed fresh logical review, but contradictory rustdoc evidence later reopened Style Assurance and invalidated its gate projection. The exact documentation successor passed narrow logical confirmation, corrected Style Assurance, and Gate Acceptance in order.
+
+The user directly authorized `SI-VC-06` on 2026-09-05. Material native-owner evidence invalidated the initial candidate at Logical Review. Fresh Logical Review rejected the first correction because active transitions remained root-synthesized and production did not consume assignment-wide liveness. It rejected the second correction because root still authored wake meaning, failures and predecessor reports could project active work, and shared Graph state could reuse predecessor readiness. A third bounded correction is implemented at exact successor `WMR-VC-06::e4bf8a9578aa44594411607bd1c5a117aabb9dd37beca322c1f1346d6ddff77f`. Fresh Logical Review, Style Assurance, Gate Acceptance, closeout, commit, push, deployment, `WMR-VC-07`, and every later slice remain unauthorized.
 
 Read the [single-runtime recovery amendment](world_model_reconciliation_single_runtime_recovery.md), the [Runtime Invariants](../../../../governance/runtime_invariants.md), the [current code ground map](current_code_groundmap.md), and the accepted detailed designs before proposing source work.
 
@@ -28,7 +32,7 @@ The accepted second vertical is recorded in the [WMR-VC-02 Gate Acceptance Recei
 
 The third vertical is defined by the [reasoning reconciliation source assessment](reasoning_reconciliation_source_assessment.md), its [delivery-design review](reviews/wmr_vc_03_delivery_design_review_receipt.md), the frozen [Delivery Gate](delivery_gates/wmr_vc_03_reasoning_reconciliation_gate.md), the completed [Source Activation Record](delivery_gates/wmr_vc_03_source_activation_record.md), and the accepted [final bounded remediation](delivery_gates/wmr_vc_03_final_bounded_remediation_record.md).
 
-Do not implement prior `WMR-SI-01`, `WMR-SI-02`, `WMR-SI-03`, or `WMR-SI-04`, restore archived source, or infer later-slice authority from completion or preparation. The historical `SI-05` outcome is reconstructed only through active `WMR-VC-05`.
+Do not implement prior `WMR-SI-01`, `WMR-SI-02`, `WMR-SI-03`, or `WMR-SI-04`, restore archived source, or infer later-slice authority from completion or preparation. Historical `SI-05` and `SI-06` outcomes are reconstructed only through `WMR-VC-05` and active `WMR-VC-06`.
 
 ## Objective And Product Proof
 
@@ -57,13 +61,13 @@ Program posture: `first slice`
 
 Obligation floor: operational durability for incumbent and new reconciliation records
 
-Current confidence is high for semantic ownership, existing transport seams, and the accepted standing Curation storage shape. The two accepted verticals retain the first-slice maturity posture without authorizing broader architecture.
+Current confidence is high for semantic ownership, existing transport seams, accepted product preparation, and the verified lifecycle candidate. Five accepted verticals and the sixth candidate retain the first-slice maturity posture without authorizing broader architecture.
 
-The user approved the architecture, accepted the Runtime Invariants, authorized rollback to `e3382ff5`, authorized this program reconstruction, explicitly approved `WMR-VC-01`, and authorized the completed `WMR-VC-02` boundary. On 2026-08-30 the user authorized `WMR-VC-03` implementation and approved one Agent-owned durable reconciliation tree family inside the existing world-model database. On 2026-09-01 the user explicitly authorized active `WMR-VC-04` implementation. On 2026-09-04 the user authorized `SI-VC-05`, reconstructed here as `WMR-VC-05`. No part of that authority activates later work.
+The user approved the architecture, accepted the Runtime Invariants, authorized rollback to `e3382ff5`, authorized this program reconstruction, explicitly approved `WMR-VC-01`, and authorized the completed `WMR-VC-02` boundary. On 2026-08-30 the user authorized `WMR-VC-03` implementation and approved one Agent-owned durable reconciliation tree family inside the existing world-model database. On 2026-09-01 the user explicitly authorized active `WMR-VC-04` implementation. On 2026-09-04 the user authorized `SI-VC-05`, reconstructed here as `WMR-VC-05`. On 2026-09-05 the user authorized `SI-VC-06`, reconstructed here as `WMR-VC-06`. No part of that authority activates later work.
 
 ## Current Design Authority
 
-`WMR-VC-04-R0` is the completed design amendment recorded in [VC-04-R Execution Authority Retirement](wmr_vc_04_r_execution_retirement.md). Authorized `WMR-VC-04-R1` implementation is complete, accepted, closed, committed, and pushed for exact revision 4 candidate `WMR-VC-04-R1::5308f0ba6ce873bd1e00b4ba283d60eefc9df996f9ba261461fc44929c86c430` against source baseline `713ca3ee`.
+`WMR-VC-06` is the current source authority under the [source assessment](activation_generation_and_lifecycle_source_assessment.md), [activation record](delivery_gates/wmr_vc_06_source_activation_record.md), and [frozen source gate](delivery_gates/wmr_vc_06_activation_generation_lifecycle_gate.md). Its second bounded successor is implemented against source baseline `85f4b85d` and awaits fresh Logical Review.
 
 ## Current Anomaly And Supersession
 
@@ -347,9 +351,43 @@ Gate owner: primary bounded Gate Acceptance lane
 
 Approval state: exact revision 4 candidate `WMR-VC-04-R1::5308f0ba6ce873bd1e00b4ba283d60eefc9df996f9ba261461fc44929c86c430` passed logical review, Style Assurance, and Gate Acceptance in order. Direct program-owner authority then authorized commit and push. Deployment and later slices remain unauthorized.
 
+## Active Sixth Slice
+
+`WMR-VC-06` implements activation generation and lifecycle closure from the exact inert prepared product.
+
+| Field | Current state |
+| --- | --- |
+| task | prepared closure through current, recoverable, replaceable, and safely retired activation generation |
+| mode | delivery |
+| status | third bounded correction implemented; fresh Logical Review required |
+| source authority | direct user authorization for `SI-VC-06` on 2026-09-05 |
+| source baseline | `85f4b85d` |
+| source assessment | [complete](activation_generation_and_lifecycle_source_assessment.md) |
+| activation record | [complete](delivery_gates/wmr_vc_06_source_activation_record.md) |
+| frozen gate | [ready](delivery_gates/wmr_vc_06_activation_generation_lifecycle_gate.md) |
+| initial implementation review | [invalidated](reviews/wmr_vc_06_implementation_review_receipt.md) |
+| initial Style Assurance | [invalidated](reviews/wmr_vc_06_style_assurance_receipt.md) |
+| successor Logical Review | required |
+| Gate Acceptance | not eligible |
+| candidate identity | `WMR-VC-06::e4bf8a9578aa44594411607bd1c5a117aabb9dd37beca322c1f1346d6ddff77f` |
+| expansion decision | one lifecycle tree family in the existing theory database; no new database |
+
+Product increment: exact prepared-plan projection now enters one canonical lifecycle aggregate. Required native readiness gates atomic current publication and admission. Owner waits carry structural wakes. Interrupted recovery and replacement preserve generation and incarnation lineage. Shutdown records owner safe points, passive fences, releases, and immutable retirement evidence.
+
+Retired source behavior:
+
+- disconnected lifecycle intent actor and queue
+- root-owned portable external-operation semantics
+- root-owned passive-delivery semantics
+- inferred stewardship registrations and fixed lifecycle actor catalog entry
+- unrelated latest Agent activation selection
+- tick-level quiescence claims
+
+The slice stops before Startup nonce proof and final native inspection.
+
 ## Source Authority State
 
-`WMR-VC-03-DG` revision 1 remains frozen and accepted for the exact final successor recorded above. `WMR-VC-04-DG` revision 4 is accepted for exact R1 candidate `5308f0ba6ce873bd1e00b4ba283d60eefc9df996f9ba261461fc44929c86c430`. Earlier VC-04 revisions remain historical only. `WMR-VC-05-DG` is accepted for exact successor candidate `WMR-VC-05::5c866f0fe0ad82033deba8191aad80972703cdff13d8f3e75e016de7bef25186` after narrow logical confirmation and corrected Style Assurance.
+`WMR-VC-03-DG` revision 1 remains frozen and accepted for the exact final successor recorded above. `WMR-VC-04-DG` revision 4 is accepted for exact R1 candidate `5308f0ba6ce873bd1e00b4ba283d60eefc9df996f9ba261461fc44929c86c430`. Earlier VC-04 revisions remain historical only. `WMR-VC-05-DG` is accepted for exact successor candidate `WMR-VC-05::5c866f0fe0ad82033deba8191aad80972703cdff13d8f3e75e016de7bef25186`. `WMR-VC-06-DG` rejected the initial implementation boundary and its first two corrections. It now tracks exact native-evidence and activation-lineage successor `WMR-VC-06::e4bf8a9578aa44594411607bd1c5a117aabb9dd37beca322c1f1346d6ddff77f` pending fresh Logical Review.
 
 ## Product Trace
 
@@ -385,6 +423,22 @@ accepted Agent Plan Task with five Docs capabilities
 ```
 
 The current route, write boundary, non-integrations, and completed deletion inventory are recorded in the [Execution route source assessment](execution_route_source_assessment.md).
+
+The sixth-slice candidate trace is:
+
+```text
+exact inert prepared closure
+-> accepted lifecycle decision
+-> exact participant realization and incarnation
+-> complete native-owner readiness barrier
+-> atomic current head and open admission epoch
+-> bounded work or durable owner wait with structural wake
+-> interrupted recovery or successor replacement
+-> closed admission, safe points, and passive fences
+-> immutable retired generation
+```
+
+The current implementation and retirement inventory are recorded in the [activation lifecycle source assessment](activation_generation_and_lifecycle_source_assessment.md).
 
 ## Completed Groundmap
 
@@ -426,7 +480,7 @@ Historical source gates cannot be reactivated. The reconstructed program must is
 | `WMR-VC-04` | actual Docs Task through real Execution and exact Agent terminal return | completed through accepted R1 successor; committed and pushed |
 | `WMR-VC-04-R1` | preserve VC-04 behavior while retiring superseded Execution planning authority | completed, accepted, committed, and pushed |
 | `WMR-VC-05` | product compilation and Agent genesis | exact documentation successor accepted and slice closed; commit and push authorized |
-| `WMR-VC-06` | activation generation and lifecycle closure | assessment-only and unauthorized |
+| `WMR-VC-06` | activation generation and lifecycle closure | third corrected successor implemented; fresh Logical Review required |
 | `WMR-VC-07` | Startup nonce proof and native inspection | assessment-only and unauthorized |
 | `WMR-VC-08` | Docs Freshness product migration | assessment-only and unauthorized |
 | `WMR-VC-09` | Dependency Security product migration | assessment-only and unauthorized |
@@ -435,7 +489,7 @@ Historical source gates cannot be reactivated. The reconstructed program must is
 
 The recovery amendment identifies six candidate cuts: epistemic knowledge, reconciliation, Execution, product initialization, Startup proof, and product migration.
 
-`WMR-VC-01`, `WMR-VC-02`, the exact final bounded successor for `WMR-VC-03`, exact `WMR-VC-04-R1`, and exact `WMR-VC-05` are accepted source cuts. VC-04-R1 is committed and pushed to its branch. `WMR-VC-05` is closed under its [source assessment](product_compilation_and_agent_genesis_source_assessment.md), [worker packet](detailed_design/wmr_vc_05_worker_packet.md), [source activation record](delivery_gates/wmr_vc_05_source_activation_record.md), [frozen gate](delivery_gates/wmr_vc_05_product_compilation_agent_genesis_gate.md), and [Gate Acceptance receipt](delivery_gates/wmr_vc_05_gate_acceptance_receipt.md). VC-06 through VC-09 remain assessment-only horizons without source authority.
+`WMR-VC-01`, `WMR-VC-02`, the exact final bounded successor for `WMR-VC-03`, exact `WMR-VC-04-R1`, and exact `WMR-VC-05` are accepted source cuts. `WMR-VC-06` is an implemented candidate under its [source assessment](activation_generation_and_lifecycle_source_assessment.md), [activation record](delivery_gates/wmr_vc_06_source_activation_record.md), and [frozen gate](delivery_gates/wmr_vc_06_activation_generation_lifecycle_gate.md). VC-07 through VC-09 remain assessment-only horizons without source authority.
 
 If a candidate cut is too broad, divide it by complete runtime behavior rather than by crate or domain. Every smaller cut must still leave one canonical route for each responsibility it accepts.
 
@@ -448,6 +502,8 @@ This is an assessment set, not source write authority. The accepted `WMR-VC-02` 
 The frozen `WMR-VC-03` affected set is PDS and theory selection, workspace and semantic product owners, Events, Graph and Traversal, Belief, Planner, Curation, Strategy, Agent, Meld Language, runtime lifecycle, root composition, Docs Freshness, and Dependency Security. Only Planner, Curation, Strategy, Agent, runtime registration, root adapters, and focused proof changed behavior.
 
 The corrected `WMR-VC-04` affected set is PDS and theory selection as read-only evidence, Events, Graph and Traversal, Planner and Curation as accepted upstream evidence, Strategy, Agent, Execution Goal Set, Execution Planning, Execution Task Network, Execution Capability runtime, Meld Language, root composition, and inspection. Only Strategy Task return data, Agent Task reconciliation, Execution admission and direct lowering, Task Network attribution and fences, runtime registration, root adapters, and focused inspection change behavior.
+
+The frozen `WMR-VC-06` affected set is runtime assembly, registration, lifecycle, supervision, ports, and operator presentation; theory as the unchanged structural publisher; native owner actors through narrow durable lifecycle checkpoint readers; the workspace passive source lifecycle owner; Dependency Security for retirement of its exclusive portable fixture; and harness plus CLI proof. The bounded correction changes no owner eligibility, Startup, or later-slice semantics.
 
 ## Expansion Decisions
 
@@ -463,11 +519,13 @@ The optional policy that blocks dependent PDS activation until Startup satisfact
 
 `WMR-VC-04` authorizes no new architectural expansion. Task admission and attribution extend the existing Execution database and Task Network journal in place. Agent Task authorization and execution receipts extend the approved Agent reconciliation family in place. Multi-admission action sharing remains deferred.
 
+`WMR-VC-06` adds one lifecycle tree family inside the existing theory database. It adds no database, crate, dependency, service, background actor, second supervisor, semantic writer, or compatibility path.
+
 The program owner disposed the revision 1 mismatch as a gate-definition defect. Revision 2 accepts the real five-step Docs Task and defers workspace owner return. No PDS, product-selection, Task-body, or workspace-owner expansion was taken.
 
 ## Hard Limits And Tripwires
 
-Any later source work requires a new explicit activation and frozen gate. Current `WMR-VC-04` authority does not authorize expansion or a later slice.
+Any later source work requires a new explicit activation and frozen gate. Current `WMR-VC-06` authority does not authorize expansion or a later slice.
 
 Stop if a proposed slice adds a canonical implementation without migrating its real runtime entrypoint. Stop if an incumbent equivalent remains live after replacement. Stop if a dormant public successor is offered as product proof. Stop if durable read compatibility is used to preserve an old writer or planner. Stop if a future cleanup slice is offered as the reason to accept present parallelism.
 
@@ -505,7 +563,15 @@ Current store and schema posture: extend the approved Agent reconciliation famil
 
 Current runtime-route delta: root uses direct Task admission under `execution.task_admission`, the single Task Network, production Docs dispatch, neutral publication, Event, and Graph seams; the old planner and Goal participant identities are absent
 
-The rejected additive attempt remains recoverable but is outside current source authority. `WMR-VC-03` is completed through its final bounded correction. Corrected `WMR-VC-04-R1` is accepted, closed, committed, and pushed. `WMR-VC-05` is accepted and closed. No later source slice is active.
+Current `WMR-VC-06` source baseline: `85f4b85d`
+
+Current lifecycle boundary: exact prepared closure, plan projection, realization, native readiness, atomic current admission, structural waits and wakes, interrupted recovery, replacement, fenced quiescence, and immutable retirement
+
+Current lifecycle persistence: one aggregate tree family in the existing theory database with no compatibility writer or second head
+
+Current lifecycle-route delta: the supervisor invokes the lifecycle authority directly and no lifecycle actor is registered or ticked
+
+The rejected additive attempt remains recoverable but is outside current source authority. `WMR-VC-03` is completed through its final bounded correction. Corrected `WMR-VC-04-R1` is accepted, closed, committed, and pushed. `WMR-VC-05` is accepted and closed. `WMR-VC-06` is the sole active source slice and its third corrected successor awaits fresh Logical Review.
 
 ## Delivery Gate Definitions
 
@@ -532,9 +598,13 @@ The accepted `WMR-VC-01-DG` includes these criteria and direct production proof 
 
 `WMR-VC-04-DG` revision 4 is accepted for the exact R1 candidate. Revisions 1 through 3 remain historical only. [WMR-VC-04-R](wmr_vc_04_r_execution_retirement.md) records the completed retirement correction and authority boundary.
 
+`WMR-VC-06-DG` is frozen for exact prepared-plan projection, one lifecycle aggregate, native readiness, atomic publication and admission, structural liveness, recovery, replacement, fenced quiescence, retirement, and incumbent deletion.
+
 ## Gate Evidence
 
-Current Gate Acceptance covers five verticals: fresh and unchanged real workspace scans, exact owner cuts, standing and planned Curation admission and terminality, durable idempotent append, Event and Graph lag, Graph replay and reopen, configured and unmapped Belief settlement, complete Planner cuts and typed refusals, immutable mixed Plan succession, Agent judgment and authorization, exact Task admission and production execution, neutral operational publication, independent Graph progress, exact milestone reconciliation, complete retirement of superseded Execution authority, exact product compilation, owner-bound Agent genesis, durable Belief acceptance, complete topology, inert Capability preparation, and prepared-product runtime hydration.
+Current accepted Gate evidence covers five verticals: fresh and unchanged real workspace scans, exact owner cuts, standing and planned Curation admission and terminality, durable idempotent append, Event and Graph lag, Graph replay and reopen, configured and unmapped Belief settlement, complete Planner cuts and typed refusals, immutable mixed Plan succession, Agent judgment and authorization, exact Task admission and production execution, neutral operational publication, independent Graph progress, exact milestone reconciliation, complete retirement of superseded Execution authority, exact product compilation, owner-bound Agent genesis, durable Belief acceptance, complete topology, inert Capability preparation, and prepared-product runtime hydration.
+
+The sixth candidate adds exact plan-to-registration parity, one durable generation authority, readiness-gated publication, coherent admission, owner waits and structural wake closure, interrupted recovery, successor replacement, fenced quiescence, immutable retirement, and retirement of the disconnected root lifecycle prototypes.
 
 `WMR-VC-04` has verified evidence for durable Task admission, direct lowering, Task Network attribution, live dispatch fences, production Docs dispatch, durable success and failure outcomes, neutral publication, independent Graph catchup, and exact terminal return. The verified candidate contains no new workspace contributor or owner-return source.
 
@@ -549,6 +619,8 @@ The initial and first bounded-successor `WMR-VC-03-DG` acceptances are supersede
 The earlier `WMR-VC-04` candidates remain historical evidence only. Revision 4 [Gate Acceptance](delivery_gates/wmr_vc_04_gate_acceptance_receipt.md) accepts exact R1 candidate `WMR-VC-04-R1::5308f0ba6ce873bd1e00b4ba283d60eefc9df996f9ba261461fc44929c86c430` after fresh logical review and dedicated Style Assurance. Program-owner authority closed, committed, and pushed that exact candidate.
 
 `WMR-VC-05-DG` is accepted for exact successor candidate `WMR-VC-05::5c866f0fe0ad82033deba8191aad80972703cdff13d8f3e75e016de7bef25186`. Its [Gate Acceptance receipt](delivery_gates/wmr_vc_05_gate_acceptance_receipt.md) records every criterion set as passed with no violation or exception.
+
+`WMR-VC-06-DG` is frozen but its successor is not yet eligible for Gate Acceptance. No Gate Acceptance receipt exists. The rejected initial candidate remains historical evidence and the current successor requires fresh ordered assurance.
 
 ## Review State
 
@@ -598,6 +670,12 @@ Current R1 implementation review: [passed with no finding](reviews/wmr_vc_04_cor
 
 Current fifth-slice implementation review: [prior full review passed](reviews/wmr_vc_05_implementation_review_receipt.md) for candidate `WMR-VC-05::2a8c32ed802b48275b711c916b4e7a410874c99f7a2323dfcfc0a265391dc850`; [successor logical confirmation passed](reviews/wmr_vc_05_style_successor_logical_confirmation.md) for exact candidate `WMR-VC-05::5c866f0fe0ad82033deba8191aad80972703cdff13d8f3e75e016de7bef25186`
 
+Initial sixth-slice implementation review: [invalidated](reviews/wmr_vc_06_implementation_review_receipt.md) for rejected candidate `WMR-VC-06::ad41bce802f5b99226d25de41eb9da4d39b005a34f7c9bca599abbf666470f38`
+
+Rejected sixth-slice successor: [bounded native-transition and production-liveness correction](delivery_gates/wmr_vc_06_native_transition_liveness_correction_record.md) at exact candidate `WMR-VC-06::871f0be8b14d49adc808250b7c6f28f9849eb408e8d7e5762bcd301cd48e7033`
+
+Current sixth-slice successor: [bounded native-evidence and activation-lineage correction](delivery_gates/wmr_vc_06_native_evidence_lineage_correction_record.md) at exact candidate `WMR-VC-06::e4bf8a9578aa44594411607bd1c5a117aabb9dd37beca322c1f1346d6ddff77f`; fresh Logical Review required
+
 ## Style Assurance
 
 Accepted second-slice Style Assurance: [satisfied after one bounded evidence correction](reviews/wmr_vc_02_style_assurance_receipt.md)
@@ -618,11 +696,17 @@ Current fifth-slice Style Assurance: [corrected successor satisfied](reviews/wmr
 
 Fifth-slice Style Assurance result: the prior contradictory receipt is superseded; exact successor satisfied with no finding and subsequently passed fresh Gate Acceptance
 
+Initial sixth-slice Style Assurance: [invalidated](reviews/wmr_vc_06_style_assurance_receipt.md); successor Style Assurance is not eligible before fresh Logical Review
+
+Sixth-slice Style Assurance result: ineligible until the current exact successor passes fresh Logical Review
+
 ## Complexity Delta
 
 Current R1 retirement delta: 49 production paths changed, 1,088 production lines added, and 8,305 production lines removed by rename-aware comparison between the durable pre-retirement checkpoint and exact worktree candidate. It adds no crate, dependency, database, durable store, background runtime, Event authority, Graph authority, or second Task Network. The old planner, Goal writer, package handoff, planner projection adapter and resource, runtime identities, exports, and exclusive support surface are retired.
 
 Current fifth-slice delta: thirty-seven production Rust paths changed, 4,470 production lines added, and 2,147 production lines removed against baseline `a7032bbf`. It adds no crate, dependency, database, service, Event authority, Graph authority, Task Network, runtime coordinator, or lifecycle generation. Direct root mutation, synthetic genesis, loose theory selection, fallback authority selection, public lower writers, obsolete tests, and exclusive fixtures are retired.
+
+Current sixth-slice delta: thirty-three production Rust paths changed, including two retired paths, against baseline `85f4b85d`. It adds one lifecycle tree family in the existing theory database and no crate, dependency, database, service, background actor, semantic writer, or second supervisor.
 
 Completed third-slice validation: formatting, diff integrity, focused crate and root tests, and the complete sequential workspace suite pass. Strict workspace lint reaches only pre-existing `clippy::result-large-err` findings after candidate-created findings were removed. Lint passes with that baseline lint explicitly allowed.
 
@@ -686,7 +770,7 @@ One direct user-authorized exception permits twenty-six production files rather 
 
 ## Reassessment
 
-The five accepted verticals show that the program can reuse the existing workspace source, Event authority, Graph runtime, traversal store, configured Belief ingestion, Curation authority, theory stores, Task Network, production Capability dispatch, root actor assembly, and exact prepared-product lineage. The maturity posture remains first slice because workspace owner return, lifecycle closure, Startup proof, and product migration remain incomplete.
+The five accepted verticals and sixth implementation candidate show that the program can reuse the existing workspace source, Event authority, Graph runtime, traversal store, configured Belief ingestion, Curation authority, theory stores, Task Network, production Capability dispatch, root actor assembly, and exact prepared-product lineage. The maturity posture remains first slice because workspace owner return, Startup proof, and product migration remain incomplete.
 
 The obligation floor is operational durability for incumbent and new reconciliation records. The third-cut successor retains only the approved Agent-owned durable reconciliation trees and one root Agent reconciliation participant. It adds no crate, dependency, database, service, Event authority, Graph authority, Belief consumer, compatibility writer, or later-slice behavior.
 
@@ -698,14 +782,14 @@ The user authorized `WMR-VC-02` and its one Curation-owned durable tree family o
 
 The corrected `WMR-VC-04` assessment confirms that the existing Task Network, production Docs dispatch, Capability runtime, outcome journal, Execution publication bridge, Event authority, and Graph runtime carry the next vertical. The delivered behavior is direct Task admission and exact operational return to Agent. No new architectural expansion is required.
 
-The accepted maturity envelope still applies. Direct authority activates product initialization only. The candidate creates no acceptance authority for lifecycle or later work.
+The accepted maturity envelope still applies. Direct authority activated lifecycle implementation only. The candidate creates no acceptance authority for Startup or later work.
 
 ## Advancement
 
-`WMR-VC-05` exact successor is locally verified, passed narrow logical confirmation, satisfied corrected Style Assurance, passed Gate Acceptance, and stops at an inert prepared closure. User authority permits cleanup, commit, and push for this accepted slice. Do not deploy, activate VC-06, or begin any later source slice without new user direction.
+`WMR-VC-06` third corrected successor is implemented and mechanically verified through owner-authored typed wakes, native resolver ownership, exact action lineage, failure-safe production liveness, incarnation-scoped owner transitions, and durable lifecycle retirement. It has not passed fresh Logical Review and is not eligible for Style Assurance or Gate Acceptance. Do not close, commit, push, deploy, activate VC-07, or begin any later source slice without new user direction.
 
 ## Final Reconciliation
 
 The semantic architecture remains approved. The prior source delivery strategy remains withdrawn. `WMR-VC-01` completes the reconstructed historical `SI-01` outcome through one canonical workspace publication and production owner-inspection route. `WMR-VC-02` completes the reconstructed historical `SI-02` outcome through standing Curation, Graph visibility, configured Belief settlement, restart recovery, and durable replay assurance. The accepted final `WMR-VC-03` successor proves exact reasoning reconciliation through mixed Plan construction, planned Curation, exact milestone acceptance, unpublished Task eligibility, terminal future Execution admission diagnostics, and live close and reopen recovery for candidate digest `f29192ea53aebfd31ab5d20f18a366066fce4580f189fc90a61b115b2741e312`.
 
-Accepted `WMR-VC-04-R1` routes the real five-capability Docs Task through canonical admission and lowering, one Task Network, production Docs dispatch, neutral publication, independent Graph progress, and exact Agent terminal return. It retires the old Execution planner, Goal writer, package-plan handoff, planner projection adapter and resource, old runtime identities, exports, and exclusive support surface. Workspace owner return remains deferred. Exact candidate `WMR-VC-04-R1::5308f0ba6ce873bd1e00b4ba283d60eefc9df996f9ba261461fc44929c86c430` is committed and pushed. `WMR-VC-05` is accepted and closed at its exact successor. Deployment and later-slice authority remain absent.
+Accepted `WMR-VC-04-R1` routes the real five-capability Docs Task through canonical admission and lowering, one Task Network, production Docs dispatch, neutral publication, independent Graph progress, and exact Agent terminal return. It retires the old Execution planner, Goal writer, package-plan handoff, planner projection adapter and resource, old runtime identities, exports, and exclusive support surface. Workspace owner return remains deferred. Exact candidate `WMR-VC-04-R1::5308f0ba6ce873bd1e00b4ba283d60eefc9df996f9ba261461fc44929c86c430` is committed and pushed. `WMR-VC-05` is accepted and closed at its exact successor. `WMR-VC-06` has a mechanically verified third corrected successor at exact candidate `WMR-VC-06::e4bf8a9578aa44594411607bd1c5a117aabb9dd37beca322c1f1346d6ddff77f` pending fresh Logical Review. Closeout, commit, push, deployment, and later-slice authority remain absent.

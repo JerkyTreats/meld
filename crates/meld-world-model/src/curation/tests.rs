@@ -125,6 +125,129 @@ impl CurationEventPort for MockEvents {
     }
 }
 
+struct MutableCurationAuthority(Mutex<Option<CurationAuthority>>);
+impl CurationAuthorityPort for MutableCurationAuthority {
+    fn observe(&self) -> Result<Option<CurationAuthority>, StorageError> {
+        Ok(self.0.lock().unwrap().clone())
+    }
+}
+
+#[test]
+fn closed_epoch_finishes_accepted_work_and_reopened_epoch_rejects_stale_intake() {
+    let mut fixture = Fixture::new(0);
+    let mut prior = authority();
+    prior.admission_epoch = Some("epoch-1".into());
+    let operation = CurationOperation::reconstruct(
+        prior.clone(),
+        fixture.rule.revision_ref(),
+        fixture.traversal.cut.lock().unwrap().clone(),
+        fixture.rule.rule.traversal_request(),
+    )
+    .unwrap();
+    fixture.store.put_operation(&operation).unwrap();
+    let accepted =
+        CurationAcceptanceRecord::for_current_authority(&operation, &fixture.rule, &prior).unwrap();
+    fixture.store.put_acceptance(&accepted).unwrap();
+    let observer = Arc::new(MutableCurationAuthority(Mutex::new(None)));
+    fixture.actor = fixture.actor.with_authority_port(observer.clone());
+    let recovered = fixture.actor.bounded_step(1);
+    assert!(recovered.fatal_errors.is_empty(), "{recovered:?}");
+    assert_eq!(recovered.results_persisted, 1);
+    assert_eq!(recovered.publications_appended, 2);
+    let closed = fixture.actor.bounded_step(1);
+    assert_eq!(closed.operations_attempted, 0);
+    assert_eq!(closed.publications_appended, 0);
+    let mut old = authority();
+    old.admission_epoch = Some("epoch-0".into());
+    let stale = CurationOperation::reconstruct(
+        old,
+        fixture.rule.revision_ref(),
+        fixture.traversal.cut.lock().unwrap().clone(),
+        fixture.rule.rule.traversal_request(),
+    )
+    .unwrap();
+    let mut grant = planned_authorization(&stale);
+    grant.admission_epoch = stale.authority.admission_epoch.clone();
+    fixture
+        .store
+        .submit_planned(&stale.clone().with_planned_authorization(grant).unwrap())
+        .unwrap();
+    let mut current = prior;
+    current.admission_epoch = Some("epoch-2".into());
+    *observer.0.lock().unwrap() = Some(current);
+    let refused = fixture.actor.bounded_step(1);
+    assert_eq!(refused.results_persisted, 0);
+    assert_eq!(
+        fixture
+            .store
+            .acceptance_for_planned_operation(&stale.operation_id)
+            .unwrap()
+            .unwrap()
+            .decision,
+        CurationAdmissionDecision::Rejected
+    );
+    assert!(fixture
+        .store
+        .next_planned_operation(&authority().agent_id)
+        .unwrap()
+        .is_none());
+    let next = fixture.actor.bounded_step(1);
+    assert_eq!(next.results_persisted, 1, "{next:?}");
+    assert_eq!(fixture.traversal.traversals.load(Ordering::SeqCst), 2);
+}
+
+#[test]
+fn native_lifecycle_accounts_for_pending_work_and_completed_publication() {
+    let fixture = Fixture::new(0);
+    let operation = CurationOperation::reconstruct(
+        authority(),
+        fixture.rule.revision_ref(),
+        fixture.traversal.cut.lock().unwrap().clone(),
+        fixture.rule.rule.traversal_request(),
+    )
+    .unwrap();
+    fixture.store.put_operation(&operation).unwrap();
+    let wake = |resource: &str, operation_id: &str| {
+        crate::waiting::StructuralWakeAddress::DurableOperation(format!(
+            "world-model::{resource}::curation-operation::{operation_id}::completion"
+        ))
+    };
+    assert!(fixture
+        .actor
+        .resolves_wake(&wake(fixture.store.resource_id(), &operation.operation_id))
+        .unwrap());
+    assert!(!fixture
+        .actor
+        .resolves_wake(&wake("foreign-resource", &operation.operation_id))
+        .unwrap());
+    assert!(!fixture
+        .actor
+        .resolves_wake(&wake(fixture.store.resource_id(), "foreign-operation"))
+        .unwrap());
+    let identity =
+        crate::lifecycle::NativeLifecycleIdentity::new("generation-a".into(), "curation-a".into())
+            .unwrap();
+    let (ready, transition) = fixture.actor.lifecycle_start(identity.clone()).unwrap();
+    assert_eq!(transition.checkpoint_ref, ready.proof_position_ref);
+    assert_eq!(
+        fixture.store.unresolved_operations(&authority()).unwrap(),
+        vec![(operation.operation_id, "result_pending".into())]
+    );
+    let result = fixture.actor.bounded_step(1);
+    assert_eq!(result.publications_appended, 2, "{result:?}");
+    let (safe, transition) = fixture.actor.lifecycle_safe_point(identity).unwrap();
+    assert_eq!(transition.checkpoint_ref, safe.proof_position_ref);
+    assert_ne!(
+        safe.unresolved_operation_summary_ref,
+        ready.unresolved_operation_summary_ref
+    );
+    assert!(fixture
+        .store
+        .unresolved_operations(&authority())
+        .unwrap()
+        .is_empty());
+}
+
 #[test]
 fn applied_result_replays_without_reexecuting_or_republishing() {
     let fixture = Fixture::new(0);
@@ -324,6 +447,7 @@ fn preadmission_rejection_persists_without_semantic_execution() {
     let ledger_id = source_cut.event_position.ledger_id;
     let traversal = Arc::new(MockTraversal {
         result: Mutex::new(TraversalResult {
+            absent_roots: Vec::new(),
             result_id: "rejected-traversal".to_string(),
             cut_id: source_cut.cut_id.clone(),
             objects: Vec::new(),
@@ -391,6 +515,7 @@ fn successor_cut_observes_existing_state_as_unchanged() {
     next_cut.event_position.after_seq += 1;
     next_cut.graph_position.after_seq += 1;
     next_cut.receipts = vec![OwnerGraphRevisionReceipt {
+        event_coverage: None,
         owner_id: "workspace_fs".to_string(),
         revision_id: "workspace-v2".to_string(),
         scope: scope(),
@@ -402,15 +527,16 @@ fn successor_cut_observes_existing_state_as_unchanged() {
             failures: Vec::new(),
             status: OwnerCompletenessStatus::Complete,
         },
-        source_event: meld_events::EventRecordRef {
+        source_event: Some(meld_events::EventRecordRef {
             ledger_id: next_cut.event_position.ledger_id,
             seq: next_cut.event_position.after_seq,
-        },
+        }),
         projection_position: next_cut.graph_position,
     }];
     next_cut.cut_id = traversal_cut_identity(&next_cut).unwrap();
     *fixture.traversal.cut.lock().unwrap() = next_cut.clone();
     *fixture.traversal.result.lock().unwrap() = TraversalResult {
+        absent_roots: Vec::new(),
         result_id: "successor-traversal".to_string(),
         cut_id: next_cut.cut_id,
         objects: publication.batch.objects,
@@ -492,6 +618,7 @@ fn reopened_actor_reuses_the_same_terminal_identity_for_the_same_cut() {
     let ledger_id = source_cut.event_position.ledger_id;
     let traversal = Arc::new(MockTraversal {
         result: Mutex::new(TraversalResult {
+            absent_roots: Vec::new(),
             result_id: "reopen-traversal".to_string(),
             cut_id: source_cut.cut_id.clone(),
             objects: Vec::new(),
@@ -567,6 +694,8 @@ fn owner_neutral_rule_authors_dissimilar_installed_vocabulary() {
     let store = Arc::new(CurationStore::new(db).unwrap());
     let subject = DomainObjectRef::new("inventory", "asset", "asset-a").unwrap();
     let neutral_rule = StandingCurationRule {
+        source_event_route: None,
+        judgment_scope: None,
         rule_id: "inventory-rule".to_string(),
         agent_id: "agent-inventory".to_string(),
         source_owner_id: "inventory".to_string(),
@@ -578,6 +707,7 @@ fn owner_neutral_rule_authors_dissimilar_installed_vocabulary() {
         expected_object_id: "asset-a::finding".to_string(),
         relation_type: "catalogues".to_string(),
         output_policy_revision: "inventory-policy-v1".to_string(),
+        realization: None,
     };
     let revision = store.install_rule(neutral_rule, 1).unwrap();
     let mut source_cut = cut(10);
@@ -587,6 +717,7 @@ fn owner_neutral_rule_authors_dissimilar_installed_vocabulary() {
     let ledger_id = source_cut.event_position.ledger_id;
     let traversal = Arc::new(MockTraversal {
         result: Mutex::new(TraversalResult {
+            absent_roots: Vec::new(),
             result_id: "inventory-traversal".to_string(),
             cut_id: source_cut.cut_id.clone(),
             objects: Vec::new(),
@@ -613,6 +744,7 @@ fn owner_neutral_rule_authors_dissimilar_installed_vocabulary() {
             perspective: PerspectiveKey::new("frame", "analysis").unwrap(),
             branch_scope: BranchScope::main(),
             activation_generation: "inventory-generation".to_string(),
+            admission_epoch: None,
             subject,
         },
         revision,
@@ -845,6 +977,7 @@ fn assert_planned_curation_recovery(interruption: PlannedInterruption) {
     let ledger_id = source_cut.event_position.ledger_id;
     let traversal = Arc::new(MockTraversal {
         result: Mutex::new(TraversalResult {
+            absent_roots: Vec::new(),
             result_id: "planned-recovery-traversal".to_string(),
             cut_id: source_cut.cut_id.clone(),
             objects: Vec::new(),
@@ -1115,6 +1248,7 @@ fn assert_publication_recovery_after_reopen(successes_before_failure: usize) {
     let ledger_id = source_cut.event_position.ledger_id;
     let traversal = Arc::new(MockTraversal {
         result: Mutex::new(TraversalResult {
+            absent_roots: Vec::new(),
             result_id: "pending-publication-traversal".to_string(),
             cut_id: source_cut.cut_id.clone(),
             objects: Vec::new(),
@@ -1241,6 +1375,7 @@ impl Fixture {
         let ledger_id = cut.event_position.ledger_id;
         let traversal = Arc::new(MockTraversal {
             result: Mutex::new(TraversalResult {
+                absent_roots: Vec::new(),
                 result_id: "initial-traversal".to_string(),
                 cut_id: cut.cut_id.clone(),
                 objects: Vec::<OwnerObjectPublication>::new(),
@@ -1281,6 +1416,8 @@ impl Fixture {
 
 fn rule() -> StandingCurationRule {
     StandingCurationRule {
+        source_event_route: None,
+        judgment_scope: None,
         rule_id: "rule-a".to_string(),
         agent_id: "agent-a".to_string(),
         source_owner_id: "workspace_fs".to_string(),
@@ -1297,6 +1434,7 @@ fn rule() -> StandingCurationRule {
         expected_object_id: "subject-a::expected".to_string(),
         relation_type: "curation_assesses".to_string(),
         output_policy_revision: "output-policy-v1".to_string(),
+        realization: None,
     }
 }
 
@@ -1306,6 +1444,7 @@ fn authority() -> CurationAuthority {
         perspective: PerspectiveKey::new("frame", "analysis").unwrap(),
         branch_scope: BranchScope::main(),
         activation_generation: "activation-a".to_string(),
+        admission_epoch: None,
         subject: DomainObjectRef::new("workspace_fs", "node", "subject-a").unwrap(),
     }
 }
@@ -1332,6 +1471,7 @@ fn planned_authorization(operation: &CurationOperation) -> CurationPlannedAuthor
         context_id: fields.5.to_string(),
         authority_scope_id: fields.6.to_string(),
         activation_generation: fields.7.to_string(),
+        admission_epoch: None,
         idempotency_key: fields.8.to_string(),
     }
 }
@@ -1351,17 +1491,20 @@ fn cut(after_seq: u64) -> TraversalCut {
         cut_id: String::new(),
         owners: vec![
             TraversalOwnerRequirement {
+                event_source: None,
                 owner_id: CURATION_OWNER_ID.to_string(),
                 scope: scope(),
                 required: false,
             },
             TraversalOwnerRequirement {
+                event_source: None,
                 owner_id: "workspace_fs".to_string(),
                 scope: scope(),
                 required: true,
             },
         ],
         receipts: vec![OwnerGraphRevisionReceipt {
+            event_coverage: None,
             owner_id: "workspace_fs".to_string(),
             revision_id: "workspace-v1".to_string(),
             scope: scope(),
@@ -1373,10 +1516,10 @@ fn cut(after_seq: u64) -> TraversalCut {
                 failures: Vec::new(),
                 status: OwnerCompletenessStatus::Complete,
             },
-            source_event: meld_events::EventRecordRef {
+            source_event: Some(meld_events::EventRecordRef {
                 ledger_id,
                 seq: after_seq,
-            },
+            }),
             projection_position: LedgerCursor {
                 ledger_id,
                 after_seq,
@@ -1397,4 +1540,185 @@ fn cut(after_seq: u64) -> TraversalCut {
     };
     cut.cut_id = traversal_cut_identity(&cut).unwrap();
     cut
+}
+
+#[test]
+fn realization_requires_exact_owner_object_qualifications_and_complete_coverage() {
+    use crate::world_state::graph::contracts::{HydrationReference, OwnerPublicationState};
+    for scenario in [
+        "absent",
+        "foreign_epoch",
+        "realized",
+        "withdrawn",
+        "incomplete",
+    ] {
+        let mut fixture = Fixture::new(0);
+        let observed_object = DomainObjectRef::new("workspace_fs", "nonce", "nonce-a").unwrap();
+        let mut installed = rule();
+        installed.roots.push(observed_object.clone());
+        installed.realization = Some(CurationRealizationRule {
+            observed_object: observed_object.clone(),
+            required_qualifications: BTreeMap::from([("epoch".into(), "epoch-a".into())]),
+            realized_relation_type: "realizes".into(),
+            not_realized_relation_type: "not_realized_within_cut".into(),
+        });
+        let revision = fixture.store.install_rule(installed, 2).unwrap();
+        fixture.actor = StandingCurationActor::new(
+            "curation",
+            "session-realization",
+            authority(),
+            revision,
+            fixture.store.clone(),
+            fixture.traversal.clone(),
+            fixture.events.clone(),
+        )
+        .unwrap();
+        {
+            let mut result = fixture.traversal.result.lock().unwrap();
+            if scenario != "incomplete" {
+                result.receipts = fixture.traversal.cut.lock().unwrap().receipts.clone();
+            }
+            if scenario != "absent" {
+                result.objects.push(OwnerObjectPublication {
+                    publication_id: "nonce-publication-a".into(),
+                    object_ref: observed_object.clone(),
+                    state: if scenario == "withdrawn" {
+                        OwnerPublicationState::Withdrawn
+                    } else {
+                        OwnerPublicationState::Observed
+                    },
+                    source_product_ref: "nonce-event-a".into(),
+                    hydration: HydrationReference {
+                        owner_id: "workspace_fs".into(),
+                        product_kind: "nonce".into(),
+                        product_id: "nonce-a".into(),
+                        revision_id: "nonce-a-v1".into(),
+                        role: "observed".into(),
+                    },
+                    provenance_refs: vec!["nonce-event-a".into()],
+                    qualifications: BTreeMap::from([(
+                        "epoch".into(),
+                        if scenario == "foreign_epoch" {
+                            "epoch-b"
+                        } else {
+                            "epoch-a"
+                        }
+                        .into(),
+                    )]),
+                });
+            }
+        }
+        let report = fixture.actor.bounded_step(1);
+        assert!(report.fatal_errors.is_empty(), "{scenario}: {report:?}");
+        let result = result_events(&fixture.events).pop().unwrap();
+        if scenario == "incomplete" {
+            assert_eq!(result.disposition, CurationTerminalDisposition::Incomplete);
+            assert!(result.semantic_publication.is_none());
+            continue;
+        }
+        assert_eq!(result.disposition, CurationTerminalDisposition::Applied);
+        let publication = result.semantic_publication.unwrap();
+        let relation = publication
+            .batch
+            .relations
+            .iter()
+            .find(|relation| relation.dst == observed_object)
+            .unwrap();
+        assert_eq!(relation.dst, observed_object);
+        assert_eq!(
+            relation.relation_type,
+            if scenario == "realized" {
+                "realizes"
+            } else {
+                "not_realized_within_cut"
+            }
+        );
+        if scenario == "realized" {
+            assert!(relation
+                .provenance_refs
+                .contains(&"nonce-publication-a".into()));
+        }
+        // Seeing our own publication must settle without an endless chain of new semantic revisions.
+        {
+            let mut traversal = fixture.traversal.result.lock().unwrap();
+            traversal.objects.extend(publication.batch.objects);
+            traversal.occurrences.extend(publication.batch.relations);
+        }
+        {
+            let mut cut = fixture.traversal.cut.lock().unwrap();
+            cut.event_position.after_seq += 1;
+            cut.graph_position.after_seq += 1;
+            // A new owner receipt changes selection while retaining the same source predicate.
+            let mut own = cut.receipts[0].clone();
+            own.owner_id = CURATION_OWNER_ID.into();
+            own.revision_id = publication.batch.revision_id;
+            cut.receipts.push(own);
+            cut.cut_id = traversal_cut_identity(&cut).unwrap();
+        }
+        let replay = fixture.actor.bounded_step(1);
+        assert_eq!(replay.publications_appended, 1, "{scenario}: {replay:?}");
+        assert_eq!(
+            result_events(&fixture.events).last().unwrap().disposition,
+            CurationTerminalDisposition::Unchanged
+        );
+    }
+}
+
+#[test]
+fn accepted_operation_finishes_its_original_rule_after_the_actor_is_rebound() {
+    let fixture = Fixture::new(0);
+    let original = CurationOperation::reconstruct(
+        authority(),
+        fixture.rule.revision_ref(),
+        fixture.traversal.cut.lock().unwrap().clone(),
+        fixture.rule.rule.traversal_request(),
+    )
+    .unwrap();
+    fixture.store.put_operation(&original).unwrap();
+    fixture
+        .store
+        .put_acceptance(&CurationAcceptanceRecord::for_operation(&original, &fixture.rule).unwrap())
+        .unwrap();
+    let mut replacement = rule();
+    replacement.expected_object_id = "successor-expectation".into();
+    replacement.roots[0].object_id = "successor-source".into();
+    replacement.judgment_scope = Some(CurationJudgmentScope {
+        subject: authority().subject,
+        perspective: authority().perspective,
+        branch_scope: authority().branch_scope,
+    });
+    let new_rule = fixture.store.install_rule(replacement, 20).unwrap();
+    let actor = StandingCurationActor::new(
+        "curation",
+        "session-rebound",
+        authority(),
+        new_rule.clone(),
+        fixture.store.clone(),
+        fixture.traversal.clone(),
+        fixture.events.clone(),
+    )
+    .unwrap()
+    .with_authority_port(Arc::new(MutableCurationAuthority(Mutex::new(None))));
+    let report = actor.bounded_step(1);
+    assert!(report.fatal_errors.is_empty(), "{report:?}");
+    assert_eq!(report.results_persisted, 1, "{report:?}");
+    let result = fixture
+        .store
+        .result_for_operation(&original.operation_id)
+        .unwrap()
+        .unwrap();
+    let publication = result.semantic_publication.unwrap();
+    assert_eq!(
+        publication.batch.objects[0].object_ref,
+        fixture.rule.rule.expected_object().unwrap()
+    );
+    assert_ne!(
+        publication.batch.objects[0].object_ref,
+        new_rule.rule.expected_object().unwrap()
+    );
+    assert_eq!(
+        publication.batch.relations[0].dst,
+        fixture.rule.rule.roots[0]
+    );
+    assert_eq!(actor.bounded_step(1).operations_attempted, 0);
 }

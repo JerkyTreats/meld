@@ -7,11 +7,15 @@
 mod actor;
 mod contracts;
 mod query;
+mod selection;
 mod store;
 #[cfg(test)]
 mod tests;
+mod theory;
 
 pub use actor::*;
 pub use contracts::*;
 pub use query::*;
+pub use selection::*;
 pub use store::*;
+pub use theory::*;

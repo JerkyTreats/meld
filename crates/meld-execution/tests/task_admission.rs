@@ -44,8 +44,10 @@ fn request(authorization_id: &str, generation: &str) -> TaskAdmissionRequest {
                 authorized_action_ids: vec!["docs.write".to_string()],
             }),
             activation_generation: generation.to_string(),
+            admission_epoch: None,
         },
         task: ExecutionTask {
+            initial_inputs: Vec::new(),
             task_id: task_id.clone(),
             composition,
             bindings: Bindings::empty(),
@@ -107,8 +109,10 @@ fn dataflow_request(with_edge: bool) -> TaskAdmissionRequest {
                 authorized_action_ids: actions.clone(),
             }),
             activation_generation: "generation-v1".to_string(),
+            admission_epoch: None,
         },
         task: ExecutionTask {
+            initial_inputs: Vec::new(),
             task_id: task_id.clone(),
             composition,
             bindings: Bindings::empty(),
@@ -169,8 +173,10 @@ fn duplicate_optional_dataflow_request() -> TaskAdmissionRequest {
                 authorized_action_ids: actions.clone(),
             }),
             activation_generation: "generation-v1".to_string(),
+            admission_epoch: None,
         },
         task: ExecutionTask {
+            initial_inputs: Vec::new(),
             task_id: task_id.clone(),
             composition,
             bindings: Bindings::empty(),
@@ -181,6 +187,64 @@ fn duplicate_optional_dataflow_request() -> TaskAdmissionRequest {
         },
         idempotency_key: task_id,
     }
+}
+
+#[test]
+fn exact_epoch_fences_new_offers_without_erasing_prior_admission() {
+    let catalog = task_network_support::catalog();
+    let mut store = InMemoryTaskNetworkStore::new("epoch-network");
+    let mut first = request("epoch-1-authority", "generation-v1");
+    first.lineage.admission_epoch = Some("epoch-1".into());
+    let accepted = TaskAdmissionApi::new(
+        &mut store,
+        &catalog,
+        "generation-v1",
+        "policy-content-docs-v1",
+    )
+    .with_admission_epoch(Some("epoch-1"))
+    .admit(first.clone())
+    .unwrap();
+    assert_eq!(accepted.decision, TaskAdmissionDecision::Admitted);
+    let mut stale = first.clone();
+    stale.lineage.authorization_id = "foreign-epoch-authority".into();
+    let refused = TaskAdmissionApi::new(
+        &mut store,
+        &catalog,
+        "generation-v1",
+        "policy-content-docs-v1",
+    )
+    .with_admission_epoch(Some("epoch-2"))
+    .admit(stale)
+    .unwrap();
+    assert!(matches!(
+        refused.decision,
+        TaskAdmissionDecision::StaleFence { .. }
+    ));
+    let replay = TaskAdmissionApi::new(
+        &mut store,
+        &catalog,
+        "generation-v1",
+        "policy-content-docs-v1",
+    )
+    .with_admission_epoch(Some("epoch-2"))
+    .admit(first)
+    .unwrap();
+    assert_eq!(replay, accepted);
+    let mut next = request("epoch-2-authority", "generation-v1");
+    next.lineage.admission_epoch = Some("epoch-2".into());
+    assert_eq!(
+        TaskAdmissionApi::new(
+            &mut store,
+            &catalog,
+            "generation-v1",
+            "policy-content-docs-v1"
+        )
+        .with_admission_epoch(Some("epoch-2"))
+        .admit(next)
+        .unwrap()
+        .decision,
+        TaskAdmissionDecision::Admitted
+    );
 }
 
 #[test]
@@ -587,4 +651,84 @@ fn exact_task_dataflow_lowers_without_static_seed_invention() {
         sources[0],
         meld_execution::task_network::TaskInitSource::UpstreamArtifact(_)
     ));
+}
+
+fn frozen_input_request() -> TaskAdmissionRequest {
+    let mut request = dataflow_request(false);
+    let catalog = task_network_support::single_input_dataflow_catalog();
+    let slot = &catalog
+        .get("docs.write_metadata", 1)
+        .unwrap()
+        .input_contract[0];
+    request.task.initial_inputs.push(meld_lang::TaskInput {
+        step_id: "write_metadata".into(),
+        slot_id: slot.slot_id.clone(),
+        artifact_type_id: slot.accepted_artifact_type_ids[0].clone(),
+        schema_version: 1,
+        content: serde_json::json!({"exact": "request payload"}),
+    });
+    request
+}
+
+#[test]
+fn frozen_task_input_lowers_with_its_exact_value_and_rejects_ambiguous_or_foreign_sources() {
+    let catalog = task_network_support::single_input_dataflow_catalog();
+    let request = frozen_input_request();
+    let mut store = InMemoryTaskNetworkStore::new("network-docs");
+    let record = TaskAdmissionApi::new(
+        &mut store,
+        &catalog,
+        "generation-v1",
+        "policy-content-docs-v1",
+    )
+    .admit(request.clone())
+    .unwrap();
+    assert_eq!(record.decision, TaskAdmissionDecision::Admitted);
+    let plan = TaskAdmissionLowerer::new(TaskCompiler::new(), catalog.clone())
+        .lower("network-docs", &record);
+    assert!(plan.diagnostics.is_empty(), "{:#?}", plan.diagnostics);
+    let sources: Vec<_> = plan
+        .mutations
+        .mutations
+        .iter()
+        .flat_map(|mutation| match mutation {
+            meld_execution::task_network::Mutation::Inject(inject) => {
+                inject.task_node.init_sources.iter()
+            }
+        })
+        .collect();
+    let [meld_execution::task_network::TaskInitSource::StaticSeed(seed)] = sources.as_slice()
+    else {
+        panic!("one exact seed expected: {sources:?}");
+    };
+    assert_eq!(seed.content, request.task.initial_inputs[0].content);
+    assert_eq!(seed.init_slot_id, request.task.initial_inputs[0].slot_id);
+
+    for variant in 0..5 {
+        let mut invalid = request.clone();
+        match variant {
+            0 => invalid.task.initial_inputs[0].slot_id = "foreign-slot".into(),
+            1 => invalid.task.initial_inputs[0].step_id = "foreign-step".into(),
+            2 => invalid.task.initial_inputs[0].schema_version = u32::MAX,
+            3 => invalid
+                .task
+                .initial_inputs
+                .push(invalid.task.initial_inputs[0].clone()),
+            4 => invalid.task.composition.edges = dataflow_request(true).task.composition.edges,
+            _ => unreachable!(),
+        }
+        let mut store = InMemoryTaskNetworkStore::new("network-docs");
+        let record = TaskAdmissionApi::new(
+            &mut store,
+            &catalog,
+            "generation-v1",
+            "policy-content-docs-v1",
+        )
+        .admit(invalid)
+        .unwrap();
+        assert!(
+            matches!(record.decision, TaskAdmissionDecision::Rejected { .. }),
+            "variant {variant}: {record:?}"
+        );
+    }
 }

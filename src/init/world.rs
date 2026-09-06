@@ -33,6 +33,8 @@ use serde::{Deserialize, Serialize};
 
 /// Stage execution over domain commands and the canonical append.
 pub mod pipeline;
+/// Shared package installation and structural product assembly.
+pub mod product;
 /// Compiled owner route publication for generic package installation.
 pub mod routes;
 /// Theory-source provisioning into the XDG theory root.

@@ -23,6 +23,11 @@ impl<'a> CurationQuery<'a> {
         self.store.active_rule(agent_id)
     }
 
+    /// Read the exact operation behind a returned result without consulting active selection.
+    pub fn operation(&self, operation_id: &str) -> Result<Option<CurationOperation>, StorageError> {
+        self.store.operation(operation_id)
+    }
+
     /// Read the durable operation selected for one declared input.
     pub fn operation_for_selection(
         &self,

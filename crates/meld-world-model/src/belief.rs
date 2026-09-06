@@ -114,4 +114,6 @@ pub use selection::{
     BeliefWorkSelection, BeliefWorkSelector,
 };
 pub use store::BeliefStore;
-pub use subscription::{BeliefSubscriptionAcceptanceProof, BeliefSubscriptionAuthority};
+pub use subscription::{
+    BeliefSubscriptionAcceptanceProof, BeliefSubscriptionAuthority, BeliefSubscriptionSource,
+};

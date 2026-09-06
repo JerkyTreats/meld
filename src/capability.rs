@@ -49,6 +49,7 @@ pub fn published_product_contracts() -> Vec<CapabilityTypeContract> {
 pub fn product_capability_inventory(
 ) -> Result<ProductCapabilityInventory, CapabilityContributionDiagnostic> {
     ProductCapabilityInventory::assemble(vec![
+        std::sync::Arc::new(crate::nonce::capability::NonceCapabilityContributor),
         std::sync::Arc::new(crate::docs::contribution::DocsCapabilityContributor::shipped()),
         std::sync::Arc::new(
             crate::dependency_security::capability::DependencySecurityCapabilityContributor,

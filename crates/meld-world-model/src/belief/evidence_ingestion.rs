@@ -37,7 +37,7 @@ use crate::belief::outcome::mapping::{
 use crate::belief::registry::BeliefFamilyRegistry;
 use crate::belief::runtime::BeliefRuntime;
 use crate::belief::store::BeliefStore;
-use crate::waiting::{conditions, WaitingOnDeclaration};
+use crate::waiting::{conditions, StructuralWakeAddress, WaitingOnDeclaration};
 use crate::world_state::graph::store::TraversalStore;
 use crate::world_state::graph::PerspectiveKey;
 
@@ -123,6 +123,8 @@ pub struct EvidenceIngestionActor {
     perspective: PerspectiveKey,
     branch_scope: BranchScope,
     family_revision: Option<crate::belief::BeliefFamilyRevision>,
+    lifecycle: crate::lifecycle::NativeLifecycle,
+    work_lock: parking_lot::Mutex<()>,
 }
 
 impl EvidenceIngestionActor {
@@ -141,8 +143,11 @@ impl EvidenceIngestionActor {
         perspective: PerspectiveKey,
         branch_scope: BranchScope,
     ) -> Self {
+        let actor_id = actor_id.into();
         Self {
-            actor_id: actor_id.into(),
+            lifecycle: crate::lifecycle::NativeLifecycle::new(actor_id.clone()),
+            work_lock: parking_lot::Mutex::new(()),
+            actor_id,
             store,
             traversal,
             registry,
@@ -175,6 +180,156 @@ impl EvidenceIngestionActor {
         &self.actor_id
     }
 
+    /// Return the exact durable ledger position used by lifecycle recovery.
+    pub fn lifecycle_cursor(&self) -> Result<LedgerCursor, String> {
+        let ledger_id = self.replay.ledger_identity();
+        match self
+            .cursor
+            .consumer_cursor(EVIDENCE_CONSUMER_ID)
+            .map_err(|error| error.message)?
+        {
+            Some(cursor) if cursor.ledger_id == ledger_id => Ok(LedgerCursor {
+                ledger_id,
+                after_seq: cursor.after_seq,
+            }),
+            Some(cursor) => Err(format!(
+                "durable evidence cursor is bound to ledger {} but replay serves {}",
+                cursor.ledger_id, ledger_id
+            )),
+            None => Ok(LedgerCursor {
+                ledger_id,
+                after_seq: 0,
+            }),
+        }
+    }
+
+    /// Resolve a wake against this ingestion instance's actual Event source.
+    pub fn resolves_wake(&self, wake: &StructuralWakeAddress) -> Result<bool, String> {
+        // Installed mappings are frozen for this instance. A new mapping needs
+        // replacement activation; only the live replay source advances here.
+        Ok(matches!(wake, StructuralWakeAddress::EventPosition(value)
+            if crate::waiting::after_position(value, &format!("event-ledger::{}", self.replay.ledger_identity()))))
+    }
+
+    /// Read lifecycle evidence from this owner's bound stores and installed inputs.
+    pub fn lifecycle_evidence(&self) -> Result<crate::lifecycle::NativeLifecycleEvidence, String> {
+        let _guard = self.work_lock.lock();
+        self.lifecycle_evidence_inner()
+    }
+
+    fn lifecycle_evidence_inner(
+        &self,
+    ) -> Result<crate::lifecycle::NativeLifecycleEvidence, String> {
+        let cursor = self.lifecycle_cursor()?;
+        let family = match &self.family_revision {
+            Some(family) => family.clone(),
+            None => self
+                .registry
+                .current(&self.family_id)
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| format!("Evidence family {} is not installed", self.family_id))?,
+        };
+        let mapping = self
+            .mapping_revision
+            .as_ref()
+            .ok_or("Evidence mapping has no installed revision")?;
+        self.store.flush().map_err(|error| error.to_string())?;
+        let checkpoint_ref = format!(
+            "evidence-consumer::{}::{}",
+            cursor.ledger_id, cursor.after_seq
+        );
+        Ok(crate::lifecycle::NativeLifecycleEvidence {
+            checkpoint_ref: checkpoint_ref.clone(),
+            installed_revision_refs: vec![
+                crate::lifecycle::evidence_ref("belief-family", &family.revision_ref())?,
+                crate::lifecycle::evidence_ref("evidence-mapping", mapping)?,
+            ],
+            binding_refs: vec![format!("evidence-ledger::{}", cursor.ledger_id)],
+            subscription_refs: vec![format!("evidence-consumer::{}", cursor.ledger_id)],
+            proof_position_ref: checkpoint_ref,
+            unresolved_operation_summary_ref: format!(
+                "evidence-replay::{}::after::{}",
+                cursor.ledger_id, cursor.after_seq
+            ),
+        })
+    }
+
+    /// Author native start evidence with bounded work excluded.
+    pub fn lifecycle_start(
+        &self,
+        identity: crate::lifecycle::NativeLifecycleIdentity,
+    ) -> Result<
+        (
+            crate::lifecycle::NativeLifecycleEvidence,
+            crate::lifecycle::NativeLifecycleTransition,
+        ),
+        String,
+    > {
+        let _guard = self.work_lock.lock();
+        let evidence = self.lifecycle_evidence_inner()?;
+        let transition = self
+            .lifecycle
+            .start(identity, evidence.proof_position_ref.clone())?;
+        Ok((evidence, transition))
+    }
+
+    /// Author native safe point evidence with bounded work excluded.
+    pub fn lifecycle_safe_point(
+        &self,
+        identity: crate::lifecycle::NativeLifecycleIdentity,
+    ) -> Result<
+        (
+            crate::lifecycle::NativeLifecycleEvidence,
+            crate::lifecycle::NativeLifecycleTransition,
+        ),
+        String,
+    > {
+        let _guard = self.work_lock.lock();
+        let evidence = self.lifecycle_evidence_inner()?;
+        let transition = self
+            .lifecycle
+            .safe_point(identity, evidence.proof_position_ref.clone())?;
+        Ok((evidence, transition))
+    }
+
+    /// Author native stop evidence with bounded work excluded.
+    pub fn lifecycle_stop(
+        &self,
+        identity: crate::lifecycle::NativeLifecycleIdentity,
+    ) -> Result<
+        (
+            crate::lifecycle::NativeLifecycleEvidence,
+            crate::lifecycle::NativeLifecycleTransition,
+        ),
+        String,
+    > {
+        let _guard = self.work_lock.lock();
+        let evidence = self.lifecycle_evidence_inner()?;
+        let transition = self
+            .lifecycle
+            .stop(identity, evidence.proof_position_ref.clone())?;
+        Ok((evidence, transition))
+    }
+
+    /// Author native release evidence with bounded work excluded.
+    pub fn lifecycle_release(
+        &self,
+        identity: crate::lifecycle::NativeLifecycleIdentity,
+    ) -> Result<
+        (
+            crate::lifecycle::NativeLifecycleEvidence,
+            crate::lifecycle::NativeLifecycleTransition,
+        ),
+        String,
+    > {
+        let _guard = self.work_lock.lock();
+        let evidence = self.lifecycle_evidence_inner()?;
+        let transition = self
+            .lifecycle
+            .release(identity, evidence.proof_position_ref.clone())?;
+        Ok((evidence, transition))
+    }
+
     /// Run one bounded ingestion step from the durable cursor.
     ///
     /// Sequencing: read the durable cursor, replay a bounded page after it,
@@ -182,6 +337,13 @@ impl EvidenceIngestionActor {
     /// disposition durably, then flush domain state and request cursor
     /// advancement through the highest contiguously absorbed sequence.
     pub fn bounded_step(&mut self, request: &EvidenceIngestionRequest) -> EvidenceIngestionReport {
+        let _guard = self.work_lock.lock();
+        let mut report = self.bounded_step_inner(request);
+        crate::waiting::bind_waits(&mut report.waiting_on, self.store.resource_id());
+        report
+    }
+
+    fn bounded_step_inner(&self, request: &EvidenceIngestionRequest) -> EvidenceIngestionReport {
         let mut report = EvidenceIngestionReport {
             actor_id: self.actor_id.clone(),
             input_after_seq: 0,
@@ -264,6 +426,11 @@ impl EvidenceIngestionActor {
             report.waiting_on.push(WaitingOnDeclaration::broad(
                 conditions::LEDGER_QUIET_PAST_CURSOR,
                 format!("no committed events past cursor {}", report.input_after_seq),
+                vec![StructuralWakeAddress::EventPosition(format!(
+                    "event-ledger::{}::after::{}",
+                    self.replay.ledger_identity(),
+                    report.input_after_seq
+                ))],
             ));
             return report;
         }
@@ -431,6 +598,11 @@ impl EvidenceIngestionActor {
                     "{} replayed records matched no source mapping of '{}'",
                     report.events_replayed, self.mapping_id
                 ),
+                vec![StructuralWakeAddress::EventPosition(format!(
+                    "event-ledger::{}::after::{}",
+                    self.replay.ledger_identity(),
+                    report.output_after_seq
+                ))],
             ));
         }
         report

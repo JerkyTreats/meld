@@ -8,6 +8,43 @@ use crate::error::StorageError;
 use crate::events::DomainObjectRef;
 use crate::world_state::graph::PerspectiveKey;
 
+/// Desired state supplied to native Agent judgment, without inventing a breach.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum AgentReconciliationIntent {
+    Goal(Goal),
+    MaintainedCondition(super::AgentMaintainedConditionBinding),
+}
+
+impl From<Goal> for AgentReconciliationIntent {
+    fn from(goal: Goal) -> Self {
+        Self::Goal(goal)
+    }
+}
+
+impl AgentReconciliationIntent {
+    /// Stable reasoning identity, available before a transient Goal exists.
+    pub fn goal_id(&self, agent_id: &str, activation_generation: &str) -> String {
+        match self {
+            Self::Goal(goal) => goal.goal_id.clone(),
+            Self::MaintainedCondition(binding) => format!(
+                "agent-goal::{agent_id}::{}::{activation_generation}",
+                binding.condition.condition_id
+            ),
+        }
+    }
+}
+
+/// Native judgment of one standing condition against an exact admitted cut.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentConditionJudgment {
+    pub judgment_id: String,
+    pub agent_id: String,
+    pub condition_revision: crate::belief::TheoryRevisionRef,
+    pub planner_cut_id: String,
+    pub activation_generation: String,
+    pub evaluation: meld_lang::EvalResult,
+}
+
 /// Durable Agent-owned Goal under one exact reconciliation fence.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentReconciliationGoal {
@@ -16,6 +53,18 @@ pub struct AgentReconciliationGoal {
     pub authority_scope_id: String,
     pub activation_generation: String,
     pub created_at_seq: u64,
+}
+
+/// Agent's Goal judgment over exact admitted evidence, separate from product completion.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AgentGoalDisposition {
+    pub disposition_id: String,
+    pub agent_id: String,
+    pub goal_id: String,
+    pub plan_revision_id: String,
+    pub planner_cut_id: String,
+    pub activation_generation: String,
+    pub lifecycle: meld_lang::GoalLifecycle,
 }
 
 /// Immutable Agent judgment over one complete Plan revision.
@@ -41,12 +90,7 @@ pub struct AgentPlanJudgment {
 }
 
 /// Product-specific authority granted only after fresh eligibility.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AgentAuthorizedProduct {
-    Epistemic(Box<crate::strategy::StrategyEpistemicOperation>),
-    Task(Box<crate::strategy::StrategyTask>),
-}
+pub type AgentAuthorizedProduct = crate::strategy::StrategyProduct;
 
 /// Exact currentness evidence retained with one product progression position.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,7 +104,24 @@ pub struct AgentCurrentnessCheck {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentAuthorizationFence {
     pub activation_generation: String,
+    /// Exact admission epoch, absent only in legacy records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission_epoch: Option<String>,
     pub authority_policy_content_hash: String,
+}
+
+impl AgentAuthorizationFence {
+    /// Reconciliation scope for transient Goals under one admission epoch.
+    pub fn reconciliation_scope(&self) -> String {
+        Self::scope_for(&self.activation_generation, self.admission_epoch.as_deref())
+    }
+
+    pub fn scope_for(generation: &str, epoch: Option<&str>) -> String {
+        match epoch {
+            Some(epoch) => format!("{generation}::epoch::{epoch}"),
+            None => generation.to_string(),
+        }
+    }
 }
 
 /// Durable state of one Plan product.
@@ -106,6 +167,9 @@ pub struct AgentProductAuthorization {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authority_decision: Option<meld_lang::AuthorityDecision>,
     pub activation_generation: String,
+    /// Exact admission epoch, absent only in legacy records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission_epoch: Option<String>,
     pub idempotency_key: String,
     pub product: AgentAuthorizedProduct,
     pub curation_authorization: Option<crate::CurationPlannedAuthorization>,

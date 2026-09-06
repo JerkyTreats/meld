@@ -17,6 +17,38 @@ pub struct Composition {
     pub edges: Vec<Edge>,
 }
 
+/// One immutable input carried by a complete Task to an exact consumer slot.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskInput {
+    /// Consumer step in the Task composition.
+    pub step_id: String,
+    /// Capability input slot selected by the producer.
+    pub slot_id: String,
+    /// Owner-defined artifact schema identity.
+    pub artifact_type_id: String,
+    /// Exact artifact schema version.
+    pub schema_version: u32,
+    /// Frozen owner input, interpreted only by the Capability implementation.
+    pub content: serde_json::Value,
+}
+
+impl TaskInput {
+    /// Validate the structural input address without interpreting its domain payload.
+    pub fn validate(&self) -> Result<(), String> {
+        if [&self.step_id, &self.slot_id, &self.artifact_type_id]
+            .iter()
+            .any(|value| value.trim().is_empty())
+            || self.schema_version == 0
+        {
+            return Err(
+                "Task input requires a consumer, slot, artifact type, and schema version".into(),
+            );
+        }
+        Ok(())
+    }
+}
+
 /// A step in a composition.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Step {

@@ -23,6 +23,45 @@ pub fn search(request: &StrategySearchRequest) -> StrategySearchResult {
         return state.finish(None);
     }
 
+    if matches!(
+        evaluate(
+            &request.problem.planner_cut.world_model_view.world_state,
+            &request.problem.goal.target
+        ),
+        EvalResult::Satisfied
+    ) {
+        let mut plan = StrategyPlan {
+            plan_revision_id: String::new(),
+            plan_family_id: plan_family_identity(&request.problem),
+            problem_id: request.problem.problem_id.clone(),
+            goal_id: request.problem.goal.goal_id.clone(),
+            planner_cut_id: request.problem.planner_cut.cut_id.clone(),
+            origin: StrategyPlanOrigin::Satisfied,
+            composition: Composition {
+                steps: Vec::new(),
+                edges: Vec::new(),
+            },
+            bindings: meld_lang::Bindings::empty(),
+            settlement_obligation: request.problem.goal.target.clone(),
+            evidence_route: None,
+            capability_contract_ids: Vec::new(),
+            tasks: Vec::new(),
+            epistemic_operations: Vec::new(),
+            dependencies: Vec::new(),
+            conditions: vec![request.problem.goal.target.clone()],
+            frozen_context_id: request.problem.planner_cut.context.context_id.clone(),
+            explanation: "Admitted owner evidence already establishes the desired condition".into(),
+            predecessor_plan_revision_id: None,
+            evaluation: StrategyPlanEvaluation {
+                step_count: 0,
+                time_ms: 0,
+                provider_calls: 0,
+            },
+        };
+        plan.plan_revision_id = plan_revision_identity(&plan);
+        return state.finish(Some(plan));
+    }
+
     let Some((rule, bindings)) = request
         .problem
         .theory
@@ -88,7 +127,8 @@ pub fn search_successor(request: &StrategySuccessorRequest) -> StrategySuccessor
         };
     }
 
-    let result = search(&request.search);
+    let confirmation = confirmation_successor(request);
+    let result = confirmation.unwrap_or_else(|| search(&request.search));
     let recommendation = result.recommendation.map(|mut plan| {
         plan.plan_family_id = predecessor.plan_family_id.clone();
         plan.predecessor_plan_revision_id = Some(predecessor.plan_revision_id.clone());
@@ -104,6 +144,116 @@ pub fn search_successor(request: &StrategySuccessorRequest) -> StrategySuccessor
         recommendation,
         rejections: result.rejections,
         statistics: result.statistics,
+    }
+}
+
+fn confirmation_successor(request: &StrategySuccessorRequest) -> Option<StrategySearchResult> {
+    let problem = &request.search.problem;
+    if matches!(
+        evaluate(
+            &problem.planner_cut.world_model_view.world_state,
+            &problem.goal.target
+        ),
+        EvalResult::Satisfied
+    ) {
+        return None;
+    }
+    let (rule, bindings) = problem.theory.settlement_rules.iter().find_map(|rule| {
+        unify(&rule.goal_pattern, &problem.goal.target).map(|bindings| (rule, bindings))
+    })?;
+    if rule.epistemic_placement != StrategyEpistemicPlacement::Confirmation {
+        return None;
+    }
+    let settlement = ground_proposition(&rule.settlement_obligation, &bindings).ok()?;
+    let completed = request.completed_history.iter().find(|entry| {
+        let Some(StrategyProduct::Task(task)) = &entry.product else { return false; };
+        entry.product_id == task.task_id
+            && entry.accepted_milestone == PlanMilestoneRequirement::ExecutionTerminal { task_id: task.task_id.clone() }
+            && task.return_milestone.as_ref() == Some(&entry.accepted_milestone)
+            && task.composition.steps.iter().any(|step| matches!(&step.kind, StepKind::Op(operator)
+                if operator.effects.iter().filter_map(effect_proposition).any(|effect| effect == &settlement)))
+    })?;
+    let epistemic_operations = epistemic_products(problem);
+    if epistemic_operations.is_empty() {
+        return None;
+    }
+    let dependencies = epistemic_operations
+        .iter()
+        .map(|operation| {
+            dependency(
+                &completed.product_id,
+                &operation.product_id,
+                completed.accepted_milestone.clone(),
+            )
+        })
+        .collect();
+    let mut plan = StrategyPlan {
+        plan_revision_id: String::new(),
+        plan_family_id: plan_family_identity(problem),
+        problem_id: problem.problem_id.clone(),
+        goal_id: problem.goal.goal_id.clone(),
+        planner_cut_id: problem.planner_cut.cut_id.clone(),
+        origin: StrategyPlanOrigin::Confirmation,
+        composition: Composition {
+            steps: Vec::new(),
+            edges: Vec::new(),
+        },
+        bindings: meld_lang::Bindings::empty(),
+        settlement_obligation: settlement,
+        evidence_route: Some(rule.evidence_route.clone()),
+        capability_contract_ids: Vec::new(),
+        tasks: Vec::new(),
+        epistemic_operations,
+        dependencies,
+        conditions: vec![problem.goal.target.clone()],
+        frozen_context_id: problem.planner_cut.context.context_id.clone(),
+        explanation: "Confirm completed executable work under the new admitted cut".into(),
+        predecessor_plan_revision_id: None,
+        evaluation: StrategyPlanEvaluation {
+            step_count: 0,
+            time_ms: 0,
+            provider_calls: 0,
+        },
+    };
+    plan.plan_revision_id = plan_revision_identity(&plan);
+    Some(SearchState::new(&request.search).finish(Some(plan)))
+}
+
+pub(crate) fn epistemic_products(problem: &StrategyProblem) -> Vec<StrategyEpistemicOperation> {
+    problem
+        .curation_operations
+        .iter()
+        .map(|operation| {
+            let product_id = stable_id(
+                "strategy-epistemic-product-v1",
+                &(&problem.goal.goal_id, &operation.operation_id),
+            );
+            StrategyEpistemicOperation {
+                idempotency_key: format!("curation::{product_id}"),
+                product_id,
+                operation: operation.clone(),
+                authority_requirements: vec![operation.authority.agent_id.clone()],
+            }
+        })
+        .collect()
+}
+
+fn dependency(
+    producer: &str,
+    consumer: &str,
+    milestone: PlanMilestoneRequirement,
+) -> StrategyPlanDependency {
+    StrategyPlanDependency {
+        dependency_id: match &milestone {
+            PlanMilestoneRequirement::CurationTerminal { operation_id } => stable_id(
+                "strategy-dependency-v1",
+                &(producer, consumer, operation_id),
+            ),
+            _ => stable_id("strategy-dependency-v1", &(producer, consumer, &milestone)),
+        },
+        producer_product_id: producer.into(),
+        consumer_product_id: consumer.into(),
+        required_milestone: milestone,
     }
 }
 
@@ -285,21 +435,19 @@ fn close_inputs(
     visiting: &mut BTreeSet<String>,
     state: &mut SearchState<'_>,
 ) -> bool {
-    // Close required artifacts backward from each consumer. Existing world
-    // artifacts terminate a branch without manufacturing a producer step.
+    // A complete Task carries each input or receives it from another contained step.
     let consumer = selected[consumer_index].1.clone();
-    let scope = goal_scope(&request.problem.goal.target);
     for input in consumer
         .resolution
         .requires_inputs
         .iter()
         .filter(|slot| slot.required)
     {
-        if existing_artifact(
-            &request.problem.planner_cut.world_model_view.world_state,
-            scope.as_ref(),
-            &input.artifact_type,
-        ) {
+        if request.problem.task_inputs.iter().any(|value| {
+            value.step_id == consumer.operator_id
+                && value.validate().is_ok()
+                && input.artifact_type == Term::ArtifactType(value.artifact_type_id.clone())
+        }) {
             continue;
         }
         if let Some((_, producer)) = selected.iter().find(|(_, operator)| {
@@ -490,11 +638,26 @@ fn finish_candidate(
     let return_milestone = PlanMilestoneRequirement::ExecutionTerminal {
         task_id: "pending".to_string(),
     };
+    let mut initial_inputs: Vec<_> = request
+        .problem
+        .task_inputs
+        .iter()
+        .filter(|input| {
+            composition
+                .steps
+                .iter()
+                .any(|step| step.step_id == input.step_id)
+        })
+        .cloned()
+        .collect();
+    initial_inputs.sort_by(|left, right| {
+        (&left.step_id, &left.slot_id).cmp(&(&right.step_id, &right.slot_id))
+    });
     let task_id = stable_id(
         "strategy-task-v1",
         &(
             &request.problem.goal.goal_id,
-            &request.problem.planner_cut.cut_id,
+            &request.problem.planner_cut.source_basis_id(),
             &composition,
             &bindings,
             &contract_ids,
@@ -502,10 +665,16 @@ fn finish_candidate(
             &return_milestone,
         ),
     );
+    let task_id = if initial_inputs.is_empty() {
+        task_id
+    } else {
+        stable_id("strategy-task-inputs-v1", &(&task_id, &initial_inputs))
+    };
     let return_milestone = PlanMilestoneRequirement::ExecutionTerminal {
         task_id: task_id.clone(),
     };
     let task = StrategyTask {
+        initial_inputs,
         task_id: task_id.clone(),
         composition: composition.clone(),
         bindings: bindings.clone(),
@@ -515,42 +684,25 @@ fn finish_candidate(
         idempotency_key: format!("task::{task_id}"),
         return_milestone: Some(return_milestone),
     };
-    let epistemic_operations = request
-        .problem
-        .curation_operations
-        .first()
-        .map(|operation| {
-            let product_id = stable_id(
-                "strategy-epistemic-product-v1",
-                &(&request.problem.goal.goal_id, &operation.operation_id),
-            );
-            StrategyEpistemicOperation {
-                idempotency_key: format!("curation::{product_id}"),
-                product_id,
-                operation: operation.clone(),
-                authority_requirements: vec![operation.authority.agent_id.clone()],
-            }
-        })
-        .into_iter()
-        .collect::<Vec<_>>();
+    let epistemic_operations = epistemic_products(&request.problem);
     let dependencies = epistemic_operations
-        .first()
-        .map(|operation| StrategyPlanDependency {
-            dependency_id: stable_id(
-                "strategy-dependency-v1",
-                &(
-                    &operation.product_id,
-                    &task_id,
-                    &operation.operation.operation_id,
-                ),
+        .iter()
+        .map(|operation| match rule.epistemic_placement {
+            StrategyEpistemicPlacement::Prerequisite => dependency(
+                &operation.product_id,
+                &task_id,
+                PlanMilestoneRequirement::CurationTerminal {
+                    operation_id: operation.operation.operation_id.clone(),
+                },
             ),
-            producer_product_id: operation.product_id.clone(),
-            consumer_product_id: task_id.clone(),
-            required_milestone: PlanMilestoneRequirement::CurationTerminal {
-                operation_id: operation.operation.operation_id.clone(),
-            },
+            StrategyEpistemicPlacement::Confirmation => dependency(
+                &task_id,
+                &operation.product_id,
+                PlanMilestoneRequirement::ExecutionTerminal {
+                    task_id: task_id.clone(),
+                },
+            ),
         })
-        .into_iter()
         .collect();
     let plan_family_id = plan_family_identity(&request.problem);
     let mut candidate = StrategyPlan {
@@ -563,7 +715,7 @@ fn finish_candidate(
         composition,
         bindings,
         settlement_obligation: settlement.clone(),
-        evidence_route: rule.evidence_route.clone(),
+        evidence_route: Some(rule.evidence_route.clone()),
         capability_contract_ids: contract_ids,
         tasks: vec![task],
         epistemic_operations,
@@ -657,7 +809,7 @@ fn ground_operator(
     }
 }
 
-fn ground_proposition(
+pub(crate) fn ground_proposition(
     proposition: &Proposition,
     bindings: &meld_lang::Bindings,
 ) -> Result<Proposition, String> {
@@ -676,33 +828,6 @@ fn ground_proposition(
                 StepKind::Op(_) => unreachable!(),
             },
         )
-}
-
-fn existing_artifact(
-    world_state: &meld_lang::WorldState,
-    scope: Option<&Term>,
-    artifact_type: &Term,
-) -> bool {
-    scope.is_some_and(|scope| {
-        world_state.satisfies(&Proposition::Exists {
-            scope: scope.clone(),
-            artifact_type: artifact_type.clone(),
-        })
-    })
-}
-
-fn goal_scope(goal: &Proposition) -> Option<Term> {
-    match goal {
-        Proposition::Holds { subject, .. } => Some(subject.clone()),
-        Proposition::Exists { scope, .. } | Proposition::Accessible { scope } => {
-            Some(scope.clone())
-        }
-        Proposition::Related { src, .. } => Some(src.clone()),
-        Proposition::All(children) | Proposition::Any(children) => {
-            children.first().and_then(goal_scope)
-        }
-        Proposition::Not(child) => goal_scope(child),
-    }
 }
 
 fn evaluate_candidate(composition: &Composition) -> StrategyPlanEvaluation {

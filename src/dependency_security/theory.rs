@@ -13,37 +13,11 @@ pub fn install_package(
     package_root: &std::path::Path,
     installed_at_seq: u64,
 ) -> Result<crate::theory::PdsPackageInstallationReceiptV1, crate::theory::TheoryRouterError> {
-    use crate::theory::{
-        PdsPackageManifestV1, PdsPackageStore, TheoryRouter, TheoryRouterDiagnostic,
-    };
-    let fail = |message: String| -> crate::theory::TheoryRouterError {
-        TheoryRouterDiagnostic::new("package_source_invalid", message).into()
-    };
-    let manifest: PdsPackageManifestV1 = serde_json::from_slice(
-        &std::fs::read(package_root.join("pds-package.json"))
-            .map_err(|failure| fail(failure.to_string()))?,
-    )
-    .map_err(|failure| fail(failure.to_string()))?;
-    if manifest.package_id != PACKAGE_ID {
-        return Err(fail("dependency-security package id differs".into()));
-    }
-    let inventory = crate::capability::product_capability_inventory()
-        .map_err(|failure| fail(failure.to_string()))?;
-    let package = manifest.materialize_with_published(package_root, Some(&inventory))?;
-    let catalog = crate::init::world::routes::current_product_route_catalog(stores)?;
-    let package_store = PdsPackageStore::new(
-        stores
-            .theory_db
-            .opened()
-            .expect("security package requires theory store")
-            .clone(),
-    )?;
-    let prior = package_store.head(PACKAGE_ID)?;
-    TheoryRouter::new(catalog, package_store).install(
-        &package,
+    crate::init::world::product::install_package(
+        stores,
+        package_root,
+        Some(PACKAGE_ID),
         installed_at_seq,
-        true,
-        prior.as_ref(),
     )
 }
 

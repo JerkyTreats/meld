@@ -44,6 +44,8 @@ pub mod error;
 pub mod execution;
 /// Prompt assembly, provider completion, lineage, and metadata DTOs.
 pub mod generation;
+/// Native lifecycle transitions owned by Execution runtime actors.
+pub mod lifecycle;
 /// Frame head publish templates used by expansion paths.
 pub mod publish;
 /// Task definition, compilation, artifact, invocation, and runtime contracts.
@@ -56,7 +58,7 @@ pub mod task_network;
 pub mod traversal;
 pub mod waiting;
 
-pub use waiting::WaitingOnDeclaration;
+pub use waiting::{StructuralWakeAddress, WaitingOnDeclaration};
 /// Workflow profiles, state, gates, events, and execution runtimes.
 pub mod workflow;
 

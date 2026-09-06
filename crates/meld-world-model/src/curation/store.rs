@@ -4,9 +4,9 @@ use serde::{de::DeserializeOwned, Serialize};
 use sled::{Db, Tree};
 
 use crate::curation::{
-    stable_identity, CurationAcceptanceRecord, CurationAdmissionDecision, CurationOperation,
-    CurationPlannedAuthorization, CurationPublicationKind, CurationPublicationReceipt,
-    CurationResult, StandingCurationRule, StandingCurationRuleRevision,
+    stable_identity, CurationAcceptanceRecord, CurationAdmissionDecision, CurationAuthority,
+    CurationOperation, CurationPlannedAuthorization, CurationPublicationKind,
+    CurationPublicationReceipt, CurationResult, StandingCurationRule, StandingCurationRuleRevision,
 };
 use crate::error::StorageError;
 
@@ -24,6 +24,7 @@ const TREE_PUBLICATION_RECEIPTS: &str = "curation_publication_receipts";
 /// Curation-owned durable state inside the shared world-model database.
 #[derive(Clone)]
 pub struct CurationStore {
+    resource_id: String,
     db: Db,
     rules: Tree,
     active_rules: Tree,
@@ -40,6 +41,7 @@ pub struct CurationStore {
 impl CurationStore {
     pub fn new(db: Db) -> Result<Self, StorageError> {
         Ok(Self {
+            resource_id: crate::waiting::resource_identity(&db)?,
             rules: db.open_tree(TREE_RULES).map_err(to_storage_io)?,
             active_rules: db.open_tree(TREE_ACTIVE_RULES).map_err(to_storage_io)?,
             operations: db.open_tree(TREE_OPERATIONS).map_err(to_storage_io)?,
@@ -64,8 +66,13 @@ impl CurationStore {
         })
     }
 
-    /// Install one exact rule revision and select it for its Agent.
-    pub fn install_rule(
+    /// Exact durable world-model resource bound to this store instance.
+    pub fn resource_id(&self) -> &str {
+        &self.resource_id
+    }
+
+    /// Persist one exact grounded rule without selecting a live runtime.
+    fn persist_rule(
         &self,
         rule: StandingCurationRule,
         installed_at_seq: u64,
@@ -98,6 +105,17 @@ impl CurationStore {
                 candidate
             }
         };
+        self.flush()?;
+        Ok(revision)
+    }
+
+    /// Legacy explicit selection retained for existing unprepared callers.
+    pub fn install_rule(
+        &self,
+        rule: StandingCurationRule,
+        installed_at_seq: u64,
+    ) -> Result<StandingCurationRuleRevision, StorageError> {
+        let revision = self.persist_rule(rule, installed_at_seq)?;
         if let Some(current) = self.active_rule(&revision.rule.agent_id)? {
             if current.installed_at_seq > revision.installed_at_seq
                 || current.installed_at_seq == revision.installed_at_seq
@@ -117,6 +135,140 @@ impl CurationStore {
             .map_err(to_storage_io)?;
         self.db.flush().map_err(to_storage_io)?;
         Ok(revision)
+    }
+
+    /// Install portable theory without selecting or starting any runtime owner.
+    pub fn install_template(
+        &self,
+        template: super::CurationRuleTemplate,
+        installed_at_seq: u64,
+    ) -> Result<super::CurationTemplateRevision, StorageError> {
+        template.validate()?;
+        let content_hash = stable_identity("curation-rule-template-v1", &template)?;
+        let reference = crate::belief::TheoryRevisionRef {
+            registry: super::CURATION_TEMPLATE_REGISTRY_ID.into(),
+            id: template.rule_id.clone(),
+            content_hash: content_hash.clone(),
+        };
+        if let Some(existing) = self.resolve_template(&reference)? {
+            return Ok(existing);
+        }
+        let revision = super::CurationTemplateRevision {
+            template,
+            content_hash,
+            installed_at_seq,
+        };
+        put_exact(
+            &self.rules,
+            &format!("template::{}::{}", reference.id, reference.content_hash),
+            &revision,
+        )?;
+        self.flush()?;
+        Ok(revision)
+    }
+
+    pub fn resolve_template(
+        &self,
+        reference: &crate::belief::TheoryRevisionRef,
+    ) -> Result<Option<super::CurationTemplateRevision>, StorageError> {
+        reference.validate_for_registry(super::CURATION_TEMPLATE_REGISTRY_ID)?;
+        let revision: Option<super::CurationTemplateRevision> = get_optional(
+            &self.rules,
+            &format!("template::{}::{}", reference.id, reference.content_hash),
+        )?;
+        if let Some(revision) = &revision {
+            revision.validate()?;
+            if revision.revision_ref() != *reference {
+                return Err(StorageError::InvalidPath(
+                    "Curation template reference differs".into(),
+                ));
+            }
+        }
+        Ok(revision)
+    }
+
+    /// Ground exact installed semantic content for one structural assignment.
+    pub fn prepare_rule(
+        &self,
+        reference: &crate::belief::TheoryRevisionRef,
+        binding: &super::CurationRuleBinding,
+        installed_at_seq: u64,
+    ) -> Result<StandingCurationRuleRevision, StorageError> {
+        let template = self.resolve_template(reference)?.ok_or_else(|| {
+            StorageError::InvalidPath("Curation template revision is not installed".into())
+        })?;
+        self.persist_rule(template.template.ground(binding)?, installed_at_seq)
+    }
+
+    /// Ground an installed template against an independent owner source and Agent judgment.
+    pub fn prepare_rule_for_source(
+        &self,
+        reference: &crate::belief::TheoryRevisionRef,
+        binding: &super::CurationRuleBinding,
+        source: &super::CurationSourceBinding,
+        judgment: &super::CurationJudgmentScope,
+        installed_at_seq: u64,
+    ) -> Result<StandingCurationRuleRevision, StorageError> {
+        let template = self.resolve_template(reference)?.ok_or_else(|| {
+            StorageError::InvalidPath("Curation template revision is not installed".into())
+        })?;
+        self.persist_rule(
+            template
+                .template
+                .ground_for_source(binding, source, judgment)?,
+            installed_at_seq,
+        )
+    }
+
+    /// Reconstruct the exact source grounding without consulting the mutable active head.
+    pub fn resolve_source_bound_rule(
+        &self,
+        template_ref: &crate::belief::TheoryRevisionRef,
+        binding: &super::CurationRuleBinding,
+        source: &super::CurationSourceBinding,
+        judgment: &super::CurationJudgmentScope,
+        rule_ref: &crate::belief::TheoryRevisionRef,
+    ) -> Result<StandingCurationRuleRevision, StorageError> {
+        let template = self.resolve_template(template_ref)?.ok_or_else(|| {
+            StorageError::InvalidPath("prepared Curation template is missing".into())
+        })?;
+        let rule = self.resolve_rule(rule_ref)?;
+        if rule.rule
+            != template
+                .template
+                .ground_for_source(binding, source, judgment)?
+        {
+            return Err(StorageError::InvalidPath(
+                "prepared Curation rule differs from its exact source and judgment context".into(),
+            ));
+        }
+        Ok(rule)
+    }
+
+    pub fn resolve_bound_rule(
+        &self,
+        template_ref: &crate::belief::TheoryRevisionRef,
+        binding: &super::CurationRuleBinding,
+        rule_ref: &crate::belief::TheoryRevisionRef,
+    ) -> Result<StandingCurationRuleRevision, StorageError> {
+        let template = self.resolve_template(template_ref)?.ok_or_else(|| {
+            StorageError::InvalidPath("prepared Curation template is missing".into())
+        })?;
+        let rule = self.resolve_rule(rule_ref)?;
+        if rule.rule != template.template.ground(binding)? {
+            return Err(StorageError::InvalidPath(
+                "prepared Curation rule differs from its installed template and assignment".into(),
+            ));
+        }
+        Ok(rule)
+    }
+
+    pub fn resolve_rule(
+        &self,
+        reference: &crate::belief::TheoryRevisionRef,
+    ) -> Result<StandingCurationRuleRevision, StorageError> {
+        reference.validate_for_registry(super::CURATION_RULE_REGISTRY_ID)?;
+        self.rule_revision(&reference.id, &reference.content_hash)
     }
 
     pub fn active_rule(
@@ -215,6 +367,12 @@ impl CurationStore {
             })?;
             authorization.validate(&operation)?;
             if operation.authority.agent_id == agent_id {
+                if self
+                    .acceptance_for_operation(&operation.operation_id)?
+                    .is_some_and(|receipt| receipt.decision == CurationAdmissionDecision::Rejected)
+                {
+                    continue;
+                }
                 let complete = if let Some(result) =
                     self.result_for_operation(&operation.operation_id)?
                 {
@@ -269,6 +427,18 @@ impl CurationStore {
             authorization.validate(&operation)?;
         }
         Ok(authorization)
+    }
+
+    /// Resolve an unchanged semantic selection to its original frozen operation.
+    /// Advancing transport positions alone must not recreate completed work.
+    pub fn resolve_operation(
+        &self,
+        candidate: CurationOperation,
+    ) -> Result<CurationOperation, StorageError> {
+        candidate.validate()?;
+        Ok(self
+            .operation_for_selection(&candidate.selection_id)?
+            .unwrap_or(candidate))
     }
 
     pub fn operation_for_selection(
@@ -461,7 +631,78 @@ impl CurationStore {
         Ok(())
     }
 
-    fn operation(&self, operation_id: &str) -> Result<Option<CurationOperation>, StorageError> {
+    /// Finish accepted native work under its original authority after admission closes.
+    pub(crate) fn resumable_operation(
+        &self,
+        authority: &CurationAuthority,
+    ) -> Result<Option<CurationOperation>, StorageError> {
+        for (operation_id, _) in self.unresolved_operations(authority)? {
+            if !self
+                .acceptance_for_operation(&operation_id)?
+                .is_some_and(|receipt| receipt.decision == CurationAdmissionDecision::Admitted)
+            {
+                continue;
+            }
+            let operation = self.operation(&operation_id)?.ok_or_else(|| {
+                StorageError::InvalidPath("accepted Curation operation is absent".into())
+            })?;
+            return match self.planned_authorization_for_operation(&operation_id)? {
+                Some(authorization) => operation
+                    .with_planned_authorization(authorization)
+                    .map(Some),
+                None => Ok(Some(operation)),
+            };
+        }
+        Ok(None)
+    }
+
+    pub(crate) fn unresolved_operations(
+        &self,
+        authority: &super::CurationAuthority,
+    ) -> Result<Vec<(String, String)>, StorageError> {
+        let mut pending = Vec::new();
+        for row in &self.operations {
+            let (_, raw) = row.map_err(to_storage_io)?;
+            let operation: CurationOperation = decode(&raw)?;
+            if !operation.authority.same_owner_scope(authority) {
+                continue;
+            }
+            if self
+                .acceptance_for_operation(&operation.operation_id)?
+                .is_some_and(|acceptance| {
+                    acceptance.decision == super::CurationAdmissionDecision::Rejected
+                })
+            {
+                continue;
+            }
+            let Some(result) = self.result_for_operation(&operation.operation_id)? else {
+                pending.push((operation.operation_id, "result_pending".into()));
+                continue;
+            };
+            for kind in [
+                CurationPublicationKind::Semantic,
+                CurationPublicationKind::Terminal,
+            ] {
+                if kind == CurationPublicationKind::Semantic
+                    && result.semantic_publication.is_none()
+                {
+                    continue;
+                }
+                if self.publication_receipt(&result.result_id, kind)?.is_none() {
+                    pending.push((
+                        operation.operation_id.clone(),
+                        format!("{kind:?}_publication_pending"),
+                    ));
+                }
+            }
+        }
+        Ok(pending)
+    }
+
+    pub(super) fn operation(
+        &self,
+        operation_id: &str,
+    ) -> Result<Option<CurationOperation>, StorageError> {
         let operation: Option<CurationOperation> = get_optional(&self.operations, operation_id)?;
         if let Some(operation) = &operation {
             operation.validate()?;
@@ -515,7 +756,13 @@ impl CurationStore {
             &acceptance.rule_revision.id,
             &acceptance.rule_revision.content_hash,
         )?;
-        if CurationAcceptanceRecord::for_operation(&operation, &rule)? != *acceptance {
+        let expected = match &acceptance.observed_authority {
+            Some(current) => {
+                CurationAcceptanceRecord::for_current_authority(&operation, &rule, current)?
+            }
+            None => CurationAcceptanceRecord::for_operation(&operation, &rule)?,
+        };
+        if expected != *acceptance {
             return Err(StorageError::InvalidPath(
                 "Curation acceptance does not match its exact operation and rule".to_string(),
             ));

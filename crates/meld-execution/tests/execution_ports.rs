@@ -411,6 +411,7 @@ fn blanket_execution_context_impl_accepts_port_bundle() {
 fn runtime_and_query_port_contracts_compile_against_port_bundle() {
     let context = FakeExecutionContext;
     let event_context = ExecutionEventContext {
+        effect_authority: None,
         session_id: "session-1".to_string(),
     };
 

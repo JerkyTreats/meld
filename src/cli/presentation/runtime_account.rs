@@ -21,17 +21,16 @@ pub fn render_runtime_tick_account_json(account: &RuntimeTickAccount) -> String 
 
 /// Render one tick account as a single human-readable text line.
 ///
-/// A quiescent pass renders `pass=quiescent`, active work renders
-/// `pass=active` with per-actor segments, so working, idle, and dead
-/// (no line at all) states stay distinguishable from the account alone.
+/// A clean observed pass renders `pass=active-idle`, while active work renders
+/// `pass=active`. An absent line remains operationally distinct.
 pub fn render_runtime_tick_account_text(account: &RuntimeTickAccount) -> String {
     let mut line = format!(
         "tick={} at_ms={} instance={} pass={}",
         account.tick,
         account.at_ms,
         account.instance_id,
-        if account.quiescent {
-            "quiescent"
+        if account.active_idle {
+            "active-idle"
         } else {
             "active"
         }
@@ -90,13 +89,13 @@ mod tests {
     use super::*;
     use crate::runtime::tooling::{RuntimeTickCheckpointAccount, RuntimeTickIssueAccount};
 
-    fn account(quiescent: bool, actors: Vec<RuntimeTickActorAccount>) -> RuntimeTickAccount {
+    fn account(active_idle: bool, actors: Vec<RuntimeTickActorAccount>) -> RuntimeTickAccount {
         RuntimeTickAccount {
             kind: "runtime_tick_account".to_string(),
             tick: 3,
             at_ms: 1_000,
             instance_id: "instance-a".to_string(),
-            quiescent,
+            active_idle,
             actors,
         }
     }
@@ -123,11 +122,11 @@ mod tests {
     }
 
     #[test]
-    fn text_line_distinguishes_quiescent_from_active_passes() {
-        let quiescent = render_runtime_tick_account_text(&account(true, Vec::new()));
+    fn text_line_distinguishes_active_idle_from_active_passes() {
+        let active_idle = render_runtime_tick_account_text(&account(true, Vec::new()));
         let active = render_runtime_tick_account_text(&account(false, vec![working_actor()]));
 
-        assert!(quiescent.contains("pass=quiescent"));
+        assert!(active_idle.contains("pass=active-idle"));
         assert!(active.contains("pass=active"));
         assert!(active.contains("actor=world_model.graph_replay"));
         assert!(active.contains("lifecycle=active_working"));
@@ -142,7 +141,7 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(parsed["type"], "runtime_tick_account");
         assert_eq!(parsed["tick"], 3);
-        assert_eq!(parsed["quiescent"], false);
+        assert_eq!(parsed["active_idle"], false);
         assert_eq!(
             parsed["actors"][0]["runtime_id"],
             "world_model.graph_replay"

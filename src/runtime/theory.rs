@@ -45,8 +45,9 @@ pub struct TheoryInstallationReceipt {
     pub executable_contracts: Vec<CapabilityContractRevisionRef>,
     /// Exact effective-authority policy revision.
     pub authority_policy: AuthorityPolicyRevisionRef,
-    /// Exact docs claim-policy revision.
-    pub claim_policy: DocsClaimPolicyRevisionRef,
+    /// Exact Docs policy when the product selects that owner component.
+    #[serde(default)]
+    pub claim_policy: Option<DocsClaimPolicyRevisionRef>,
     /// Sequence observed when the receipt was first installed.
     pub installed_at_seq: u64,
 }
@@ -61,7 +62,7 @@ struct ReceiptIdentity<'a> {
     strategy_theory: &'a TheoryRevisionRef,
     executable_contracts: &'a [CapabilityContractRevisionRef],
     authority_policy: &'a AuthorityPolicyRevisionRef,
-    claim_policy: &'a DocsClaimPolicyRevisionRef,
+    claim_policy: &'a Option<DocsClaimPolicyRevisionRef>,
 }
 
 impl TheoryInstallationReceipt {
@@ -76,9 +77,10 @@ impl TheoryInstallationReceipt {
         strategy_theory: TheoryRevisionRef,
         mut executable_contracts: Vec<CapabilityContractRevisionRef>,
         authority_policy: AuthorityPolicyRevisionRef,
-        claim_policy: DocsClaimPolicyRevisionRef,
+        claim_policy: impl Into<Option<DocsClaimPolicyRevisionRef>>,
         installed_at_seq: u64,
     ) -> Result<Self, TheoryReceiptError> {
+        let claim_policy = claim_policy.into();
         executable_contracts.sort_by(|left, right| {
             left.selector
                 .capability_type_id
@@ -118,9 +120,9 @@ impl TheoryInstallationReceipt {
                 "receipt authority policy reference is incomplete".to_string(),
             ));
         }
-        if claim_policy.policy_id.trim().is_empty()
-            || claim_policy.content_identity.trim().is_empty()
-        {
+        if claim_policy.as_ref().is_some_and(|policy| {
+            policy.policy_id.trim().is_empty() || policy.content_identity.trim().is_empty()
+        }) {
             return Err(TheoryReceiptError::Invalid(
                 "receipt claim policy reference is incomplete".to_string(),
             ));
@@ -217,8 +219,8 @@ pub struct ResolvedStewardshipTheory {
     pub executable_contracts: Vec<CapabilityContractRevision>,
     /// Exact effective-authority policy revision.
     pub authority_policy: AuthorityPolicyRevision,
-    /// Exact docs claim-policy revision.
-    pub claim_policy: DocsClaimPolicyRevision,
+    /// Exact Docs policy when the product selects that owner component.
+    pub claim_policy: Option<DocsClaimPolicyRevision>,
 }
 
 impl ResolvedStewardshipTheory {
@@ -418,11 +420,17 @@ impl ResolvedStewardshipTheory {
             )
             .map_err(owner_error)?
             .ok_or_else(|| missing("authority policy"))?;
-        let claim_policy = stores
-            .claim_policy_registry
-            .resolve(&receipt.claim_policy)
-            .map_err(owner_error)?
-            .ok_or_else(|| missing("docs claim policy"))?;
+        let claim_policy = receipt
+            .claim_policy
+            .as_ref()
+            .map(|reference| {
+                stores
+                    .claim_policy_registry
+                    .resolve(reference)
+                    .map_err(owner_error)?
+                    .ok_or_else(|| missing("docs claim policy"))
+            })
+            .transpose()?;
         let resolved = Self {
             product_compilation_receipt_id,
             package_receipt_ids,
@@ -439,6 +447,94 @@ impl ResolvedStewardshipTheory {
         };
         resolved.validate(selection, expected_subject)?;
         Ok(resolved)
+    }
+
+    /// Resolve the native rule named by the prepared Agent genesis receipt.
+    pub fn native_curation_rule(
+        &self,
+        stores: &OpenProductStores,
+        agent: &meld_world_model::agent::AgentRecord,
+    ) -> Result<Option<meld_world_model::StandingCurationRuleRevision>, TheoryResolutionError> {
+        let Some(closure) = &self.prepared_closure else {
+            return stores
+                .curation_store
+                .active_rule(&agent.agent_id)
+                .map_err(owner_error);
+        };
+        let compilation = stores
+            .pds_products
+            .compilation(&closure.assignment.product_compilation_receipt_id)
+            .map_err(owner_error)?
+            .ok_or_else(|| missing("prepared product compilation"))?;
+        let templates: Vec<_> = compilation
+            .installed_owner_revisions
+            .iter()
+            .filter(|component| {
+                component.owner_revision.registry
+                    == meld_world_model::curation::CURATION_TEMPLATE_REGISTRY_ID
+            })
+            .collect();
+        if templates.is_empty() {
+            // Existing packages predate native Curation installation. Their explicit
+            // active selection remains readable until those products are migrated.
+            return stores
+                .curation_store
+                .active_rule(&agent.agent_id)
+                .map_err(owner_error);
+        }
+        if templates.len() != 1 {
+            return Err(TheoryResolutionError::Inconsistent(
+                "this Curation participant requires one exact assigned template".into(),
+            ));
+        }
+        let template = &templates[0].owner_revision;
+        let template_ref = TheoryRevisionRef {
+            registry: template.registry.clone(),
+            id: template.id.clone(),
+            content_hash: template.content_hash.clone(),
+        };
+        let receipts = stores
+            .agent_store
+            .genesis_receipts_for_assignment(&closure.assignment.assignment_id)
+            .map_err(owner_error)?;
+        let genesis: Vec<_> = receipts
+            .iter()
+            .filter(|receipt| {
+                receipt.agent_id == agent.agent_id
+                    && receipt.product_compilation_receipt_id == compilation.compilation_receipt_id
+            })
+            .collect();
+        if genesis.len() != 1 {
+            return Err(missing("exact Agent genesis Curation binding"));
+        }
+        let rules: Vec<_> = genesis[0]
+            .installed_owner_revisions
+            .iter()
+            .filter(|reference| {
+                reference.registry == meld_world_model::curation::CURATION_RULE_REGISTRY_ID
+            })
+            .collect();
+        if rules.len() != 1 || !genesis[0].installed_owner_revisions.contains(&template_ref) {
+            return Err(missing("prepared native Curation revision"));
+        }
+        stores
+            .curation_store
+            .resolve_bound_rule(
+                &template_ref,
+                &meld_world_model::curation::CurationRuleBinding {
+                    agent_id: agent.agent_id.clone(),
+                    subject: agent.subject.clone(),
+                    scope: meld_world_model::world_state::graph::contracts::OwnerPublicationScope {
+                        scope_id: agent.subject.object_id.clone(),
+                        branch_id: Some(agent.branch_scope.branch_id.clone()),
+                        perspective_id: Some(agent.perspective_key.perspective_id.clone()),
+                        valid_at: None,
+                    },
+                },
+                rules[0],
+            )
+            .map(Some)
+            .map_err(owner_error)
     }
 
     /// Build the exact in-memory execution catalog selected by the receipt.
@@ -464,7 +560,11 @@ impl ResolvedStewardshipTheory {
             || self.outcome_mapping.revision_ref() != self.receipt.outcome_mapping
             || self.strategy_theory.revision_ref() != self.receipt.strategy_theory
             || self.authority_policy.revision_ref() != self.receipt.authority_policy
-            || self.claim_policy.revision_ref() != self.receipt.claim_policy
+            || self
+                .claim_policy
+                .as_ref()
+                .map(|policy| policy.revision_ref())
+                != self.receipt.claim_policy
         {
             return Err(TheoryResolutionError::Inconsistent(
                 "resolved owner revision does not match its receipt reference".to_string(),
@@ -476,7 +576,12 @@ impl ResolvedStewardshipTheory {
             || self.receipt.outcome_mapping.id != selection.evidence_mapping_id
             || self.receipt.strategy_theory.id != selection.strategy_theory_id
             || self.receipt.authority_policy.policy_id != selection.authority_policy_id
-            || self.receipt.claim_policy.policy_id != selection.claim_policy_id
+            || self
+                .receipt
+                .claim_policy
+                .as_ref()
+                .map_or("", |policy| policy.policy_id.as_str())
+                != selection.claim_policy_id
         {
             return Err(TheoryResolutionError::Inconsistent(
                 "prepared owner revisions differ from the physical stewardship selection"
@@ -556,13 +661,29 @@ fn receipt_from_components(
         id: reference.id,
         content_hash: reference.content_hash,
     };
-    let belief_family = world_ref(one(route("world-model", "belief-family"))?);
+    let selected_families: Vec<_> = components
+        .iter()
+        .filter(|component| {
+            component.route == route("world-model", "belief-family")
+                && component.owner_revision.id == selection.belief_family_id
+        })
+        .collect();
+    if selected_families.len() != 1 {
+        return Err(TheoryResolutionError::Inconsistent(
+            "selected Agent observation family requires one exact compiled revision".into(),
+        ));
+    }
+    let belief_family = world_ref(selected_families[0].owner_revision.clone());
     let curation_rule = world_ref(one(route("world-model", "agent-curation-rule"))?);
     let maintained_condition = world_ref(one(route("world-model", "agent-maintained-condition"))?);
     let outcome_mapping = world_ref(one(route("world-model", "outcome-mapping"))?);
     let strategy_theory = world_ref(one(route("world-model", "strategy-theory"))?);
     let authority = one(route("execution", "authority-policy"))?;
-    let claim = one(route("docs", "claim-policy"))?;
+    let claim = if selection.claim_policy_id.is_empty() {
+        None
+    } else {
+        Some(one(route("docs", "claim-policy"))?)
+    };
     let mut executable_contracts = Vec::new();
     for component in components
         .iter()
@@ -600,10 +721,10 @@ fn receipt_from_components(
             policy_id: authority.id,
             content_hash: authority.content_hash,
         },
-        DocsClaimPolicyRevisionRef {
+        claim.map(|claim| DocsClaimPolicyRevisionRef {
             policy_id: claim.id,
             content_identity: claim.content_hash,
-        },
+        }),
         installed_at_seq,
     )
     .map_err(|failure| TheoryResolutionError::Inconsistent(failure.to_string()))
@@ -669,7 +790,6 @@ fn validate_selection(selection: &SelectedStewardshipPackage) -> Result<(), Theo
         &selection.maintained_condition_id,
         &selection.strategy_theory_id,
         &selection.authority_policy_id,
-        &selection.claim_policy_id,
     ] {
         if value.trim().is_empty() {
             return Err(TheoryReceiptError::Invalid(
@@ -921,5 +1041,60 @@ mod tests {
             ResolvedStewardshipTheory::resolve_receipt(&stores, &receipt.receipt_id),
             Err(TheoryResolutionError::Missing(message)) if message.contains("belief family")
         ));
+    }
+    #[test]
+    fn security_package_resolves_its_selected_family_without_a_docs_policy() {
+        let temp = tempfile::tempdir().unwrap();
+        let stores =
+            OpenProductStores::open(&ProductStorageLayout::from_root(temp.path())).unwrap();
+        let package = crate::dependency_security::theory::install_package(
+            &stores,
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/dependency_security"),
+            1,
+        )
+        .unwrap();
+        let selected = SelectedStewardshipPackage {
+            expression: "dependency_security_fixture".into(),
+            principal_id: "workspace-owner".into(),
+            belief_family_id: "dependency_security_posture".into(),
+            evidence_mapping_id: "dependency_security_outcome_mapping_v1".into(),
+            curation_rule_id: "dependency_security_posture".into(),
+            maintained_condition_id: "dependency_security_posture".into(),
+            strategy_theory_id: "dependency_security_fixture".into(),
+            authority_policy_id: "dependency_security_fixture_read_only".into(),
+            claim_policy_id: String::new(),
+        };
+        let subject = DomainObjectRef::new("workspace_fs", "node", "dependency-graph").unwrap();
+        let resolved = ResolvedStewardshipTheory::resolve_pds_receipt(
+            &stores,
+            &selected,
+            &subject,
+            &package.receipt_id,
+        )
+        .unwrap();
+        assert_eq!(
+            resolved.belief_family.config.family_id,
+            "dependency_security_posture"
+        );
+        assert!(resolved.claim_policy.is_none());
+        assert_eq!(resolved.executable_contracts.len(), 4);
+        assert_eq!(
+            package
+                .components
+                .iter()
+                .filter(|component| component.route.component_kind == "belief-family")
+                .count(),
+            2
+        );
+        // The primary observation selection cannot silently drift to the first family in the package.
+        let mut foreign = selected;
+        foreign.belief_family_id = "missing-observation-family".into();
+        assert!(ResolvedStewardshipTheory::resolve_pds_receipt(
+            &stores,
+            &foreign,
+            &subject,
+            &package.receipt_id
+        )
+        .is_err());
     }
 }

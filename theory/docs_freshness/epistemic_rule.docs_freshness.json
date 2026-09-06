@@ -1,0 +1,15 @@
+{
+  "rule_id": "docs-standing-curation",
+  "source_owner_id": "workspace_fs",
+  "traversal_direction": "Incoming",
+  "bounds": {
+    "max_depth": 4,
+    "max_objects": 32,
+    "max_occurrences": 32,
+    "max_paths": 32
+  },
+  "expected_object_kind": "assessment",
+  "expected_object_key": "standing-assessment",
+  "relation_type": "curation_assesses",
+  "output_policy_revision": "docs-standing-output-v1"
+}

@@ -10,9 +10,22 @@ use crate::generation::{
     GeneratedFrameMetadataInput, PreviousMetadataSnapshotView, PromptLineageRequest,
 };
 
+/// Exact effect boundary derived from an admitted Task's authority.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionEffectAuthority {
+    /// Principal whose effect grant Execution validated.
+    pub principal_id: String,
+    /// Exact object within the admitted grant.
+    pub subject: meld_events::DomainObjectRef,
+    /// Opaque live fence retained from the accepted admission.
+    pub fence_ref: String,
+}
+
 /// Event publication context supplied by callers that want durable envelopes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionEventContext {
+    /// Validated effect authority, absent for telemetry-only contexts.
+    pub effect_authority: Option<ExecutionEffectAuthority>,
     /// Session identifier used as the event stream root.
     pub session_id: String,
 }
@@ -343,6 +356,12 @@ pub trait EventPublicationPort: Send + Sync {
     type Error;
     /// Event envelope type accepted by the adapter.
     type EventEnvelope;
+
+    /// Neutral durable append authority when this execution context is explicitly bound.
+    /// Callers requiring an append receipt must refuse an unavailable binding.
+    fn durable_event_append(&self) -> Option<meld_events::EventAppendCapability> {
+        None
+    }
 
     /// Publishes one execution envelope in the supplied event context.
     fn publish_execution_envelope(

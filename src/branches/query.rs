@@ -365,6 +365,7 @@ impl BranchQueryRuntime {
                 let cut = query
                     .cut(&TraversalCutRequest {
                         owners: vec![TraversalOwnerRequirement {
+                            event_source: None,
                             owner_id: owner_id.to_string(),
                             scope: owner_scope.clone(),
                             required: true,

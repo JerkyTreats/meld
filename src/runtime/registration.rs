@@ -1,14 +1,14 @@
 //! Runtime registration identity and lifecycle projection contracts.
 //!
-//! Owner: root runtime. A registration is a required binding derived from
-//! the selected stewardship expression and physical binding — distinct
+//! Owner: root runtime. A registration is a required binding projected from
+//! the accepted participant plan and physical binding — distinct
 //! from the descriptor catalog, which is an internal inventory with no
 //! product cardinality meaning. Catalog-only descriptors receive no
 //! registration and no lifecycle state; unavailable status is reserved for
 //! a required binding that cannot be resolved.
 //!
 //! Registration-set composition is a public surface: the
-//! stewardship-derived set is one producer, and harness or proof callers
+//! prepared-plan projection is one producer, and harness or proof callers
 //! may supply an explicit set to compose any actor subset. Store and port
 //! opening is scoped to the composed set.
 //!

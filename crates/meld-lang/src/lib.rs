@@ -78,7 +78,7 @@ pub use authority::{
     evaluate_authority, required_action_ids, AuthorityDecision, AuthorityDenial, AuthorityPolicy,
     AuthorityPolicyBinding,
 };
-pub use composition::{Composition, Edge, EdgeKind, Step, StepKind};
+pub use composition::{Composition, Edge, EdgeKind, Step, StepKind, TaskInput};
 pub use condition::Condition;
 pub use cost::CostEstimate;
 pub use effect::Effect;

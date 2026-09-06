@@ -587,6 +587,7 @@ mod tests {
         let mut executor =
             TaskExecutor::new(compiled_task(), init_payload(), "repo_docs_writer").unwrap();
         let context = ExecutionEventContext {
+            effect_authority: None,
             session_id: "session_1".to_string(),
         };
 
@@ -626,6 +627,7 @@ mod tests {
         let mut executor =
             TaskExecutor::new(compiled_task(), init_payload(), "repo_docs_writer").unwrap();
         let context = ExecutionEventContext {
+            effect_authority: None,
             session_id: "session_1".to_string(),
         };
 
@@ -655,6 +657,7 @@ mod tests {
             "task::pkg::turn::turn-1::finalize".to_string();
         let mut executor = TaskExecutor::new(task, init_payload(), "repo_docs_writer").unwrap();
         let context = ExecutionEventContext {
+            effect_authority: None,
             session_id: "session_1".to_string(),
         };
         let telemetry = WorkflowTaskTelemetry {
@@ -701,6 +704,7 @@ mod tests {
         let mut executor =
             TaskExecutor::new(blocked_task, init_payload(), "repo_docs_writer").unwrap();
         let context = ExecutionEventContext {
+            effect_authority: None,
             session_id: "session_1".to_string(),
         };
 
@@ -751,6 +755,7 @@ mod tests {
             "task::pkg::turn::turn-1::prepare".to_string();
         let mut executor = TaskExecutor::new(task, init_payload(), "repo_docs_writer").unwrap();
         let context = ExecutionEventContext {
+            effect_authority: None,
             session_id: "session_1".to_string(),
         };
         let telemetry = WorkflowTaskTelemetry {
@@ -789,6 +794,7 @@ mod tests {
             "task::pkg::turn::turn-1::finalize".to_string();
         let mut executor = TaskExecutor::new(task, init_payload(), "repo_docs_writer").unwrap();
         let context = ExecutionEventContext {
+            effect_authority: None,
             session_id: "session_1".to_string(),
         };
         let telemetry = WorkflowTaskTelemetry {

@@ -206,6 +206,7 @@ pub struct TheorySelection {
     pub authority_policy_id: String,
 
     /// Docs claim policy identity.
+    #[serde(default)]
     pub claim_policy_id: String,
 }
 
@@ -406,10 +407,6 @@ fn validate_declaration(
         (
             "theory.authority_policy_id",
             &declaration.theory.authority_policy_id,
-        ),
-        (
-            "theory.claim_policy_id",
-            &declaration.theory.claim_policy_id,
         ),
     ] {
         if value.trim().is_empty() {

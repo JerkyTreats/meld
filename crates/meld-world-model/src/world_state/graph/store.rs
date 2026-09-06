@@ -46,6 +46,14 @@ const TREE_RUNTIME_META: &str = "traversal_runtime_meta";
 const KEY_LAST_REDUCED_SEQ: &str = "last_reduced_seq";
 const KEY_AUTHORITY_CURSOR: &[u8] = b"event_authority_cursor";
 const KEY_PENDING_DERIVED_EVENTS: &[u8] = b"pending_derived_events";
+fn owner_event_route_key(owner: &str, event_type: &str) -> Result<String, StorageError> {
+    let bytes = serde_json::to_vec(&(owner, event_type)).map_err(to_storage_data)?;
+    Ok(format!(
+        "owner-event-route::{}",
+        blake3::hash(&bytes).to_hex()
+    ))
+}
+
 const KEY_PAD: usize = 20;
 
 /// Stored relation edge plus the fact that produced it.
@@ -65,6 +73,7 @@ struct PersistedGraphCursor {
 /// Sled-backed graph traversal store.
 #[derive(Clone)]
 pub struct TraversalStore {
+    resource_id: String,
     db: Db,
     facts: Tree,
     owner_publications: Tree,
@@ -83,9 +92,15 @@ pub struct TraversalStore {
 }
 
 impl TraversalStore {
+    /// Exact durable world-model resource bound to this store instance.
+    pub fn resource_id(&self) -> &str {
+        &self.resource_id
+    }
+
     /// Open all traversal trees against a shared sled database.
     pub fn new(db: Db) -> Result<Self, StorageError> {
         Ok(Self {
+            resource_id: crate::waiting::resource_identity(&db)?,
             facts: db.open_tree(TREE_FACTS).map_err(to_storage_io)?,
             owner_publications: db
                 .open_tree(TREE_OWNER_PUBLICATIONS)
@@ -112,6 +127,250 @@ impl TraversalStore {
             runtime_meta: db.open_tree(TREE_RUNTIME_META).map_err(to_storage_io)?,
             db,
         })
+    }
+
+    /// Install one immutable owner Event admission contract in the existing Graph metadata.
+    pub fn install_owner_event_route(
+        &self,
+        route: &super::admission::GraphOwnerEventRoute,
+    ) -> Result<crate::belief::TheoryRevisionRef, StorageError> {
+        let reference = route.revision_ref()?;
+        let key = owner_event_route_key(&route.owner_id, &route.event_type)?;
+        let bytes = serde_json::to_vec(route).map_err(to_storage_data)?;
+        match self
+            .runtime_meta
+            .compare_and_swap(key, None as Option<&[u8]>, Some(bytes.as_slice()))
+            .map_err(to_storage_io)?
+        {
+            Ok(()) => {
+                self.db.flush().map_err(to_storage_io)?;
+            }
+            Err(conflict) if conflict.current.as_deref() == Some(bytes.as_slice()) => {}
+            Err(_) => {
+                return Err(StorageError::InvalidPath(
+                    "owner Event kind already has a different Graph admission contract".into(),
+                ))
+            }
+        }
+        Ok(reference)
+    }
+
+    pub fn owner_event_route(
+        &self,
+        owner: &str,
+        event_type: &str,
+    ) -> Result<Option<super::admission::GraphOwnerEventRoute>, StorageError> {
+        self.runtime_meta
+            .get(owner_event_route_key(owner, event_type)?)
+            .map_err(to_storage_io)?
+            .map(|raw| {
+                let route: super::admission::GraphOwnerEventRoute =
+                    serde_json::from_slice(&raw).map_err(to_storage_data)?;
+                route.validate()?;
+                if route.owner_id != owner || route.event_type != event_type {
+                    return Err(StorageError::InvalidPath(
+                        "Graph owner Event route key disagrees with its body".into(),
+                    ));
+                }
+                Ok(route)
+            })
+            .transpose()
+    }
+
+    pub fn owner_event_routes(
+        &self,
+    ) -> Result<Vec<super::admission::GraphOwnerEventRoute>, StorageError> {
+        self.runtime_meta
+            .scan_prefix(b"owner-event-route::")
+            .map(|row| {
+                let (_, raw) = row.map_err(to_storage_io)?;
+                let route: super::admission::GraphOwnerEventRoute =
+                    serde_json::from_slice(&raw).map_err(to_storage_data)?;
+                route.validate()?;
+                Ok(route)
+            })
+            .collect()
+    }
+
+    /// Record the immutable route set present before a verified replay from genesis.
+    pub(crate) fn record_genesis_event_sources(
+        &self,
+        ledger_id: LedgerIdentity,
+        routes: &[super::admission::OwnerEventSourceRef],
+    ) -> Result<(), StorageError> {
+        if self.authority_cursor(ledger_id)?.after_seq != 0 {
+            return Err(StorageError::InvalidPath(
+                "Event-source genesis coverage requires a zero Graph cursor".into(),
+            ));
+        }
+        self.runtime_meta
+            .insert(
+                format!("event-source-genesis::{ledger_id}").as_bytes(),
+                serde_json::to_vec(routes).map_err(to_storage_data)?,
+            )
+            .map_err(to_storage_io)?;
+        self.db.flush().map_err(to_storage_io)?;
+        Ok(())
+    }
+
+    /// Check exact installed owner authority and replay coverage, never just its namespace.
+    pub fn covers_event_source(
+        &self,
+        ledger_id: LedgerIdentity,
+        owner_id: &str,
+        source: &super::admission::OwnerEventSourceRef,
+    ) -> Result<bool, StorageError> {
+        let installed = self.owner_event_routes()?.into_iter().any(|route| {
+            route.complete_event_source
+                && route.owner_id == owner_id
+                && route
+                    .source_ref()
+                    .is_ok_and(|reference| &reference == source)
+        });
+        if !installed {
+            return Ok(false);
+        }
+        let Some(raw) = self
+            .runtime_meta
+            .get(format!("event-source-genesis::{ledger_id}").as_bytes())
+            .map_err(to_storage_io)?
+        else {
+            return Ok(false);
+        };
+        let covered: Vec<super::admission::OwnerEventSourceRef> =
+            serde_json::from_slice(&raw).map_err(to_storage_data)?;
+        Ok(covered.contains(source))
+    }
+
+    /// Inspect each exhaustive route's native replay obligation without advancing it.
+    pub fn owner_event_replay_states(
+        &self,
+        ledger_id: LedgerIdentity,
+    ) -> Result<Vec<super::admission::OwnerEventReplayState>, StorageError> {
+        let mut states = Vec::new();
+        for route in self
+            .owner_event_routes()?
+            .into_iter()
+            .filter(|route| route.complete_event_source)
+        {
+            let source = route.source_ref()?;
+            let covered = self.covers_event_source(ledger_id, &route.owner_id, &source)?;
+            states.push(super::admission::OwnerEventReplayState {
+                covered,
+                position: if covered {
+                    self.authority_cursor(ledger_id)?
+                } else {
+                    self.owner_event_replay_cursor(ledger_id, &source)?
+                },
+                source,
+            });
+        }
+        states.sort_by(|left, right| left.source.cmp(&right.source));
+        Ok(states)
+    }
+
+    pub(crate) fn owner_event_replay_cursor(
+        &self,
+        ledger_id: LedgerIdentity,
+        source: &super::admission::OwnerEventSourceRef,
+    ) -> Result<LedgerCursor, StorageError> {
+        let key = format!("owner-event-replay::{ledger_id}::{}", source.consumer_id());
+        let Some(raw) = self
+            .runtime_meta
+            .get(key.as_bytes())
+            .map_err(to_storage_io)?
+        else {
+            return Ok(LedgerCursor {
+                ledger_id,
+                after_seq: 0,
+            });
+        };
+        let cursor: LedgerCursor = serde_json::from_slice(&raw).map_err(to_storage_data)?;
+        if cursor.ledger_id != ledger_id {
+            return Err(StorageError::IdentityMismatch {
+                expected: ledger_id,
+                actual: cursor.ledger_id,
+            });
+        }
+        Ok(cursor)
+    }
+
+    pub(crate) fn advance_owner_event_replay(
+        &self,
+        source: &super::admission::OwnerEventSourceRef,
+        prior: LedgerCursor,
+        next: u64,
+    ) -> Result<LedgerCursor, StorageError> {
+        if self.owner_event_replay_cursor(prior.ledger_id, source)? != prior
+            || next < prior.after_seq
+            || next > self.authority_cursor(prior.ledger_id)?.after_seq
+        {
+            return Err(StorageError::InvalidPath(
+                "owner Event replay cannot regress or pass the canonical projection".into(),
+            ));
+        }
+        // Projection writes are durable before their separate resume position advances.
+        self.flush()?;
+        let cursor = LedgerCursor {
+            ledger_id: prior.ledger_id,
+            after_seq: next,
+        };
+        self.runtime_meta
+            .insert(
+                format!(
+                    "owner-event-replay::{}::{}",
+                    prior.ledger_id,
+                    source.consumer_id()
+                )
+                .as_bytes(),
+                serde_json::to_vec(&cursor).map_err(to_storage_data)?,
+            )
+            .map_err(to_storage_io)?;
+        self.db.flush().map_err(to_storage_io)?;
+        Ok(cursor)
+    }
+
+    pub(crate) fn complete_owner_event_replay(
+        &self,
+        source: &super::admission::OwnerEventSourceRef,
+        cursor: LedgerCursor,
+    ) -> Result<(), StorageError> {
+        if self.owner_event_replay_cursor(cursor.ledger_id, source)? != cursor
+            || cursor != self.authority_cursor(cursor.ledger_id)?
+        {
+            return Err(StorageError::InvalidPath(
+                "owner Event coverage requires completed replay through the canonical projection"
+                    .into(),
+            ));
+        }
+        let key = format!("event-source-genesis::{}", cursor.ledger_id);
+        loop {
+            let prior = self
+                .runtime_meta
+                .get(key.as_bytes())
+                .map_err(to_storage_io)?;
+            let mut sources: Vec<super::admission::OwnerEventSourceRef> = prior
+                .as_ref()
+                .map(|raw| serde_json::from_slice(raw).map_err(to_storage_data))
+                .transpose()?
+                .unwrap_or_default();
+            if sources.contains(source) {
+                return Ok(());
+            }
+            sources.push(source.clone());
+            sources.sort();
+            let bytes = serde_json::to_vec(&sources).map_err(to_storage_data)?;
+            if self
+                .runtime_meta
+                .compare_and_swap(key.as_bytes(), prior, Some(bytes))
+                .map_err(to_storage_io)?
+                .is_ok()
+            {
+                break;
+            }
+        }
+        self.db.flush().map_err(to_storage_io)?;
+        Ok(())
     }
 
     /// Open the store behind an `Arc` for runtime assembly.

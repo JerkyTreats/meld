@@ -36,6 +36,36 @@ pub mod conditions {
     pub const WORLD_STATE_INDETERMINATE: &str = "world_state_indeterminate";
 }
 
+/// Structural address that can make an Execution owner eligible again.
+///
+/// The emitting owner chooses the class and exact durable address. Runtime
+/// lifecycle may bind and resolve this value but does not infer its meaning.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum StructuralWakeAddress {
+    /// Durable Event position or watermark.
+    EventPosition(String),
+    /// Durable native-owner revision.
+    OwnerRevision(String),
+    /// Durable operation completion position.
+    DurableOperation(String),
+    /// Durable deadline.
+    DurableDeadline(String),
+    /// Recovery of a physical or authority binding.
+    BindingRecovery(String),
+    /// Explicit operator action channel.
+    OperatorAction(String),
+}
+
+pub(crate) fn after_position(value: &str, exact_resource: &str) -> bool {
+    value
+        .strip_prefix(&format!("{exact_resource}::after::"))
+        .is_some_and(|position| {
+            !position.is_empty()
+                && position.bytes().all(|byte| byte.is_ascii_digit())
+                && position.parse::<u64>().is_ok()
+        })
+}
+
 /// One domain-owned statement of what would make work eligible.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WaitingOnDeclaration {
@@ -45,6 +75,8 @@ pub struct WaitingOnDeclaration {
     pub subject_key: Option<String>,
     /// Human-readable detail in the emitting domain's vocabulary.
     pub detail: String,
+    /// Complete owner-authored structural addresses that can change eligibility.
+    pub wake_addresses: Vec<StructuralWakeAddress>,
 }
 
 impl WaitingOnDeclaration {
@@ -53,20 +85,35 @@ impl WaitingOnDeclaration {
         condition: impl Into<String>,
         subject_key: impl Into<String>,
         detail: impl Into<String>,
+        wake_addresses: Vec<StructuralWakeAddress>,
     ) -> Self {
+        assert!(
+            !wake_addresses.is_empty(),
+            "Execution wait requires native wake evidence"
+        );
         Self {
             condition: condition.into(),
             subject_key: Some(subject_key.into()),
             detail: detail.into(),
+            wake_addresses,
         }
     }
 
     /// Build a declaration whose condition has no single subject.
-    pub fn broad(condition: impl Into<String>, detail: impl Into<String>) -> Self {
+    pub fn broad(
+        condition: impl Into<String>,
+        detail: impl Into<String>,
+        wake_addresses: Vec<StructuralWakeAddress>,
+    ) -> Self {
+        assert!(
+            !wake_addresses.is_empty(),
+            "Execution wait requires native wake evidence"
+        );
         Self {
             condition: condition.into(),
             subject_key: None,
             detail: detail.into(),
+            wake_addresses,
         }
     }
 }

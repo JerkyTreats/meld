@@ -43,7 +43,7 @@ use crate::task_network::state::{
     validate_task_admission_attribution, NetworkState, TaskNode, TaskStatus,
 };
 use crate::task_network::store::{InMemoryTaskNetworkStore, SledTaskNetworkStore};
-use crate::waiting::{conditions, WaitingOnDeclaration};
+use crate::waiting::{conditions, StructuralWakeAddress, WaitingOnDeclaration};
 use async_trait::async_trait;
 use meld_lang::AuthorityPolicyBinding;
 use std::sync::Arc;
@@ -144,6 +144,16 @@ pub trait ClaimedTaskInvoker: Send + Sync {
 pub trait AdmissionGenerationObserver: Send + Sync {
     /// Return the currently active generation for one attributed Agent.
     fn active_generation(&self, agent_id: &str) -> Result<Option<String>, String>;
+
+    /// Recheck the whole admission fence in one owner observation.
+    fn validates_admission(
+        &self,
+        attribution: &crate::task_network::TaskAdmissionAttribution,
+    ) -> Result<bool, String> {
+        Ok(attribution.admission_epoch.is_none()
+            && self.active_generation(&attribution.agent_id)?.as_deref()
+                == Some(attribution.activation_generation.as_str()))
+    }
 }
 
 /// Narrow task-network access port for the dispatch actor.
@@ -328,6 +338,7 @@ pub struct DispatchRuntimeActor<CI> {
     authority_policy: Option<AuthorityPolicyBinding>,
     admission_generation: Option<String>,
     admission_generation_observer: Option<Arc<dyn AdmissionGenerationObserver>>,
+    lifecycle: crate::lifecycle::NativeLifecycle,
 }
 
 impl<CI> DispatchRuntimeActor<CI>
@@ -357,7 +368,132 @@ where
             authority_policy: None,
             admission_generation: None,
             admission_generation_observer: None,
+            lifecycle: crate::lifecycle::NativeLifecycle::new(DISPATCH_ACTOR_ID),
         })
+    }
+
+    /// Resolve readiness and artifacts against the exact network and contained Task.
+    pub fn resolves_wake(
+        &self,
+        network: &crate::task_network::store::SledTaskNetworkStore,
+        wake: &crate::waiting::StructuralWakeAddress,
+    ) -> bool {
+        let state = network.state();
+        match wake {
+            StructuralWakeAddress::OwnerRevision(value) => crate::waiting::after_position(
+                value,
+                &format!("task-network::{}", state.network_id),
+            ),
+            StructuralWakeAddress::DurableOperation(value) => value
+                .strip_prefix(&format!("task-artifact::{}::", state.network_id))
+                .and_then(|tail| tail.strip_suffix("::available"))
+                .is_some_and(|id| state.tasks.contains_key(id)),
+            _ => false,
+        }
+    }
+
+    /// Account for the native durable work in the borrowed, exclusively bound network.
+    pub fn lifecycle_evidence(
+        &self,
+        network: &crate::task_network::store::SledTaskNetworkStore,
+    ) -> Result<crate::lifecycle::NativeLifecycleEvidence, String> {
+        network.flush().map_err(|error| error.to_string())?;
+        let state = network.state();
+        self.db.flush().map_err(|error| error.to_string())?;
+        let checkpoint_ref = format!("task-network::{}::{}", state.network_id, state.revision);
+        Ok(crate::lifecycle::NativeLifecycleEvidence {
+            checkpoint_ref: checkpoint_ref.clone(),
+            installed_revision_refs: vec![
+                format!("task-network-state::{}", state.state_hash),
+                crate::lifecycle::evidence_ref("dispatch-authority", &self.authority_policy)?,
+            ],
+            binding_refs: vec![
+                format!("dispatch-worker::{}", self.worker_id),
+                format!("task-network::{}", state.network_id),
+            ],
+            subscription_refs: vec![format!("ready-task-set::{}", state.network_id)],
+            proof_position_ref: checkpoint_ref,
+            unresolved_operation_summary_ref: crate::lifecycle::evidence_ref(
+                "dispatch-durable-claims",
+                &state.claims,
+            )?,
+        })
+    }
+
+    /// Author native start evidence while the network is borrowed.
+    pub fn lifecycle_start(
+        &self,
+        identity: crate::lifecycle::NativeLifecycleIdentity,
+        network: &crate::task_network::store::SledTaskNetworkStore,
+    ) -> Result<
+        (
+            crate::lifecycle::NativeLifecycleEvidence,
+            crate::lifecycle::NativeLifecycleTransition,
+        ),
+        String,
+    > {
+        let evidence = self.lifecycle_evidence(network)?;
+        let transition = self
+            .lifecycle
+            .start(identity, evidence.proof_position_ref.clone())?;
+        Ok((evidence, transition))
+    }
+
+    /// Author native safe point evidence while the network is borrowed.
+    pub fn lifecycle_safe_point(
+        &self,
+        identity: crate::lifecycle::NativeLifecycleIdentity,
+        network: &crate::task_network::store::SledTaskNetworkStore,
+    ) -> Result<
+        (
+            crate::lifecycle::NativeLifecycleEvidence,
+            crate::lifecycle::NativeLifecycleTransition,
+        ),
+        String,
+    > {
+        let evidence = self.lifecycle_evidence(network)?;
+        let transition = self
+            .lifecycle
+            .safe_point(identity, evidence.proof_position_ref.clone())?;
+        Ok((evidence, transition))
+    }
+
+    /// Author native stop evidence while the network is borrowed.
+    pub fn lifecycle_stop(
+        &self,
+        identity: crate::lifecycle::NativeLifecycleIdentity,
+        network: &crate::task_network::store::SledTaskNetworkStore,
+    ) -> Result<
+        (
+            crate::lifecycle::NativeLifecycleEvidence,
+            crate::lifecycle::NativeLifecycleTransition,
+        ),
+        String,
+    > {
+        let evidence = self.lifecycle_evidence(network)?;
+        let transition = self
+            .lifecycle
+            .stop(identity, evidence.proof_position_ref.clone())?;
+        Ok((evidence, transition))
+    }
+
+    /// Author native release evidence while the network is borrowed.
+    pub fn lifecycle_release(
+        &self,
+        identity: crate::lifecycle::NativeLifecycleIdentity,
+        network: &crate::task_network::store::SledTaskNetworkStore,
+    ) -> Result<
+        (
+            crate::lifecycle::NativeLifecycleEvidence,
+            crate::lifecycle::NativeLifecycleTransition,
+        ),
+        String,
+    > {
+        let evidence = self.lifecycle_evidence(network)?;
+        let transition = self
+            .lifecycle
+            .release(identity, evidence.proof_position_ref.clone())?;
+        Ok((evidence, transition))
     }
 
     /// Bind dispatch to one exact authority policy for independent enforcement.
@@ -387,11 +523,15 @@ where
             self.admission_generation_observer.as_ref(),
             node.lineage.admission.as_ref(),
         ) {
-            (Some(observer), Some(attribution)) => observer
-                .active_generation(&attribution.agent_id)
-                .map_err(|error| {
-                    format!("live activation generation observation failed: {error}")
-                })?,
+            (Some(observer), Some(attribution)) => {
+                if !observer.validates_admission(attribution)? {
+                    return Err(
+                        "admitted Task activation generation or admission epoch is no longer open"
+                            .to_string(),
+                    );
+                }
+                Some(attribution.activation_generation.clone())
+            }
             _ => self.admission_generation.clone(),
         };
         validate_task_authority(
@@ -480,12 +620,22 @@ where
                 condition: readiness_condition(&diagnostic.code).to_string(),
                 subject_key: diagnostic.task_instance_id.clone(),
                 detail: diagnostic.message.clone(),
+                wake_addresses: readiness_wakes(
+                    &diagnostic.code,
+                    &ready.network_id,
+                    ready.revision,
+                    diagnostic.task_instance_id.as_deref(),
+                ),
             });
         }
         if ready.task_instance_ids.is_empty() && ready.diagnostics.is_empty() {
             report.waiting_on.push(WaitingOnDeclaration::broad(
                 conditions::NO_READY_TASKS,
                 format!("no claimable task at network revision {}", ready.revision),
+                vec![StructuralWakeAddress::OwnerRevision(format!(
+                    "task-network::{}::after::{}",
+                    ready.network_id, ready.revision
+                ))],
             ));
         }
         for task_instance_id in &ready.task_instance_ids {
@@ -869,5 +1019,31 @@ fn readiness_condition(code: &ReadinessDiagnosticCode) -> &'static str {
         ReadinessDiagnosticCode::CycleDetected => conditions::DEPENDENCY_CYCLE,
         ReadinessDiagnosticCode::ConditionalDeferred => conditions::CONDITIONAL_EDGE_DEFERRED,
         ReadinessDiagnosticCode::ArtifactUnavailable => conditions::UPSTREAM_ARTIFACT_UNAVAILABLE,
+    }
+}
+
+fn readiness_wakes(
+    code: &ReadinessDiagnosticCode,
+    network_id: &str,
+    revision: u64,
+    task_instance_id: Option<&str>,
+) -> Vec<StructuralWakeAddress> {
+    match code {
+        ReadinessDiagnosticCode::MissingEndpoint | ReadinessDiagnosticCode::ConditionalDeferred => {
+            vec![StructuralWakeAddress::OwnerRevision(format!(
+                "task-network::{network_id}::after::{revision}"
+            ))]
+        }
+        ReadinessDiagnosticCode::CycleDetected => {
+            vec![StructuralWakeAddress::OperatorAction(format!(
+                "task-network-cycle::{network_id}"
+            ))]
+        }
+        ReadinessDiagnosticCode::ArtifactUnavailable => {
+            vec![StructuralWakeAddress::DurableOperation(format!(
+                "task-artifact::{network_id}::{}::available",
+                task_instance_id.unwrap_or(network_id)
+            ))]
+        }
     }
 }

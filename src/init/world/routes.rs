@@ -50,6 +50,8 @@ pub fn current_product_route_catalog(
         belief_family_handler(family_store),
         outcome_mapping_handler(opened(&stores.outcome_mapping_registry)),
         curation_rule_handler(opened(&stores.curation_rule_registry)),
+        epistemic_template_handler(opened(&stores.curation_store)),
+        graph_owner_event_handler(opened(&stores.traversal_store)),
         maintained_condition_handler(opened(&stores.maintained_condition_registry)),
         strategy_handler(opened(&stores.strategy_theory_registry)),
         capability_contract_handler(opened(&stores.capability_contract_registry)),
@@ -69,6 +71,48 @@ pub fn current_product_route_catalog(
         ),
     ];
     TheoryRouteCatalog::build(handlers)
+}
+
+fn graph_owner_event_handler(
+    store: Arc<meld_world_model::world_state::graph::store::TraversalStore>,
+) -> Arc<dyn TheoryRouteHandler> {
+    use meld_world_model::world_state::graph::admission::{
+        GraphOwnerEventRoute, OWNER_EVENT_ROUTE_REGISTRY,
+    };
+    let validate = Arc::new(|owner_id: &str, bytes: &[u8]| {
+        let route: GraphOwnerEventRoute = decode(bytes)?;
+        route.validate().map_err(owner_failure)?;
+        require_id(owner_id, &route.route_id)
+    });
+    let install_store = store.clone();
+    let install = Arc::new(move |owner_id: &str, bytes: &[u8], _seq| {
+        let route: GraphOwnerEventRoute = decode(bytes)?;
+        require_id(owner_id, &route.route_id)?;
+        install_store
+            .install_owner_event_route(&route)
+            .map(world_ref)
+            .map_err(owner_failure)
+    });
+    let verify = Arc::new(move |reference: &TheoryRevisionRef| {
+        require_registry(reference, OWNER_EVENT_ROUTE_REGISTRY)?;
+        let routes = store.owner_event_routes().map_err(owner_failure)?;
+        require_found(routes.iter().any(|route| {
+            route.revision_ref().is_ok_and(|found| {
+                found.id == reference.id && found.content_hash == reference.content_hash
+            })
+        }))
+    });
+    Arc::new(PortBackedTheoryRouteHandler::new(
+        contract(
+            "world-model",
+            "graph-owner-event-route",
+            RouteCardinality::Many,
+        ),
+        validate,
+        install,
+        verify,
+        no_semantic_links(),
+    ))
 }
 
 fn dependency_security_policy_handler(
@@ -208,6 +252,54 @@ fn curation_rule_handler(
     });
     Arc::new(PortBackedTheoryRouteHandler::new(
         contract("world-model", "agent-curation-rule", RouteCardinality::Many),
+        validate,
+        install,
+        verify,
+        no_semantic_links(),
+    ))
+}
+
+fn epistemic_template_handler(
+    store: Arc<meld_world_model::CurationStore>,
+) -> Arc<dyn TheoryRouteHandler> {
+    let validate = Arc::new(|owner_id: &str, bytes: &[u8]| {
+        let body: meld_world_model::curation::CurationRuleTemplate = decode(bytes)?;
+        body.validate().map_err(owner_failure)?;
+        require_id(owner_id, &body.rule_id)
+    });
+    let install_store = store.clone();
+    let install = Arc::new(move |owner_id: &str, bytes: &[u8], seq| {
+        let body: meld_world_model::curation::CurationRuleTemplate = decode(bytes)?;
+        require_id(owner_id, &body.rule_id)?;
+        Ok(world_ref(
+            install_store
+                .install_template(body, seq)
+                .map_err(owner_failure)?
+                .revision_ref(),
+        ))
+    });
+    let verify = Arc::new(move |reference: &TheoryRevisionRef| {
+        require_registry(
+            reference,
+            meld_world_model::curation::CURATION_TEMPLATE_REGISTRY_ID,
+        )?;
+        require_found(
+            store
+                .resolve_template(&WorldModelTheoryRevisionRef {
+                    registry: reference.registry.clone(),
+                    id: reference.id.clone(),
+                    content_hash: reference.content_hash.clone(),
+                })
+                .map_err(owner_failure)?
+                .is_some(),
+        )
+    });
+    Arc::new(PortBackedTheoryRouteHandler::new(
+        contract(
+            "world-model",
+            "epistemic-curation-rule",
+            RouteCardinality::Many,
+        ),
         validate,
         install,
         verify,
@@ -508,7 +600,7 @@ mod tests {
             OpenProductStores::open(&ProductStorageLayout::from_root(root.path())).unwrap();
         let catalog = current_product_route_catalog(&stores).unwrap();
         let routes: Vec<String> = catalog.routes().map(TheoryRouteId::key).collect();
-        assert_eq!(routes.len(), 9);
+        assert_eq!(routes.len(), 11);
         assert_eq!(
             routes,
             vec![
@@ -519,6 +611,8 @@ mod tests {
                 "world-model.agent-curation-rule.v1",
                 "world-model.agent-maintained-condition.v1",
                 "world-model.belief-family.v1",
+                "world-model.epistemic-curation-rule.v1",
+                "world-model.graph-owner-event-route.v1",
                 "world-model.outcome-mapping.v1",
                 "world-model.strategy-theory.v1",
             ]

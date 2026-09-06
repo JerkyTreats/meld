@@ -549,6 +549,70 @@ fn belief_store_put_assignment_once_marks_dirty_only_for_new_assignment() {
 }
 
 #[test]
+fn latest_observation_replaces_prior_and_is_independent_of_batch_order() {
+    use meld_world_model::belief::{ComparatorUpdatePolicy, ConfidenceProjection};
+    let (_temp_dir, graph, node) = seeded_graph();
+    let mut config = BeliefConfigLoader::load_json(config_json()).unwrap().config;
+    let original = serde_json::to_value(&config).unwrap();
+    assert!(original["comparator"].get("update_policy").is_none());
+    assert!(original["planner_projection"]
+        .get("confidence_projection")
+        .is_none());
+    config.comparator.update_policy = ComparatorUpdatePolicy::LatestObservation;
+    config.planner_projection.confidence_projection = ConfidenceProjection::Probability;
+    let snapshot = BeliefConfigLoader::load_json(&serde_json::to_string(&config).unwrap()).unwrap();
+    let query = meld_world_model::TraversalQuery::new(graph.as_ref());
+    let anchor = query
+        .current_frame_head(&node, "analysis")
+        .unwrap()
+        .unwrap();
+    let provenance = query.provenance_for_anchor(&anchor.anchor_id).unwrap();
+    let normalizer = BeliefEvidenceNormalizer::new(
+        config.clone(),
+        PerspectiveKey::new("default", "default").unwrap(),
+        BranchScope::main(),
+    );
+    let mut negative = normalizer
+        .normalize_anchor(&anchor, &provenance)
+        .unwrap()
+        .remove(0);
+    negative.typed_value = EvidenceValue::Scalar(0.0);
+    let mut positive = negative.clone();
+    positive.evidence_id = "later-observation".into();
+    positive.typed_value = EvidenceValue::Scalar(1.0);
+    positive.source_cursor_start = negative.source_cursor_end + 1;
+    positive.source_cursor_end = positive.source_cursor_start;
+    let assess = |evidence: Vec<_>, prior: Option<BeliefRevision>| {
+        BayesianComparator::assess(ComparatorInput {
+            config: config.clone(),
+            config_snapshot_hash: snapshot.hash.clone(),
+            prior_revision: prior,
+            evidence,
+            subject_key: None,
+            source_cursor_start: negative.source_cursor_start,
+            source_cursor_end: positive.source_cursor_end,
+        })
+        .unwrap()
+        .revision
+    };
+    let earlier = assess(vec![negative.clone()], None);
+    assert_eq!(earlier.planner_projection.confidence, 0.0);
+    let combined = assess(vec![negative.clone(), positive.clone()], None);
+    let reversed = assess(vec![positive.clone(), negative.clone()], None);
+    assert_eq!(combined, reversed);
+    assert_eq!(combined.planner_projection.confidence, 1.0);
+    assert_eq!(combined.evidence_ids, vec![positive.evidence_id.clone()]);
+    let separate = assess(vec![positive.clone()], Some(earlier));
+    assert_eq!(separate.posterior, combined.posterior);
+    assert_eq!(separate.planner_projection, combined.planner_projection);
+    let mut later_negative = negative.clone();
+    later_negative.evidence_id = "new-negative-observation".into();
+    later_negative.source_cursor_end = positive.source_cursor_end + 1;
+    let withdrawn = assess(vec![positive.clone(), later_negative], Some(separate));
+    assert_eq!(withdrawn.planner_projection.confidence, 0.0);
+}
+
+#[test]
 fn configured_bayesian_comparator_is_deterministic() {
     let (_temp_dir, graph, node) = seeded_graph();
     let snapshot = BeliefConfigLoader::load_json(config_json()).unwrap();

@@ -61,11 +61,23 @@ pub struct PlannerDecisionContext {
     pub agent_id: String,
     pub goal_id: String,
     pub subject: DomainObjectRef,
+    /// Explicit evidence target when it differs from the authorized runtime subject.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation_subject: Option<DomainObjectRef>,
     pub scope_id: String,
     pub branch_id: String,
     pub perspective_id: String,
     pub authority_scope_id: String,
     pub activation_generation: String,
+    /// Exact admission epoch, absent only in legacy records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission_epoch: Option<String>,
+}
+
+impl PlannerDecisionContext {
+    pub fn observation_subject(&self) -> &DomainObjectRef {
+        self.observation_subject.as_ref().unwrap_or(&self.subject)
+    }
 }
 
 /// Complete immutable input to Planner cut assembly.
@@ -126,6 +138,7 @@ pub enum PlannerRefusalGround {
     InvalidInput {
         detail: String,
     },
+    UnsupportedObservationSelection,
 }
 
 /// Exhaustive refusal returned before Strategy is invoked.

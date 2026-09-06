@@ -7,12 +7,13 @@ pub use meld_events as events;
 pub mod agent;
 pub mod belief;
 pub mod curation;
+pub mod lifecycle;
 pub mod planner;
 pub mod strategy;
 pub mod waiting;
 pub mod world_state;
 
-pub use waiting::WaitingOnDeclaration;
+pub use waiting::{StructuralWakeAddress, WaitingOnDeclaration};
 
 pub use agent::{
     AgentActivationRecord, AgentActivationStatus, AgentAuthorityPort, AgentAuthorizationFence,

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "package_id": "meld.docs-freshness",
-  "package_version": "1.0.0",
+  "package_version": "1.1.0",
   "description": "Documentation freshness stewardship theory",
   "imports": [],
   "components": [
@@ -37,7 +37,9 @@
       },
       "requires": [
         {
-          "package": { "kind": "self_package" },
+          "package": {
+            "kind": "self_package"
+          },
           "component_id": "docs-belief-family",
           "required_route": {
             "owner_domain": "world-model",
@@ -63,12 +65,16 @@
       },
       "requires": [
         {
-          "package": { "kind": "self_package" },
+          "package": {
+            "kind": "self_package"
+          },
           "component_id": "docs-belief-family",
           "required_route": null
         },
         {
-          "package": { "kind": "self_package" },
+          "package": {
+            "kind": "self_package"
+          },
           "component_id": "docs-maintained-condition",
           "required_route": null
         }
@@ -90,7 +96,9 @@
       },
       "requires": [
         {
-          "package": { "kind": "self_package" },
+          "package": {
+            "kind": "self_package"
+          },
           "component_id": "docs-belief-family",
           "required_route": null
         }
@@ -111,12 +119,48 @@
         "content_hash": "23fb86cbcfa0cb5b8b9df98a056c3ecb8d37d31ca98b4a822ddbd588ffc2e7a5"
       },
       "requires": [
-        { "package": { "kind": "self_package" }, "component_id": "docs-belief-family", "required_route": null },
-        { "package": { "kind": "self_package" }, "component_id": "docs-capability-inspect", "required_route": null },
-        { "package": { "kind": "self_package" }, "component_id": "docs-capability-draft", "required_route": null },
-        { "package": { "kind": "self_package" }, "component_id": "docs-capability-validate", "required_route": null },
-        { "package": { "kind": "self_package" }, "component_id": "docs-capability-publish", "required_route": null },
-        { "package": { "kind": "self_package" }, "component_id": "docs-capability-assess", "required_route": null }
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "docs-belief-family",
+          "required_route": null
+        },
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "docs-capability-inspect",
+          "required_route": null
+        },
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "docs-capability-draft",
+          "required_route": null
+        },
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "docs-capability-validate",
+          "required_route": null
+        },
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "docs-capability-publish",
+          "required_route": null
+        },
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "docs-capability-assess",
+          "required_route": null
+        }
       ]
     },
     {
@@ -134,11 +178,41 @@
         "content_hash": "fa839fb8616fa17d0ad1892e41724210db2181106b24ad7d1b1854675f712e6c"
       },
       "requires": [
-        { "package": { "kind": "self_package" }, "component_id": "docs-capability-inspect", "required_route": null },
-        { "package": { "kind": "self_package" }, "component_id": "docs-capability-draft", "required_route": null },
-        { "package": { "kind": "self_package" }, "component_id": "docs-capability-validate", "required_route": null },
-        { "package": { "kind": "self_package" }, "component_id": "docs-capability-publish", "required_route": null },
-        { "package": { "kind": "self_package" }, "component_id": "docs-capability-assess", "required_route": null }
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "docs-capability-inspect",
+          "required_route": null
+        },
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "docs-capability-draft",
+          "required_route": null
+        },
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "docs-capability-validate",
+          "required_route": null
+        },
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "docs-capability-publish",
+          "required_route": null
+        },
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "docs-capability-assess",
+          "required_route": null
+        }
       ]
     },
     {
@@ -207,7 +281,13 @@
         "content_identity": "capability-contract-4c6515ebde60cb02c31bed6d6f01512ff1090c3ed1ba44ecaf049bda0af06146"
       },
       "requires": [
-        { "package": { "kind": "self_package" }, "component_id": "docs-claim-policy", "required_route": null }
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "docs-claim-policy",
+          "required_route": null
+        }
       ]
     },
     {
@@ -226,7 +306,13 @@
         "content_identity": "capability-contract-be6d8d1ddbcf0f2a1e5605b31777db71b7ac081286189912b18a4b90495e79c8"
       },
       "requires": [
-        { "package": { "kind": "self_package" }, "component_id": "docs-claim-policy", "required_route": null }
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "docs-claim-policy",
+          "required_route": null
+        }
       ]
     },
     {
@@ -245,8 +331,30 @@
         "content_identity": "capability-contract-74c5ccba6c32c36a32b4d093f92b4ca463a6c6a997008d366a8d6a36cd14bd60"
       },
       "requires": [
-        { "package": { "kind": "self_package" }, "component_id": "docs-claim-policy", "required_route": null }
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "docs-claim-policy",
+          "required_route": null
+        }
       ]
+    },
+    {
+      "component_id": "docs-epistemic-rule",
+      "owner_component_id": "docs-standing-curation",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "epistemic-curation-rule",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "epistemic_rule.docs_freshness.json",
+        "content_hash": "4ea17c286bc3c353a4497609dd8472fb3860d3d3be0b3a05e61889f48037031d"
+      },
+      "requires": []
     }
   ]
 }

@@ -1,0 +1,7 @@
+{
+  "route_id": "nonce-owner-publication",
+  "owner_id": "nonce",
+  "event_type": "nonce",
+  "enumeration_rule_revision": "nonce.publication.v1",
+  "complete_event_source": true
+}

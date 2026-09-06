@@ -35,4 +35,15 @@ pub trait GraphConsumerCursorReporter: Send + Sync {
 
     /// Reports the graph's durable cursor monotonically.
     fn report_graph_cursor(&self, cursor: LedgerCursor) -> Result<(), EventAuthorityError>;
+
+    /// Report an independent historical reader without regressing the main Graph consumer.
+    fn report_owner_source_cursor(
+        &self,
+        _source: &super::admission::OwnerEventSourceRef,
+        _cursor: LedgerCursor,
+    ) -> Result<(), EventAuthorityError> {
+        Err(EventAuthorityError::invalid_request(
+            "owner source cursor reporting is unavailable",
+        ))
+    }
 }

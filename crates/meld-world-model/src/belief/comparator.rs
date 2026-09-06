@@ -24,14 +24,14 @@
 //! # let _ = output;
 //! ```
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::belief::config::stable_hash_hex;
 use crate::belief::contracts::{
     BeliefFamilyConfig, BeliefKey, BeliefProvenanceSummary, BeliefRevision, BeliefStatus,
-    ContradictionReason, ContradictionState, EvidenceItem, EvidencePolarity, EvidenceValue,
-    FreshnessState, HydrationRefs, ObservationOpportunity, ObservationReason,
-    PlannerProjectionSummary, PosteriorSummary,
+    ComparatorUpdatePolicy, ConfidenceProjection, ContradictionReason, ContradictionState,
+    EvidenceItem, EvidencePolarity, EvidenceValue, FreshnessState, HydrationRefs,
+    ObservationOpportunity, ObservationReason, PlannerProjectionSummary, PosteriorSummary,
 };
 use crate::error::StorageError;
 
@@ -78,12 +78,27 @@ impl BayesianComparator {
     /// schemas are all missing so the status is a truthful
     /// `NeedsObservation` with its opportunity open, and the cited
     /// evidence set is empty.
-    pub fn assess(input: ComparatorInput) -> Result<ComparatorOutput, StorageError> {
+    pub fn assess(mut input: ComparatorInput) -> Result<ComparatorOutput, StorageError> {
         let Some(key) = resolved_key(&input) else {
             return missing_observation(input);
         };
         if input.config.comparator.engine_id != "weighted_bayesian" {
             return missing_assessment(input, key);
+        }
+        if input.config.comparator.update_policy == ComparatorUpdatePolicy::LatestObservation {
+            let mut latest = BTreeMap::<String, u64>::new();
+            for item in &input.evidence {
+                latest
+                    .entry(item.evidence_schema_id.clone())
+                    .and_modify(|seq| *seq = (*seq).max(item.source_cursor_end))
+                    .or_insert(item.source_cursor_end);
+            }
+            input.evidence.retain(|item| {
+                latest.get(&item.evidence_schema_id) == Some(&item.source_cursor_end)
+            });
+            input
+                .evidence
+                .sort_by(|left, right| left.evidence_id.cmp(&right.evidence_id));
         }
         let prior = input
             .prior_revision
@@ -137,8 +152,15 @@ impl BayesianComparator {
         } else {
             prior
         };
-        let posterior = ((prior + evidence_probability) / 2.0).clamp(0.0, 1.0);
-        let confidence = (1.0 - posterior).clamp(0.0, 1.0);
+        let posterior = match input.config.comparator.update_policy {
+            ComparatorUpdatePolicy::BlendPrior => (prior + evidence_probability) / 2.0,
+            ComparatorUpdatePolicy::LatestObservation => evidence_probability,
+        }
+        .clamp(0.0, 1.0);
+        let confidence = match input.config.planner_projection.confidence_projection {
+            ConfidenceProjection::Complement => 1.0 - posterior,
+            ConfidenceProjection::Probability => posterior,
+        };
         let uncertainty = if missing_required.is_empty() {
             (1.0 - total_weight.min(1.0)).clamp(0.0, 1.0)
         } else {

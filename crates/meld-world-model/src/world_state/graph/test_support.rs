@@ -63,6 +63,16 @@ impl GraphDerivedEventSink for AuthorityGraphTestPorts {
 }
 
 impl GraphConsumerCursorReporter for AuthorityGraphTestPorts {
+    fn report_owner_source_cursor(
+        &self,
+        source: &crate::world_state::graph::admission::OwnerEventSourceRef,
+        cursor: LedgerCursor,
+    ) -> Result<(), EventAuthorityError> {
+        self.registry
+            .report(&source.consumer_id(), cursor)
+            .map(|_| ())
+    }
+
     fn ledger_identity(&self) -> LedgerIdentity {
         self.registry.ledger_identity()
     }

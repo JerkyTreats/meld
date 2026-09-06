@@ -130,6 +130,165 @@ pub struct WaitingOnDeclaration {
     pub subject_key: Option<String>,
     /// Human-readable detail in the emitting domain's vocabulary.
     pub detail: String,
+    /// Complete typed structural addresses supplied by the native owner.
+    pub wake_refs: Vec<crate::runtime::lifecycle::StructuralWakeRef>,
+}
+
+/// Byte shape of a waiting declaration before native wake addresses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct WaitingOnDeclarationCompatV1 {
+    pub condition: String,
+    pub subject_key: Option<String>,
+    pub detail: String,
+}
+
+impl From<WaitingOnDeclarationCompatV1> for WaitingOnDeclaration {
+    fn from(value: WaitingOnDeclarationCompatV1) -> Self {
+        Self {
+            condition: value.condition,
+            subject_key: value.subject_key,
+            detail: value.detail,
+            wake_refs: Vec::new(),
+        }
+    }
+}
+
+impl WaitingOnDeclaration {
+    pub(crate) fn from_world_model(value: meld_world_model::WaitingOnDeclaration) -> Self {
+        Self {
+            condition: value.condition,
+            subject_key: value.subject_key,
+            detail: value.detail,
+            wake_refs: value
+                .wake_addresses
+                .into_iter()
+                .map(structural_wake_from_world_model)
+                .collect(),
+        }
+    }
+
+    pub(crate) fn from_execution(value: meld_execution::WaitingOnDeclaration) -> Self {
+        Self {
+            condition: value.condition,
+            subject_key: value.subject_key,
+            detail: value.detail,
+            wake_refs: value
+                .wake_addresses
+                .into_iter()
+                .map(structural_wake_from_execution)
+                .collect(),
+        }
+    }
+}
+
+fn structural_wake_from_world_model(
+    value: meld_world_model::StructuralWakeAddress,
+) -> crate::runtime::lifecycle::StructuralWakeRef {
+    use meld_world_model::StructuralWakeAddress as Source;
+
+    match value {
+        Source::EventPosition(value) => {
+            crate::runtime::lifecycle::StructuralWakeRef::EventPosition(value)
+        }
+        Source::OwnerRevision(value) => {
+            crate::runtime::lifecycle::StructuralWakeRef::OwnerRevision(value)
+        }
+        Source::DurableOperation(value) => {
+            crate::runtime::lifecycle::StructuralWakeRef::DurableOperation(value)
+        }
+        Source::DurableDeadline(value) => {
+            crate::runtime::lifecycle::StructuralWakeRef::DurableDeadline(value)
+        }
+        Source::BindingRecovery(value) => {
+            crate::runtime::lifecycle::StructuralWakeRef::BindingRecovery(value)
+        }
+        Source::OperatorAction(value) => {
+            crate::runtime::lifecycle::StructuralWakeRef::OperatorAction(value)
+        }
+    }
+}
+
+fn structural_wake_from_execution(
+    value: meld_execution::StructuralWakeAddress,
+) -> crate::runtime::lifecycle::StructuralWakeRef {
+    use meld_execution::StructuralWakeAddress as Source;
+
+    match value {
+        Source::EventPosition(value) => {
+            crate::runtime::lifecycle::StructuralWakeRef::EventPosition(value)
+        }
+        Source::OwnerRevision(value) => {
+            crate::runtime::lifecycle::StructuralWakeRef::OwnerRevision(value)
+        }
+        Source::DurableOperation(value) => {
+            crate::runtime::lifecycle::StructuralWakeRef::DurableOperation(value)
+        }
+        Source::DurableDeadline(value) => {
+            crate::runtime::lifecycle::StructuralWakeRef::DurableDeadline(value)
+        }
+        Source::BindingRecovery(value) => {
+            crate::runtime::lifecycle::StructuralWakeRef::BindingRecovery(value)
+        }
+        Source::OperatorAction(value) => {
+            crate::runtime::lifecycle::StructuralWakeRef::OperatorAction(value)
+        }
+    }
+}
+
+pub(crate) fn structural_wake_to_world_model(
+    value: &crate::runtime::lifecycle::StructuralWakeRef,
+) -> Option<meld_world_model::StructuralWakeAddress> {
+    use crate::runtime::lifecycle::StructuralWakeRef as Source;
+
+    match value {
+        Source::EventPosition(value) => Some(
+            meld_world_model::StructuralWakeAddress::EventPosition(value.clone()),
+        ),
+        Source::OwnerRevision(value) => Some(
+            meld_world_model::StructuralWakeAddress::OwnerRevision(value.clone()),
+        ),
+        Source::DurableOperation(value) => Some(
+            meld_world_model::StructuralWakeAddress::DurableOperation(value.clone()),
+        ),
+        Source::DurableDeadline(value) => Some(
+            meld_world_model::StructuralWakeAddress::DurableDeadline(value.clone()),
+        ),
+        Source::BindingRecovery(value) => Some(
+            meld_world_model::StructuralWakeAddress::BindingRecovery(value.clone()),
+        ),
+        Source::OperatorAction(value) => Some(
+            meld_world_model::StructuralWakeAddress::OperatorAction(value.clone()),
+        ),
+        Source::PassiveSubscription(_) => None,
+    }
+}
+
+pub(crate) fn structural_wake_to_execution(
+    value: &crate::runtime::lifecycle::StructuralWakeRef,
+) -> Option<meld_execution::StructuralWakeAddress> {
+    use crate::runtime::lifecycle::StructuralWakeRef as Source;
+
+    match value {
+        Source::EventPosition(value) => Some(meld_execution::StructuralWakeAddress::EventPosition(
+            value.clone(),
+        )),
+        Source::OwnerRevision(value) => Some(meld_execution::StructuralWakeAddress::OwnerRevision(
+            value.clone(),
+        )),
+        Source::DurableOperation(value) => Some(
+            meld_execution::StructuralWakeAddress::DurableOperation(value.clone()),
+        ),
+        Source::DurableDeadline(value) => Some(
+            meld_execution::StructuralWakeAddress::DurableDeadline(value.clone()),
+        ),
+        Source::BindingRecovery(value) => Some(
+            meld_execution::StructuralWakeAddress::BindingRecovery(value.clone()),
+        ),
+        Source::OperatorAction(value) => Some(
+            meld_execution::StructuralWakeAddress::OperatorAction(value.clone()),
+        ),
+        Source::PassiveSubscription(_) => None,
+    }
 }
 
 /// Full cache record written by one runtime status cache publisher.
@@ -169,6 +328,39 @@ pub(crate) struct RuntimeStatusCacheRecordCompatV1 {
     pub snapshot: RuntimeStatusSnapshot,
     pub recent_actions: Vec<RuntimeActionRecordCompatV1>,
     pub written_at_ms: u64,
+}
+
+/// Byte shape of [`RuntimeStatusCacheRecord`] with legacy waiting declarations
+/// and without activation lineage on embedded action records.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct RuntimeStatusCacheRecordCompatV2 {
+    pub schema_version: u16,
+    pub product_root: PathBuf,
+    pub supervisor_store_path: PathBuf,
+    pub status_cache_path: PathBuf,
+    pub writer: RuntimeStatusWriterIdentity,
+    pub snapshot: RuntimeStatusSnapshot,
+    pub recent_actions: Vec<RuntimeActionRecordCompatV2>,
+    pub written_at_ms: u64,
+}
+
+impl From<RuntimeStatusCacheRecordCompatV2> for RuntimeStatusCacheRecord {
+    fn from(record: RuntimeStatusCacheRecordCompatV2) -> Self {
+        RuntimeStatusCacheRecord {
+            schema_version: record.schema_version,
+            product_root: record.product_root,
+            supervisor_store_path: record.supervisor_store_path,
+            status_cache_path: record.status_cache_path,
+            writer: record.writer,
+            snapshot: record.snapshot,
+            recent_actions: record
+                .recent_actions
+                .into_iter()
+                .map(RuntimeActionRecord::from)
+                .collect(),
+            written_at_ms: record.written_at_ms,
+        }
+    }
 }
 
 impl From<RuntimeStatusCacheRecordCompatV1> for RuntimeStatusCacheRecord {
@@ -605,6 +797,10 @@ pub struct RuntimeActionRecord {
     /// end-of-input here, falls back to [`RuntimeActionRecordCompatV1`],
     /// and every later field must also append at the end.
     pub waiting_on: Vec<WaitingOnDeclaration>,
+    /// Activation generation observed by the owner, when activated.
+    pub generation_id: Option<String>,
+    /// Exact participant incarnation observed by the owner, when activated.
+    pub incarnation_id: Option<String>,
 }
 
 /// Byte shape of [`RuntimeActionRecord`] before the waiting-on field.
@@ -630,6 +826,53 @@ pub(crate) struct RuntimeActionRecordCompatV1 {
     pub redaction: RuntimeRedactionState,
 }
 
+/// Byte shape of [`RuntimeActionRecord`] after waiting declarations were
+/// introduced and before native wake addresses and activation lineage.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct RuntimeActionRecordCompatV2 {
+    pub action_id: String,
+    pub observed_at_ms: u64,
+    pub runtime_id: String,
+    pub domain_id: String,
+    pub actor_id: String,
+    pub object_ref: RuntimeObjectRef,
+    pub action_kind: RuntimeActionKind,
+    pub cause: RuntimeActionCause,
+    pub outcome: RuntimeActionOutcome,
+    pub metrics: RuntimeActionMetrics,
+    pub checkpoints: Vec<RuntimeCheckpointObservation>,
+    pub issues: Vec<RuntimeActionIssueSummary>,
+    pub redaction: RuntimeRedactionState,
+    pub waiting_on: Vec<WaitingOnDeclarationCompatV1>,
+}
+
+impl From<RuntimeActionRecordCompatV2> for RuntimeActionRecord {
+    fn from(record: RuntimeActionRecordCompatV2) -> Self {
+        RuntimeActionRecord {
+            action_id: record.action_id,
+            observed_at_ms: record.observed_at_ms,
+            runtime_id: record.runtime_id,
+            domain_id: record.domain_id,
+            actor_id: record.actor_id,
+            object_ref: record.object_ref,
+            action_kind: record.action_kind,
+            cause: record.cause,
+            outcome: record.outcome,
+            metrics: record.metrics,
+            checkpoints: record.checkpoints,
+            issues: record.issues,
+            redaction: record.redaction,
+            waiting_on: record
+                .waiting_on
+                .into_iter()
+                .map(WaitingOnDeclaration::from)
+                .collect(),
+            generation_id: None,
+            incarnation_id: None,
+        }
+    }
+}
+
 impl From<RuntimeActionRecordCompatV1> for RuntimeActionRecord {
     fn from(record: RuntimeActionRecordCompatV1) -> Self {
         RuntimeActionRecord {
@@ -647,11 +890,20 @@ impl From<RuntimeActionRecordCompatV1> for RuntimeActionRecord {
             issues: record.issues,
             redaction: record.redaction,
             waiting_on: Vec::new(),
+            generation_id: None,
+            incarnation_id: None,
         }
     }
 }
 
 impl RuntimeActionRecord {
+    /// Bind this durable owner report to one exact lifecycle context.
+    pub fn bind_lifecycle(mut self, generation_id: String, incarnation_id: String) -> Self {
+        self.generation_id = Some(generation_id);
+        self.incarnation_id = Some(incarnation_id);
+        self
+    }
+
     /// Build a runtime action record from one bounded worker report.
     pub fn from_worker_tick(
         action_id: impl Into<String>,
@@ -729,6 +981,8 @@ impl RuntimeActionRecord {
             issues,
             redaction: RuntimeRedactionState::NotNeeded,
             waiting_on: report.waiting_on,
+            generation_id: None,
+            incarnation_id: None,
         }
     }
 }
@@ -1041,6 +1295,23 @@ impl WorkerTickReport {
 
 impl From<GraphCatchUpReport> for WorkerTickReport {
     fn from(report: GraphCatchUpReport) -> Self {
+        let waiting_on = report
+            .waiting_on
+            .into_iter()
+            .map(WaitingOnDeclaration::from_world_model)
+            .collect();
+        let (checkpoint_name, input, output) = match &report.source_replay {
+            Some(source) => (
+                source.source.consumer_id(),
+                source.before.after_seq,
+                source.after.after_seq,
+            ),
+            None => (
+                "event_spine_seq".into(),
+                report.input_event_seq,
+                report.output_event_seq,
+            ),
+        };
         Self {
             actor_id: report.actor_id,
             scope: WorkerScope {
@@ -1053,15 +1324,19 @@ impl From<GraphCatchUpReport> for WorkerTickReport {
                 subject_key: None,
             },
             input_checkpoint: WorkerCheckpoint {
-                name: "event_spine_seq".to_string(),
-                value: report.input_event_seq,
+                name: checkpoint_name.clone(),
+                value: input,
             },
             output_checkpoint: WorkerCheckpoint {
-                name: "event_spine_seq".to_string(),
-                value: report.output_event_seq,
+                name: checkpoint_name,
+                value: output,
             },
             items_attempted: report.events_attempted,
-            items_committed: report.traversal_events_applied,
+            items_committed: if report.source_replay.is_some() {
+                report.events_attempted
+            } else {
+                report.traversal_events_applied
+            },
             retryable_errors: report
                 .retryable_errors
                 .into_iter()
@@ -1081,7 +1356,7 @@ impl From<GraphCatchUpReport> for WorkerTickReport {
                 })
                 .collect(),
             budget_exhausted: report.budget_exhausted,
-            waiting_on: Vec::new(),
+            waiting_on,
         }
     }
 }
@@ -1135,6 +1410,12 @@ impl From<PublicationBridgeReport> for WorkerTickReport {
 
 impl From<PublicationRuntimeReport> for WorkerTickReport {
     fn from(report: PublicationRuntimeReport) -> Self {
+        let waiting_on = report
+            .waiting_on
+            .clone()
+            .into_iter()
+            .map(WaitingOnDeclaration::from_execution)
+            .collect();
         Self {
             actor_id: report.actor_id,
             scope: WorkerScope {
@@ -1175,7 +1456,7 @@ impl From<PublicationRuntimeReport> for WorkerTickReport {
                 })
                 .collect(),
             budget_exhausted: report.budget_exhausted,
-            waiting_on: Vec::new(),
+            waiting_on,
         }
     }
 }
@@ -1184,7 +1465,12 @@ impl From<TaskAdmissionRuntimeReport> for WorkerTickReport {
     fn from(report: TaskAdmissionRuntimeReport) -> Self {
         let mut retryable_errors = Vec::new();
         let mut fatal_errors = Vec::new();
-        let mut waiting_on = Vec::new();
+        let waiting_on = report
+            .waiting_on
+            .clone()
+            .into_iter()
+            .map(WaitingOnDeclaration::from_execution)
+            .collect();
         for item in report.items {
             match item.result {
                 Ok(meld_execution::task_network::Response::Rejected(rejection)) => {
@@ -1203,16 +1489,6 @@ impl From<TaskAdmissionRuntimeReport> for WorkerTickReport {
                     });
                 }
             }
-        }
-        if report.attempted == 0 {
-            waiting_on.push(WaitingOnDeclaration {
-                condition: "task_admission_available".to_string(),
-                subject_key: None,
-                detail: format!(
-                    "no admitted unlowered Task at network revision {}",
-                    report.output_revision
-                ),
-            });
         }
         Self {
             actor_id: "execution.task_admission.runtime".to_string(),
@@ -1253,6 +1529,7 @@ mod tests {
     #[test]
     fn graph_report_maps_to_worker_report() {
         let report = GraphCatchUpReport {
+            source_replay: None,
             actor_id: "world_state.graph.reducer".to_string(),
             input_event_seq: 1,
             output_event_seq: 3,
@@ -1262,6 +1539,7 @@ mod tests {
             retryable_errors: Vec::new(),
             fatal_errors: Vec::new(),
             budget_exhausted: false,
+            waiting_on: Vec::new(),
         };
 
         let worker: WorkerTickReport = report.into();
@@ -1332,6 +1610,7 @@ mod tests {
             }],
             budget_exhausted: true,
             results: Vec::new(),
+            waiting_on: Vec::new(),
         };
 
         let worker: WorkerTickReport = report.into();
@@ -1515,6 +1794,8 @@ mod tests {
             issues: Vec::new(),
             redaction: RuntimeRedactionState::NotNeeded,
             waiting_on: Vec::new(),
+            generation_id: None,
+            incarnation_id: None,
         };
         let snapshot = RuntimeStatusSnapshot {
             instance: Some(RuntimeStatusInstanceSummary {

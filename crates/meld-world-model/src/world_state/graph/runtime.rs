@@ -29,7 +29,7 @@ use crate::world_state::graph::ports::{
 use crate::world_state::graph::reducer::TraversalReducer;
 use crate::world_state::graph::store::TraversalStore;
 
-const GRAPH_ACTOR_ID: &str = "world_state.graph.reducer";
+pub(super) const GRAPH_ACTOR_ID: &str = "world_state.graph.reducer";
 
 /// Bounded graph catch-up request.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,6 +52,8 @@ pub struct GraphWorkerIssue {
 /// Diagnostic report from one bounded graph catch-up tick.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GraphCatchUpReport {
+    /// Independent owner-history checkpoint when this tick bootstraps a late route.
+    pub source_replay: Option<OwnerEventReplayTick>,
     /// Stable runtime actor identifier.
     pub actor_id: String,
     /// Event ledger sequence read before replay.
@@ -70,6 +72,17 @@ pub struct GraphCatchUpReport {
     pub fatal_errors: Vec<GraphWorkerIssue>,
     /// True when more event records remain after the selected budget.
     pub budget_exhausted: bool,
+    /// Owner-authored conditions that can make Graph replay eligible again.
+    pub waiting_on: Vec<crate::waiting::WaitingOnDeclaration>,
+}
+
+/// Native progress in a historical owner-source scan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OwnerEventReplayTick {
+    pub source: super::admission::OwnerEventSourceRef,
+    pub before: LedgerCursor,
+    pub after: LedgerCursor,
+    pub target: LedgerCursor,
 }
 
 /// Event-backed graph projection runtime.
@@ -82,6 +95,7 @@ pub struct GraphRuntime {
     cursor: GraphProjectionCursor,
     derived_outbox: GraphDerivedOutbox,
     catch_up_lock: Mutex<()>,
+    lifecycle: crate::lifecycle::NativeLifecycle,
 }
 
 impl GraphRuntime {
@@ -115,7 +129,162 @@ impl GraphRuntime {
             cursor,
             derived_outbox,
             catch_up_lock: Mutex::new(()),
+            lifecycle: crate::lifecycle::NativeLifecycle::new("world_state.graph_replay"),
         })
+    }
+
+    /// Resolve only positions in the Event authority this Graph actually replays.
+    pub fn resolves_wake(
+        &self,
+        wake: &crate::waiting::StructuralWakeAddress,
+    ) -> Result<bool, String> {
+        Ok(match wake {
+            crate::waiting::StructuralWakeAddress::EventPosition(value) => {
+                crate::waiting::after_position(value, &format!("event-ledger::{}", self.ledger_id))
+            }
+            crate::waiting::StructuralWakeAddress::OwnerRevision(value) => {
+                crate::waiting::bound_address(value, self.traversal.resource_id()).is_some_and(
+                    |value| value == format!("graph-projection::{}::successor", self.ledger_id),
+                )
+            }
+            _ => false,
+        })
+    }
+
+    /// Read the Graph-owned cursor, subscription, and durable publication account.
+    pub fn lifecycle_evidence(&self) -> Result<crate::lifecycle::NativeLifecycleEvidence, String> {
+        let _guard = self.catch_up_lock.lock();
+        self.lifecycle_evidence_inner()
+    }
+
+    fn lifecycle_evidence_inner(
+        &self,
+    ) -> Result<crate::lifecycle::NativeLifecycleEvidence, String> {
+        let cursor = self
+            .durable_event_cursor()
+            .map_err(|error| error.to_string())?;
+        let pending = self
+            .derived_outbox
+            .pending()
+            .map_err(|error| error.to_string())?;
+        let source_replays = self
+            .traversal
+            .owner_event_replay_states(cursor.ledger_id)
+            .map_err(|error| error.to_string())?;
+        self.traversal.flush().map_err(|error| error.to_string())?;
+        let checkpoint_ref = format!(
+            "graph-projection::{}::{}",
+            cursor.ledger_id, cursor.after_seq
+        );
+        Ok(crate::lifecycle::NativeLifecycleEvidence {
+            checkpoint_ref: checkpoint_ref.clone(),
+            installed_revision_refs: {
+                let mut revisions = vec!["graph-projection-schema::v1".into()];
+                for route in self
+                    .traversal
+                    .owner_event_routes()
+                    .map_err(|error| error.to_string())?
+                {
+                    revisions.push(crate::lifecycle::evidence_ref(
+                        "graph-owner-event-route",
+                        &route.revision_ref().map_err(|error| error.to_string())?,
+                    )?);
+                }
+                revisions
+            },
+            binding_refs: vec![
+                format!("graph-traversal::{}", cursor.ledger_id),
+                crate::lifecycle::evidence_ref("graph-owner-source-progress", &source_replays)?,
+            ],
+            subscription_refs: vec![format!("event-ledger::{}", cursor.ledger_id)],
+            proof_position_ref: checkpoint_ref,
+            unresolved_operation_summary_ref: crate::lifecycle::evidence_ref(
+                "graph-native-work",
+                &(
+                    &pending,
+                    source_replays
+                        .iter()
+                        .filter(|state| !state.covered)
+                        .collect::<Vec<_>>(),
+                ),
+            )?,
+        })
+    }
+
+    /// Author native start evidence under the Graph work lock.
+    pub fn lifecycle_start(
+        &self,
+        identity: crate::lifecycle::NativeLifecycleIdentity,
+    ) -> Result<
+        (
+            crate::lifecycle::NativeLifecycleEvidence,
+            crate::lifecycle::NativeLifecycleTransition,
+        ),
+        String,
+    > {
+        let _guard = self.catch_up_lock.lock();
+        let evidence = self.lifecycle_evidence_inner()?;
+        let transition = self
+            .lifecycle
+            .start(identity, evidence.proof_position_ref.clone())?;
+        Ok((evidence, transition))
+    }
+
+    /// Author native safe point evidence under the Graph work lock.
+    pub fn lifecycle_safe_point(
+        &self,
+        identity: crate::lifecycle::NativeLifecycleIdentity,
+    ) -> Result<
+        (
+            crate::lifecycle::NativeLifecycleEvidence,
+            crate::lifecycle::NativeLifecycleTransition,
+        ),
+        String,
+    > {
+        let _guard = self.catch_up_lock.lock();
+        let evidence = self.lifecycle_evidence_inner()?;
+        let transition = self
+            .lifecycle
+            .safe_point(identity, evidence.proof_position_ref.clone())?;
+        Ok((evidence, transition))
+    }
+
+    /// Author native stop evidence under the Graph work lock.
+    pub fn lifecycle_stop(
+        &self,
+        identity: crate::lifecycle::NativeLifecycleIdentity,
+    ) -> Result<
+        (
+            crate::lifecycle::NativeLifecycleEvidence,
+            crate::lifecycle::NativeLifecycleTransition,
+        ),
+        String,
+    > {
+        let _guard = self.catch_up_lock.lock();
+        let evidence = self.lifecycle_evidence_inner()?;
+        let transition = self
+            .lifecycle
+            .stop(identity, evidence.proof_position_ref.clone())?;
+        Ok((evidence, transition))
+    }
+
+    /// Author native release evidence under the Graph work lock.
+    pub fn lifecycle_release(
+        &self,
+        identity: crate::lifecycle::NativeLifecycleIdentity,
+    ) -> Result<
+        (
+            crate::lifecycle::NativeLifecycleEvidence,
+            crate::lifecycle::NativeLifecycleTransition,
+        ),
+        String,
+    > {
+        let _guard = self.catch_up_lock.lock();
+        let evidence = self.lifecycle_evidence_inner()?;
+        let transition = self
+            .lifecycle
+            .release(identity, evidence.proof_position_ref.clone())?;
+        Ok((evidence, transition))
     }
 
     /// Reduce new ledger events into traversal indexes.
@@ -186,10 +355,46 @@ impl GraphRuntime {
         let mut derived_events_appended = self.drain_derived_outbox()?;
         let cursor = self.cursor.get()?;
         let after_seq = cursor.after_seq;
-        let read = self.replay.replay(ReplayRequest {
-            cursor,
-            limit: max_items,
-        });
+        if after_seq > 0 {
+            if let Some(mut report) = super::source_replay::replay_pending_source(
+                self.traversal.as_ref(),
+                self.replay.as_ref(),
+                self.cursor_reporter.as_ref(),
+                cursor,
+                max_items,
+            )? {
+                report.derived_events_appended += derived_events_appended;
+                return Ok(report);
+            }
+        }
+        // Snapshot before replay so a route installed mid-page cannot claim prior coverage.
+        let genesis_sources = if after_seq == 0 {
+            self.traversal
+                .owner_event_routes()?
+                .into_iter()
+                .filter(|route| route.complete_event_source)
+                .map(|route| route.source_ref())
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            Vec::new()
+        };
+        let read = self
+            .replay
+            .replay(ReplayRequest {
+                cursor,
+                limit: max_items,
+            })
+            .and_then(|page| {
+                if page.coverage.retained_from > after_seq.saturating_add(1) {
+                    Err(EventAuthorityError::RetentionGap {
+                        ledger_id: self.ledger_id,
+                        after_seq,
+                        retained_from: page.coverage.retained_from,
+                    })
+                } else {
+                    Ok(page)
+                }
+            });
         let (events, budget_exhausted) = match read {
             Ok(page) => {
                 if page.ledger_id != self.ledger_id {
@@ -205,6 +410,10 @@ impl GraphRuntime {
                     });
                 }
                 validate_replay_page(after_seq, max_items, &page)?;
+                if after_seq == 0 {
+                    self.traversal
+                        .record_genesis_event_sources(self.ledger_id, &genesis_sources)?;
+                }
                 let budget_exhausted = matches!(
                     page.coverage.truncation,
                     CoverageTruncation::After | CoverageTruncation::Both
@@ -221,6 +430,7 @@ impl GraphRuntime {
                 ..
             }) => {
                 return Ok(GraphCatchUpReport {
+                    source_replay: None,
                     actor_id: GRAPH_ACTOR_ID.to_string(),
                     input_event_seq: after_seq,
                     output_event_seq: after_seq,
@@ -237,6 +447,7 @@ impl GraphRuntime {
                         ),
                     }],
                     budget_exhausted: false,
+                    waiting_on: Vec::new(),
                 });
             }
             Err(error) => return Err(authority_error_to_storage(error)),
@@ -270,7 +481,35 @@ impl GraphRuntime {
         self.cursor_reporter
             .report_graph_cursor(durable_cursor)
             .map_err(authority_error_to_storage)?;
+        for state in self
+            .traversal
+            .owner_event_replay_states(self.ledger_id)?
+            .into_iter()
+            .filter(|state| state.covered)
+        {
+            self.cursor_reporter
+                .report_owner_source_cursor(&state.source, durable_cursor)
+                .map_err(authority_error_to_storage)?;
+        }
+        let waiting_on = if events_attempted == 0 && !budget_exhausted {
+            vec![crate::waiting::WaitingOnDeclaration::broad(
+                "ledger_quiet_past_graph_cursor",
+                format!(
+                    "no committed events past Graph cursor {}",
+                    durable_cursor.after_seq
+                ),
+                vec![crate::waiting::StructuralWakeAddress::EventPosition(
+                    format!(
+                        "event-ledger::{}::after::{}",
+                        self.ledger_id, durable_cursor.after_seq
+                    ),
+                )],
+            )]
+        } else {
+            Vec::new()
+        };
         Ok(GraphCatchUpReport {
+            source_replay: None,
             actor_id: GRAPH_ACTOR_ID.to_string(),
             input_event_seq: after_seq,
             output_event_seq: durable_cursor.after_seq,
@@ -280,6 +519,7 @@ impl GraphRuntime {
             retryable_errors: Vec::new(),
             fatal_errors: Vec::new(),
             budget_exhausted,
+            waiting_on,
         })
     }
 
@@ -331,7 +571,7 @@ fn validate_receipt_identity(
     }
 }
 
-fn validate_replay_page(
+pub(crate) fn validate_replay_page(
     after_seq: u64,
     max_items: usize,
     page: &EventPage,
@@ -420,6 +660,51 @@ mod tests {
     use super::*;
     use crate::events::{DomainObjectRef, EventEnvelope};
     use crate::world_state::graph::test_support::GraphRuntimeTestFixture; // boundary-allow: event-test
+
+    #[test]
+    fn lifecycle_evidence_accounts_for_the_actual_durable_outbox() {
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        let fixture = GraphRuntimeTestFixture::open(db).unwrap();
+        let runtime = fixture.runtime();
+        let valid = crate::waiting::StructuralWakeAddress::EventPosition(format!(
+            "event-ledger::{}::after::0",
+            runtime.ledger_id
+        ));
+        assert!(runtime.resolves_wake(&valid).unwrap());
+        for invalid in [
+            format!("event-ledger::{}::after::0", LedgerIdentity::new()),
+            format!("event-ledger::{}::after::not-a-position", runtime.ledger_id),
+            format!("event-ledger::{}::after::0::extra", runtime.ledger_id),
+        ] {
+            assert!(!runtime
+                .resolves_wake(&crate::waiting::StructuralWakeAddress::EventPosition(
+                    invalid
+                ))
+                .unwrap());
+        }
+        let identity =
+            crate::lifecycle::NativeLifecycleIdentity::new("generation-a".into(), "graph-a".into())
+                .unwrap();
+        let (ready, transition) = runtime.lifecycle_start(identity.clone()).unwrap();
+        assert_eq!(transition.checkpoint_ref, ready.proof_position_ref);
+        let envelope = EventEnvelope::with_now_domain(
+            "session",
+            "graph",
+            "pending",
+            "test.pending",
+            None,
+            json!({}),
+        );
+        runtime.derived_outbox.replace(&[envelope]).unwrap();
+        let (safe, transition) = runtime.lifecycle_safe_point(identity).unwrap();
+        assert_eq!(safe.checkpoint_ref, ready.checkpoint_ref);
+        assert_eq!(transition.checkpoint_ref, safe.proof_position_ref);
+        assert_ne!(
+            safe.unresolved_operation_summary_ref,
+            ready.unresolved_operation_summary_ref
+        );
+        assert_eq!(runtime.derived_outbox.pending().unwrap().len(), 1);
+    }
 
     #[test]
     fn reopen_recovers_crash_between_projection_flush_and_outbox_persistence() {

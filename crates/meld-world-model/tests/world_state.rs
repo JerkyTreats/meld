@@ -104,6 +104,16 @@ impl GraphDerivedEventSink for AuthorityGraphPorts {
 }
 
 impl GraphConsumerCursorReporter for AuthorityGraphPorts {
+    fn report_owner_source_cursor(
+        &self,
+        source: &meld_world_model::world_state::graph::admission::OwnerEventSourceRef,
+        cursor: LedgerCursor,
+    ) -> Result<(), EventAuthorityError> {
+        self.registry
+            .report(&source.consumer_id(), cursor)
+            .map(|_| ())
+    }
+
     fn ledger_identity(&self) -> LedgerIdentity {
         self.registry.ledger_identity()
     }
@@ -1170,6 +1180,14 @@ fn graph_runtime_from_ports_reports_retention_gap_without_cursor_movement() {
         .unwrap();
     let traversal =
         TraversalStore::shared(sled::open(temp_dir.path().join("traversal")).unwrap()).unwrap();
+    let route = meld_world_model::world_state::graph::admission::GraphOwnerEventRoute {
+        complete_event_source: true,
+        route_id: "retained-owner-route".into(),
+        owner_id: "sample".into(),
+        event_type: "sample.publication".into(),
+        enumeration_rule_revision: "sample-v1".into(),
+    };
+    traversal.install_owner_event_route(&route).unwrap();
     let existing_fact = TraversalFactRecord {
         fact_id: "pre-gap-fact".to_string(),
         source_spine_fact_id: "spine::77".to_string(),
@@ -1190,6 +1208,13 @@ fn graph_runtime_from_ports_reports_retention_gap_without_cursor_movement() {
         )
         .unwrap();
     assert_eq!(report.fatal_errors[0].code, "retention_gap");
+    assert!(!traversal
+        .covers_event_source(
+            authority.ledger_identity(),
+            "sample",
+            &route.source_ref().unwrap()
+        )
+        .unwrap());
     assert_eq!(runtime.durable_event_cursor().unwrap().after_seq, 0);
     assert_eq!(
         traversal.get_fact("pre-gap-fact").unwrap(),
@@ -1872,4 +1897,54 @@ fn legacy_claim_adapter_maps_frame_anchors_to_active_claims() {
     assert_eq!(claims[0].claim_kind, ClaimKind::GenerationSucceeded);
     assert_eq!(claims[0].status, SettlementStatus::Active);
     assert_eq!(claims[0].supporting_fact_ids, vec!["spine::1"]);
+}
+
+#[test]
+fn late_owner_source_replay_refuses_pruned_history_without_claiming_coverage() {
+    use meld_world_model::world_state::graph::admission::GraphOwnerEventRoute;
+    use meld_world_model::world_state::graph::runtime::GraphCatchUpBudget;
+    let temp = tempfile::tempdir().unwrap();
+    let event_db = sled::open(temp.path().join("events")).unwrap();
+    let authority =
+        EventAuthority::open(event_db.clone(), EventAuthorityOpenOptions::default()).unwrap();
+    for _ in 0..3 {
+        authority
+            .append_capability()
+            .append_durable(
+                event("context", "context.noop", Vec::new(), Vec::new()),
+                AppendMode::Plain,
+            )
+            .unwrap();
+    }
+    let ports = Arc::new(AuthorityGraphPorts::new(&authority));
+    let store = TraversalStore::shared(sled::open(temp.path().join("world")).unwrap()).unwrap();
+    let graph =
+        GraphRuntime::from_ports(ports.clone(), ports.clone(), ports, store.clone()).unwrap();
+    graph
+        .catch_up_bounded(GraphCatchUpBudget { max_items: 8 })
+        .unwrap();
+    let before = graph.durable_event_cursor().unwrap();
+    EventStore::new(event_db)
+        .unwrap()
+        .set_retained_lower_boundary(2)
+        .unwrap();
+    let route = GraphOwnerEventRoute {
+        complete_event_source: true,
+        route_id: "late-source".into(),
+        owner_id: "sample".into(),
+        event_type: "sample.event".into(),
+        enumeration_rule_revision: "sample-v1".into(),
+    };
+    store.install_owner_event_route(&route).unwrap();
+    let report = graph
+        .catch_up_bounded(GraphCatchUpBudget { max_items: 1 })
+        .unwrap();
+    assert_eq!(report.fatal_errors[0].code, "owner_source_retention_gap");
+    assert_eq!(report.events_attempted, 0);
+    assert_eq!(report.source_replay.unwrap().after.after_seq, 0);
+    assert_eq!(graph.durable_event_cursor().unwrap(), before);
+    assert!(!store
+        .covers_event_source(before.ledger_id, "sample", &route.source_ref().unwrap())
+        .unwrap());
+    assert!(!store.owner_event_replay_states(before.ledger_id).unwrap()[0].covered);
 }

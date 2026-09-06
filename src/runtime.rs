@@ -4,11 +4,11 @@
 pub mod assembly;
 /// Supervisor-facing worker report contracts.
 pub mod contracts;
-/// Passive PDS source subscriptions and fenced delivery lineage.
-pub mod delivery;
+/// Owner preparation for an exact native Agent epoch specification.
+pub mod epoch;
 /// Runtime assembly and port error surfaces.
 pub mod error;
-/// Portable PDS generation lifecycle and durable external operations.
+/// Canonical assignment generation and structural lifecycle authority.
 pub mod lifecycle;
 /// Thin direct handoff ports built by product assembly.
 pub mod ports;

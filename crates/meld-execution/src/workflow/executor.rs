@@ -1102,6 +1102,7 @@ mod tests {
             &node_not_found,
         );
         let event_context = ExecutionEventContext {
+            effect_authority: None,
             session_id: "session-1".to_string(),
         };
         block_on(execute_registered_workflow_async(

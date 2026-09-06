@@ -13,11 +13,13 @@ use crate::task_network::{
     contracts::stable_id,
     mutation,
     state::{
-        DependencyEdge, DependencyEdgeOrigin, DependencyKind, TaskAdmissionAttribution,
-        TaskInitSource, TaskLineage, TaskNode, UpstreamArtifactInitSource,
+        DependencyEdge, DependencyEdgeOrigin, DependencyKind, StaticSeedInitSource,
+        TaskAdmissionAttribution, TaskInitSource, TaskLineage, TaskNode,
+        UpstreamArtifactInitSource,
     },
     InMemoryTaskNetworkStore, SledTaskNetworkStore,
 };
+use crate::waiting::{conditions, StructuralWakeAddress, WaitingOnDeclaration};
 use meld_lang::{Bindings, EdgeKind, StepKind, Term};
 use serde::{Deserialize, Serialize};
 
@@ -308,11 +310,14 @@ pub struct TaskAdmissionRuntimeReport {
     pub budget_exhausted: bool,
     /// Per-admission results.
     pub items: Vec<TaskAdmissionRuntimeItem>,
+    /// Owner-authored conditions that can make admission eligible again.
+    pub waiting_on: Vec<WaitingOnDeclaration>,
 }
 
 /// The one root Execution Task admission participant for Agent Tasks.
 pub struct TaskAdmissionRuntimeActor<C = TaskCompiler> {
     lowerer: TaskAdmissionLowerer<C>,
+    lifecycle: crate::lifecycle::NativeLifecycle,
 }
 
 impl<C> TaskAdmissionRuntimeActor<C>
@@ -321,7 +326,133 @@ where
 {
     /// Bind direct lowering to the Task admission participant.
     pub fn new(lowerer: TaskAdmissionLowerer<C>) -> Self {
-        Self { lowerer }
+        Self {
+            lowerer,
+            lifecycle: crate::lifecycle::NativeLifecycle::new("execution.task_admission"),
+        }
+    }
+
+    /// Resolve the durable admissions stream for the network this owner observes.
+    pub fn resolves_wake(
+        &self,
+        network: &SledTaskNetworkStore,
+        wake: &crate::waiting::StructuralWakeAddress,
+    ) -> bool {
+        matches!(wake, crate::waiting::StructuralWakeAddress::OwnerRevision(value)
+            if crate::waiting::after_position(value, &format!("agent-admissions::{}", network.state().network_id)))
+    }
+
+    /// Account for the native durable work in the borrowed, exclusively bound network.
+    pub fn lifecycle_evidence(
+        &self,
+        network: &crate::task_network::store::SledTaskNetworkStore,
+    ) -> Result<crate::lifecycle::NativeLifecycleEvidence, String> {
+        network.flush().map_err(|error| error.to_string())?;
+        let state = network.state();
+        let pending: Vec<_> = state
+            .admissions
+            .values()
+            .filter(|admission| {
+                admission.decision == TaskAdmissionDecision::Admitted
+                    && !state.tasks.values().any(|node| {
+                        node.lineage.admission.as_ref().is_some_and(|attribution| {
+                            attribution.admission_id == admission.admission_id
+                        })
+                    })
+            })
+            .collect();
+        let contracts: Vec<_> = self.lowerer.catalog.iter().collect();
+        let checkpoint_ref = format!("task-network::{}::{}", state.network_id, state.revision);
+        Ok(crate::lifecycle::NativeLifecycleEvidence {
+            checkpoint_ref: checkpoint_ref.clone(),
+            installed_revision_refs: vec![crate::lifecycle::evidence_ref(
+                "admission-capability-catalog",
+                &contracts,
+            )?],
+            binding_refs: vec![format!("task-network::{}", state.network_id)],
+            subscription_refs: vec![format!("agent-admissions::{}", state.network_id)],
+            proof_position_ref: checkpoint_ref,
+            unresolved_operation_summary_ref: crate::lifecycle::evidence_ref(
+                "admission-pending-regions",
+                &pending,
+            )?,
+        })
+    }
+
+    /// Author native start evidence while the network is borrowed.
+    pub fn lifecycle_start(
+        &self,
+        identity: crate::lifecycle::NativeLifecycleIdentity,
+        network: &crate::task_network::store::SledTaskNetworkStore,
+    ) -> Result<
+        (
+            crate::lifecycle::NativeLifecycleEvidence,
+            crate::lifecycle::NativeLifecycleTransition,
+        ),
+        String,
+    > {
+        let evidence = self.lifecycle_evidence(network)?;
+        let transition = self
+            .lifecycle
+            .start(identity, evidence.proof_position_ref.clone())?;
+        Ok((evidence, transition))
+    }
+
+    /// Author native safe point evidence while the network is borrowed.
+    pub fn lifecycle_safe_point(
+        &self,
+        identity: crate::lifecycle::NativeLifecycleIdentity,
+        network: &crate::task_network::store::SledTaskNetworkStore,
+    ) -> Result<
+        (
+            crate::lifecycle::NativeLifecycleEvidence,
+            crate::lifecycle::NativeLifecycleTransition,
+        ),
+        String,
+    > {
+        let evidence = self.lifecycle_evidence(network)?;
+        let transition = self
+            .lifecycle
+            .safe_point(identity, evidence.proof_position_ref.clone())?;
+        Ok((evidence, transition))
+    }
+
+    /// Author native stop evidence while the network is borrowed.
+    pub fn lifecycle_stop(
+        &self,
+        identity: crate::lifecycle::NativeLifecycleIdentity,
+        network: &crate::task_network::store::SledTaskNetworkStore,
+    ) -> Result<
+        (
+            crate::lifecycle::NativeLifecycleEvidence,
+            crate::lifecycle::NativeLifecycleTransition,
+        ),
+        String,
+    > {
+        let evidence = self.lifecycle_evidence(network)?;
+        let transition = self
+            .lifecycle
+            .stop(identity, evidence.proof_position_ref.clone())?;
+        Ok((evidence, transition))
+    }
+
+    /// Author native release evidence while the network is borrowed.
+    pub fn lifecycle_release(
+        &self,
+        identity: crate::lifecycle::NativeLifecycleIdentity,
+        network: &crate::task_network::store::SledTaskNetworkStore,
+    ) -> Result<
+        (
+            crate::lifecycle::NativeLifecycleEvidence,
+            crate::lifecycle::NativeLifecycleTransition,
+        ),
+        String,
+    > {
+        let evidence = self.lifecycle_evidence(network)?;
+        let transition = self
+            .lifecycle
+            .release(identity, evidence.proof_position_ref.clone())?;
+        Ok((evidence, transition))
     }
 
     /// Select durable admissions and commit distinct operational regions.
@@ -414,6 +545,18 @@ where
                 result: Ok(response),
             });
         }
+        let waiting_on = if items.is_empty() {
+            vec![WaitingOnDeclaration::broad(
+                conditions::NO_ACTIVE_GOALS,
+                format!("no admitted unlowered Task at network revision {input_revision}"),
+                vec![StructuralWakeAddress::OwnerRevision(format!(
+                    "agent-admissions::{}::after::{input_revision}",
+                    request.network_id
+                ))],
+            )]
+        } else {
+            Vec::new()
+        };
         Ok(TaskAdmissionRuntimeReport {
             input_revision,
             output_revision: store.network_state().revision,
@@ -421,6 +564,7 @@ where
             committed,
             budget_exhausted,
             items,
+            waiting_on,
         })
     }
 }
@@ -518,6 +662,46 @@ fn exact_input_sources(
 ) -> Result<(Vec<crate::task::TaskInitSlotSpec>, Vec<TaskInitSource>), String> {
     let edges = &admission.request.task.composition.edges;
     let mut selected = BTreeMap::new();
+    for input in admission
+        .request
+        .task
+        .initial_inputs
+        .iter()
+        .filter(|input| input.step_id == step_id)
+    {
+        input.validate()?;
+        let slot = consumer
+            .contract
+            .input_contract
+            .iter()
+            .find(|slot| slot.slot_id == input.slot_id)
+            .ok_or_else(|| "frozen Task input names an unknown Capability slot".to_string())?;
+        if !slot
+            .accepted_artifact_type_ids
+            .contains(&input.artifact_type_id)
+            || !slot.schema_versions.accepts(input.schema_version)
+        {
+            return Err("frozen Task input does not match its Capability schema".into());
+        }
+        let spec = crate::task::TaskInitSlotSpec {
+            init_slot_id: input.slot_id.clone(),
+            artifact_type_id: input.artifact_type_id.clone(),
+            schema_version: input.schema_version,
+            required: slot.required,
+        };
+        let source = TaskInitSource::StaticSeed(StaticSeedInitSource {
+            init_slot_id: input.slot_id.clone(),
+            artifact_type_id: input.artifact_type_id.clone(),
+            schema_version: input.schema_version,
+            content: input.content.clone(),
+        });
+        if selected
+            .insert(input.slot_id.clone(), (spec, source))
+            .is_some()
+        {
+            return Err("several frozen Task inputs target one Capability slot".into());
+        }
+    }
     for edge in edges.iter().filter(|edge| edge.to == step_id) {
         let EdgeKind::DataFlow {
             artifact_type: Term::ArtifactType(artifact_type_id),

@@ -162,7 +162,7 @@ fuzz_target!(|data: &[u8]| {
     let query = TraversalQuery::new(&store);
     let cut = query
         .cut(&TraversalCutRequest {
-            owners: vec![TraversalOwnerRequirement {
+            owners: vec![TraversalOwnerRequirement { event_source: None,
                 owner_id: owner.to_string(),
                 scope: scope.clone(),
                 required: true,

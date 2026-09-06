@@ -348,6 +348,8 @@ impl OwnerPublicationOperation {
 /// Graph-owned projection of an intact producer operation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectedOwnerPublication {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_route: Option<super::admission::OwnerEventSourceRef>,
     pub operation: OwnerPublicationOperation,
     pub source_event: EventRecordRef,
 }
@@ -355,6 +357,9 @@ pub struct ProjectedOwnerPublication {
 /// Owner requirement for a latest complete cut.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct TraversalOwnerRequirement {
+    /// Opt-in exhaustive Event source, distinct from a published owner revision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_source: Option<super::admission::OwnerEventSourceRef>,
     pub owner_id: String,
     pub scope: OwnerPublicationScope,
     pub required: bool,
@@ -393,6 +398,9 @@ impl TraversalCutRequest {
         }
         let mut owner_scopes = BTreeSet::new();
         for owner in &self.owners {
+            if let Some(source) = &owner.event_source {
+                source.validate()?;
+            }
             require_non_empty("cut owner_id", &owner.owner_id)?;
             owner.scope.validate()?;
             if !owner_scopes.insert((owner.owner_id.clone(), owner.scope.clone())) {
@@ -406,12 +414,36 @@ impl TraversalCutRequest {
 /// Exact owner revision selected into one immutable cut.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OwnerGraphRevisionReceipt {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_coverage: Option<OwnerEventCoverageReceipt>,
     pub owner_id: String,
     pub revision_id: String,
     pub scope: OwnerPublicationScope,
     pub completeness: OwnerCompletenessReceipt,
-    pub source_event: EventRecordRef,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_event: Option<EventRecordRef>,
     pub projection_position: LedgerCursor,
+}
+
+impl OwnerGraphRevisionReceipt {
+    /// Material identity excludes a later proof boundary over unchanged source contents.
+    pub fn semantic_basis(&self) -> Self {
+        let mut basis = self.clone();
+        if let Some(coverage) = &mut basis.event_coverage {
+            coverage.through.after_seq = 0;
+            if basis.source_event.is_none() {
+                basis.projection_position.after_seq = 0;
+            }
+        }
+        basis
+    }
+}
+
+/// Native coverage of an exact owner route from ledger genesis through the cut.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OwnerEventCoverageReceipt {
+    pub source: super::admission::OwnerEventSourceRef,
+    pub through: LedgerCursor,
 }
 
 /// Reason a cut cannot claim complete owner coverage.
@@ -554,6 +586,9 @@ impl TraversalTruncation {
 /// Deterministic occurrence-rich result tied to one immutable cut.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraversalResult {
+    /// Roots proved absent within the complete declared Event-source scopes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub absent_roots: Vec<DomainObjectRef>,
     pub result_id: String,
     pub cut_id: String,
     pub objects: Vec<OwnerObjectPublication>,

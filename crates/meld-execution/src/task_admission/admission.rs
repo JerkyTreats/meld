@@ -9,6 +9,9 @@ use std::collections::BTreeSet;
 /// Complete Task body accepted by Execution without semantic reconstruction.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ExecutionTask {
+    /// Exact frozen inputs available to the selected Task steps.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub initial_inputs: Vec<meld_lang::TaskInput>,
     /// Stable Agent-authored Task identity.
     pub task_id: String,
     /// Sole semantic action body accepted by Execution.
@@ -49,6 +52,9 @@ pub struct TaskAdmissionLineage {
     pub authority_decision: Option<AuthorityDecision>,
     /// Activation generation that fences realization.
     pub activation_generation: String,
+    /// Exact admission epoch, absent only in legacy records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission_epoch: Option<String>,
 }
 
 /// One immutable offer to the Execution Goal Set.
@@ -174,6 +180,7 @@ pub struct TaskAdmissionApi<'a, S> {
     store: &'a mut S,
     catalog: &'a CapabilityCatalog,
     live_generation: &'a str,
+    live_admission_epoch: Option<&'a str>,
     live_authority_policy_content_hash: &'a str,
 }
 
@@ -192,8 +199,15 @@ where
             store,
             catalog,
             live_generation,
+            live_admission_epoch: None,
             live_authority_policy_content_hash,
         }
+    }
+
+    /// Bind the exact open admission epoch observed for this offer.
+    pub fn with_admission_epoch(mut self, epoch: Option<&'a str>) -> Self {
+        self.live_admission_epoch = epoch;
+        self
     }
 
     /// Decide and durably record one exact Task offer before lowering.
@@ -206,11 +220,10 @@ where
             .admissions
             .get(&proposal.admission_id)
         {
-            return if existing.request == proposal.request && existing.decision == proposal.decision
-            {
+            return if existing.request == proposal.request {
                 Ok(existing.clone())
             } else {
-                Err("durable Task admission identity contains a different decision".to_string())
+                Err("durable Task admission identity contains a different offer".to_string())
             };
         }
         let state = self.store.network_state();
@@ -240,6 +253,7 @@ where
 
     fn decide(&self, request: &TaskAdmissionRequest) -> TaskAdmissionDecision {
         if request.lineage.activation_generation != self.live_generation
+            || request.lineage.admission_epoch.as_deref() != self.live_admission_epoch
             || request.lineage.authority_policy_content_hash
                 != self.live_authority_policy_content_hash
         {
@@ -442,6 +456,28 @@ fn validation_grounds(request: &TaskAdmissionRequest, catalog: &CapabilityCatalo
             ));
         }
     }
+    for input in &request.task.initial_inputs {
+        if let Err(error) = input.validate() {
+            grounds.push(error);
+        }
+        let slot = resolved_contracts
+            .get(input.step_id.as_str())
+            .and_then(|contract| {
+                contract
+                    .input_contract
+                    .iter()
+                    .find(|slot| slot.slot_id == input.slot_id)
+            });
+        match slot {
+            Some(slot)
+                if slot
+                    .accepted_artifact_type_ids
+                    .contains(&input.artifact_type_id)
+                    && slot.schema_versions.accepts(input.schema_version) => {}
+            _ => grounds
+                .push("Task frozen input does not match an exact consumer slot and schema".into()),
+        }
+    }
     for (step_id, contract) in &resolved_contracts {
         for slot in &contract.input_contract {
             let matching_edges = request
@@ -460,16 +496,23 @@ fn validation_grounds(request: &TaskAdmissionRequest, catalog: &CapabilityCatalo
                     _ => false,
                 })
                 .count();
+            let matching_inputs = request
+                .task
+                .initial_inputs
+                .iter()
+                .filter(|input| input.step_id == **step_id && input.slot_id == slot.slot_id)
+                .count();
+            let matching_edges = matching_edges + matching_inputs;
             match slot.cardinality {
                 InputCardinality::One if slot.required && matching_edges != 1 => {
                     grounds.push(format!(
-                        "Capability step '{}' required input slot '{}' is not closed by exactly one Task data flow edge",
+                        "Capability step '{}' required input slot '{}' is not closed by exactly one Task input source",
                         step_id, slot.slot_id
                     ));
                 }
                 InputCardinality::One if !slot.required && matching_edges > 1 => {
                     grounds.push(format!(
-                        "Capability step '{}' optional input slot '{}' accepts at most one Task data flow edge",
+                        "Capability step '{}' optional input slot '{}' accepts at most one Task input source",
                         step_id, slot.slot_id
                     ));
                 }

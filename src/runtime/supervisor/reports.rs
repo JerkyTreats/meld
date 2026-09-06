@@ -24,8 +24,9 @@
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::runtime::contracts::{
-    RuntimeActionRecord, RuntimeActionRecordCompatV1, RuntimeStatusCacheRecord,
-    RuntimeStatusCacheRecordCompatV1, RuntimeStatusPublisher, RuntimeStatusReader,
+    RuntimeActionRecord, RuntimeActionRecordCompatV1, RuntimeActionRecordCompatV2,
+    RuntimeStatusCacheRecord, RuntimeStatusCacheRecordCompatV1, RuntimeStatusCacheRecordCompatV2,
+    RuntimeStatusPublisher, RuntimeStatusReader,
 };
 
 use super::store::{SupervisorStore, SupervisorStoreError};
@@ -269,8 +270,17 @@ fn encode<T: Serialize>(record: &T) -> Result<Vec<u8>, SupervisorStoreError> {
 fn decode_action(raw: &[u8]) -> Result<RuntimeActionRecord, SupervisorStoreError> {
     match bincode::deserialize::<RuntimeActionRecord>(raw) {
         Ok(record) => Ok(record),
-        Err(current_error) => decode_exact::<RuntimeActionRecordCompatV1>(raw, current_error)
-            .map(RuntimeActionRecord::from),
+        Err(current_error) => match try_decode_exact::<RuntimeActionRecordCompatV2>(raw) {
+            Ok(record) => Ok(RuntimeActionRecord::from(record)),
+            Err(compat_v2_error) => match try_decode_exact::<RuntimeActionRecordCompatV1>(raw) {
+                Ok(record) => Ok(RuntimeActionRecord::from(record)),
+                Err(compat_v1_error) => Err(compatibility_decode_error(
+                    current_error,
+                    compat_v2_error,
+                    compat_v1_error,
+                )),
+            },
+        },
     }
 }
 
@@ -279,28 +289,42 @@ fn decode_action(raw: &[u8]) -> Result<RuntimeActionRecord, SupervisorStoreError
 fn decode_snapshot(raw: &[u8]) -> Result<RuntimeStatusCacheRecord, SupervisorStoreError> {
     match bincode::deserialize::<RuntimeStatusCacheRecord>(raw) {
         Ok(record) => Ok(record),
-        Err(current_error) => decode_exact::<RuntimeStatusCacheRecordCompatV1>(raw, current_error)
-            .map(RuntimeStatusCacheRecord::from),
+        Err(current_error) => match try_decode_exact::<RuntimeStatusCacheRecordCompatV2>(raw) {
+            Ok(record) => Ok(RuntimeStatusCacheRecord::from(record)),
+            Err(compat_v2_error) => {
+                match try_decode_exact::<RuntimeStatusCacheRecordCompatV1>(raw) {
+                    Ok(record) => Ok(RuntimeStatusCacheRecord::from(record)),
+                    Err(compat_v1_error) => Err(compatibility_decode_error(
+                        current_error,
+                        compat_v2_error,
+                        compat_v1_error,
+                    )),
+                }
+            }
+        },
     }
 }
 
 /// Byte-exact legacy decode: same fixint encoding as the store's writes,
 /// but trailing bytes are an error rather than silently discarded.
-fn decode_exact<T: DeserializeOwned>(
-    raw: &[u8],
-    current_error: bincode::Error,
-) -> Result<T, SupervisorStoreError> {
+fn try_decode_exact<T: DeserializeOwned>(raw: &[u8]) -> Result<T, bincode::Error> {
     use bincode::Options as _;
     bincode::DefaultOptions::new()
         .with_fixint_encoding()
         .with_no_limit()
         .deserialize(raw)
-        .map_err(|legacy_error| {
-            SupervisorStoreError::Codec(format!(
-                "record decodes as neither the current shape ({current_error}) nor the \
-                 byte-exact legacy shape ({legacy_error})"
-            ))
-        })
+}
+
+fn compatibility_decode_error(
+    current_error: bincode::Error,
+    compat_v2_error: bincode::Error,
+    compat_v1_error: bincode::Error,
+) -> SupervisorStoreError {
+    SupervisorStoreError::Codec(format!(
+        "record decodes as neither the current shape ({current_error}), the byte-exact \
+         waiting declaration legacy shape ({compat_v2_error}), nor the pre-wait shape \
+         ({compat_v1_error})"
+    ))
 }
 
 fn decode_sequence(key: &[u8]) -> Result<u64, SupervisorStoreError> {
@@ -544,6 +568,37 @@ mod tests {
         bincode::serialize(&legacy).unwrap()
     }
 
+    /// Freeze one action record into the released waiting declaration shape.
+    fn legacy_waiting_bytes(record: &RuntimeActionRecord) -> Vec<u8> {
+        use crate::runtime::contracts::WaitingOnDeclarationCompatV1;
+
+        let legacy = RuntimeActionRecordCompatV2 {
+            action_id: record.action_id.clone(),
+            observed_at_ms: record.observed_at_ms,
+            runtime_id: record.runtime_id.clone(),
+            domain_id: record.domain_id.clone(),
+            actor_id: record.actor_id.clone(),
+            object_ref: record.object_ref.clone(),
+            action_kind: record.action_kind,
+            cause: record.cause,
+            outcome: record.outcome,
+            metrics: record.metrics.clone(),
+            checkpoints: record.checkpoints.clone(),
+            issues: record.issues.clone(),
+            redaction: record.redaction,
+            waiting_on: record
+                .waiting_on
+                .iter()
+                .map(|waiting| WaitingOnDeclarationCompatV1 {
+                    condition: waiting.condition.clone(),
+                    subject_key: waiting.subject_key.clone(),
+                    detail: waiting.detail.clone(),
+                })
+                .collect(),
+        };
+        bincode::serialize(&legacy).unwrap()
+    }
+
     #[test]
     fn legacy_action_records_without_waiting_on_decode_unchanged() {
         let (_temp, reports) = open_report_store();
@@ -579,6 +634,7 @@ mod tests {
                 condition: "graph_anchor_absent".to_string(),
                 subject_key: Some("workspace_fs::node::docs".to_string()),
                 detail: "no current anchor under frame_type::analysis".to_string(),
+                wake_refs: Vec::new(),
             });
         let action = RuntimeActionRecord::from_worker_tick("action-w", "event.append", 10, report);
         reports.publish_action(&action).unwrap();
@@ -590,6 +646,90 @@ mod tests {
             recent[0].waiting_on[0].subject_key.as_deref(),
             Some("workspace_fs::node::docs")
         );
+    }
+
+    #[test]
+    fn released_waiting_records_decode_without_inventing_native_evidence() {
+        let (_temp, reports) = open_report_store();
+        let mut expected = action("action-wait-legacy", "event.append", 10, 0, 0);
+        expected
+            .waiting_on
+            .push(crate::runtime::contracts::WaitingOnDeclaration {
+                condition: "legacy_condition".into(),
+                subject_key: Some("legacy-subject".into()),
+                detail: "legacy detail".into(),
+                wake_refs: vec![crate::runtime::lifecycle::StructuralWakeRef::OwnerRevision(
+                    "must-not-be-invented".into(),
+                )],
+            });
+        let bytes = legacy_waiting_bytes(&expected);
+        reports.actions.insert(0u64.to_be_bytes(), bytes).unwrap();
+
+        let decoded = reports.read_recent_actions(10).unwrap();
+        assert_eq!(decoded[0].waiting_on.len(), 1);
+        assert!(decoded[0].waiting_on[0].wake_refs.is_empty());
+        assert_eq!(decoded[0].generation_id, None);
+        assert_eq!(decoded[0].incarnation_id, None);
+    }
+
+    #[test]
+    fn released_waiting_snapshots_decode_without_inventing_native_evidence() {
+        use crate::runtime::contracts::{
+            RuntimeStatusCacheRecordCompatV2, RuntimeStatusSnapshot, RuntimeStatusWriterIdentity,
+        };
+
+        let (_temp, reports) = open_report_store();
+        let mut action = action("action-wait-snapshot", "event.append", 10, 0, 0);
+        action
+            .waiting_on
+            .push(crate::runtime::contracts::WaitingOnDeclaration {
+                condition: "legacy_condition".into(),
+                subject_key: None,
+                detail: "legacy detail".into(),
+                wake_refs: Vec::new(),
+            });
+        let legacy_action: RuntimeActionRecordCompatV2 =
+            bincode::deserialize(&legacy_waiting_bytes(&action)).unwrap();
+        let legacy = RuntimeStatusCacheRecordCompatV2 {
+            schema_version: 1,
+            product_root: "/tmp/product".into(),
+            supervisor_store_path: "/tmp/product/supervisor.sled".into(),
+            status_cache_path: "/tmp/product/status".into(),
+            writer: RuntimeStatusWriterIdentity {
+                instance_id: Some("runtime-cli-1".into()),
+                process_id: Some(42),
+                parent_process_id: Some(41),
+                run_mode: crate::runtime::contracts::RuntimeRunMode::Foreground,
+                launch_status: crate::runtime::contracts::RuntimeLaunchStatus::Ready,
+            },
+            snapshot: RuntimeStatusSnapshot {
+                instance: None,
+                process: None,
+                shutdown: None,
+                runtimes: Vec::new(),
+                health_counts: crate::runtime::contracts::RuntimeStatusHealthCounts {
+                    unknown: 0,
+                    starting: 0,
+                    healthy: 0,
+                    degraded: 0,
+                    unhealthy: 0,
+                    stopped: 0,
+                },
+                ledger: None,
+                warnings: Vec::new(),
+            },
+            recent_actions: vec![legacy_action],
+            written_at_ms: 11,
+        };
+        reports
+            .snapshots
+            .insert(LATEST_SNAPSHOT_KEY, bincode::serialize(&legacy).unwrap())
+            .unwrap();
+
+        let decoded = reports.read_latest_snapshot().unwrap().unwrap();
+        assert_eq!(decoded.recent_actions[0].waiting_on.len(), 1);
+        assert!(decoded.recent_actions[0].waiting_on[0].wake_refs.is_empty());
+        assert_eq!(decoded.recent_actions[0].generation_id, None);
     }
 
     #[test]

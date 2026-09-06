@@ -627,6 +627,7 @@ fn task(
         .collect::<Vec<_>>();
     capability_contract_ids.sort();
     ExecutionTask {
+        initial_inputs: Vec::new(),
         task_id: task_id.to_string(),
         composition,
         bindings: Bindings::empty(),
@@ -658,6 +659,7 @@ fn admission_request(task: ExecutionTask) -> TaskAdmissionRequest {
                 authorized_action_ids: actions,
             }),
             activation_generation: "generation-v1".to_string(),
+            admission_epoch: None,
         },
         idempotency_key: task.idempotency_key.clone(),
         task,

@@ -51,6 +51,7 @@ impl AgentStrategyRuntimeConfig {
         curation_operations: Vec<crate::CurationOperation>,
     ) -> StrategyProblem {
         StrategyProblem {
+            task_inputs: Vec::new(),
             problem_id: format!(
                 "{}::{}::{}",
                 self.package.snapshot.theory_id, goal.goal_id, planner_cut.cut_id

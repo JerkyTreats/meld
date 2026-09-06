@@ -299,7 +299,7 @@ fn planner_projection_shape() {
     .unwrap();
     let propositions = output.world_state.propositions();
 
-    assert!(propositions.contains(&Proposition::Holds {
+    assert!(!propositions.contains(&Proposition::Holds {
         subject: Term::Object(subject()),
         dimension: Term::Dimension("dimension_a".to_string()),
         condition: Condition::Equals(Term::Literal(Literal::Number(0.8))),
@@ -317,6 +317,35 @@ fn planner_projection_shape() {
     assert!(propositions.contains(&Proposition::Accessible {
         scope: Term::Object(subject()),
     }));
+}
+
+#[test]
+fn unsettled_prior_cannot_establish_a_satisfied_proposition() {
+    for status in [
+        BeliefStatus::NeedsObservation,
+        BeliefStatus::NeedsAssessment,
+        BeliefStatus::AssessmentPending,
+        BeliefStatus::Stale,
+        BeliefStatus::Invalid,
+    ] {
+        let mut view = test_view("dimension_a", 1.0, false, false);
+        view.status = status;
+        let output = project_world_state(projection_input(Some(view))).unwrap();
+        let query = Proposition::Holds {
+            subject: Term::Object(subject()),
+            dimension: Term::Dimension("dimension_a".to_string()),
+            condition: Condition::Above(Term::Literal(Literal::Number(0.7))),
+        };
+        assert!(matches!(
+            evaluate(&output.world_state, &query),
+            EvalResult::Indeterminate { .. }
+        ));
+        assert!(output
+            .source_refs
+            .contains(&PlannerSourceRef::BeliefRevision {
+                revision_id: "revision-a".to_string(),
+            }));
+    }
 }
 
 #[test]
@@ -636,7 +665,7 @@ proptest! {
                 } if found == &dimension
             )
         });
-        prop_assert!(found_dimension);
+        prop_assert_eq!(found_dimension, !stale && !observation);
     }
 
     #[test]

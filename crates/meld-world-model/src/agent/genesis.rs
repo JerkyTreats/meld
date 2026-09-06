@@ -23,6 +23,22 @@ pub struct AgentSubscriptionRequestV1 {
 }
 
 impl AgentSubscriptionRequestV1 {
+    pub fn validate(&self) -> Result<(), StorageError> {
+        let canonical = Self::new(
+            self.agent_id.clone(),
+            self.source_owner.clone(),
+            self.source_contract_revision.clone(),
+            self.belief_key.clone(),
+            self.initial_cursor_policy.clone(),
+        )?;
+        if &canonical != self {
+            return Err(StorageError::InvalidPath(
+                "Agent subscription identity differs from its request".into(),
+            ));
+        }
+        Ok(())
+    }
+
     pub fn new(
         agent_id: String,
         source_owner: String,

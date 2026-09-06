@@ -37,6 +37,7 @@ impl<'a> PlannerQuery<'a> {
         &self,
         request: PlannerCurrentAssemblyRequest,
     ) -> PlannerAssemblyOutcome {
+        let observation_subject = request.context.observation_subject().clone();
         let context_id = request.context.context_id.clone();
         let refuse = |detail: String| {
             PlannerAssemblyOutcome::Refused(PlannerRefusal {
@@ -44,6 +45,14 @@ impl<'a> PlannerQuery<'a> {
                 grounds: vec![PlannerRefusalGround::InvalidInput { detail }],
             })
         };
+        if request.belief_key.subject != observation_subject
+            || request.belief_key.perspective.perspective_id != request.context.perspective_id
+            || request.belief_key.branch_scope.branch_id != request.context.branch_id
+        {
+            return refuse(
+                "Planner observation key differs from the selected judgment scope".into(),
+            );
+        }
         let cut = match self.traversal_query.cut(&request.traversal_cut_request) {
             Ok(cut) => cut,
             Err(error) => return refuse(error.to_string()),
@@ -69,7 +78,7 @@ impl<'a> PlannerQuery<'a> {
             .unwrap_or_default();
         let anchors = match self
             .traversal_query
-            .current_anchors_for_subject(&request.context.subject)
+            .current_anchors_for_subject(&observation_subject)
         {
             Ok(anchors) => anchors,
             Err(error) => return refuse(error.to_string()),
@@ -110,7 +119,7 @@ impl<'a> PlannerQuery<'a> {
             source_positions,
             view_input: PlannerProjectionInput {
                 context: PlannerProjectionContext {
-                    subject: request.context.subject,
+                    subject: observation_subject.clone(),
                     perspective: request.belief_key.perspective,
                     branch_scope: request.belief_key.branch_scope,
                     projection_version: crate::planner::contracts::PLANNER_PROJECTION_VERSION
@@ -284,6 +293,7 @@ impl<'a> PlannerQuery<'a> {
         let mut traversal_cut = TraversalCut {
             cut_id: String::new(),
             owners: vec![TraversalOwnerRequirement {
+                event_source: None,
                 owner_id: "world_model.compatibility_projection".to_string(),
                 scope: scope.clone(),
                 required: false,
@@ -309,6 +319,7 @@ impl<'a> PlannerQuery<'a> {
             },
         };
         let traversal_result = TraversalResult {
+            absent_roots: Vec::new(),
             result_id: traversal_result_identity(&traversal_cut.cut_id, &traversal_request)?,
             cut_id: traversal_cut.cut_id.clone(),
             objects: Vec::new(),
@@ -319,6 +330,7 @@ impl<'a> PlannerQuery<'a> {
             truncation: TraversalTruncation::default(),
         };
         let decision_context = PlannerDecisionContext {
+            observation_subject: None,
             context_id: format!("compatibility-context::{}", context.subject.index_key()),
             agent_id: "legacy_execution_planning".to_string(),
             goal_id: format!("compatibility-goal::{}", context.subject.index_key()),
@@ -328,6 +340,7 @@ impl<'a> PlannerQuery<'a> {
             perspective_id: perspective_id.clone(),
             authority_scope_id: "legacy_execution_projection".to_string(),
             activation_generation: "compatibility-v1".to_string(),
+            admission_epoch: None,
         };
         let graph_revision_id = traversal_cut.cut_id.clone();
         let mut required_sources = vec![PlannerSourceKind::Graph];

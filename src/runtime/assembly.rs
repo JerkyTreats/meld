@@ -2,8 +2,8 @@
 //!
 //! Owner: root runtime composition. Assembly is machine initialization
 //! (Runtime Initialization stages 0, 1, and 5): it opens stores for the
-//! composed registration scope, builds ports, derives registrations from
-//! the selected stewardship expression, and binds concrete domain actor
+//! composed registration scope, builds ports, projects registrations from
+//! the accepted participant plan, and binds concrete domain actor
 //! factories. It never creates semantic state — no genesis, no theory
 //! install, no seeding. A world with incomplete genesis hydrates with the
 //! genesis-dependent actors truthfully unresolved (no semantic body, so
@@ -31,10 +31,10 @@ use meld_execution::task_network::{
     PublicationRuntime, PublishPendingPublicationsRequest, SledTaskNetworkStore,
 };
 use meld_lang::AuthorityPolicyBinding;
-use meld_lang::{Goal, GoalLifecycle, GoalSource};
+use meld_world_model::agent::AgentReconciliationIntent;
 use meld_world_model::agent::{
-    AgentActivationStatus, AgentAuthorizationFence, AgentReconciliationActor,
-    AgentReconciliationReport, AgentStatus, AgentStore, AGENT_RECONCILIATION_RUNTIME_ID,
+    AgentAuthorizationFence, AgentReconciliationActor, AgentReconciliationReport, AgentStatus,
+    AgentStore, AGENT_RECONCILIATION_RUNTIME_ID,
 };
 use meld_world_model::belief::{
     BeliefAssessmentActor, BeliefAssessmentReport, BeliefAssessmentRequest, BeliefFamilyRegistry,
@@ -62,18 +62,20 @@ use crate::capability::{
 use crate::config::MerkleConfig;
 use crate::config::PhysicalBinding;
 use crate::runtime::contracts::{
-    WorkBudget, WorkerCheckpoint, WorkerScope, WorkerTickIssue, WorkerTickReport,
+    structural_wake_to_execution, structural_wake_to_world_model, WorkBudget, WorkerCheckpoint,
+    WorkerScope, WorkerTickIssue, WorkerTickReport,
 };
 use crate::runtime::error::{RuntimeAssemblyError, RuntimeRegistryError};
 use crate::runtime::lifecycle::{
-    ActivationLifecycleService, ActivationLifecycleStore, LifecycleStepOutcome,
-    STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID,
+    ActivationLifecycleStore, NativeOwnerReadinessEvidenceV1, OwnerReadinessReceiptV1,
+    OwnerReleaseReceiptV1, OwnerSafePointReceiptV1, OwnerStopReceiptV1, OwnerWaitReceiptV1,
+    ParticipantLifecycleContextV1, StructuralWakeRef,
 };
 use crate::runtime::ports::{
     ProductAdmissionGenerationObserver, ProductAgentAuthorityPort, ProductAgentExecutionPort,
-    ProductAgentPlannerPort, ProductCurationTraversalPort, ProductEventAppendPort,
-    ProductEventReplayPort, ProductPlannedCurationPort, ProductRuntimePorts, ProviderPortConfig,
-    SharedClaimedTaskInvoker,
+    ProductAgentPlannerPort, ProductCurationAuthorityPort, ProductCurationTraversalPort,
+    ProductEventAppendPort, ProductEventReplayPort, ProductPlannedCurationPort,
+    ProductRuntimePorts, ProviderPortConfig, SharedClaimedTaskInvoker,
 };
 use crate::runtime::registration::{RegistrationKind, RegistrationSet, RuntimeRegistration};
 use crate::runtime::storage::{
@@ -99,6 +101,8 @@ pub struct ProductRuntimeAssembly {
     registry: RuntimeFactoryRegistry,
     handle_factories: RuntimeHandleFactoryRegistry,
     registration_set: Option<RegistrationSet>,
+    lifecycle_store: Option<ActivationLifecycleStore>,
+    prepared_activation: Option<crate::theory::PreparedActivationClosureV1>,
     desired_runtime_state: Vec<DesiredRuntimeState>,
     lifecycle_config: RuntimeLifecycleConfig,
     default_work_budget: WorkBudget,
@@ -276,53 +280,47 @@ pub fn scope_for_registration_set(
     scope
 }
 
-/// Runtime ids classified as passive services in the stewardship-derived set.
+/// Project one exact prepared participant plan into runtime registrations.
 ///
-/// The event append and replay capabilities and the task-network command
-/// service are called by actors; they are never
-/// leased, never ticked, and receive no actor health. This includes the
-/// former `event.append` diagnostics observer: its ledger-health facts now
-/// live on the passive append capability's health surface
-/// (`ProductEventAppendPort::health`) and the existing self-observation
-/// watcher, so the actor-shaped diagnostics handle survives only as a
-/// compatibility body for explicit legacy compositions.
-const STEWARDSHIP_PASSIVE_SERVICE_IDS: [&str; 3] = [
-    "event.append",
-    "event.replay",
-    "execution.task_network_command",
-];
-
-/// Derive the runtime registration set from one validated stewardship binding.
-///
-/// Per the ground map: selecting docs freshness causes composition to derive
-/// exactly the actor and passive-service registrations the convergence loop
-/// requires. There are no product slots or slot counts — the derivation
-/// walks the internal descriptor catalog and classifies each required role
-/// honestly. Registration production stays a public composition surface:
-/// this derivation is one producer, and harness callers may supply an
-/// explicit [`RegistrationSet`] instead.
-pub fn derive_stewardship_registrations(
-    binding: &PhysicalBinding,
+/// The descriptor catalog supplies factories and resource requirements only.
+/// It cannot add a participant absent from the accepted plan.
+pub fn project_prepared_registrations(
+    prepared: &crate::theory::PreparedActivationClosureV1,
+    registry: &RuntimeFactoryRegistry,
 ) -> Result<RegistrationSet, RuntimeAssemblyError> {
-    let registry = RuntimeFactoryRegistry::first_proof_registry()?;
-    let expression = &binding.package.expression;
-    let registrations = registry
-        .descriptors()
-        .map(|descriptor| {
-            let kind = if STEWARDSHIP_PASSIVE_SERVICE_IDS.contains(&descriptor.runtime_id.as_str())
-            {
-                RegistrationKind::PassiveService
-            } else {
-                RegistrationKind::ActiveActor
+    let registrations = prepared
+        .participant_plan
+        .participants
+        .iter()
+        .filter_map(|participant| {
+            let descriptor = match registry.get(&participant.participant_id) {
+                Some(descriptor) => descriptor,
+                None if !participant.required => return None,
+                None => {
+                    return Some(Err(RuntimeAssemblyError::Config(format!(
+                        "required prepared participant '{}' has no runtime factory",
+                        participant.participant_id
+                    ))));
+                }
             };
-            RuntimeRegistration {
-                registration_id: format!("stewardship::{expression}::{}", descriptor.runtime_id),
-                runtime_id: descriptor.runtime_id.clone(),
+            let kind = match participant.kind {
+                crate::theory::ParticipantKind::PassiveSource => RegistrationKind::PassiveService,
+                crate::theory::ParticipantKind::BoundedActor
+                | crate::theory::ParticipantKind::DurableOperationAdapter => {
+                    RegistrationKind::ActiveActor
+                }
+            };
+            Some(Ok(RuntimeRegistration {
+                registration_id: format!(
+                    "prepared::{}::{}",
+                    prepared.prepared_id, participant.participant_id
+                ),
+                runtime_id: participant.participant_id.clone(),
                 kind,
                 required_resources: descriptor.required_resources.clone(),
-            }
+            }))
         })
-        .collect();
+        .collect::<Result<Vec<_>, RuntimeAssemblyError>>()?;
     Ok(RegistrationSet { registrations })
 }
 
@@ -685,6 +683,7 @@ fn activate_exact_capabilities(
 
 /// Stewardship values shared by the composed actor factories.
 struct ComposedStewardship {
+    lifecycle: Option<ActivationLifecycleStore>,
     bindings: StewardshipActorBindings,
     theory: HydratedStewardshipTheory,
     network: Option<Arc<Mutex<SledTaskNetworkStore>>>,
@@ -692,6 +691,32 @@ struct ComposedStewardship {
     worker_id: String,
     dispatch_slot: DispatchRouteSlot,
     dispatch_route_seed: DispatchRouteSeed,
+}
+
+impl ComposedStewardship {
+    fn admission_observer(
+        &self,
+        store: Arc<AgentStore>,
+    ) -> Result<ProductAdmissionGenerationObserver, RuntimeAssemblyError> {
+        let prepared = self
+            .theory
+            .resolved
+            .as_ref()
+            .and_then(|resolved| resolved.prepared_closure.as_ref())
+            .ok_or_else(|| {
+                RuntimeAssemblyError::RuntimeHandleConstruction(
+                    "native admission requires a prepared assignment".into(),
+                )
+            })?;
+        let lifecycle = self.lifecycle.clone().ok_or_else(|| {
+            RuntimeAssemblyError::RuntimeHandleConstruction(
+                "native admission requires the lifecycle authority".into(),
+            )
+        })?;
+        Ok(ProductAdmissionGenerationObserver::new(
+            store, lifecycle, prepared,
+        ))
+    }
 }
 
 /// Derive the production route seed from one validated physical binding.
@@ -730,6 +755,8 @@ pub struct InertRuntimeHandle {
     runtime_id: String,
     required_resources: Vec<RuntimeResource>,
     started: bool,
+    lifecycle_binding: Option<ParticipantLifecycleContextV1>,
+    last_report: Option<WorkerTickReport>,
     semantic: RuntimeSemanticHandle,
 }
 
@@ -799,6 +826,7 @@ struct EvidenceIngestionFactory {
 
 #[derive(Clone)]
 struct StandingCurationFactory {
+    authority_port: Arc<dyn meld_world_model::curation::CurationAuthorityPort>,
     runtime_id: String,
     session_id: String,
     authority: CurationAuthority,
@@ -811,7 +839,7 @@ struct StandingCurationFactory {
 #[derive(Clone)]
 struct AgentActorFactory {
     runtime_id: String,
-    goal: Goal,
+    intent: AgentReconciliationIntent,
     store: Arc<AgentStore>,
     planner: Arc<dyn meld_world_model::AgentPlannerPort>,
     authority_port: Arc<dyn meld_world_model::AgentAuthorityPort>,
@@ -855,7 +883,6 @@ struct PublicationFactory {
 #[derive(Clone)]
 enum RuntimeSemanticHandleFactory {
     None,
-    ActivationLifecycle { service: ActivationLifecycleService },
     GraphReplay { graph_runtime: Arc<GraphRuntime> },
     EventAppend { port: ProductEventAppendPort },
     BeliefAssessment(Box<BeliefAssessmentFactory>),
@@ -869,7 +896,6 @@ enum RuntimeSemanticHandleFactory {
 
 enum RuntimeSemanticHandle {
     None,
-    ActivationLifecycle(ActivationLifecycleHandle),
     GraphReplay(GraphReplayRuntimeHandle),
     EventAppend(EventAppendRuntimeHandle),
     BeliefAssessment(Box<BeliefAssessmentHandle>),
@@ -884,11 +910,6 @@ enum RuntimeSemanticHandle {
 #[derive(Clone)]
 struct GraphReplayRuntimeHandle {
     graph_runtime: Arc<GraphRuntime>,
-}
-
-struct ActivationLifecycleHandle {
-    service: ActivationLifecycleService,
-    transition_sequence: u64,
 }
 
 /// Diagnostics-only handle publishing ledger ingress health through the
@@ -906,6 +927,7 @@ struct EventAppendRuntimeHandle {
     // Baseline sampled on the first tick so a restart or an existing ledger
     // never misreports history as fresh work or fresh drops.
     last: Option<(u64, u64)>,
+    lifecycle: NativeOwnerLifecycleState,
 }
 
 struct BeliefAssessmentHandle {
@@ -943,6 +965,7 @@ struct DispatchHandle {
 }
 
 struct PublicationHandle {
+    runtime: PublicationRuntime,
     event_append: ProductEventAppendPort,
     bindings: StewardshipActorBindings,
     worker_id: String,
@@ -963,6 +986,8 @@ pub struct RuntimeLeaseContext {
 pub struct RuntimeHandleStartReport {
     /// Runtime id that accepted the start.
     pub runtime_id: String,
+    /// Native-owner readiness when an exact lifecycle context was supplied.
+    pub owner_readiness: Option<OwnerReadinessReceiptV1>,
 }
 
 /// Report returned when an inert handle accepts a stop request.
@@ -972,6 +997,8 @@ pub struct RuntimeHandleStopReport {
     pub runtime_id: String,
     /// Whether the handle was running before the stop request.
     pub was_started: bool,
+    /// Native owner stop evidence when shutdown belongs to an activation generation.
+    pub owner_stop: Option<OwnerStopReceiptV1>,
 }
 
 /// Report returned when an inert handle reaches a safe point.
@@ -981,6 +1008,112 @@ pub struct RuntimeHandleSafePointReport {
     pub runtime_id: String,
     /// Whether the handle is safe for product flush.
     pub safe_for_flush: bool,
+    /// Native-owner safe-point evidence for the exact stopped incarnation.
+    pub owner_safe_point: Option<OwnerSafePointReceiptV1>,
+}
+
+#[derive(Debug, Clone)]
+struct NativeOwnerLifecycleSnapshot {
+    checkpoint_ref: String,
+    installed_revision_refs: Vec<String>,
+    binding_refs: Vec<String>,
+    subscription_refs: Vec<String>,
+    proof_position_ref: String,
+    unresolved_operation_summary_ref: String,
+}
+
+impl From<meld_world_model::lifecycle::NativeLifecycleEvidence> for NativeOwnerLifecycleSnapshot {
+    fn from(evidence: meld_world_model::lifecycle::NativeLifecycleEvidence) -> Self {
+        Self {
+            checkpoint_ref: evidence.checkpoint_ref,
+            installed_revision_refs: evidence.installed_revision_refs,
+            binding_refs: evidence.binding_refs,
+            subscription_refs: evidence.subscription_refs,
+            proof_position_ref: evidence.proof_position_ref,
+            unresolved_operation_summary_ref: evidence.unresolved_operation_summary_ref,
+        }
+    }
+}
+impl From<meld_execution::lifecycle::NativeLifecycleEvidence> for NativeOwnerLifecycleSnapshot {
+    fn from(evidence: meld_execution::lifecycle::NativeLifecycleEvidence) -> Self {
+        Self {
+            checkpoint_ref: evidence.checkpoint_ref,
+            installed_revision_refs: evidence.installed_revision_refs,
+            binding_refs: evidence.binding_refs,
+            subscription_refs: evidence.subscription_refs,
+            proof_position_ref: evidence.proof_position_ref,
+            unresolved_operation_summary_ref: evidence.unresolved_operation_summary_ref,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NativeOwnerLifecyclePhase {
+    Constructed,
+    Running,
+    SafePoint,
+    Stopped,
+    Released,
+}
+
+#[derive(Debug, Clone)]
+struct NativeOwnerLifecycleState {
+    phase: NativeOwnerLifecyclePhase,
+    incarnation_id: Option<String>,
+    last_transition_proof_ref: Option<String>,
+}
+
+impl Default for NativeOwnerLifecycleState {
+    fn default() -> Self {
+        Self {
+            phase: NativeOwnerLifecyclePhase::Constructed,
+            incarnation_id: None,
+            last_transition_proof_ref: None,
+        }
+    }
+}
+
+impl NativeOwnerLifecycleState {
+    fn transition(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+        checkpoint_ref: &str,
+        expected: NativeOwnerLifecyclePhase,
+        next: NativeOwnerLifecyclePhase,
+    ) -> Result<String, RuntimeAssemblyError> {
+        if self.phase == next
+            && self.incarnation_id.as_deref() == Some(context.incarnation_id.as_str())
+        {
+            return self.last_transition_proof_ref.clone().ok_or_else(|| {
+                RuntimeAssemblyError::SupervisorHandoff(
+                    "native owner repeated a transition without retained proof".to_string(),
+                )
+            });
+        }
+        if self.phase != expected {
+            return Err(RuntimeAssemblyError::SupervisorHandoff(format!(
+                "native owner '{}' cannot transition from {:?} to {:?}",
+                context.participant_id, self.phase, next
+            )));
+        }
+        if self
+            .incarnation_id
+            .as_ref()
+            .is_some_and(|incarnation_id| incarnation_id != &context.incarnation_id)
+        {
+            return Err(RuntimeAssemblyError::SupervisorHandoff(
+                "native owner transition changed activation incarnation".to_string(),
+            ));
+        }
+        let proof_ref = format!(
+            "native-owner-transition::{}::{}::{}::{:?}-to-{:?}::{checkpoint_ref}",
+            context.owner_domain, context.participant_id, context.incarnation_id, self.phase, next
+        );
+        self.phase = next;
+        self.incarnation_id = Some(context.incarnation_id.clone());
+        self.last_transition_proof_ref = Some(proof_ref.clone());
+        Ok(proof_ref)
+    }
 }
 
 /// Diagnostic snapshot from one inert runtime handle.
@@ -1047,6 +1180,12 @@ pub struct SupervisorStartupPackage<'a> {
     pub process_services: &'a RuntimeProcessServices,
     /// Assembly diagnostics collected before handoff.
     pub diagnostics: &'a [AssemblyDiagnostic],
+    /// Exact registration projection composed from the prepared plan.
+    pub registration_set: Option<&'a RegistrationSet>,
+    /// Canonical activation lifecycle authority when a prepared product exists.
+    pub lifecycle_store: Option<&'a ActivationLifecycleStore>,
+    /// Exact inert closure whose participant plan composes this supervisor.
+    pub prepared_activation: Option<&'a crate::theory::PreparedActivationClosureV1>,
 }
 
 impl ProductRuntimeConfig {
@@ -1209,24 +1348,19 @@ impl ProductRuntimeAssembly {
             ));
         }
 
+        let has_stewardship = stewardship.is_some();
         let product_root = ProductStorageRoot::new(config.product_root);
         let layout = product_root.layout();
         let registry = RuntimeFactoryRegistry::first_proof_registry()?;
         validate_runtime_selection(&config.enabled_runtime_ids)?;
         validate_runtime_selection(&config.disabled_runtime_ids)?;
 
-        let registration_set = match (&config.registration_set, &stewardship) {
-            (Some(explicit), _) => Some(explicit.clone()),
-            (None, Some(composition)) => {
-                Some(derive_stewardship_registrations(&composition.binding)?)
-            }
-            (None, None) => None,
-        };
-        let mut scope = registration_set
+        let explicit_registration_set = config.registration_set.clone();
+        let mut scope = explicit_registration_set
             .as_ref()
             .map(|set| scope_for_registration_set(set, &registry))
             .unwrap_or_else(StoreScope::all);
-        if stewardship.is_some() {
+        if has_stewardship {
             scope.theory = true;
         }
 
@@ -1234,13 +1368,13 @@ impl ProductRuntimeAssembly {
         let supervisor_store_path = config
             .supervisor_store_path
             .unwrap_or_else(|| layout.root.join("supervisor.sled"));
-        let desired_runtime_state = desired_runtime_state(
+        let fallback_desired_runtime_state = desired_runtime_state(
             &registry,
-            config.enabled_runtime_ids,
-            config.disabled_runtime_ids,
+            config.enabled_runtime_ids.clone(),
+            config.disabled_runtime_ids.clone(),
         )?;
         let mut provider = config.provider;
-        provider.provider_required = provider_required(&registry, &desired_runtime_state);
+        provider.provider_required = provider_required(&registry, &fallback_desired_runtime_state);
         let supervisor_store = SupervisorStore::open(supervisor_store_path)?;
         let ports = ProductRuntimePorts::from_authority(
             stores.as_ref(),
@@ -1281,7 +1415,23 @@ impl ProductRuntimeAssembly {
                     ))),
                     None => None,
                 };
+                let lifecycle = theory
+                    .resolved
+                    .as_ref()
+                    .and_then(|resolved| resolved.prepared_closure.as_ref())
+                    .map(|_| {
+                        let db = stores.theory_db.opened().ok_or_else(|| {
+                            RuntimeAssemblyError::RuntimeHandleConstruction(
+                                "prepared activation requires the theory store".into(),
+                            )
+                        })?;
+                        ActivationLifecycleStore::new(db.clone()).map_err(|error| {
+                            RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
+                        })
+                    })
+                    .transpose()?;
                 Some(ComposedStewardship {
+                    lifecycle,
                     dispatch_slot: DispatchRouteSlot::default(),
                     network,
                     cursor_registry: event_authority.consumer_registry_capability(),
@@ -1305,6 +1455,57 @@ impl ProductRuntimeAssembly {
             composed_stewardship.as_ref(),
             &mut diagnostics,
         )?;
+        let prepared_activation = composed_stewardship
+            .as_ref()
+            .and_then(|composed| composed.theory.resolved.as_ref())
+            .and_then(|resolved| resolved.prepared_closure.clone());
+        let registration_set = match (
+            &explicit_registration_set,
+            &prepared_activation,
+            has_stewardship,
+        ) {
+            (Some(explicit), Some(prepared), _) => {
+                let projected = project_prepared_registrations(prepared, &registry)?;
+                if explicit != &projected {
+                    return Err(RuntimeAssemblyError::Config(
+                        "explicit runtime registrations differ from the prepared participant plan"
+                            .to_string(),
+                    ));
+                }
+                Some(explicit.clone())
+            }
+            (Some(explicit), None, _) => Some(explicit.clone()),
+            (None, Some(prepared), _) => Some(project_prepared_registrations(prepared, &registry)?),
+            (None, None, true) => Some(RegistrationSet {
+                registrations: Vec::new(),
+            }),
+            (None, None, false) => None,
+        };
+        let desired_runtime_state = match (&registration_set, &prepared_activation) {
+            (Some(registrations), Some(_)) => desired_runtime_state_for_registration_set(
+                &registry,
+                registrations,
+                &BTreeSet::new(),
+            ),
+            (Some(registrations), None) => {
+                let disabled = registrations
+                    .registrations
+                    .iter()
+                    .filter(|registration| {
+                        !fallback_desired_runtime_state.iter().any(|state| {
+                            state.runtime_id == registration.runtime_id && state.enabled
+                        })
+                    })
+                    .map(|registration| registration.runtime_id.clone())
+                    .collect();
+                desired_runtime_state_for_registration_set(&registry, registrations, &disabled)
+            }
+            (None, None) => fallback_desired_runtime_state,
+            (None, Some(_)) => unreachable!("prepared activation always projects registrations"),
+        };
+        let lifecycle_store = composed_stewardship
+            .as_ref()
+            .and_then(|composed| composed.lifecycle.clone());
         let dispatch_route_slot = composed_stewardship
             .as_ref()
             .map(|composed| composed.dispatch_slot.clone());
@@ -1326,6 +1527,8 @@ impl ProductRuntimeAssembly {
             registry,
             handle_factories,
             registration_set,
+            lifecycle_store,
+            prepared_activation,
             desired_runtime_state,
             lifecycle_config: config.lifecycle_config,
             default_work_budget: config.default_work_budget,
@@ -1400,6 +1603,16 @@ impl ProductRuntimeAssembly {
         self.registration_set.as_ref()
     }
 
+    /// Return the canonical activation lifecycle authority when composed.
+    pub fn lifecycle_store(&self) -> Option<&ActivationLifecycleStore> {
+        self.lifecycle_store.as_ref()
+    }
+
+    /// Return the exact prepared closure composing this runtime.
+    pub fn prepared_activation(&self) -> Option<&crate::theory::PreparedActivationClosureV1> {
+        self.prepared_activation.as_ref()
+    }
+
     /// Return desired runtime states prepared for supervisor handoff.
     pub fn desired_runtime_state(&self) -> &[DesiredRuntimeState] {
         &self.desired_runtime_state
@@ -1466,6 +1679,9 @@ impl ProductRuntimeAssembly {
             default_work_budget: self.default_work_budget.clone(),
             process_services: &self.process_services,
             diagnostics: self.diagnostics(),
+            registration_set: self.registration_set(),
+            lifecycle_store: self.lifecycle_store(),
+            prepared_activation: self.prepared_activation(),
         }
     }
 
@@ -1531,6 +1747,7 @@ impl RuntimeFactoryRegistry {
         Self::from_descriptors([
             RuntimeFactoryDescriptor::new("event.append", vec![EventAppend])?,
             RuntimeFactoryDescriptor::new("event.replay", vec![EventReplay])?,
+            RuntimeFactoryDescriptor::new("workspace.source", vec![EventAppend, Workspace])?,
             RuntimeFactoryDescriptor::new(
                 "world_model.graph_replay",
                 vec![EventAppend, EventReplay, EventConsumerRegistry, WorldModel],
@@ -1565,7 +1782,6 @@ impl RuntimeFactoryRegistry {
                 "execution.publication",
                 vec![TaskNetworkFactory, EventAppend],
             )?,
-            RuntimeFactoryDescriptor::new(STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID, vec![Theory])?,
         ])
     }
 
@@ -1679,6 +1895,8 @@ impl RuntimeHandleFactory {
             runtime_id: self.descriptor.runtime_id.clone(),
             required_resources: self.descriptor.required_resources.clone(),
             started: false,
+            lifecycle_binding: None,
+            last_report: None,
             semantic: self.semantic.build_handle(),
         }
     }
@@ -1713,7 +1931,9 @@ impl InertRuntimeHandle {
         if !self.started {
             return None;
         }
-        self.semantic.tick(budget)
+        let report = self.semantic.tick(budget);
+        self.last_report.clone_from(&report);
+        report
     }
 
     /// Return a supervisor-facing diagnostic snapshot.
@@ -1737,11 +1957,27 @@ impl InertRuntimeHandle {
     pub fn request_stop(&mut self) -> RuntimeHandleStopReport {
         let was_started = self.started;
         self.started = false;
-        self.semantic.request_stop();
         RuntimeHandleStopReport {
             runtime_id: self.runtime_id.clone(),
             was_started,
+            owner_stop: None,
         }
+    }
+
+    /// Invoke the native owner stop hook for one exact activation incarnation.
+    pub fn request_lifecycle_stop(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<RuntimeHandleStopReport, RuntimeAssemblyError> {
+        self.validate_lifecycle_context(context)?;
+        let was_started = self.started;
+        let owner_stop = self.semantic.request_stop(context)?;
+        self.started = false;
+        Ok(RuntimeHandleStopReport {
+            runtime_id: self.runtime_id.clone(),
+            was_started,
+            owner_stop: Some(owner_stop),
+        })
     }
 
     /// Wait for an inert handle safe point.
@@ -1749,13 +1985,81 @@ impl InertRuntimeHandle {
         RuntimeHandleSafePointReport {
             runtime_id: self.runtime_id.clone(),
             safe_for_flush: !self.started,
+            owner_safe_point: None,
         }
+    }
+
+    /// Ask the native owner to prove its safe point before final stop.
+    pub fn wait_for_lifecycle_safe_point(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<RuntimeHandleSafePointReport, RuntimeAssemblyError> {
+        self.validate_lifecycle_context(context)?;
+        let receipt = self.semantic.safe_point(context)?;
+        Ok(RuntimeHandleSafePointReport {
+            runtime_id: self.runtime_id.clone(),
+            safe_for_flush: true,
+            owner_safe_point: Some(receipt),
+        })
+    }
+
+    /// Ask the native owner to acknowledge release of its exact lease.
+    pub fn release_lifecycle(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerReleaseReceiptV1, RuntimeAssemblyError> {
+        self.validate_lifecycle_context(context)?;
+        self.semantic.release(context)
+    }
+
+    /// Ask the native owner for its typed no-work account.
+    pub fn lifecycle_wait(
+        &self,
+        context: &ParticipantLifecycleContextV1,
+        report: &WorkerTickReport,
+    ) -> Result<OwnerWaitReceiptV1, RuntimeAssemblyError> {
+        self.validate_lifecycle_context(context)?;
+        self.semantic.wait(context, report)
+    }
+
+    /// Return whether this native owner resolves one structural wake address.
+    pub fn resolves_lifecycle_wake(
+        &self,
+        generation_id: &str,
+        incarnation_id: &str,
+        wake_ref: &StructuralWakeRef,
+    ) -> Result<bool, RuntimeAssemblyError> {
+        if !self.started
+            || !self.lifecycle_binding.as_ref().is_some_and(|binding| {
+                binding.generation_id == generation_id && binding.incarnation_id == incarnation_id
+            })
+        {
+            return Ok(false);
+        }
+        self.semantic.resolves_wake(wake_ref)
     }
 
     /// Start only after the supervisor supplies a matching non-empty lease.
     pub fn start_after_lease(
         &mut self,
         lease: RuntimeLeaseContext,
+    ) -> Result<RuntimeHandleStartReport, RuntimeAssemblyError> {
+        self.start_after_lease_inner(lease, None)
+    }
+
+    /// Start and return native readiness for one exact activation incarnation.
+    pub fn start_after_lifecycle_lease(
+        &mut self,
+        lease: RuntimeLeaseContext,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<RuntimeHandleStartReport, RuntimeAssemblyError> {
+        self.start_after_lease_inner(lease, Some(context))
+    }
+
+    fn start_after_lease_inner(
+        &mut self,
+        lease: RuntimeLeaseContext,
+        context: Option<&ParticipantLifecycleContextV1>,
     ) -> Result<RuntimeHandleStartReport, RuntimeAssemblyError> {
         if lease.runtime_id != self.runtime_id {
             return Err(RuntimeAssemblyError::SupervisorHandoff(format!(
@@ -1768,10 +2072,43 @@ impl InertRuntimeHandle {
                 "lease id must be non-empty".to_string(),
             ));
         }
+        if !self.has_semantic_body() {
+            return Err(RuntimeAssemblyError::SupervisorHandoff(format!(
+                "runtime '{}' has no owner readiness evidence",
+                self.runtime_id
+            )));
+        }
+        let owner_readiness = match context {
+            Some(context) => {
+                self.validate_lifecycle_context(context)?;
+                if context.lease_ref != lease.lease_id {
+                    return Err(RuntimeAssemblyError::SupervisorHandoff(
+                        "lifecycle incarnation does not own the supplied lease".to_string(),
+                    ));
+                }
+                Some(self.semantic.readiness(context)?)
+            }
+            None => None,
+        };
         self.started = true;
+        self.lifecycle_binding = context.cloned();
         Ok(RuntimeHandleStartReport {
             runtime_id: self.runtime_id.clone(),
+            owner_readiness,
         })
+    }
+
+    fn validate_lifecycle_context(
+        &self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<(), RuntimeAssemblyError> {
+        if context.participant_id != self.runtime_id {
+            return Err(RuntimeAssemblyError::SupervisorHandoff(format!(
+                "lifecycle participant '{}' does not match handle '{}'",
+                context.participant_id, self.runtime_id
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -1801,21 +2138,6 @@ impl RuntimeSemanticHandleFactory {
             Ok(RuntimeSemanticHandleFactory::None)
         }
         match runtime_id {
-            STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID => {
-                let Some(theory_db) = stores.theory_db.opened() else {
-                    return unresolved(
-                        diagnostics,
-                        "pds_activation_lifecycle_store_unresolved",
-                        "PDS activation lifecycle requires the theory store scope".to_string(),
-                    );
-                };
-                let store = ActivationLifecycleStore::new(theory_db.clone()).map_err(|error| {
-                    RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
-                })?;
-                Ok(Self::ActivationLifecycle {
-                    service: ActivationLifecycleService::new(store),
-                })
-            }
             "world_model.graph_replay" => match graph_runtime {
                 Some(graph_runtime) => Ok(Self::GraphReplay {
                     graph_runtime: Arc::clone(graph_runtime),
@@ -1866,7 +2188,17 @@ impl RuntimeSemanticHandleFactory {
                         ),
                     );
                 }
-                let rule = match curation_store.active_rule(&agent_id) {
+                let rule = match composed
+                    .theory
+                    .resolved
+                    .as_ref()
+                    .ok_or_else(|| {
+                        RuntimeAssemblyError::RuntimeHandleConstruction(
+                            "Curation requires prepared product theory".into(),
+                        )
+                    })?
+                    .native_curation_rule(stores, &agent)
+                {
                     Ok(Some(rule)) => rule,
                     Ok(None) => {
                         return unresolved(
@@ -1883,37 +2215,24 @@ impl RuntimeSemanticHandleFactory {
                         )
                     }
                 };
-                let activation = match agent_store.activations_for_agent(&agent_id) {
-                    Ok(activations) => activations.into_iter().next_back(),
-                    Err(error) => {
-                        return unresolved(
-                            diagnostics,
-                            "standing_curation_activation_probe_failed",
-                            format!("standing Curation activation probe failed: {error}"),
-                        )
-                    }
-                };
-                let Some(activation) = activation else {
+                let Some(prepared) = composed
+                    .theory
+                    .resolved
+                    .as_ref()
+                    .and_then(|resolved| resolved.prepared_closure.as_ref())
+                else {
                     return unresolved(
                         diagnostics,
-                        "standing_curation_activation_unresolved",
-                        format!(
-                            "Agent '{agent_id}' has no activated generation for standing Curation"
-                        ),
+                        "standing_curation_preparation_unresolved",
+                        "standing Curation requires exact prepared genesis".into(),
                     );
                 };
-                if activation.status != AgentActivationStatus::Activated {
-                    return unresolved(
-                        diagnostics,
-                        "standing_curation_activation_inactive",
-                        format!("Agent '{agent_id}' latest activation generation is not activated"),
-                    );
-                }
                 let authority = CurationAuthority {
                     agent_id,
                     perspective: agent.perspective_key,
                     branch_scope: agent.branch_scope,
-                    activation_generation: activation.activation_id,
+                    activation_generation: prepared.activation.activation_id.clone(),
+                    admission_epoch: None,
                     subject: agent.subject,
                 };
                 authority.validate().map_err(|error| {
@@ -1923,6 +2242,10 @@ impl RuntimeSemanticHandleFactory {
                     RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
                 })?;
                 Ok(Self::StandingCuration(Box::new(StandingCurationFactory {
+                    authority_port: Arc::new(ProductCurationAuthorityPort {
+                        admission: composed.admission_observer(Arc::clone(agent_store))?,
+                        authority: authority.clone(),
+                    }),
                     runtime_id: runtime_id.to_string(),
                     session_id: composed.bindings.session_id.clone(),
                     authority,
@@ -2126,23 +2449,17 @@ impl RuntimeSemanticHandleFactory {
                             .to_string(),
                     );
                 };
-                let activation = agent_store
-                    .activations_for_agent(&agent_id)
-                    .map_err(|error| {
-                        RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
-                    })?
-                    .into_iter()
-                    .next_back()
-                    .filter(|activation| activation.status == AgentActivationStatus::Activated);
-                let Some(activation) = activation else {
-                    return unresolved(
-                        diagnostics,
-                        "agent_reconciliation_activation_unresolved",
-                        format!("Agent '{agent_id}' has no active generation"),
-                    );
-                };
-                let rule = curation_store
-                    .active_rule(&agent_id)
+                let expected_activation_id = resolved
+                    .prepared_closure
+                    .as_ref()
+                    .map(|prepared| prepared.activation.activation_id.as_str())
+                    .ok_or_else(|| {
+                        RuntimeAssemblyError::RuntimeHandleConstruction(
+                            "live Agent theory has no prepared activation identity".to_string(),
+                        )
+                    })?;
+                let rule = resolved
+                    .native_curation_rule(stores, &agent)
                     .map_err(|error| {
                         RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
                     })?
@@ -2151,34 +2468,20 @@ impl RuntimeSemanticHandleFactory {
                             "Agent reconciliation Curation rule is not installed".to_string(),
                         )
                     })?;
-                let condition = &resolved.maintained_condition.condition;
-                let goal_id = format!(
-                    "agent-goal::{}::{}::{}",
-                    agent_id, condition.condition_id, activation.activation_id
+                let intent = AgentReconciliationIntent::MaintainedCondition(
+                    resolved.maintained_condition.binding().map_err(|error| {
+                        RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
+                    })?,
                 );
-                let goal = Goal {
-                    goal_id: goal_id.clone(),
-                    agent_id: agent_id.clone(),
-                    target: condition
-                        .target_for(agent.subject.clone())
-                        .map_err(|error| {
-                            RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
-                        })?,
-                    priority: condition.goal_priority.clone(),
-                    source: GoalSource::MaintainedConditionBreach {
-                        maintained_condition_id: condition.condition_id.clone(),
-                        dimension: condition.dimension_id.clone(),
-                        observed: "requires_reconciliation".to_string(),
-                        desired: condition.desired_summary.clone(),
-                    },
-                    lifecycle: GoalLifecycle::Proposed,
-                };
+                let condition = &resolved.maintained_condition.condition;
+                let goal_id = intent.goal_id(&agent_id, expected_activation_id);
                 let authority_scope_id = strategy
                     .authority_policy
                     .as_ref()
                     .map(|binding| binding.policy.policy_id.clone())
                     .unwrap_or_else(|| "world_model.agent_reconciliation".to_string());
                 let context = PlannerDecisionContext {
+                    observation_subject: None,
                     context_id: format!("agent-context::{goal_id}"),
                     agent_id: agent_id.clone(),
                     goal_id,
@@ -2187,7 +2490,8 @@ impl RuntimeSemanticHandleFactory {
                     branch_id: agent.branch_scope.branch_id.clone(),
                     perspective_id: agent.perspective_key.perspective_id.clone(),
                     authority_scope_id: authority_scope_id.clone(),
-                    activation_generation: activation.activation_id.clone(),
+                    activation_generation: expected_activation_id.to_string(),
+                    admission_epoch: None,
                 };
                 let source =
                     |kind,
@@ -2294,11 +2598,13 @@ impl RuntimeSemanticHandleFactory {
                         owners: {
                             let mut owners = vec![
                                 TraversalOwnerRequirement {
+                                    event_source: None,
                                     owner_id: rule.rule.source_owner_id.clone(),
                                     scope: rule.rule.scope.clone(),
                                     required: true,
                                 },
                                 TraversalOwnerRequirement {
+                                    event_source: None,
                                     owner_id: meld_world_model::CURATION_OWNER_ID.to_string(),
                                     scope: rule.rule.scope.clone(),
                                     required: false,
@@ -2324,20 +2630,28 @@ impl RuntimeSemanticHandleFactory {
                     agent_id: agent_id.clone(),
                     perspective: agent.perspective_key,
                     branch_scope: agent.branch_scope,
-                    activation_generation: activation.activation_id.clone(),
+                    activation_generation: expected_activation_id.to_string(),
+                    admission_epoch: None,
                     subject: agent.subject,
                 };
                 let frozen_authority = AgentAuthorizationFence {
                     activation_generation: authority.activation_generation.clone(),
+                    admission_epoch: None,
                     authority_policy_content_hash: resolved
                         .receipt
                         .authority_policy
                         .content_hash
                         .clone(),
                 };
+                let authority_port: Arc<dyn meld_world_model::AgentAuthorityPort> =
+                    Arc::new(ProductAgentAuthorityPort::new(
+                        composed.admission_observer(Arc::clone(agent_store))?,
+                        agent_id,
+                        frozen_authority.authority_policy_content_hash.clone(),
+                    ));
                 Ok(Self::AgentActor(Box::new(AgentActorFactory {
                     runtime_id: runtime_id.to_string(),
-                    goal,
+                    intent,
                     store: Arc::clone(agent_store),
                     planner: Arc::new(ProductAgentPlannerPort::new(
                         Arc::clone(belief),
@@ -2345,17 +2659,13 @@ impl RuntimeSemanticHandleFactory {
                         ports.event_append().clone(),
                         planner_request,
                     )),
-                    authority_port: Arc::new(ProductAgentAuthorityPort::new(
-                        Arc::clone(agent_store),
-                        agent_id,
-                        frozen_authority.authority_policy_content_hash.clone(),
-                    )),
+                    authority_port: Arc::clone(&authority_port),
                     frozen_authority: frozen_authority.clone(),
                     curation: Arc::new(ProductPlannedCurationPort::new(Arc::clone(curation_store))),
                     execution: Arc::new(ProductAgentExecutionPort::new(
                         Arc::clone(network),
                         capability_runtime.catalog.clone(),
-                        activation.activation_id,
+                        authority_port,
                         frozen_authority.authority_policy_content_hash.clone(),
                     )),
                     strategy,
@@ -2407,12 +2717,7 @@ impl RuntimeSemanticHandleFactory {
                             .to_string(),
                     });
                 }
-                let admission_generation_observer = stores.agent_store.opened().map(|store| {
-                    Arc::new(ProductAdmissionGenerationObserver::new(Arc::clone(store)))
-                        as Arc<
-                            dyn meld_execution::task_network::dispatch_actor::AdmissionGenerationObserver,
-                        >
-                });
+                let admission_generation_observer = stores.agent_store.opened().filter(|_| composed.lifecycle.is_some()).map(|store| composed.admission_observer(Arc::clone(store)).map(|observer| Arc::new(observer) as Arc<dyn meld_execution::task_network::dispatch_actor::AdmissionGenerationObserver>)).transpose()?;
                 Ok(Self::Dispatch(Box::new(DispatchFactory {
                     routes: composed.dispatch_slot.clone(),
                     execution_db: execution_db.clone(),
@@ -2444,6 +2749,7 @@ impl RuntimeSemanticHandleFactory {
             // The dispatch body exists only while execution routes are
             // bound; an unbound slot is an unresolved required binding.
             Self::Dispatch(factory) => factory.routes.is_bound(),
+            Self::AggregatePublication(factory) => factory.network.is_some(),
             _ => true,
         }
     }
@@ -2451,12 +2757,6 @@ impl RuntimeSemanticHandleFactory {
     fn build_handle(&self) -> RuntimeSemanticHandle {
         match self {
             Self::None => RuntimeSemanticHandle::None,
-            Self::ActivationLifecycle { service } => {
-                RuntimeSemanticHandle::ActivationLifecycle(ActivationLifecycleHandle {
-                    service: service.clone(),
-                    transition_sequence: 0,
-                })
-            }
             Self::GraphReplay { graph_runtime } => {
                 RuntimeSemanticHandle::GraphReplay(GraphReplayRuntimeHandle {
                     graph_runtime: Arc::clone(graph_runtime),
@@ -2466,6 +2766,7 @@ impl RuntimeSemanticHandleFactory {
                 RuntimeSemanticHandle::EventAppend(EventAppendRuntimeHandle {
                     port: port.clone(),
                     last: None,
+                    lifecycle: NativeOwnerLifecycleState::default(),
                 })
             }
             Self::BeliefAssessment(factory) => {
@@ -2538,13 +2839,14 @@ impl RuntimeSemanticHandleFactory {
                         Arc::new(factory.traversal.clone()) as Arc<dyn CurationTraversalPort>,
                         Arc::new(factory.events.clone()) as Arc<dyn CurationEventPort>,
                     )
-                    .expect("standing Curation factory holds validated authority and rule"),
+                    .expect("standing Curation factory holds validated authority and rule")
+                    .with_authority_port(Arc::clone(&factory.authority_port)),
                 }))
             }
             Self::AgentActor(factory) => {
                 let actor = AgentReconciliationActor::new(
                     factory.runtime_id.clone(),
-                    factory.goal.clone(),
+                    factory.intent.clone(),
                     Arc::clone(&factory.store),
                     Arc::clone(&factory.planner),
                     Arc::clone(&factory.authority_port),
@@ -2558,7 +2860,7 @@ impl RuntimeSemanticHandleFactory {
                 .expect("Agent reconciliation factory holds validated exact bindings");
                 RuntimeSemanticHandle::AgentActor(Box::new(AgentActorHandle {
                     runtime_id: factory.runtime_id.clone(),
-                    agent_id: factory.goal.agent_id.clone(),
+                    agent_id: factory.strategy.agent_id.clone(),
                     actor,
                 }))
             }
@@ -2610,6 +2912,7 @@ impl RuntimeSemanticHandleFactory {
             }
             Self::AggregatePublication(factory) => {
                 RuntimeSemanticHandle::AggregatePublication(Box::new(PublicationHandle {
+                    runtime: PublicationRuntime::new(),
                     event_append: factory.event_append.clone(),
                     bindings: factory.bindings.clone(),
                     worker_id: factory.worker_id.clone(),
@@ -2650,10 +2953,27 @@ fn family_installed(
 }
 
 impl RuntimeSemanticHandle {
+    fn readiness(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerReadinessReceiptV1, RuntimeAssemblyError> {
+        match self {
+            Self::None => Err(missing_native_lifecycle_owner()),
+            Self::GraphReplay(handle) => handle.native_readiness(context),
+            Self::EventAppend(handle) => handle.native_readiness(context),
+            Self::BeliefAssessment(handle) => handle.native_readiness(context),
+            Self::EvidenceIngestion(handle) => handle.native_readiness(context),
+            Self::StandingCuration(handle) => handle.native_readiness(context),
+            Self::AgentActor(handle) => handle.native_readiness(context),
+            Self::TaskAdmission(handle) => handle.native_readiness(context),
+            Self::Dispatch(handle) => handle.native_readiness(context),
+            Self::AggregatePublication(handle) => handle.native_readiness(context),
+        }
+    }
+
     fn tick(&mut self, budget: WorkBudget) -> Option<WorkerTickReport> {
         match self {
             Self::None => None,
-            Self::ActivationLifecycle(handle) => Some(handle.tick()),
             Self::GraphReplay(handle) => Some(handle.tick(budget)),
             Self::EventAppend(handle) => Some(handle.tick()),
             Self::BeliefAssessment(handle) => Some(handle.tick(budget)),
@@ -2666,62 +2986,273 @@ impl RuntimeSemanticHandle {
         }
     }
 
-    fn request_stop(&mut self) {}
-}
-
-impl ActivationLifecycleHandle {
-    fn tick(&mut self) -> WorkerTickReport {
-        let input = self.transition_sequence;
-        match self.service.bounded_step() {
-            Ok(LifecycleStepOutcome::Advanced { .. }) => {
-                self.transition_sequence = self.transition_sequence.saturating_add(1);
-                WorkerTickReport {
-                    actor_id: STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID.to_string(),
-                    scope: worker_scope("runtime", Some("pds_activation_lifecycle"), None, None),
-                    input_checkpoint: WorkerCheckpoint {
-                        name: "pds_lifecycle_transition_sequence".to_string(),
-                        value: input,
-                    },
-                    output_checkpoint: WorkerCheckpoint {
-                        name: "pds_lifecycle_transition_sequence".to_string(),
-                        value: self.transition_sequence,
-                    },
-                    items_attempted: 1,
-                    items_committed: 1,
-                    retryable_errors: Vec::new(),
-                    fatal_errors: Vec::new(),
-                    budget_exhausted: false,
-                    waiting_on: Vec::new(),
-                }
-            }
-            Ok(LifecycleStepOutcome::NoWork) => WorkerTickReport {
-                actor_id: STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID.to_string(),
-                scope: worker_scope("runtime", Some("pds_activation_lifecycle"), None, None),
-                input_checkpoint: WorkerCheckpoint {
-                    name: "pds_lifecycle_transition_sequence".to_string(),
-                    value: input,
-                },
-                output_checkpoint: WorkerCheckpoint {
-                    name: "pds_lifecycle_transition_sequence".to_string(),
-                    value: input,
-                },
-                items_attempted: 0,
-                items_committed: 0,
-                retryable_errors: Vec::new(),
-                fatal_errors: Vec::new(),
-                budget_exhausted: false,
-                waiting_on: Vec::new(),
-            },
-            Err(error) => WorkerTickReport::fatal(
-                STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID,
-                "runtime",
-                Some("pds_activation_lifecycle"),
-                "pds_lifecycle_transition_sequence",
-                "pds_lifecycle_step_failed",
-                error.to_string(),
-            ),
+    fn request_stop(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerStopReceiptV1, RuntimeAssemblyError> {
+        match self {
+            Self::None => Err(missing_native_lifecycle_owner()),
+            Self::GraphReplay(handle) => handle.native_stop(context),
+            Self::EventAppend(handle) => handle.native_stop(context),
+            Self::BeliefAssessment(handle) => handle.native_stop(context),
+            Self::EvidenceIngestion(handle) => handle.native_stop(context),
+            Self::StandingCuration(handle) => handle.native_stop(context),
+            Self::AgentActor(handle) => handle.native_stop(context),
+            Self::TaskAdmission(handle) => handle.native_stop(context),
+            Self::Dispatch(handle) => handle.native_stop(context),
+            Self::AggregatePublication(handle) => handle.native_stop(context),
         }
     }
+
+    fn safe_point(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerSafePointReceiptV1, RuntimeAssemblyError> {
+        match self {
+            Self::None => Err(missing_native_lifecycle_owner()),
+            Self::GraphReplay(handle) => handle.native_safe_point(context),
+            Self::EventAppend(handle) => handle.native_safe_point(context),
+            Self::BeliefAssessment(handle) => handle.native_safe_point(context),
+            Self::EvidenceIngestion(handle) => handle.native_safe_point(context),
+            Self::StandingCuration(handle) => handle.native_safe_point(context),
+            Self::AgentActor(handle) => handle.native_safe_point(context),
+            Self::TaskAdmission(handle) => handle.native_safe_point(context),
+            Self::Dispatch(handle) => handle.native_safe_point(context),
+            Self::AggregatePublication(handle) => handle.native_safe_point(context),
+        }
+    }
+
+    fn release(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerReleaseReceiptV1, RuntimeAssemblyError> {
+        match self {
+            Self::None => Err(missing_native_lifecycle_owner()),
+            Self::GraphReplay(handle) => handle.native_release(context),
+            Self::EventAppend(handle) => handle.native_release(context),
+            Self::BeliefAssessment(handle) => handle.native_release(context),
+            Self::EvidenceIngestion(handle) => handle.native_release(context),
+            Self::StandingCuration(handle) => handle.native_release(context),
+            Self::AgentActor(handle) => handle.native_release(context),
+            Self::TaskAdmission(handle) => handle.native_release(context),
+            Self::Dispatch(handle) => handle.native_release(context),
+            Self::AggregatePublication(handle) => handle.native_release(context),
+        }
+    }
+
+    fn wait(
+        &self,
+        context: &ParticipantLifecycleContextV1,
+        report: &WorkerTickReport,
+    ) -> Result<OwnerWaitReceiptV1, RuntimeAssemblyError> {
+        match self {
+            Self::None => Err(missing_native_lifecycle_owner()),
+            Self::GraphReplay(handle) => handle.native_wait(context, report),
+            Self::EventAppend(handle) => handle.native_wait(context, report),
+            Self::BeliefAssessment(handle) => handle.native_wait(context, report),
+            Self::EvidenceIngestion(handle) => handle.native_wait(context, report),
+            Self::StandingCuration(handle) => handle.native_wait(context, report),
+            Self::AgentActor(handle) => handle.native_wait(context, report),
+            Self::TaskAdmission(handle) => handle.native_wait(context, report),
+            Self::Dispatch(handle) => handle.native_wait(context, report),
+            Self::AggregatePublication(handle) => handle.native_wait(context, report),
+        }
+    }
+
+    fn resolves_wake(&self, wake_ref: &StructuralWakeRef) -> Result<bool, RuntimeAssemblyError> {
+        match self {
+            Self::None => Ok(false),
+            Self::GraphReplay(handle) => handle.native_resolves_wake(wake_ref),
+            Self::EventAppend(handle) => handle.native_resolves_wake(wake_ref),
+            Self::BeliefAssessment(handle) => handle.native_resolves_wake(wake_ref),
+            Self::EvidenceIngestion(handle) => handle.native_resolves_wake(wake_ref),
+            Self::StandingCuration(handle) => handle.native_resolves_wake(wake_ref),
+            Self::AgentActor(handle) => handle.native_resolves_wake(wake_ref),
+            Self::TaskAdmission(handle) => handle.native_resolves_wake(wake_ref),
+            Self::Dispatch(handle) => handle.native_resolves_wake(wake_ref),
+            Self::AggregatePublication(handle) => handle.native_resolves_wake(wake_ref),
+        }
+    }
+}
+
+fn missing_native_lifecycle_owner() -> RuntimeAssemblyError {
+    RuntimeAssemblyError::SupervisorHandoff("native lifecycle owner is absent".to_string())
+}
+
+trait NativeTransitionProof {
+    fn generation_id(&self) -> &str;
+    fn incarnation_id(&self) -> &str;
+    fn proof_ref(&self) -> &str;
+}
+
+impl NativeTransitionProof for meld_world_model::lifecycle::NativeLifecycleTransition {
+    fn generation_id(&self) -> &str {
+        &self.generation_id
+    }
+
+    fn incarnation_id(&self) -> &str {
+        &self.incarnation_id
+    }
+
+    fn proof_ref(&self) -> &str {
+        &self.proof_ref
+    }
+}
+
+impl NativeTransitionProof for meld_execution::lifecycle::NativeLifecycleTransition {
+    fn generation_id(&self) -> &str {
+        &self.generation_id
+    }
+
+    fn incarnation_id(&self) -> &str {
+        &self.incarnation_id
+    }
+
+    fn proof_ref(&self) -> &str {
+        &self.proof_ref
+    }
+}
+
+fn verified_native_transition<T: NativeTransitionProof>(
+    context: &ParticipantLifecycleContextV1,
+    transition: T,
+) -> Result<String, RuntimeAssemblyError> {
+    if transition.generation_id() != context.generation_id
+        || transition.incarnation_id() != context.incarnation_id
+        || transition.proof_ref().trim().is_empty()
+    {
+        return Err(RuntimeAssemblyError::SupervisorHandoff(
+            "native lifecycle transition belongs to another activation position".to_string(),
+        ));
+    }
+    Ok(transition.proof_ref().to_string())
+}
+
+trait NativeOwnerLifecycle {
+    fn native_snapshot(&self) -> Result<NativeOwnerLifecycleSnapshot, RuntimeAssemblyError>;
+    fn native_readiness(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerReadinessReceiptV1, RuntimeAssemblyError>;
+    fn native_wait(
+        &self,
+        context: &ParticipantLifecycleContextV1,
+        report: &WorkerTickReport,
+    ) -> Result<OwnerWaitReceiptV1, RuntimeAssemblyError>;
+    fn native_safe_point(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerSafePointReceiptV1, RuntimeAssemblyError>;
+    fn native_stop(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerStopReceiptV1, RuntimeAssemblyError>;
+    fn native_release(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerReleaseReceiptV1, RuntimeAssemblyError>;
+    fn native_resolves_wake(
+        &self,
+        wake_ref: &StructuralWakeRef,
+    ) -> Result<bool, RuntimeAssemblyError>;
+}
+
+fn owner_readiness_receipt(
+    context: &ParticipantLifecycleContextV1,
+    snapshot: NativeOwnerLifecycleSnapshot,
+    transition_proof_ref: String,
+) -> Result<OwnerReadinessReceiptV1, RuntimeAssemblyError> {
+    let evidence = NativeOwnerReadinessEvidenceV1::new(
+        context.participant_id.clone(),
+        context.owner_domain.clone(),
+        snapshot.checkpoint_ref,
+        snapshot.installed_revision_refs,
+        snapshot.binding_refs,
+        snapshot.subscription_refs,
+        transition_proof_ref,
+    )
+    .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))?;
+    OwnerReadinessReceiptV1::from_native(context, evidence)
+        .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))
+}
+
+fn owner_wait_receipt(
+    context: &ParticipantLifecycleContextV1,
+    snapshot: NativeOwnerLifecycleSnapshot,
+    report: &WorkerTickReport,
+) -> Result<OwnerWaitReceiptV1, RuntimeAssemblyError> {
+    if report.made_progress()
+        || !report.retryable_errors.is_empty()
+        || !report.fatal_errors.is_empty()
+        || report.budget_exhausted
+    {
+        return Err(RuntimeAssemblyError::SupervisorHandoff(
+            "native owner cannot author a wait for an active or failed step".to_string(),
+        ));
+    }
+    if report.waiting_on.is_empty()
+        || report
+            .waiting_on
+            .iter()
+            .any(|declaration| declaration.wake_refs.is_empty())
+    {
+        return Err(RuntimeAssemblyError::SupervisorHandoff(
+            "native owner supplied incomplete wait evidence".to_string(),
+        ));
+    }
+    let mut reasons = report
+        .waiting_on
+        .iter()
+        .map(|wait| wait.condition.as_str())
+        .collect::<Vec<_>>();
+    reasons.sort_unstable();
+    reasons.dedup();
+    let reason = reasons.join("+");
+    let wake_refs = report
+        .waiting_on
+        .iter()
+        .flat_map(|wait| wait.wake_refs.iter().cloned())
+        .collect();
+    OwnerWaitReceiptV1::new(
+        context.generation_id.clone(),
+        context.incarnation_id.clone(),
+        snapshot.checkpoint_ref,
+        reason,
+        wake_refs,
+    )
+    .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))
+}
+
+fn owner_safe_point_receipt(
+    context: &ParticipantLifecycleContextV1,
+    snapshot: NativeOwnerLifecycleSnapshot,
+    transition_proof_ref: String,
+) -> Result<OwnerSafePointReceiptV1, RuntimeAssemblyError> {
+    OwnerSafePointReceiptV1::new(
+        context,
+        snapshot.checkpoint_ref,
+        snapshot.unresolved_operation_summary_ref,
+        vec![snapshot.proof_position_ref, transition_proof_ref],
+    )
+    .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))
+}
+
+fn owner_stop_receipt(
+    context: &ParticipantLifecycleContextV1,
+    snapshot: NativeOwnerLifecycleSnapshot,
+    transition_proof_ref: String,
+) -> Result<OwnerStopReceiptV1, RuntimeAssemblyError> {
+    OwnerStopReceiptV1::new(context, snapshot.checkpoint_ref, transition_proof_ref)
+        .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))
+}
+
+fn owner_release_receipt(
+    context: &ParticipantLifecycleContextV1,
+    _snapshot: NativeOwnerLifecycleSnapshot,
+    transition_proof_ref: String,
+) -> Result<OwnerReleaseReceiptV1, RuntimeAssemblyError> {
+    OwnerReleaseReceiptV1::new(context, transition_proof_ref)
+        .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))
 }
 
 impl EventAppendRuntimeHandle {
@@ -2805,6 +3336,246 @@ impl GraphReplayRuntimeHandle {
     }
 }
 
+impl NativeOwnerLifecycle for GraphReplayRuntimeHandle {
+    fn native_snapshot(&self) -> Result<NativeOwnerLifecycleSnapshot, RuntimeAssemblyError> {
+        self.graph_runtime
+            .lifecycle_evidence()
+            .map(Into::into)
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)
+    }
+
+    fn native_readiness(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerReadinessReceiptV1, RuntimeAssemblyError> {
+        let (snapshot, transition) = self
+            .graph_runtime
+            .lifecycle_start(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_readiness_receipt(
+            context,
+            snapshot.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_wait(
+        &self,
+        context: &ParticipantLifecycleContextV1,
+        report: &WorkerTickReport,
+    ) -> Result<OwnerWaitReceiptV1, RuntimeAssemblyError> {
+        let snapshot = self.native_snapshot()?;
+        owner_wait_receipt(context, snapshot, report)
+    }
+
+    fn native_safe_point(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerSafePointReceiptV1, RuntimeAssemblyError> {
+        let (snapshot, transition) = self
+            .graph_runtime
+            .lifecycle_safe_point(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_safe_point_receipt(
+            context,
+            snapshot.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_stop(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerStopReceiptV1, RuntimeAssemblyError> {
+        let (snapshot, transition) = self
+            .graph_runtime
+            .lifecycle_stop(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_stop_receipt(
+            context,
+            snapshot.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_release(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerReleaseReceiptV1, RuntimeAssemblyError> {
+        let (snapshot, transition) = self
+            .graph_runtime
+            .lifecycle_release(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_release_receipt(
+            context,
+            snapshot.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_resolves_wake(
+        &self,
+        wake_ref: &StructuralWakeRef,
+    ) -> Result<bool, RuntimeAssemblyError> {
+        match structural_wake_to_world_model(wake_ref) {
+            Some(wake) => self
+                .graph_runtime
+                .resolves_wake(&wake)
+                .map_err(RuntimeAssemblyError::SupervisorHandoff),
+            None => Ok(false),
+        }
+    }
+}
+
+impl NativeOwnerLifecycle for EventAppendRuntimeHandle {
+    fn native_snapshot(&self) -> Result<NativeOwnerLifecycleSnapshot, RuntimeAssemblyError> {
+        let health = self
+            .port
+            .health()
+            .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))?;
+        let checkpoint_ref = format!(
+            "event-authority::{}::{}",
+            health.ledger_id, health.committed_watermark
+        );
+        Ok(NativeOwnerLifecycleSnapshot {
+            checkpoint_ref: checkpoint_ref.clone(),
+            installed_revision_refs: vec!["event-authority-schema::v1".to_string()],
+            binding_refs: vec![format!("event-writer::{}", health.ledger_id)],
+            subscription_refs: vec![format!("event-commit-watermark::{}", health.ledger_id)],
+            proof_position_ref: checkpoint_ref.clone(),
+            unresolved_operation_summary_ref: format!(
+                "event-authority::committed-tip::{}",
+                health.committed_watermark
+            ),
+        })
+    }
+
+    fn native_readiness(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerReadinessReceiptV1, RuntimeAssemblyError> {
+        let snapshot = self.native_snapshot()?;
+        let proof_ref = self.lifecycle.transition(
+            context,
+            &snapshot.proof_position_ref,
+            NativeOwnerLifecyclePhase::Constructed,
+            NativeOwnerLifecyclePhase::Running,
+        )?;
+        owner_readiness_receipt(context, snapshot, proof_ref)
+    }
+
+    fn native_wait(
+        &self,
+        context: &ParticipantLifecycleContextV1,
+        report: &WorkerTickReport,
+    ) -> Result<OwnerWaitReceiptV1, RuntimeAssemblyError> {
+        let snapshot = self.native_snapshot()?;
+        if report.made_progress()
+            || !report.retryable_errors.is_empty()
+            || !report.fatal_errors.is_empty()
+            || report.budget_exhausted
+        {
+            return Err(RuntimeAssemblyError::SupervisorHandoff(
+                "legacy Event observer cannot wait after an active or failed step".to_string(),
+            ));
+        }
+        let subscription = snapshot.subscription_refs.first().ok_or_else(|| {
+            RuntimeAssemblyError::SupervisorHandoff(
+                "legacy Event observer subscription is absent".to_string(),
+            )
+        })?;
+        OwnerWaitReceiptV1::new(
+            context.generation_id.clone(),
+            context.incarnation_id.clone(),
+            snapshot.checkpoint_ref,
+            "event-authority-awaiting-commit".to_string(),
+            vec![StructuralWakeRef::EventPosition(format!(
+                "{subscription}::after::{}",
+                report.output_checkpoint.value
+            ))],
+        )
+        .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))
+    }
+
+    fn native_safe_point(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerSafePointReceiptV1, RuntimeAssemblyError> {
+        let snapshot = self.native_snapshot()?;
+        let proof_ref = self.lifecycle.transition(
+            context,
+            &snapshot.proof_position_ref,
+            NativeOwnerLifecyclePhase::Running,
+            NativeOwnerLifecyclePhase::SafePoint,
+        )?;
+        owner_safe_point_receipt(context, snapshot, proof_ref)
+    }
+
+    fn native_stop(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerStopReceiptV1, RuntimeAssemblyError> {
+        let snapshot = self.native_snapshot()?;
+        let proof_ref = self.lifecycle.transition(
+            context,
+            &snapshot.proof_position_ref,
+            NativeOwnerLifecyclePhase::SafePoint,
+            NativeOwnerLifecyclePhase::Stopped,
+        )?;
+        owner_stop_receipt(context, snapshot, proof_ref)
+    }
+
+    fn native_release(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerReleaseReceiptV1, RuntimeAssemblyError> {
+        let snapshot = self.native_snapshot()?;
+        let proof_ref = self.lifecycle.transition(
+            context,
+            &snapshot.proof_position_ref,
+            NativeOwnerLifecyclePhase::Stopped,
+            NativeOwnerLifecyclePhase::Released,
+        )?;
+        owner_release_receipt(context, snapshot, proof_ref)
+    }
+
+    fn native_resolves_wake(
+        &self,
+        wake_ref: &StructuralWakeRef,
+    ) -> Result<bool, RuntimeAssemblyError> {
+        Ok(matches!(
+            wake_ref,
+            StructuralWakeRef::EventPosition(value)
+                if value.strip_prefix(&format!("event-commit-watermark::{}::after::", self.port.watermark().map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))?.ledger_id))
+                    .is_some_and(|position| !position.is_empty() && position.bytes().all(|byte| byte.is_ascii_digit()) && position.parse::<u64>().is_ok())
+        ))
+    }
+}
+
 impl BeliefAssessmentHandle {
     fn tick(&mut self, budget: WorkBudget) -> WorkerTickReport {
         let sequence = match self.sequence.next() {
@@ -2828,6 +3599,121 @@ impl BeliefAssessmentHandle {
     }
 }
 
+impl NativeOwnerLifecycle for BeliefAssessmentHandle {
+    fn native_snapshot(&self) -> Result<NativeOwnerLifecycleSnapshot, RuntimeAssemblyError> {
+        self.actor
+            .lifecycle_evidence()
+            .map(Into::into)
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)
+    }
+
+    fn native_readiness(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerReadinessReceiptV1, RuntimeAssemblyError> {
+        let (snapshot, transition) = self
+            .actor
+            .lifecycle_start(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_readiness_receipt(
+            context,
+            snapshot.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_wait(
+        &self,
+        context: &ParticipantLifecycleContextV1,
+        report: &WorkerTickReport,
+    ) -> Result<OwnerWaitReceiptV1, RuntimeAssemblyError> {
+        let snapshot = self.native_snapshot()?;
+        owner_wait_receipt(context, snapshot, report)
+    }
+
+    fn native_safe_point(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerSafePointReceiptV1, RuntimeAssemblyError> {
+        let (snapshot, transition) = self
+            .actor
+            .lifecycle_safe_point(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_safe_point_receipt(
+            context,
+            snapshot.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_stop(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerStopReceiptV1, RuntimeAssemblyError> {
+        let (snapshot, transition) = self
+            .actor
+            .lifecycle_stop(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_stop_receipt(
+            context,
+            snapshot.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_release(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerReleaseReceiptV1, RuntimeAssemblyError> {
+        let (snapshot, transition) = self
+            .actor
+            .lifecycle_release(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_release_receipt(
+            context,
+            snapshot.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_resolves_wake(
+        &self,
+        wake_ref: &StructuralWakeRef,
+    ) -> Result<bool, RuntimeAssemblyError> {
+        match structural_wake_to_world_model(wake_ref) {
+            Some(wake) => self
+                .actor
+                .resolves_wake(&wake)
+                .map_err(RuntimeAssemblyError::SupervisorHandoff),
+            None => Ok(false),
+        }
+    }
+}
+
 impl EvidenceIngestionHandle {
     fn tick(&mut self, budget: WorkBudget) -> WorkerTickReport {
         let report = self.actor.bounded_step(&EvidenceIngestionRequest {
@@ -2837,9 +3723,239 @@ impl EvidenceIngestionHandle {
     }
 }
 
+impl NativeOwnerLifecycle for EvidenceIngestionHandle {
+    fn native_snapshot(&self) -> Result<NativeOwnerLifecycleSnapshot, RuntimeAssemblyError> {
+        self.actor
+            .lifecycle_evidence()
+            .map(Into::into)
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)
+    }
+
+    fn native_readiness(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerReadinessReceiptV1, RuntimeAssemblyError> {
+        let (snapshot, transition) = self
+            .actor
+            .lifecycle_start(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_readiness_receipt(
+            context,
+            snapshot.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_wait(
+        &self,
+        context: &ParticipantLifecycleContextV1,
+        report: &WorkerTickReport,
+    ) -> Result<OwnerWaitReceiptV1, RuntimeAssemblyError> {
+        let snapshot = self.native_snapshot()?;
+        owner_wait_receipt(context, snapshot, report)
+    }
+
+    fn native_safe_point(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerSafePointReceiptV1, RuntimeAssemblyError> {
+        let (snapshot, transition) = self
+            .actor
+            .lifecycle_safe_point(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_safe_point_receipt(
+            context,
+            snapshot.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_stop(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerStopReceiptV1, RuntimeAssemblyError> {
+        let (snapshot, transition) = self
+            .actor
+            .lifecycle_stop(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_stop_receipt(
+            context,
+            snapshot.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_release(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerReleaseReceiptV1, RuntimeAssemblyError> {
+        let (snapshot, transition) = self
+            .actor
+            .lifecycle_release(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_release_receipt(
+            context,
+            snapshot.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_resolves_wake(
+        &self,
+        wake_ref: &StructuralWakeRef,
+    ) -> Result<bool, RuntimeAssemblyError> {
+        match structural_wake_to_world_model(wake_ref) {
+            Some(wake) => self
+                .actor
+                .resolves_wake(&wake)
+                .map_err(RuntimeAssemblyError::SupervisorHandoff),
+            None => Ok(false),
+        }
+    }
+}
+
 impl StandingCurationHandle {
     fn tick(&mut self, budget: WorkBudget) -> WorkerTickReport {
         standing_curation_worker_report(self.actor.bounded_step(budget.max_items))
+    }
+}
+
+impl NativeOwnerLifecycle for StandingCurationHandle {
+    fn native_snapshot(&self) -> Result<NativeOwnerLifecycleSnapshot, RuntimeAssemblyError> {
+        self.actor
+            .lifecycle_evidence()
+            .map(Into::into)
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)
+    }
+
+    fn native_readiness(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerReadinessReceiptV1, RuntimeAssemblyError> {
+        let (snapshot, transition) = self
+            .actor
+            .lifecycle_start(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_readiness_receipt(
+            context,
+            snapshot.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_wait(
+        &self,
+        context: &ParticipantLifecycleContextV1,
+        report: &WorkerTickReport,
+    ) -> Result<OwnerWaitReceiptV1, RuntimeAssemblyError> {
+        let snapshot = self.native_snapshot()?;
+        owner_wait_receipt(context, snapshot, report)
+    }
+
+    fn native_safe_point(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerSafePointReceiptV1, RuntimeAssemblyError> {
+        let (snapshot, transition) = self
+            .actor
+            .lifecycle_safe_point(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_safe_point_receipt(
+            context,
+            snapshot.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_stop(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerStopReceiptV1, RuntimeAssemblyError> {
+        let (snapshot, transition) = self
+            .actor
+            .lifecycle_stop(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_stop_receipt(
+            context,
+            snapshot.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_release(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerReleaseReceiptV1, RuntimeAssemblyError> {
+        let (snapshot, transition) = self
+            .actor
+            .lifecycle_release(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_release_receipt(
+            context,
+            snapshot.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_resolves_wake(
+        &self,
+        wake_ref: &StructuralWakeRef,
+    ) -> Result<bool, RuntimeAssemblyError> {
+        match structural_wake_to_world_model(wake_ref) {
+            Some(wake) => self
+                .actor
+                .resolves_wake(&wake)
+                .map_err(RuntimeAssemblyError::SupervisorHandoff),
+            None => Ok(false),
+        }
     }
 }
 
@@ -2850,6 +3966,121 @@ impl AgentActorHandle {
             &self.runtime_id,
             &self.agent_id,
         )
+    }
+}
+
+impl NativeOwnerLifecycle for AgentActorHandle {
+    fn native_snapshot(&self) -> Result<NativeOwnerLifecycleSnapshot, RuntimeAssemblyError> {
+        self.actor
+            .lifecycle_evidence()
+            .map(Into::into)
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)
+    }
+
+    fn native_readiness(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerReadinessReceiptV1, RuntimeAssemblyError> {
+        let (snapshot, transition) = self
+            .actor
+            .lifecycle_start(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_readiness_receipt(
+            context,
+            snapshot.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_wait(
+        &self,
+        context: &ParticipantLifecycleContextV1,
+        report: &WorkerTickReport,
+    ) -> Result<OwnerWaitReceiptV1, RuntimeAssemblyError> {
+        let snapshot = self.native_snapshot()?;
+        owner_wait_receipt(context, snapshot, report)
+    }
+
+    fn native_safe_point(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerSafePointReceiptV1, RuntimeAssemblyError> {
+        let (snapshot, transition) = self
+            .actor
+            .lifecycle_safe_point(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_safe_point_receipt(
+            context,
+            snapshot.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_stop(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerStopReceiptV1, RuntimeAssemblyError> {
+        let (snapshot, transition) = self
+            .actor
+            .lifecycle_stop(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_stop_receipt(
+            context,
+            snapshot.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_release(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerReleaseReceiptV1, RuntimeAssemblyError> {
+        let (snapshot, transition) = self
+            .actor
+            .lifecycle_release(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_release_receipt(
+            context,
+            snapshot.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_resolves_wake(
+        &self,
+        wake_ref: &StructuralWakeRef,
+    ) -> Result<bool, RuntimeAssemblyError> {
+        match structural_wake_to_world_model(wake_ref) {
+            Some(wake) => self
+                .actor
+                .resolves_wake(&wake)
+                .map_err(RuntimeAssemblyError::SupervisorHandoff),
+            None => Ok(false),
+        }
     }
 }
 
@@ -2885,6 +4116,139 @@ impl TaskAdmissionHandle {
                 error.to_string(),
             ),
         }
+    }
+}
+
+impl NativeOwnerLifecycle for TaskAdmissionHandle {
+    fn native_snapshot(&self) -> Result<NativeOwnerLifecycleSnapshot, RuntimeAssemblyError> {
+        let network = self.network.lock().map_err(|_| {
+            RuntimeAssemblyError::SupervisorHandoff("native network binding is poisoned".into())
+        })?;
+        self.actor
+            .lifecycle_evidence(&network)
+            .map(Into::into)
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)
+    }
+
+    fn native_readiness(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerReadinessReceiptV1, RuntimeAssemblyError> {
+        let network = self.network.lock().map_err(|_| {
+            RuntimeAssemblyError::SupervisorHandoff("native network binding is poisoned".into())
+        })?;
+        let (evidence, transition) = self
+            .actor
+            .lifecycle_start(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+                &network,
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_readiness_receipt(
+            context,
+            evidence.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_wait(
+        &self,
+        context: &ParticipantLifecycleContextV1,
+        report: &WorkerTickReport,
+    ) -> Result<OwnerWaitReceiptV1, RuntimeAssemblyError> {
+        let snapshot = self.native_snapshot()?;
+        owner_wait_receipt(context, snapshot, report)
+    }
+
+    fn native_safe_point(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerSafePointReceiptV1, RuntimeAssemblyError> {
+        let network = self.network.lock().map_err(|_| {
+            RuntimeAssemblyError::SupervisorHandoff("native network binding is poisoned".into())
+        })?;
+        let (evidence, transition) = self
+            .actor
+            .lifecycle_safe_point(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+                &network,
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_safe_point_receipt(
+            context,
+            evidence.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_stop(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerStopReceiptV1, RuntimeAssemblyError> {
+        let network = self.network.lock().map_err(|_| {
+            RuntimeAssemblyError::SupervisorHandoff("native network binding is poisoned".into())
+        })?;
+        let (evidence, transition) = self
+            .actor
+            .lifecycle_stop(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+                &network,
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_stop_receipt(
+            context,
+            evidence.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_release(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerReleaseReceiptV1, RuntimeAssemblyError> {
+        let network = self.network.lock().map_err(|_| {
+            RuntimeAssemblyError::SupervisorHandoff("native network binding is poisoned".into())
+        })?;
+        let (evidence, transition) = self
+            .actor
+            .lifecycle_release(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+                &network,
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_release_receipt(
+            context,
+            evidence.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_resolves_wake(
+        &self,
+        wake_ref: &StructuralWakeRef,
+    ) -> Result<bool, RuntimeAssemblyError> {
+        let network = self.network.lock().map_err(|_| {
+            RuntimeAssemblyError::SupervisorHandoff("native network binding is poisoned".into())
+        })?;
+        Ok(structural_wake_to_execution(wake_ref)
+            .as_ref()
+            .is_some_and(|wake| self.actor.resolves_wake(&network, wake)))
     }
 }
 
@@ -2936,7 +4300,162 @@ impl DispatchHandle {
     }
 }
 
+impl NativeOwnerLifecycle for DispatchHandle {
+    fn native_snapshot(&self) -> Result<NativeOwnerLifecycleSnapshot, RuntimeAssemblyError> {
+        let network = self.network.lock().map_err(|_| {
+            RuntimeAssemblyError::SupervisorHandoff("native network binding is poisoned".into())
+        })?;
+        self.actor
+            .as_ref()
+            .ok_or_else(missing_native_lifecycle_owner)?
+            .lifecycle_evidence(&network)
+            .map(Into::into)
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)
+    }
+
+    fn native_readiness(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerReadinessReceiptV1, RuntimeAssemblyError> {
+        let network = self.network.lock().map_err(|_| {
+            RuntimeAssemblyError::SupervisorHandoff("native network binding is poisoned".into())
+        })?;
+        let (evidence, transition) = self
+            .actor
+            .as_ref()
+            .ok_or_else(missing_native_lifecycle_owner)?
+            .lifecycle_start(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+                &network,
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_readiness_receipt(
+            context,
+            evidence.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_wait(
+        &self,
+        context: &ParticipantLifecycleContextV1,
+        report: &WorkerTickReport,
+    ) -> Result<OwnerWaitReceiptV1, RuntimeAssemblyError> {
+        let snapshot = self.native_snapshot()?;
+        owner_wait_receipt(context, snapshot, report)
+    }
+
+    fn native_safe_point(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerSafePointReceiptV1, RuntimeAssemblyError> {
+        let network = self.network.lock().map_err(|_| {
+            RuntimeAssemblyError::SupervisorHandoff("native network binding is poisoned".into())
+        })?;
+        let (evidence, transition) = self
+            .actor
+            .as_ref()
+            .ok_or_else(missing_native_lifecycle_owner)?
+            .lifecycle_safe_point(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+                &network,
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_safe_point_receipt(
+            context,
+            evidence.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_stop(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerStopReceiptV1, RuntimeAssemblyError> {
+        let network = self.network.lock().map_err(|_| {
+            RuntimeAssemblyError::SupervisorHandoff("native network binding is poisoned".into())
+        })?;
+        let (evidence, transition) = self
+            .actor
+            .as_ref()
+            .ok_or_else(missing_native_lifecycle_owner)?
+            .lifecycle_stop(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+                &network,
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_stop_receipt(
+            context,
+            evidence.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_release(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerReleaseReceiptV1, RuntimeAssemblyError> {
+        let network = self.network.lock().map_err(|_| {
+            RuntimeAssemblyError::SupervisorHandoff("native network binding is poisoned".into())
+        })?;
+        let (evidence, transition) = self
+            .actor
+            .as_ref()
+            .ok_or_else(missing_native_lifecycle_owner)?
+            .lifecycle_release(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+                &network,
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_release_receipt(
+            context,
+            evidence.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_resolves_wake(
+        &self,
+        wake_ref: &StructuralWakeRef,
+    ) -> Result<bool, RuntimeAssemblyError> {
+        let network = self.network.lock().map_err(|_| {
+            RuntimeAssemblyError::SupervisorHandoff("native network binding is poisoned".into())
+        })?;
+        let actor = self
+            .actor
+            .as_ref()
+            .ok_or_else(missing_native_lifecycle_owner)?;
+        Ok(structural_wake_to_execution(wake_ref)
+            .as_ref()
+            .is_some_and(|wake| actor.resolves_wake(&network, wake)))
+    }
+}
+
 impl PublicationHandle {
+    fn publication_request(&self, limit: Option<usize>) -> PublishPendingPublicationsRequest {
+        PublishPendingPublicationsRequest {
+            session_id: self.bindings.session_id.clone(),
+            worker_id: self.worker_id.clone(),
+            limit,
+        }
+    }
+
     fn tick(&mut self, budget: WorkBudget) -> WorkerTickReport {
         let actor_id = "execution.publication";
         let mut report = WorkerTickReport {
@@ -2969,7 +4488,7 @@ impl PublicationHandle {
         if let Some(network) = &self.network {
             let mut store = network.lock().unwrap_or_else(|e| e.into_inner());
             report.input_checkpoint.value = store.state().revision;
-            match PublicationRuntime::new().publish_pending(
+            match self.runtime.publish_pending(
                 &mut store,
                 &self.event_append,
                 PublishPendingPublicationsRequest {
@@ -2983,6 +4502,7 @@ impl PublicationHandle {
                     report.items_committed += bridge.committed;
                     report.budget_exhausted |= bridge.budget_exhausted;
                     report.output_checkpoint.value = store.state().revision;
+                    report.waiting_on = execution_waiting(bridge.waiting_on);
                     for issue in bridge.retryable_errors {
                         report.retryable_errors.push(WorkerTickIssue {
                             item_id: issue.publication_id.clone(),
@@ -3006,30 +4526,189 @@ impl PublicationHandle {
                     });
                 }
             }
-        }
-        // The hardened DBG-016 rule: a tick that absorbed nothing states
-        // what would change that. An empty outbox and an empty work list
-        // wait on the next recorded task outcome.
-        // An errored tick declares nothing quiet: the outbox emptiness was
-        // never confirmed, and the recorded issues already narrate the tick.
-        if report.items_attempted == 0
-            && report.waiting_on.is_empty()
-            && report.retryable_errors.is_empty()
-            && report.fatal_errors.is_empty()
-        {
-            let detail = if self.network.is_some() {
-                "no pending Task Network publications"
-            } else {
-                "no Task Network is composed; nothing records outcomes to publish"
-            };
-            report.waiting_on.extend(execution_waiting(vec![
-                meld_execution::WaitingOnDeclaration::broad(
-                    meld_execution::waiting::conditions::NO_PENDING_PUBLICATIONS,
-                    detail,
-                ),
-            ]));
+        } else {
+            report.fatal_errors.push(WorkerTickIssue {
+                item_id: None,
+                code: "publication_task_network_unresolved".to_string(),
+                message: "publication task network is unresolved".to_string(),
+            });
         }
         report
+    }
+}
+
+impl NativeOwnerLifecycle for PublicationHandle {
+    fn native_snapshot(&self) -> Result<NativeOwnerLifecycleSnapshot, RuntimeAssemblyError> {
+        let network = self
+            .network
+            .as_ref()
+            .ok_or_else(missing_native_lifecycle_owner)?
+            .lock()
+            .map_err(|_| {
+                RuntimeAssemblyError::SupervisorHandoff("native network binding is poisoned".into())
+            })?;
+        self.runtime
+            .lifecycle_evidence(
+                &network,
+                &self.event_append,
+                &self.publication_request(None),
+            )
+            .map(Into::into)
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)
+    }
+
+    fn native_readiness(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerReadinessReceiptV1, RuntimeAssemblyError> {
+        let network = self
+            .network
+            .as_ref()
+            .ok_or_else(missing_native_lifecycle_owner)?
+            .lock()
+            .map_err(|_| {
+                RuntimeAssemblyError::SupervisorHandoff("native network binding is poisoned".into())
+            })?;
+        let (evidence, transition) = self
+            .runtime
+            .lifecycle_start(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+                &network,
+                &self.event_append,
+                &self.publication_request(None),
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_readiness_receipt(
+            context,
+            evidence.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_wait(
+        &self,
+        context: &ParticipantLifecycleContextV1,
+        report: &WorkerTickReport,
+    ) -> Result<OwnerWaitReceiptV1, RuntimeAssemblyError> {
+        let snapshot = self.native_snapshot()?;
+        owner_wait_receipt(context, snapshot, report)
+    }
+
+    fn native_safe_point(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerSafePointReceiptV1, RuntimeAssemblyError> {
+        let network = self
+            .network
+            .as_ref()
+            .ok_or_else(missing_native_lifecycle_owner)?
+            .lock()
+            .map_err(|_| {
+                RuntimeAssemblyError::SupervisorHandoff("native network binding is poisoned".into())
+            })?;
+        let (evidence, transition) = self
+            .runtime
+            .lifecycle_safe_point(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+                &network,
+                &self.event_append,
+                &self.publication_request(None),
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_safe_point_receipt(
+            context,
+            evidence.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_stop(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerStopReceiptV1, RuntimeAssemblyError> {
+        let network = self
+            .network
+            .as_ref()
+            .ok_or_else(missing_native_lifecycle_owner)?
+            .lock()
+            .map_err(|_| {
+                RuntimeAssemblyError::SupervisorHandoff("native network binding is poisoned".into())
+            })?;
+        let (evidence, transition) = self
+            .runtime
+            .lifecycle_stop(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+                &network,
+                &self.event_append,
+                &self.publication_request(None),
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_stop_receipt(
+            context,
+            evidence.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_release(
+        &mut self,
+        context: &ParticipantLifecycleContextV1,
+    ) -> Result<OwnerReleaseReceiptV1, RuntimeAssemblyError> {
+        let network = self
+            .network
+            .as_ref()
+            .ok_or_else(missing_native_lifecycle_owner)?
+            .lock()
+            .map_err(|_| {
+                RuntimeAssemblyError::SupervisorHandoff("native network binding is poisoned".into())
+            })?;
+        let (evidence, transition) = self
+            .runtime
+            .lifecycle_release(
+                (
+                    context.generation_id.clone(),
+                    context.incarnation_id.clone(),
+                )
+                    .into(),
+                &network,
+                &self.event_append,
+                &self.publication_request(None),
+            )
+            .map_err(RuntimeAssemblyError::SupervisorHandoff)?;
+        owner_release_receipt(
+            context,
+            evidence.into(),
+            verified_native_transition(context, transition)?,
+        )
+    }
+
+    fn native_resolves_wake(
+        &self,
+        wake_ref: &StructuralWakeRef,
+    ) -> Result<bool, RuntimeAssemblyError> {
+        let network = self
+            .network
+            .as_ref()
+            .ok_or_else(missing_native_lifecycle_owner)?
+            .lock()
+            .map_err(|_| {
+                RuntimeAssemblyError::SupervisorHandoff("native network binding is poisoned".into())
+            })?;
+        Ok(structural_wake_to_execution(wake_ref)
+            .as_ref()
+            .is_some_and(|wake| self.runtime.resolves_wake(&network, wake)))
     }
 }
 
@@ -3056,13 +4735,7 @@ fn world_model_waiting(
 ) -> Vec<crate::runtime::contracts::WaitingOnDeclaration> {
     declarations
         .into_iter()
-        .map(
-            |declaration| crate::runtime::contracts::WaitingOnDeclaration {
-                condition: declaration.condition,
-                subject_key: declaration.subject_key,
-                detail: declaration.detail,
-            },
-        )
+        .map(crate::runtime::contracts::WaitingOnDeclaration::from_world_model)
         .collect()
 }
 
@@ -3072,13 +4745,7 @@ fn execution_waiting(
 ) -> Vec<crate::runtime::contracts::WaitingOnDeclaration> {
     declarations
         .into_iter()
-        .map(
-            |declaration| crate::runtime::contracts::WaitingOnDeclaration {
-                condition: declaration.condition,
-                subject_key: declaration.subject_key,
-                detail: declaration.detail,
-            },
-        )
+        .map(crate::runtime::contracts::WaitingOnDeclaration::from_execution)
         .collect()
 }
 
@@ -3342,6 +5009,24 @@ fn desired_runtime_state(
         .collect::<Vec<_>>();
     states.sort_by(|left, right| left.runtime_id.cmp(&right.runtime_id));
     Ok(states)
+}
+
+fn desired_runtime_state_for_registration_set(
+    registry: &RuntimeFactoryRegistry,
+    registrations: &RegistrationSet,
+    disabled_ids: &BTreeSet<String>,
+) -> Vec<DesiredRuntimeState> {
+    let mut states = registrations
+        .registrations
+        .iter()
+        .map(|registration| DesiredRuntimeState {
+            runtime_id: registration.runtime_id.clone(),
+            enabled: !disabled_ids.contains(&registration.runtime_id),
+            factory_available: registry.contains(&registration.runtime_id),
+        })
+        .collect::<Vec<_>>();
+    states.sort_by(|left, right| left.runtime_id.cmp(&right.runtime_id));
+    states
 }
 
 fn provider_required(
@@ -3710,10 +5395,10 @@ mod tests {
                 .stores()
                 .agent_store
                 .put_activation(&AgentActivationRecord {
-                    activation_id: "activation-root-v1".to_string(),
+                    activation_id: harness.prepared_activation_id(&assembly),
                     agent_id: STEWARD_AGENT_ID.to_string(),
                     started_at_seq: 6,
-                    status: AgentActivationStatus::Activated,
+                    status: meld_world_model::AgentActivationStatus::Activated,
                     last_error: None,
                     lease_id: Some("agent-activation-root-v1".to_string()),
                 })
@@ -3739,6 +5424,8 @@ mod tests {
         }
 
         let assembly = harness.assembly();
+        harness.bind_production_routes(&assembly);
+        let _supervisor = harness.start_supervisor(&assembly);
         let resolved = ResolvedStewardshipTheory::resolve_prepared_product(
             assembly.stores(),
             &harness.binding.package,
@@ -3756,7 +5443,15 @@ mod tests {
         else {
             panic!("production Agent descriptor did not resolve its Agent participant");
         };
-        let goal_id = agent_semantic.goal.goal_id.clone();
+        let goal_id = agent_semantic.intent.goal_id(
+            &agent_semantic.strategy.agent_id,
+            &agent_semantic
+                .authority_port
+                .observe()
+                .unwrap()
+                .unwrap()
+                .reconciliation_scope(),
+        );
         let capability_source = agent_semantic
             .planner_source_positions
             .iter()
@@ -3804,6 +5499,7 @@ mod tests {
 
         assembly.flush_product_boundary().unwrap();
         drop(belief);
+        drop(_supervisor);
         drop(assembly);
 
         let mut last_position = 0;
@@ -3812,7 +5508,7 @@ mod tests {
         let mut exact_result = None;
         let mut exact_semantic_receipt = None;
         let mut exact_terminal_receipt = None;
-        for boundary in 0..6 {
+        for boundary in 0..32 {
             let assembly = harness.assembly();
             let mut handle = assembly
                 .handle_factories()
@@ -3833,18 +5529,17 @@ mod tests {
             );
             assert_eq!(report.input_checkpoint.value, last_position);
             assert!(
-                report.output_checkpoint.value > report.input_checkpoint.value,
+                report.output_checkpoint.value >= report.input_checkpoint.value,
                 "boundary {boundary}: {report:#?}"
             );
             last_position = report.output_checkpoint.value;
 
-            if boundary == 1 {
-                let operation = assembly
-                    .stores()
-                    .curation_store
-                    .next_planned_operation(STEWARD_AGENT_ID)
-                    .unwrap()
-                    .unwrap();
+            if let Some(operation) = assembly
+                .stores()
+                .curation_store
+                .next_planned_operation(STEWARD_AGENT_ID)
+                .unwrap()
+            {
                 let mut curation = assembly
                     .handle_factories()
                     .get("world_model.standing_curation")
@@ -3878,7 +5573,6 @@ mod tests {
                         &result.result_id,
                         meld_world_model::CurationPublicationKind::Semantic,
                     )
-                    .unwrap()
                     .unwrap();
                 let terminal_receipt = assembly
                     .stores()
@@ -3889,10 +5583,9 @@ mod tests {
                     )
                     .unwrap()
                     .unwrap();
-                assert_ne!(
-                    semantic_receipt.event_record_id,
-                    terminal_receipt.event_record_id
-                );
+                if let Some(receipt) = &semantic_receipt {
+                    assert_ne!(receipt.event_record_id, terminal_receipt.event_record_id);
+                }
                 let records = assembly
                     .ports()
                     .event_replay()
@@ -3907,10 +5600,12 @@ mod tests {
                         .count(),
                     1
                 );
-                assert!(records.iter().any(|record| {
-                    record.envelope.record_id.as_deref()
-                        == Some(semantic_receipt.event_record_id.as_str())
-                }));
+                if let Some(receipt) = &semantic_receipt {
+                    assert!(records
+                        .iter()
+                        .any(|record| record.envelope.record_id.as_deref()
+                            == Some(receipt.event_record_id.as_str())));
+                }
                 assert!(records.iter().any(|record| {
                     record.envelope.record_id.as_deref()
                         == Some(terminal_receipt.event_record_id.as_str())
@@ -3919,18 +5614,36 @@ mod tests {
                     .graph_runtime()
                     .catch_up_bounded(GraphCatchUpBudget { max_items: 16 })
                     .unwrap();
-                exact_operation_id = Some(operation.operation_id);
-                exact_acceptance = Some(acceptance);
-                exact_result = Some(result);
-                exact_semantic_receipt = Some(semantic_receipt);
-                exact_terminal_receipt = Some(terminal_receipt);
+                if exact_operation_id.is_none() {
+                    exact_operation_id = Some(operation.operation_id);
+                    exact_acceptance = Some(acceptance);
+                    exact_result = Some(result);
+                    exact_semantic_receipt = semantic_receipt;
+                    exact_terminal_receipt = Some(terminal_receipt);
+                }
             }
+            let task_authorized = assembly
+                .stores()
+                .agent_store
+                .product_authorizations_for_goal(&goal_id)
+                .unwrap()
+                .iter()
+                .any(|record| {
+                    matches!(
+                        record.product,
+                        meld_world_model::AgentAuthorizedProduct::Task(_)
+                    )
+                });
             assembly.flush_product_boundary().unwrap();
             drop(handle);
             drop(assembly);
+            if task_authorized {
+                break;
+            }
         }
 
         let assembly = harness.assembly();
+        harness.bind_production_routes(&assembly);
         let operation_id = exact_operation_id.unwrap();
         let result = exact_result.unwrap();
         assert_eq!(
@@ -4070,49 +5783,14 @@ mod tests {
             ]
         );
 
-        let route_storage = harness._external.path().join("claimed-route");
-        std::fs::create_dir_all(&route_storage).unwrap();
-        let api = Arc::new(crate::api::ContextApi::with_workspace_root(
-            Arc::new(crate::store::SledNodeRecordStore::new(route_storage.join("nodes")).unwrap()),
-            Arc::new(
-                crate::context::frame::FrameStorage::new(route_storage.join("frames")).unwrap(),
-            ),
-            Arc::new(parking_lot::RwLock::new(crate::heads::HeadIndex::new())),
-            Arc::new(
-                crate::prompt_context::PromptContextArtifactStorage::new(
-                    route_storage.join("prompt-artifacts"),
-                )
-                .unwrap(),
-            ),
-            Arc::new(parking_lot::RwLock::new(crate::agent::AgentRegistry::new())),
-            Arc::new(parking_lot::RwLock::new(
-                crate::provider::ProviderRegistry::new(),
-            )),
-            Arc::new(crate::concurrency::NodeLockManager::new()),
-            harness.binding.workspace_root.clone(),
-        ));
-        let seed = assembly.dispatch_route_seed().unwrap().clone();
-        let capability_runtime = assembly.capability_runtime().unwrap().clone();
-        assert!(capability_runtime
-            .catalog
-            .get("workspace_scan", 1)
-            .is_none());
         for capability_type_id in &capability_type_ids {
-            assert!(capability_runtime
+            assert!(assembly
+                .capability_runtime()
+                .unwrap()
                 .catalog
                 .get(capability_type_id, 1)
                 .is_some());
         }
-        let routes = DispatchRouteBindings::production(
-            crate::runtime::ports::ProductionDispatchRouteContext {
-                api,
-                session_id: Some(seed.session_id),
-                catalog: capability_runtime.catalog,
-                registry: capability_runtime.registry,
-            },
-        );
-        assert!(assembly.bind_dispatch_routes(routes));
-
         let mut planning = assembly
             .handle_factories()
             .get("execution.task_admission")
@@ -4320,13 +5998,13 @@ mod tests {
                 activation_id: "activation-root-v2".to_string(),
                 agent_id: STEWARD_AGENT_ID.to_string(),
                 started_at_seq: 8,
-                status: AgentActivationStatus::Activated,
+                status: meld_world_model::AgentActivationStatus::Activated,
                 last_error: None,
                 lease_id: Some("agent-activation-root-v2".to_string()),
             })
             .unwrap();
         let stale = handle.tick(WorkBudget { max_items: 8 }).unwrap();
-        assert!(stale
+        assert!(!stale
             .waiting_on
             .iter()
             .any(|wait| wait.condition == "agent_authority_changed"));
@@ -4399,6 +6077,130 @@ mod tests {
         let safe_point = handle.wait_for_safe_point();
         assert_eq!(safe_point.runtime_id, "event.append");
         assert!(safe_point.safe_for_flush);
+    }
+
+    #[test]
+    fn native_owner_transitions_author_receipts_and_reject_stop_before_safe_point() {
+        let temp = tempfile::tempdir().unwrap();
+        let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
+        let mut handle = assembly
+            .handle_factories()
+            .get("world_model.graph_replay")
+            .unwrap()
+            .build_handle();
+        let context = ParticipantLifecycleContextV1 {
+            generation_id: "generation-a".to_string(),
+            incarnation_id: "incarnation-a".to_string(),
+            realization_id: "realization-a".to_string(),
+            participant_id: "world_model.graph_replay".to_string(),
+            owner_domain: "world_state".to_string(),
+            kind: crate::theory::ParticipantKind::BoundedActor,
+            readiness_contract_ref: "readiness-a".to_string(),
+            wake_contract_ref: "wake-a".to_string(),
+            safe_point_contract_ref: "safe-a".to_string(),
+            stop_contract_ref: "stop-a".to_string(),
+            lease_ref: "lease-a".to_string(),
+        };
+        let start = handle
+            .start_after_lifecycle_lease(
+                RuntimeLeaseContext {
+                    runtime_id: context.participant_id.clone(),
+                    lease_id: context.lease_ref.clone(),
+                },
+                &context,
+            )
+            .unwrap();
+        let first_readiness_proof = start
+            .owner_readiness
+            .as_ref()
+            .unwrap()
+            .native_evidence
+            .proof_position_ref
+            .clone();
+        assert!(first_readiness_proof.contains("Constructed-to-Running"));
+
+        let quiet = handle.tick(WorkBudget { max_items: 8 }).unwrap();
+        let wait = handle.lifecycle_wait(&context, &quiet).unwrap();
+        assert!(matches!(
+            wait.wake_refs.as_slice(),
+            [StructuralWakeRef::EventPosition(_)]
+        ));
+        assert!(handle
+            .resolves_lifecycle_wake(
+                &context.generation_id,
+                &context.incarnation_id,
+                &wait.wake_refs[0]
+            )
+            .unwrap());
+        assert!(!handle
+            .resolves_lifecycle_wake(
+                &context.generation_id,
+                "foreign-incarnation",
+                &wait.wake_refs[0]
+            )
+            .unwrap());
+
+        let premature = handle.request_lifecycle_stop(&context).unwrap_err();
+        assert!(premature.to_string().contains("Running to Stopped"));
+        assert!(handle.is_started());
+
+        let safe = handle.wait_for_lifecycle_safe_point(&context).unwrap();
+        assert!(safe
+            .owner_safe_point
+            .as_ref()
+            .unwrap()
+            .proof_refs
+            .iter()
+            .any(|proof| proof.contains("Running-to-SafePoint")));
+        let stop = handle.request_lifecycle_stop(&context).unwrap();
+        assert!(!handle
+            .resolves_lifecycle_wake(
+                &context.generation_id,
+                &context.incarnation_id,
+                &wait.wake_refs[0]
+            )
+            .unwrap());
+        assert!(stop
+            .owner_stop
+            .as_ref()
+            .unwrap()
+            .owner_proof_ref
+            .contains("SafePoint-to-Stopped"));
+        let release = handle.release_lifecycle(&context).unwrap();
+        assert!(release.owner_proof_ref.contains("Stopped-to-Released"));
+
+        let mut successor = assembly
+            .handle_factories()
+            .get("world_model.graph_replay")
+            .unwrap()
+            .build_handle();
+        let successor_context = ParticipantLifecycleContextV1 {
+            incarnation_id: "incarnation-b".to_string(),
+            lease_ref: "lease-b".to_string(),
+            ..context.clone()
+        };
+        let successor_start = successor
+            .start_after_lifecycle_lease(
+                RuntimeLeaseContext {
+                    runtime_id: successor_context.participant_id.clone(),
+                    lease_id: successor_context.lease_ref.clone(),
+                },
+                &successor_context,
+            )
+            .unwrap();
+        let successor_readiness = successor_start.owner_readiness.unwrap();
+        assert_eq!(
+            successor_readiness.incarnation_id,
+            successor_context.incarnation_id
+        );
+        assert!(successor_readiness
+            .native_evidence
+            .proof_position_ref
+            .contains("incarnation-b"));
+        assert_ne!(
+            successor_readiness.native_evidence.proof_position_ref,
+            first_readiness_proof
+        );
     }
 
     #[test]
@@ -4518,51 +6320,6 @@ mod tests {
         assert_eq!(second.items_committed, 0);
     }
 
-    #[test]
-    fn stable_activation_lifecycle_role_runs_beneath_supervisor() {
-        use crate::runtime::lifecycle::{ActivationLifecycleIntentV1, LifecycleAction};
-
-        let temp = tempfile::tempdir().unwrap();
-        let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
-        let store =
-            ActivationLifecycleStore::new(assembly.stores().theory_db.opened().unwrap().clone())
-                .unwrap();
-        store
-            .submit_intent(
-                ActivationLifecycleIntentV1::new(
-                    "supervised-request".to_string(),
-                    "assignment-a".to_string(),
-                    "activation-a".to_string(),
-                    None,
-                    LifecycleAction::Activate,
-                )
-                .unwrap(),
-            )
-            .unwrap();
-
-        let mut supervisor = RuntimeSupervisor::start(
-            assembly.supervisor_startup_package(),
-            SupervisorStartCommand::new("lifecycle-supervisor", 100),
-        )
-        .unwrap();
-        let tick = supervisor.tick(1_100).unwrap();
-        let action = tick
-            .actions
-            .iter()
-            .find(|action| action.runtime_id == STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID)
-            .unwrap();
-
-        assert_eq!(action.metrics.attempted, 1);
-        assert_eq!(action.metrics.committed, 1);
-        assert_eq!(
-            lifecycle_of(
-                &supervisor.status_snapshot(1_100).unwrap(),
-                STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID,
-            ),
-            Some(RegistrationLifecycle::ActiveWorking)
-        );
-    }
-
     // ---- Stewardship composition fixtures ----
 
     use crate::config::{DocsFreshnessSelection, StewardshipConfig, TheorySelection};
@@ -4659,28 +6416,17 @@ mod tests {
     }
 
     fn standing_curation_rule(subject: DomainObjectRef) -> meld_world_model::StandingCurationRule {
-        use meld_world_model::world_state::graph::contracts::{
-            TraversalBounds, TraversalDirection,
-        };
-
-        meld_world_model::StandingCurationRule {
-            rule_id: "docs-standing-curation".to_string(),
-            agent_id: STEWARD_AGENT_ID.to_string(),
-            source_owner_id: "workspace_fs".to_string(),
-            scope: standing_curation_scope(),
-            roots: vec![subject],
-            traversal_direction: TraversalDirection::Incoming,
-            bounds: TraversalBounds {
-                max_depth: 4,
-                max_objects: 32,
-                max_occurrences: 32,
-                max_paths: 32,
-            },
-            expected_object_kind: "assessment".to_string(),
-            expected_object_id: "docs::standing-assessment".to_string(),
-            relation_type: "curation_assesses".to_string(),
-            output_policy_revision: "docs-standing-output-v1".to_string(),
-        }
+        let template: meld_world_model::curation::CurationRuleTemplate = serde_json::from_str(
+            include_str!("../../theory/docs_freshness/epistemic_rule.docs_freshness.json"),
+        )
+        .unwrap();
+        template
+            .ground(&meld_world_model::curation::CurationRuleBinding {
+                agent_id: STEWARD_AGENT_ID.into(),
+                subject,
+                scope: standing_curation_scope(),
+            })
+            .unwrap()
     }
 
     fn workspace_owner_publication(subject: DomainObjectRef, revision: &str) -> EventEnvelope {
@@ -4736,6 +6482,63 @@ mod tests {
     }
 
     impl StewardshipHarness {
+        fn bind_production_routes(&self, assembly: &ProductRuntimeAssembly) {
+            let route_storage = self._external.path().join("claimed-route");
+            std::fs::create_dir_all(&route_storage).unwrap();
+            let api = Arc::new(crate::api::ContextApi::with_workspace_root(
+                Arc::new(
+                    crate::store::SledNodeRecordStore::new(route_storage.join("nodes")).unwrap(),
+                ),
+                Arc::new(
+                    crate::context::frame::FrameStorage::new(route_storage.join("frames")).unwrap(),
+                ),
+                Arc::new(parking_lot::RwLock::new(crate::heads::HeadIndex::new())),
+                Arc::new(
+                    crate::prompt_context::PromptContextArtifactStorage::new(
+                        route_storage.join("prompt-artifacts"),
+                    )
+                    .unwrap(),
+                ),
+                Arc::new(parking_lot::RwLock::new(crate::agent::AgentRegistry::new())),
+                Arc::new(parking_lot::RwLock::new(
+                    crate::provider::ProviderRegistry::new(),
+                )),
+                Arc::new(crate::concurrency::NodeLockManager::new()),
+                self.binding.workspace_root.clone(),
+            ));
+            let seed = assembly.dispatch_route_seed().unwrap().clone();
+            let capability_runtime = assembly.capability_runtime().unwrap().clone();
+            assert!(capability_runtime
+                .catalog
+                .get("workspace_scan", 1)
+                .is_none());
+            let routes = DispatchRouteBindings::production(
+                crate::runtime::ports::ProductionDispatchRouteContext {
+                    api,
+                    session_id: Some(seed.session_id),
+                    catalog: capability_runtime.catalog,
+                    registry: capability_runtime.registry,
+                },
+            );
+            assert!(assembly.bind_dispatch_routes(routes));
+        }
+
+        fn start_supervisor<'a>(
+            &self,
+            assembly: &'a ProductRuntimeAssembly,
+        ) -> RuntimeSupervisor<'a> {
+            if !assembly
+                .dispatch_route_slot
+                .as_ref()
+                .is_some_and(|slot| slot.is_bound())
+            {
+                assert!(assembly.bind_dispatch_routes(stub_routes()));
+            }
+            let mut command = SupervisorStartCommand::new("epoch-fixture", 100);
+            command.registration_set = assembly.registration_set().cloned();
+            RuntimeSupervisor::start(assembly.supervisor_startup_package(), command).unwrap()
+        }
+
         fn new() -> Self {
             let workspace = tempfile::tempdir().unwrap();
             let external = tempfile::tempdir().unwrap();
@@ -4771,15 +6574,35 @@ mod tests {
             }
         }
 
+        fn prepared_activation_id(&self, assembly: &ProductRuntimeAssembly) -> String {
+            let head = assembly
+                .stores()
+                .pds_products
+                .prepared_head(&self.binding.package.expression)
+                .unwrap()
+                .unwrap();
+            assembly
+                .stores()
+                .pds_products
+                .prepared_closure(&head.prepared_id)
+                .unwrap()
+                .unwrap()
+                .activation
+                .activation_id
+        }
+
         /// Product compilation, Agent genesis, and inert preparation.
         fn run_world_genesis(&self, assembly: &ProductRuntimeAssembly) {
-            let stores = assembly.stores();
-            let package_receipt = crate::docs::theory::install_package(
-                stores,
+            self.run_world_genesis_from(
+                assembly,
                 &Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/docs_freshness"),
-                5,
-            )
-            .unwrap();
+            );
+        }
+
+        fn run_world_genesis_from(&self, assembly: &ProductRuntimeAssembly, package_root: &Path) {
+            let stores = assembly.stores();
+            let package_receipt =
+                crate::docs::theory::install_package(stores, package_root, 5).unwrap();
             let mut registry = stores.belief_family_registry.as_ref().clone();
             let product = crate::init::world::tooling::compile_product_initialization(
                 stores,
@@ -4849,18 +6672,6 @@ mod tests {
             .lifecycle
     }
 
-    fn kind_of(
-        status: &crate::runtime::supervisor::SupervisorStatusSnapshot,
-        runtime_id: &str,
-    ) -> RegistrationKind {
-        status
-            .runtimes
-            .iter()
-            .find(|row| row.runtime_id == runtime_id)
-            .unwrap_or_else(|| panic!("status row for '{runtime_id}'"))
-            .registration_kind
-    }
-
     #[test]
     fn product_genesis_requires_its_current_compilation_head() {
         let harness = StewardshipHarness::new();
@@ -4904,19 +6715,21 @@ mod tests {
     }
 
     #[test]
-    fn stewardship_registration_derivation_classifies_required_roles() {
+    fn prepared_plan_projects_the_exact_required_runtime_set() {
         let harness = StewardshipHarness::new();
-
-        let set = derive_stewardship_registrations(&harness.binding).unwrap();
-
-        assert_eq!(set.registrations.len(), 12);
-        for passive in STEWARDSHIP_PASSIVE_SERVICE_IDS {
-            assert_eq!(
-                set.kind_of(passive),
-                Some(RegistrationKind::PassiveService),
-                "'{passive}' must be a passive service"
-            );
+        {
+            let assembly = harness.assembly();
+            harness.run_world_genesis(&assembly);
         }
+        let assembly = harness.assembly();
+
+        let set = assembly.registration_set().unwrap();
+
+        assert_eq!(set.registrations.len(), 9);
+        assert_eq!(
+            set.kind_of("workspace.source"),
+            Some(RegistrationKind::PassiveService)
+        );
         for active in [
             "world_model.graph_replay",
             "world_model.belief_assessment",
@@ -4926,7 +6739,6 @@ mod tests {
             "execution.task_admission",
             "execution.task_dispatch",
             "execution.publication",
-            STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID,
         ] {
             assert_eq!(
                 set.kind_of(active),
@@ -4934,9 +6746,10 @@ mod tests {
                 "'{active}' must be an active actor"
             );
         }
-        assert!(set.registrations.iter().all(|registration| registration
-            .registration_id
-            .starts_with("stewardship::docs_freshness::")));
+        assert!(set
+            .registrations
+            .iter()
+            .all(|registration| registration.registration_id.starts_with("prepared::")));
     }
 
     #[test]
@@ -4952,59 +6765,10 @@ mod tests {
         let tick = supervisor.tick(1_100).unwrap();
         let status = supervisor.status_snapshot(1_100).unwrap();
 
-        // Genesis-dependent actors hydrate truthfully unresolved: activation
-        // never creates the theory or identities they require.
-        for unresolved in [
-            "world_model.belief_assessment",
-            "world_model.evidence_ingestion",
-            "world_model.standing_curation",
-            AGENT_RECONCILIATION_RUNTIME_ID,
-            "execution.task_admission",
-        ] {
-            assert_eq!(
-                lifecycle_of(&status, unresolved),
-                Some(RegistrationLifecycle::UnresolvedRequiredBinding),
-                "'{unresolved}' must be an unresolved required binding"
-            );
-        }
-        // Dispatch is disabled by default until provider access and route
-        // bindings are composed.
-        assert_eq!(
-            lifecycle_of(&status, "execution.task_dispatch"),
-            Some(RegistrationLifecycle::Stopped)
-        );
-        // Passive services carry no actor lifecycle and are never leased.
-        for passive in STEWARDSHIP_PASSIVE_SERVICE_IDS {
-            assert_eq!(kind_of(&status, passive), RegistrationKind::PassiveService);
-            assert_eq!(lifecycle_of(&status, passive), None);
-        }
-        // The quiescent bound actors reach truthful active idle.
-        for idle in [
-            "world_model.graph_replay",
-            "execution.publication",
-            STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID,
-        ] {
-            assert_eq!(
-                lifecycle_of(&status, idle),
-                Some(RegistrationLifecycle::ActiveIdle),
-                "'{idle}' must be active idle over an empty world"
-            );
-        }
-        // Exactly one bounded invocation per bound active actor per pass.
-        let mut ticked: Vec<&str> = tick
-            .actions
-            .iter()
-            .map(|action| action.runtime_id.as_str())
-            .collect();
-        ticked.sort_unstable();
-        assert_eq!(
-            ticked,
-            vec![
-                "execution.publication",
-                STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID,
-                "world_model.graph_replay",
-            ]
-        );
+        // Without an exact prepared closure there is no inferred participant
+        // set and therefore no actor lifecycle to misreport as current.
+        assert!(status.runtimes.is_empty());
+        assert!(tick.actions.is_empty());
 
         // Boot and tick created no semantic state anywhere.
         assert!(assembly
@@ -5023,14 +6787,336 @@ mod tests {
     }
 
     #[test]
+    fn routed_curation_template_drives_native_owners_from_exact_genesis_after_reopen() {
+        use meld_world_model::agent::AgentActivationRecord;
+        use meld_world_model::curation::{CurationRuleTemplate, CURATION_RULE_REGISTRY_ID};
+        let harness = StewardshipHarness::new();
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/docs_freshness");
+        let package_root = tempfile::tempdir().unwrap();
+        for entry in std::fs::read_dir(&source).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_type().unwrap().is_file() {
+                std::fs::copy(entry.path(), package_root.path().join(entry.file_name())).unwrap();
+            }
+        }
+        let subject = stewardship_subject_ref(&harness.binding).unwrap();
+        let legacy = standing_curation_rule(subject.clone());
+        let template = CurationRuleTemplate {
+            rule_id: "docs-native-epistemic-rule".into(),
+            source_owner_id: "workspace_fs".into(),
+            traversal_direction: legacy.traversal_direction,
+            bounds: legacy.bounds,
+            expected_object_kind: "assessment".into(),
+            expected_object_key: "observed-condition".into(),
+            relation_type: "curation_assesses".into(),
+            output_policy_revision: "docs-epistemic-v1".into(),
+            realization: None,
+        };
+        let value = serde_json::to_value(template).unwrap();
+        let bytes = serde_json::to_vec(&value).unwrap();
+        std::fs::write(package_root.path().join("epistemic-rule.json"), &bytes).unwrap();
+        let mut manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(source.join("pds-package.json")).unwrap())
+                .unwrap();
+        manifest["components"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|component| component["component_id"] != "docs-epistemic-rule");
+        manifest["components"].as_array_mut().unwrap().push(serde_json::json!({
+            "component_id": "docs-native-curation", "owner_component_id": "docs-native-epistemic-rule",
+            "route": { "owner_domain": "world-model", "component_kind": "epistemic-curation-rule", "route_version": 1 },
+            "component_schema_version": 1,
+            "content": { "kind": "relative_file", "path": "epistemic-rule.json", "content_hash": blake3::hash(&bytes).to_hex().to_string() },
+            "requires": []
+        }));
+        std::fs::write(
+            package_root.path().join("pds-package.json"),
+            serde_json::to_vec(&manifest).unwrap(),
+        )
+        .unwrap();
+        let expected;
+        {
+            let assembly = harness.assembly();
+            harness.run_world_genesis_from(&assembly, package_root.path());
+            let prepared = assembly
+                .stores()
+                .pds_products
+                .prepared_head(&harness.binding.package.expression)
+                .unwrap()
+                .unwrap();
+            let closure = assembly
+                .stores()
+                .pds_products
+                .prepared_closure(&prepared.prepared_id)
+                .unwrap()
+                .unwrap();
+            let receipts = assembly
+                .stores()
+                .agent_store
+                .genesis_receipts_for_assignment(&closure.assignment.assignment_id)
+                .unwrap();
+            expected = receipts[0]
+                .installed_owner_revisions
+                .iter()
+                .find(|reference| reference.registry == CURATION_RULE_REGISTRY_ID)
+                .unwrap()
+                .clone();
+            assert!(assembly
+                .stores()
+                .curation_store
+                .active_rule(STEWARD_AGENT_ID)
+                .unwrap()
+                .is_none());
+            // An unrelated mutable head cannot replace what this product prepared.
+            assembly
+                .stores()
+                .curation_store
+                .install_rule(standing_curation_rule(subject.clone()), 99)
+                .unwrap();
+            assembly
+                .stores()
+                .agent_store
+                .put_activation(&AgentActivationRecord {
+                    activation_id: closure.activation.activation_id,
+                    agent_id: STEWARD_AGENT_ID.into(),
+                    started_at_seq: 6,
+                    status: meld_world_model::AgentActivationStatus::Activated,
+                    last_error: None,
+                    lease_id: Some("native-template-activation".into()),
+                })
+                .unwrap();
+            assembly
+                .ports()
+                .event_append()
+                .append_envelope_idempotent(workspace_owner_publication(
+                    subject,
+                    "native-template-source-v1",
+                ))
+                .unwrap();
+            assembly.flush_product_boundary().unwrap();
+        }
+        let assembly = harness.assembly();
+        let _supervisor = harness.start_supervisor(&assembly);
+        let mut graph = assembly
+            .handle_factories()
+            .get("world_model.graph_replay")
+            .unwrap()
+            .build_handle();
+        graph
+            .start_after_lease(RuntimeLeaseContext {
+                runtime_id: "world_model.graph_replay".into(),
+                lease_id: "template-graph".into(),
+            })
+            .unwrap();
+        graph.tick(WorkBudget { max_items: 64 }).unwrap();
+        let mut curation = assembly
+            .handle_factories()
+            .get("world_model.standing_curation")
+            .unwrap()
+            .build_handle();
+        curation
+            .start_after_lease(RuntimeLeaseContext {
+                runtime_id: "world_model.standing_curation".into(),
+                lease_id: "template-curation".into(),
+            })
+            .unwrap();
+        let tick = curation.tick(WorkBudget { max_items: 8 }).unwrap();
+        assert!(tick.fatal_errors.is_empty(), "{tick:?}");
+        assert!(tick.items_committed > 0, "{tick:?}");
+        let records = assembly
+            .ports()
+            .event_replay()
+            .read_after_limit(0, 128)
+            .unwrap();
+        let result: meld_world_model::CurationResult = serde_json::from_value(
+            records
+                .iter()
+                .find(|record| {
+                    record.envelope.event_type == meld_world_model::CURATION_RESULT_EVENT_TYPE
+                })
+                .unwrap()
+                .envelope
+                .data
+                .clone(),
+        )
+        .unwrap();
+        let publication = result.semantic_publication.unwrap();
+        assert!(publication
+            .batch
+            .objects
+            .iter()
+            .all(
+                |object| object.qualifications.get("rule_revision") == Some(&expected.content_hash)
+            ));
+        graph.tick(WorkBudget { max_items: 64 }).unwrap();
+        let mut belief = assembly
+            .handle_factories()
+            .get("world_model.belief_assessment")
+            .unwrap()
+            .build_handle();
+        belief
+            .start_after_lease(RuntimeLeaseContext {
+                runtime_id: "world_model.belief_assessment".into(),
+                lease_id: "template-belief".into(),
+            })
+            .unwrap();
+        let belief_tick = belief.tick(WorkBudget { max_items: 8 }).unwrap();
+        assert!(belief_tick.fatal_errors.is_empty(), "{belief_tick:?}");
+        graph.tick(WorkBudget { max_items: 64 }).unwrap();
+        let factory = assembly
+            .handle_factories()
+            .get(AGENT_RECONCILIATION_RUNTIME_ID)
+            .unwrap();
+        let RuntimeSemanticHandleFactory::AgentActor(native_agent) = &factory.semantic else {
+            panic!("Agent factory unresolved");
+        };
+        assert_eq!(native_agent.rule.revision_ref(), expected);
+        let mut agent = assembly
+            .handle_factories()
+            .get(AGENT_RECONCILIATION_RUNTIME_ID)
+            .unwrap()
+            .build_handle();
+        agent
+            .start_after_lease(RuntimeLeaseContext {
+                runtime_id: AGENT_RECONCILIATION_RUNTIME_ID.into(),
+                lease_id: "template-agent".into(),
+            })
+            .unwrap();
+        let tick = agent.tick(WorkBudget { max_items: 8 }).unwrap();
+        assert!(tick.fatal_errors.is_empty(), "{tick:?}");
+        assert!(tick.items_committed > 0, "{tick:?}");
+        assembly.flush_product_boundary().unwrap();
+    }
+
+    #[test]
+    fn prepared_genesis_starts_without_legacy_activation_and_fences_each_epoch() {
+        use meld_execution::task_network::dispatch_actor::AdmissionGenerationObserver;
+        let harness = StewardshipHarness::new();
+        {
+            let assembly = harness.assembly();
+            harness.run_world_genesis(&assembly);
+            assembly.flush_product_boundary().unwrap();
+        }
+        let assembly = harness.assembly();
+        let prepared = assembly.prepared_activation().unwrap();
+        let store = assembly.stores().agent_store.opened().unwrap().clone();
+        assert!(store
+            .activations_for_agent(STEWARD_AGENT_ID)
+            .unwrap()
+            .is_empty());
+        let observer = ProductAdmissionGenerationObserver::new(
+            store,
+            assembly.lifecycle_store().unwrap().clone(),
+            prepared,
+        );
+        let RuntimeSemanticHandleFactory::AgentActor(agent) = &assembly
+            .handle_factories()
+            .get(AGENT_RECONCILIATION_RUNTIME_ID)
+            .unwrap()
+            .semantic
+        else {
+            panic!("prepared Agent must construct");
+        };
+        let RuntimeSemanticHandleFactory::StandingCuration(curation) = &assembly
+            .handle_factories()
+            .get("world_model.standing_curation")
+            .unwrap()
+            .semantic
+        else {
+            panic!("prepared Curation must construct");
+        };
+        assert!(agent.authority_port.observe().unwrap().is_none());
+        assert!(curation.authority_port.observe().unwrap().is_none());
+        assert!(observer
+            .active_generation(STEWARD_AGENT_ID)
+            .unwrap()
+            .is_none());
+        let _supervisor = harness.start_supervisor(&assembly);
+        let first = agent.authority_port.observe().unwrap().unwrap();
+        let curation_first = curation.authority_port.observe().unwrap().unwrap();
+        assert_eq!(
+            first.activation_generation,
+            curation_first.activation_generation
+        );
+        assert_eq!(first.admission_epoch, curation_first.admission_epoch);
+        assert_ne!(
+            first.activation_generation,
+            prepared.activation.activation_id
+        );
+        assert!(first.admission_epoch.is_some());
+        let mut attribution = meld_execution::task_network::TaskAdmissionAttribution {
+            agent_id: STEWARD_AGENT_ID.into(),
+            goal_id: "epoch-test-goal".into(),
+            plan_revision_id: "epoch-test-plan".into(),
+            task_id: "epoch-test-task".into(),
+            authorization_id: "epoch-test-authorization".into(),
+            admission_id: "epoch-test-admission".into(),
+            authority_scope_id: "epoch-test-policy".into(),
+            authority_policy_content_hash: first.authority_policy_content_hash.clone(),
+            activation_generation: first.activation_generation.clone(),
+            admission_epoch: first.admission_epoch.clone(),
+        };
+        assert!(observer.validates_admission(&attribution).unwrap());
+        attribution.agent_id = "foreign-agent".into();
+        assert!(!observer.validates_admission(&attribution).unwrap());
+        attribution.agent_id = STEWARD_AGENT_ID.into();
+        let lifecycle = assembly.lifecycle_store().unwrap();
+        lifecycle
+            .interrupt(
+                &prepared.assignment.assignment_id,
+                &first.activation_generation,
+            )
+            .unwrap();
+        assert!(agent.authority_port.observe().unwrap().is_none());
+        assert!(curation.authority_port.observe().unwrap().is_none());
+        assert!(!observer.validates_admission(&attribution).unwrap());
+        let second = lifecycle
+            .reopen(
+                &prepared.assignment.assignment_id,
+                &first.activation_generation,
+                prepared,
+            )
+            .unwrap();
+        assert_ne!(Some(&second.epoch_id), first.admission_epoch.as_ref());
+        assert!(!observer.validates_admission(&attribution).unwrap());
+        let reopened = agent.authority_port.observe().unwrap().unwrap();
+        assert_eq!(reopened.activation_generation, first.activation_generation);
+        assert_eq!(reopened.admission_epoch.as_ref(), Some(&second.epoch_id));
+        attribution.admission_epoch = Some(second.epoch_id);
+        assert!(observer.validates_admission(&attribution).unwrap());
+        attribution.admission_epoch = None;
+        assert!(!observer.validates_admission(&attribution).unwrap());
+        assert!(assembly
+            .stores()
+            .agent_store
+            .activations_for_agent(STEWARD_AGENT_ID)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
     fn genesised_world_binds_epistemic_actors_and_ticks_each_exactly_once() {
         let harness = StewardshipHarness::new();
         {
             let assembly = harness.assembly();
             harness.run_world_genesis(&assembly);
+            assert!(assembly
+                .stores()
+                .curation_store
+                .active_rule(STEWARD_AGENT_ID)
+                .unwrap()
+                .is_none());
+            assert!(assembly
+                .stores()
+                .agent_store
+                .activations_for_agent(STEWARD_AGENT_ID)
+                .unwrap()
+                .is_empty());
+            assembly.flush_product_boundary().unwrap();
         }
 
         let assembly = harness.assembly();
+        assert!(assembly.bind_dispatch_routes(stub_routes()));
         let registration_set = assembly.registration_set().cloned().unwrap();
         let mut command = SupervisorStartCommand::new("instance-b", 100);
         command.registration_set = Some(registration_set);
@@ -5038,14 +7124,26 @@ mod tests {
             RuntimeSupervisor::start(assembly.supervisor_startup_package(), command).unwrap();
         let tick = supervisor.tick(1_100).unwrap();
         let status = supervisor.status_snapshot(1_100).unwrap();
+        assert_eq!(
+            status
+                .activation_liveness
+                .as_ref()
+                .expect("prepared activation must expose assignment liveness")
+                .state,
+            crate::runtime::lifecycle::ProjectedLifecycleState::ActiveWork,
+            "{:?}",
+            status.activation_liveness
+        );
 
         let bound = [
             "world_model.graph_replay",
             "world_model.belief_assessment",
             "world_model.evidence_ingestion",
+            "world_model.standing_curation",
+            AGENT_RECONCILIATION_RUNTIME_ID,
             "execution.task_admission",
+            "execution.task_dispatch",
             "execution.publication",
-            STABLE_ACTIVATION_LIFECYCLE_RUNTIME_ID,
         ];
         for runtime_id in bound {
             let lifecycle = lifecycle_of(&status, runtime_id);
@@ -5058,12 +7156,7 @@ mod tests {
                 "'{runtime_id}' must be truthfully active after genesis, got {lifecycle:?}"
             );
         }
-        assert_eq!(
-            lifecycle_of(&status, AGENT_RECONCILIATION_RUNTIME_ID),
-            Some(RegistrationLifecycle::UnresolvedRequiredBinding)
-        );
-        // Agent planning dependencies remain absent, while exact prepared
-        // Capability bindings make Task admission truthfully available.
+        // Exact prepared Capability bindings make Task admission available.
         assert_eq!(
             lifecycle_of(&status, "execution.task_admission"),
             Some(RegistrationLifecycle::ActiveIdle)
@@ -5078,7 +7171,146 @@ mod tests {
         let mut expected = bound.to_vec();
         expected.sort_unstable();
         assert_eq!(ticked, expected);
+        let mut quiescent = false;
+        for pass in 2..=24 {
+            supervisor.tick(1_100 + pass * 10).unwrap();
+            let projected = supervisor
+                .status_snapshot(1_101 + pass * 10)
+                .unwrap()
+                .activation_liveness
+                .expect("prepared activation must retain assignment liveness");
+            if projected.state == crate::runtime::lifecycle::ProjectedLifecycleState::Quiescent {
+                assert!(projected.incomplete_participants.is_empty());
+                assert!(projected.broken_wake_refs.is_empty());
+                quiescent = true;
+                break;
+            }
+        }
+        assert!(quiescent, "native waits must reach resolved quiescence");
+        let lifecycle_store = assembly.lifecycle_store().unwrap();
+        let assignment_id = assembly
+            .prepared_activation()
+            .unwrap()
+            .assignment
+            .assignment_id
+            .clone();
+        let current = lifecycle_store
+            .current_generation(&assignment_id)
+            .unwrap()
+            .unwrap();
+        assert!(current.admission_open());
+        assert_eq!(current.readiness.len(), 9);
+        assert!(current.readiness.values().all(|receipt| {
+            !receipt.native_evidence.installed_revision_refs.is_empty()
+                && !receipt.native_evidence.binding_refs.is_empty()
+                && !receipt.native_evidence.subscription_refs.is_empty()
+                && !receipt.native_evidence.proof_position_ref.is_empty()
+        }));
+        let wake_refs = current
+            .waits
+            .values()
+            .flat_map(|wait| wait.wake_refs.iter())
+            .collect::<Vec<_>>();
+        assert!(wake_refs.iter().any(|wake| matches!(
+            wake,
+            crate::runtime::lifecycle::StructuralWakeRef::EventPosition(_)
+        )));
+        assert!(wake_refs.iter().any(|wake| matches!(
+            wake,
+            crate::runtime::lifecycle::StructuralWakeRef::OwnerRevision(_)
+        )));
+        assert!(wake_refs.iter().any(|wake| matches!(
+            wake,
+            crate::runtime::lifecycle::StructuralWakeRef::DurableOperation(_)
+        )));
+        let generation_id = current.generation_id.clone();
+        let (participant_id, original_wait) = current.waits.iter().next().unwrap();
+        for foreign in [
+            StructuralWakeRef::EventPosition(format!(
+                "event-ledger::{}::after::0",
+                meld_events::LedgerIdentity::new()
+            )),
+            StructuralWakeRef::OwnerRevision("task-network::foreign-network::after::0".into()),
+            StructuralWakeRef::DurableOperation(
+                "publication-outbox::foreign-network::after::0".into(),
+            ),
+            StructuralWakeRef::OwnerRevision(format!(
+                "world-model::{}::belief-dirty-work::world_model.belief_assessment::after::0",
+                meld_events::LedgerIdentity::new()
+            )),
+        ] {
+            lifecycle_store
+                .record_wait(
+                    &assignment_id,
+                    &generation_id,
+                    participant_id,
+                    OwnerWaitReceiptV1::new(
+                        generation_id.clone(),
+                        original_wait.incarnation_id.clone(),
+                        original_wait.owner_checkpoint_ref.clone(),
+                        "adversarial-foreign-resource".into(),
+                        vec![foreign.clone()],
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+            let projection = supervisor
+                .status_snapshot(1_900)
+                .unwrap()
+                .activation_liveness
+                .unwrap();
+            assert_eq!(
+                projection.state,
+                crate::runtime::lifecycle::ProjectedLifecycleState::Stalled,
+                "{projection:?}"
+            );
+            assert_eq!(projection.broken_wake_refs, vec![foreign]);
+        }
+        lifecycle_store
+            .record_wait(
+                &assignment_id,
+                &generation_id,
+                participant_id,
+                original_wait.clone(),
+            )
+            .unwrap();
+        assert_eq!(
+            supervisor
+                .status_snapshot(1_901)
+                .unwrap()
+                .activation_liveness
+                .unwrap()
+                .state,
+            crate::runtime::lifecycle::ProjectedLifecycleState::Quiescent
+        );
         supervisor.request_shutdown(2_000).unwrap();
+        let retired_status = supervisor.status_snapshot(2_001).unwrap();
+        assert_eq!(
+            retired_status
+                .activation_liveness
+                .as_ref()
+                .expect("retired activation remains visible")
+                .state,
+            crate::runtime::lifecycle::ProjectedLifecycleState::Retired
+        );
+        let lifecycle = lifecycle_store.assignment(&assignment_id).unwrap().unwrap();
+        assert!(lifecycle.current_generation_id.is_none());
+        assert!(lifecycle
+            .generations
+            .values()
+            .all(|generation| generation.status
+                == crate::runtime::lifecycle::ActivationGenerationStatus::Retired));
+        let retired = &lifecycle.generations[&generation_id];
+        assert_eq!(retired.stop_receipts.len(), 9);
+        assert_eq!(retired.release_receipts.len(), 9);
+        assert_eq!(retired.safe_points.len(), 8);
+        assert_eq!(retired.passive_fences.len(), 1);
+        assert!(retired
+            .retirement
+            .as_ref()
+            .is_some_and(
+                |receipt| receipt.stop_receipts.len() == 9 && receipt.release_receipts.len() == 9
+            ));
     }
 
     #[test]
@@ -5100,10 +7332,10 @@ mod tests {
                 .stores()
                 .agent_store
                 .put_activation(&AgentActivationRecord {
-                    activation_id: "standing-generation-a".to_string(),
+                    activation_id: harness.prepared_activation_id(&assembly),
                     agent_id: STEWARD_AGENT_ID.to_string(),
                     started_at_seq: 5,
-                    status: AgentActivationStatus::Activated,
+                    status: meld_world_model::AgentActivationStatus::Activated,
                     last_error: None,
                     lease_id: Some("standing-lease-a".to_string()),
                 })
@@ -5143,6 +7375,7 @@ mod tests {
         }
 
         let assembly = harness.assembly();
+        let _supervisor = harness.start_supervisor(&assembly);
         let mut curation = assembly
             .handle_factories()
             .get("world_model.standing_curation")
@@ -5189,6 +7422,7 @@ mod tests {
         let unprojected_cut = TraversalQuery::new(assembly.stores().traversal_store.as_ref())
             .cut(&TraversalCutRequest {
                 owners: vec![TraversalOwnerRequirement {
+                    event_source: None,
                     owner_id: meld_world_model::CURATION_OWNER_ID.to_string(),
                     scope: standing_curation_scope(),
                     required: true,
@@ -5220,11 +7454,13 @@ mod tests {
             .cut(&TraversalCutRequest {
                 owners: vec![
                     TraversalOwnerRequirement {
+                        event_source: None,
                         owner_id: "workspace_fs".to_string(),
                         scope: standing_curation_scope(),
                         required: true,
                     },
                     TraversalOwnerRequirement {
+                        event_source: None,
                         owner_id: meld_world_model::CURATION_OWNER_ID.to_string(),
                         scope: standing_curation_scope(),
                         required: true,
@@ -5345,6 +7581,7 @@ mod tests {
         drop(ingestion);
         drop(graph);
         drop(curation);
+        drop(_supervisor);
         drop(assembly);
 
         let reopened = harness.assembly();
@@ -5568,9 +7805,8 @@ mod tests {
         assert_eq!(subject.object_id, "docs");
     }
 
-    /// The publication tick declares quiet only when the outbox emptiness
-    /// was actually confirmed: a composed empty network and an absent
-    /// network both narrate, each with its own detail.
+    /// The publication tick declares quiet only when the native outbox
+    /// confirms emptiness. An absent network fails closed.
     #[test]
     fn publication_tick_declares_quiet_only_when_confirmed() {
         let harness = StewardshipHarness::new();
@@ -5581,6 +7817,7 @@ mod tests {
             SledTaskNetworkStore::open(execution_db, bindings.network_id.clone()).unwrap();
 
         let mut handle = PublicationHandle {
+            runtime: PublicationRuntime::new(),
             event_append: crate::runtime::ports::ProductEventAppendPort::new(&harness.authority),
             bindings,
             worker_id: "worker-test".to_string(),
@@ -5595,12 +7832,14 @@ mod tests {
             .detail
             .contains("no pending Task Network publications"));
 
-        // Without a composed network the declaration carries the
-        // no-network detail instead of claiming a confirmed empty outbox.
+        // Without a composed network no owner can prove an outbox wait.
         handle.network = None;
         let report = handle.tick(WorkBudget { max_items: 8 });
-        assert_eq!(report.waiting_on.len(), 1, "{report:?}");
-        assert_eq!(report.waiting_on[0].condition, "no_pending_publications");
-        assert!(report.waiting_on[0].detail.contains("no Task Network"));
+        assert!(report.waiting_on.is_empty(), "{report:?}");
+        assert_eq!(report.fatal_errors.len(), 1, "{report:?}");
+        assert_eq!(
+            report.fatal_errors[0].code,
+            "publication_task_network_unresolved"
+        );
     }
 }

@@ -9,6 +9,7 @@
 //! Product composition creates [`runtime::GraphRuntime`] with [`runtime::GraphRuntime::from_ports`].
 //! Raw event storage construction is intentionally unavailable here.
 
+pub mod admission;
 pub mod compat;
 pub mod contracts;
 mod cursor;
@@ -31,3 +32,5 @@ pub use contracts::{
 };
 pub use ports::{GraphConsumerCursorReporter, GraphDerivedEventSink, GraphEventReplaySource};
 pub use query::TraversalQuery;
+
+pub(crate) mod source_replay;

@@ -27,6 +27,11 @@ pub const CURATION_PUBLICATION_PENDING: &str = "curation_publication_pending";
 /// One narrow installed rule for Curation-owned expected state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StandingCurationRule {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_event_route: Option<crate::world_state::graph::admission::OwnerEventSourceRef>,
+    /// Exact judgment authority when observing an independently owned source scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judgment_scope: Option<CurationJudgmentScope>,
     pub rule_id: String,
     pub agent_id: String,
     pub source_owner_id: String,
@@ -38,6 +43,41 @@ pub struct StandingCurationRule {
     pub expected_object_id: String,
     pub relation_type: String,
     pub output_policy_revision: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub realization: Option<CurationRealizationRule>,
+}
+
+/// Agent judgment context, independent from the source owner's publication scope.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CurationJudgmentScope {
+    pub subject: DomainObjectRef,
+    pub perspective: PerspectiveKey,
+    pub branch_scope: BranchScope,
+}
+
+impl CurationJudgmentScope {
+    pub fn validate(&self) -> Result<(), StorageError> {
+        self.subject.validate()?;
+        self.perspective.validate()?;
+        require_non_empty("Curation judgment branch", &self.branch_scope.branch_id)
+    }
+
+    fn matches(&self, authority: &CurationAuthority) -> bool {
+        self.subject == authority.subject
+            && self.perspective == authority.perspective
+            && self.branch_scope == authority.branch_scope
+    }
+}
+
+/// Installed owner-qualified predicate assessed under a complete bounded cut.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CurationRealizationRule {
+    pub observed_object: DomainObjectRef,
+    #[serde(default)]
+    pub required_qualifications: BTreeMap<String, String>,
+    pub realized_relation_type: String,
+    pub not_realized_relation_type: String,
 }
 
 impl StandingCurationRule {
@@ -46,6 +86,12 @@ impl StandingCurationRule {
         require_non_empty("standing Curation agent id", &self.agent_id)?;
         require_non_empty("standing Curation source owner", &self.source_owner_id)?;
         self.scope.validate()?;
+        if let Some(source) = &self.source_event_route {
+            source.validate()?;
+        }
+        if let Some(scope) = &self.judgment_scope {
+            scope.validate()?;
+        }
         if self.roots.is_empty() {
             return invalid("standing Curation rule requires at least one root");
         }
@@ -56,6 +102,26 @@ impl StandingCurationRule {
             }
         }
         self.bounds.validate_for_curation()?;
+        if let Some(realization) = &self.realization {
+            realization.observed_object.validate()?;
+            if !self.roots.contains(&realization.observed_object) {
+                return invalid("Curation realization target must be an explicit traversal root");
+            }
+            if realization.observed_object.domain_id != self.source_owner_id {
+                return invalid("Curation realization must refer to its declared source owner");
+            }
+            require_non_empty(
+                "Curation realized relation",
+                &realization.realized_relation_type,
+            )?;
+            require_non_empty(
+                "Curation not-realized relation",
+                &realization.not_realized_relation_type,
+            )?;
+            if realization.realized_relation_type == realization.not_realized_relation_type {
+                return invalid("Curation realization dispositions must have distinct relations");
+            }
+        }
         require_non_empty(
             "standing Curation expected object kind",
             &self.expected_object_kind,
@@ -69,6 +135,38 @@ impl StandingCurationRule {
             "standing Curation output policy revision",
             &self.output_policy_revision,
         )
+    }
+
+    /// Validate a caller's exact Agent scope before preparing work for this rule.
+    pub fn validate_authority(&self, authority: &CurationAuthority) -> Result<(), StorageError> {
+        self.validate()?;
+        authority.validate()?;
+        if self.agent_id != authority.agent_id {
+            return invalid("standing Curation rule belongs to another Agent");
+        }
+        if let Some(reason) = self.authority_mismatch(authority) {
+            return invalid(reason);
+        }
+        Ok(())
+    }
+
+    fn authority_mismatch(&self, authority: &CurationAuthority) -> Option<&'static str> {
+        if let Some(scope) = &self.judgment_scope {
+            return (!scope.matches(authority))
+                .then_some("initiating Agent differs from the declared judgment scope");
+        }
+        if !self.roots.contains(&authority.subject) {
+            Some("initiating Agent subject is outside the standing rule roots")
+        } else if self.scope.branch_id.as_deref() != Some(authority.branch_scope.branch_id.as_str())
+        {
+            Some("initiating Agent branch differs from the standing rule scope")
+        } else if self.scope.perspective_id.as_deref()
+            != Some(authority.perspective.perspective_id.as_str())
+        {
+            Some("initiating Agent perspective differs from the standing rule scope")
+        } else {
+            None
+        }
     }
 
     pub fn expected_object(&self) -> Result<DomainObjectRef, StorageError> {
@@ -126,10 +224,21 @@ pub struct CurationAuthority {
     pub perspective: PerspectiveKey,
     pub branch_scope: BranchScope,
     pub activation_generation: String,
+    /// Exact admission epoch, absent only in legacy records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission_epoch: Option<String>,
     pub subject: DomainObjectRef,
 }
 
 impl CurationAuthority {
+    /// Durable ownership scope shared by this Agent's successive admission epochs.
+    pub(crate) fn same_owner_scope(&self, other: &Self) -> bool {
+        self.agent_id == other.agent_id
+            && self.subject == other.subject
+            && self.perspective == other.perspective
+            && self.branch_scope == other.branch_scope
+    }
+
     pub fn validate(&self) -> Result<(), StorageError> {
         require_non_empty("Curation authority agent id", &self.agent_id)?;
         self.perspective.validate()?;
@@ -168,6 +277,9 @@ pub struct CurationPlannedAuthorization {
     pub context_id: String,
     pub authority_scope_id: String,
     pub activation_generation: String,
+    /// Exact admission epoch, absent only in legacy records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission_epoch: Option<String>,
     pub idempotency_key: String,
 }
 
@@ -190,6 +302,7 @@ impl CurationPlannedAuthorization {
         if self.operation_id != operation.operation_id
             || self.agent_id != operation.authority.agent_id
             || self.activation_generation != operation.authority.activation_generation
+            || self.admission_epoch != operation.authority.admission_epoch
         {
             return invalid("planned Curation authorization does not match its operation fence");
         }
@@ -232,7 +345,11 @@ impl CurationOperation {
                 &authority,
                 &rule_revision,
                 &source_cut.owners,
-                &source_cut.receipts,
+                &source_cut
+                    .receipts
+                    .iter()
+                    .map(|receipt| receipt.semantic_basis())
+                    .collect::<Vec<_>>(),
                 &source_cut.scope,
                 source_cut.currentness,
                 &traversal_request,
@@ -304,11 +421,39 @@ pub struct CurationAcceptanceRecord {
     pub decision: CurationAdmissionDecision,
     pub reason: String,
     pub authority: CurationAuthority,
+    /// Exact current authority observed when rejecting an obsolete offer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_authority: Option<CurationAuthority>,
     pub rule_revision: TheoryRevisionRef,
     pub source_cut_id: String,
 }
 
 impl CurationAcceptanceRecord {
+    /// Decide new intake against the exact currently open native authority.
+    pub fn for_current_authority(
+        operation: &CurationOperation,
+        rule: &StandingCurationRuleRevision,
+        current: &CurationAuthority,
+    ) -> Result<Self, StorageError> {
+        current.validate()?;
+        let mut receipt = Self::for_operation(operation, rule)?;
+        if &operation.authority != current {
+            receipt.decision = CurationAdmissionDecision::Rejected;
+            receipt.reason = "operation authority does not match the open admission epoch".into();
+            receipt.observed_authority = Some(current.clone());
+            receipt.acceptance_id = stable_identity(
+                "curation-epoch-acceptance-v1",
+                &(
+                    &operation.operation_id,
+                    &receipt.decision,
+                    &receipt.reason,
+                    current,
+                ),
+            )?;
+        }
+        Ok(receipt)
+    }
+
     pub fn for_operation(
         operation: &CurationOperation,
         rule: &StandingCurationRuleRevision,
@@ -327,16 +472,8 @@ impl CurationAcceptanceRecord {
             Some("operation source cut has undeclared owner requirements")
         } else if !complete_cut_matches_declared_owners(&operation.source_cut) {
             Some("operation source cut is not complete for its declared owners")
-        } else if !rule.rule.roots.contains(&operation.authority.subject) {
-            Some("initiating Agent subject is outside the standing rule roots")
-        } else if rule.rule.scope.branch_id.as_deref()
-            != Some(operation.authority.branch_scope.branch_id.as_str())
-        {
-            Some("initiating Agent branch differs from the standing rule scope")
-        } else if rule.rule.scope.perspective_id.as_deref()
-            != Some(operation.authority.perspective.perspective_id.as_str())
-        {
-            Some("initiating Agent perspective differs from the standing rule scope")
+        } else if let Some(reason) = rule.rule.authority_mismatch(&operation.authority) {
+            Some(reason)
         } else if let Some(authorization) = &operation.planned_authorization {
             authorization
                 .validate(operation)
@@ -363,6 +500,7 @@ impl CurationAcceptanceRecord {
             decision,
             reason,
             authority: operation.authority.clone(),
+            observed_authority: None,
             rule_revision: operation.rule_revision.clone(),
             source_cut_id: operation.source_cut.cut_id.clone(),
         })
@@ -374,11 +512,13 @@ pub(crate) fn expected_cut_owners(
 ) -> Vec<crate::world_state::graph::contracts::TraversalOwnerRequirement> {
     let mut owners = vec![
         crate::world_state::graph::contracts::TraversalOwnerRequirement {
+            event_source: rule.rule.source_event_route.clone(),
             owner_id: rule.rule.source_owner_id.clone(),
             scope: rule.rule.scope.clone(),
             required: true,
         },
         crate::world_state::graph::contracts::TraversalOwnerRequirement {
+            event_source: None,
             owner_id: CURATION_OWNER_ID.to_string(),
             scope: rule.rule.scope.clone(),
             required: false,
@@ -410,12 +550,32 @@ fn complete_cut_matches_declared_owners(cut: &TraversalCut) -> bool {
     }
     cut.receipts.iter().all(|receipt| {
         cut.owners.iter().any(|requirement| {
-            requirement.owner_id == receipt.owner_id && requirement.scope == receipt.scope
+            requirement.owner_id == receipt.owner_id
+                && requirement.scope == receipt.scope
+                && requirement.event_source.as_ref()
+                    == receipt
+                        .event_coverage
+                        .as_ref()
+                        .map(|coverage| &coverage.source)
         }) && receipt.completeness.status
             == crate::world_state::graph::contracts::OwnerCompletenessStatus::Complete
             && receipt.completeness.scope == receipt.scope
-            && receipt.source_event.ledger_id == cut.event_position.ledger_id
-            && receipt.source_event.seq <= cut.event_position.after_seq
+            && receipt.source_event.is_none_or(|event| {
+                event.ledger_id == cut.event_position.ledger_id
+                    && event.seq > 0
+                    && event.seq <= cut.event_position.after_seq
+            })
+            && match &receipt.event_coverage {
+                Some(coverage) => {
+                    coverage.through == cut.event_position
+                        && cut.owners.iter().any(|owner| {
+                            owner.owner_id == receipt.owner_id
+                                && owner.scope == receipt.scope
+                                && owner.event_source.as_ref() == Some(&coverage.source)
+                        })
+                }
+                None => receipt.source_event.is_some(),
+            }
             && receipt.projection_position.ledger_id == cut.graph_position.ledger_id
             && receipt.projection_position.after_seq <= cut.graph_position.after_seq
     })
@@ -692,7 +852,7 @@ pub(crate) fn qualifications(
     operation: &CurationOperation,
     rule: &StandingCurationRuleRevision,
 ) -> BTreeMap<String, String> {
-    BTreeMap::from([
+    let mut qualifications = BTreeMap::from([
         ("agent_id".to_string(), operation.authority.agent_id.clone()),
         (
             "perspective".to_string(),
@@ -715,7 +875,11 @@ pub(crate) fn qualifications(
             "output_policy_revision".to_string(),
             rule.rule.output_policy_revision.clone(),
         ),
-    ])
+    ]);
+    if let Some(epoch) = &operation.authority.admission_epoch {
+        qualifications.insert("admission_epoch".into(), epoch.clone());
+    }
+    qualifications
 }
 
 fn require_non_empty(label: &str, value: &str) -> Result<(), StorageError> {

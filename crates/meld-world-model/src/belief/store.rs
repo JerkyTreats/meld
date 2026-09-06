@@ -18,6 +18,7 @@
 use std::io;
 use std::sync::Arc;
 
+use sled::transaction::{ConflictableTransactionError, TransactionError, Transactional};
 use sled::{Db, Tree};
 
 use crate::belief::contracts::{
@@ -44,9 +45,68 @@ const TREE_DIRTY_KEYS: &str = "belief_dirty_keys";
 const TREE_RUNTIME_META: &str = "belief_runtime_meta";
 const TREE_SUBSCRIPTION_ACCEPTANCES: &str = "belief_subscription_acceptances_v1";
 
+fn subscription_prefix(
+    kind: &str,
+    revision: &crate::belief::TheoryRevisionRef,
+    perspective: &PerspectiveKey,
+    branch: &crate::belief::BranchScope,
+) -> Result<String, StorageError> {
+    let bytes = serde_json::to_vec(&(revision, perspective, branch)).map_err(to_storage_data)?;
+    Ok(format!("{kind}::{}::", blake3::hash(&bytes).to_hex()))
+}
+
+fn subscription_key(
+    kind: &str,
+    revision: &crate::belief::TheoryRevisionRef,
+    key: &BeliefKey,
+) -> Result<String, StorageError> {
+    Ok(format!(
+        "{}{}",
+        subscription_prefix(kind, revision, &key.perspective, &key.branch_scope)?,
+        key.index_key()
+    ))
+}
+
+fn subscription_transaction_error(error: TransactionError<String>) -> StorageError {
+    match error {
+        TransactionError::Abort(message) => StorageError::InvalidPath(message),
+        TransactionError::Storage(error) => to_storage_io(error),
+    }
+}
+
+fn dirty_scope_prefix(
+    dimension: &str,
+    predicate: &str,
+    policy: &str,
+    perspective: &PerspectiveKey,
+    branch: &crate::belief::BranchScope,
+) -> Result<String, StorageError> {
+    let bytes = serde_json::to_vec(&(dimension, predicate, policy, perspective, branch))
+        .map_err(to_storage_data)?;
+    Ok(format!(
+        "dirty-scope-v1::{}::",
+        blake3::hash(&bytes).to_hex()
+    ))
+}
+
+fn dirty_scope_key(key: &BeliefKey) -> Result<String, StorageError> {
+    Ok(format!(
+        "{}{}",
+        dirty_scope_prefix(
+            &key.dimension_id,
+            &key.predicate_id,
+            &key.evidence_policy_id,
+            &key.perspective,
+            &key.branch_scope
+        )?,
+        key.index_key()
+    ))
+}
+
 /// Sled-backed store for belief evidence, revisions, views, and leases.
 #[derive(Clone)]
 pub struct BeliefStore {
+    resource_id: String,
     db: Db,
     evidence: Tree,
     assignments: Tree,
@@ -64,9 +124,15 @@ pub struct BeliefStore {
 }
 
 impl BeliefStore {
+    /// Exact durable world-model resource bound to this store instance.
+    pub fn resource_id(&self) -> &str {
+        &self.resource_id
+    }
+
     /// Open all belief trees against a shared sled database.
     pub fn new(db: Db) -> Result<Self, StorageError> {
-        Ok(Self {
+        let store = Self {
+            resource_id: crate::waiting::resource_identity(&db)?,
             evidence: db.open_tree(TREE_EVIDENCE).map_err(to_storage_io)?,
             assignments: db.open_tree(TREE_ASSIGNMENTS).map_err(to_storage_io)?,
             revisions: db.open_tree(TREE_REVISIONS).map_err(to_storage_io)?,
@@ -83,33 +149,222 @@ impl BeliefStore {
                 .open_tree(TREE_SUBSCRIPTION_ACCEPTANCES)
                 .map_err(to_storage_io)?,
             db,
-        })
+        };
+        store.index_existing_dirty_scopes()?;
+        Ok(store)
+    }
+
+    fn index_existing_dirty_scopes(&self) -> Result<(), StorageError> {
+        const MARKER: &[u8] = b"dirty-scope-index-v1";
+        if self
+            .runtime_meta
+            .contains_key(MARKER)
+            .map_err(to_storage_io)?
+        {
+            return Ok(());
+        }
+        for entry in self.dirty_keys.iter() {
+            let (key, value) = entry.map_err(to_storage_io)?;
+            let state = decode_dirty_state(&value)?;
+            let index_key = dirty_scope_key(&state.belief_key)?;
+            (&self.dirty_keys, &self.runtime_meta)
+                .transaction(|(dirty, index)| {
+                    if dirty.get(&key)?.is_some() {
+                        index.insert(index_key.as_bytes(), key.as_ref())?;
+                    }
+                    Ok(())
+                })
+                .map_err(subscription_transaction_error)?;
+        }
+        self.runtime_meta
+            .insert(MARKER, b"complete")
+            .map_err(to_storage_io)?;
+        self.flush()
     }
 
     pub(super) fn put_subscription_acceptance(
         &self,
         acceptance: &SourceSubscriptionAcceptanceV1,
+        request: &crate::agent::AgentSubscriptionRequestV1,
     ) -> Result<bool, StorageError> {
         let bytes = serde_json::to_vec(acceptance).map_err(to_storage_data)?;
-        let changed = match self
-            .subscription_acceptances
-            .compare_and_swap(
-                acceptance.request_id.as_bytes(),
-                None as Option<&[u8]>,
-                Some(bytes.as_slice()),
-            )
-            .map_err(to_storage_io)?
-        {
-            Ok(()) => true,
-            Err(conflict) if conflict.current.as_deref() == Some(bytes.as_slice()) => false,
-            Err(_) => {
-                return Err(StorageError::InvalidPath(
-                    "Belief subscription acceptance conflicts with its request".to_string(),
-                ))
-            }
-        };
+        request.validate()?;
+        let body = serde_json::to_vec(request).map_err(to_storage_data)?;
+        let key = &request.belief_key;
+        let pending_key = subscription_key("pending", &request.source_contract_revision, key)?;
+        let binding_key = subscription_key("binding", &request.source_contract_revision, key)?;
+        let request_key = format!("request::{}", request.request_id);
+        let changed = (
+            &self.subscription_acceptances,
+            &self.revision_head,
+            &self.revisions,
+        )
+            .transaction(|(subscriptions, heads, revisions)| {
+                let previous = subscriptions.get(acceptance.request_id.as_bytes())?;
+                if previous
+                    .as_ref()
+                    .is_some_and(|previous| previous.as_ref() != bytes.as_slice())
+                {
+                    return Err(ConflictableTransactionError::Abort(
+                        "Belief subscription acceptance conflicts with its request".to_string(),
+                    ));
+                }
+                if subscriptions
+                    .get(request_key.as_bytes())?
+                    .as_ref()
+                    .is_some_and(|previous| previous.as_ref() != body.as_slice())
+                {
+                    return Err(ConflictableTransactionError::Abort(
+                        "Belief subscription body conflicts with its identity".to_string(),
+                    ));
+                }
+                subscriptions.insert(acceptance.request_id.as_bytes(), bytes.as_slice())?;
+                subscriptions.insert(request_key.as_bytes(), body.as_slice())?;
+                if subscriptions.get(binding_key.as_bytes())?.is_none() {
+                    subscriptions.insert(binding_key.as_bytes(), request.request_id.as_bytes())?;
+                }
+                let current = heads
+                    .get(key.index_key().as_bytes())?
+                    .map(|head| {
+                        let raw = revisions.get(head)?.ok_or_else(|| {
+                            ConflictableTransactionError::Abort(
+                                "Belief head names an absent revision".to_string(),
+                            )
+                        })?;
+                        serde_json::from_slice::<BeliefRevision>(&raw)
+                            .map_err(|error| ConflictableTransactionError::Abort(error.to_string()))
+                    })
+                    .transpose()?;
+                if current.as_ref().is_none_or(|current| {
+                    current.theory_revision.as_ref() != Some(&request.source_contract_revision)
+                }) && subscriptions.get(pending_key.as_bytes())?.is_none()
+                {
+                    subscriptions.insert(pending_key.as_bytes(), request.request_id.as_bytes())?;
+                }
+                Ok(previous.is_none())
+            })
+            .map_err(subscription_transaction_error)?;
         self.db.flush().map_err(to_storage_io)?;
         Ok(changed)
+    }
+
+    /// Exact accepted source request retained independently of Agent storage.
+    pub fn accepted_subscription(
+        &self,
+        revision: &crate::belief::TheoryRevisionRef,
+        key: &BeliefKey,
+    ) -> Result<Option<crate::agent::AgentSubscriptionRequestV1>, StorageError> {
+        let Some(id) = self
+            .subscription_acceptances
+            .get(subscription_key("binding", revision, key)?)
+            .map_err(to_storage_io)?
+        else {
+            return Ok(None);
+        };
+        self.subscription_request(&id).map(Some)
+    }
+
+    fn subscription_request(
+        &self,
+        id: &[u8],
+    ) -> Result<crate::agent::AgentSubscriptionRequestV1, StorageError> {
+        let id = std::str::from_utf8(id)
+            .map_err(|error| StorageError::InvalidPath(error.to_string()))?;
+        let request: crate::agent::AgentSubscriptionRequestV1 = decode_optional(
+            self.subscription_acceptances
+                .get(format!("request::{id}"))
+                .map_err(to_storage_io)?,
+        )?
+        .ok_or_else(|| {
+            StorageError::InvalidPath("accepted subscription has no durable request".into())
+        })?;
+        request.validate()?;
+        if request.request_id != id || self.subscription_acceptance(id)?.is_none() {
+            return Err(StorageError::InvalidPath(
+                "subscription index has no matching acceptance".into(),
+            ));
+        }
+        Ok(request)
+    }
+
+    pub(super) fn pending_subscriptions(
+        &self,
+        revision: &crate::belief::TheoryRevisionRef,
+        perspective: &PerspectiveKey,
+        branch: &crate::belief::BranchScope,
+        limit: usize,
+    ) -> Result<(Vec<crate::agent::AgentSubscriptionRequestV1>, bool), StorageError> {
+        self.subscription_requests("pending", revision, perspective, branch, limit)
+    }
+
+    pub(super) fn bound_subscriptions(
+        &self,
+        revision: &crate::belief::TheoryRevisionRef,
+        perspective: &PerspectiveKey,
+        branch: &crate::belief::BranchScope,
+    ) -> Result<Vec<crate::agent::AgentSubscriptionRequestV1>, StorageError> {
+        Ok(self
+            .subscription_requests("binding", revision, perspective, branch, usize::MAX)?
+            .0)
+    }
+
+    pub(super) fn subscription_for_index_key(
+        &self,
+        revision: &crate::belief::TheoryRevisionRef,
+        perspective: &PerspectiveKey,
+        branch: &crate::belief::BranchScope,
+        key: &str,
+    ) -> Result<Option<crate::agent::AgentSubscriptionRequestV1>, StorageError> {
+        let index = format!(
+            "{}{key}",
+            subscription_prefix("binding", revision, perspective, branch)?
+        );
+        let Some(id) = self
+            .subscription_acceptances
+            .get(index)
+            .map_err(to_storage_io)?
+        else {
+            return Ok(None);
+        };
+        let request = self.subscription_request(&id)?;
+        if request.belief_key.index_key() != key
+            || request.belief_key.perspective != *perspective
+            || request.belief_key.branch_scope != *branch
+            || request.source_contract_revision != *revision
+        {
+            return Err(StorageError::InvalidPath(
+                "subscription binding differs from its index".into(),
+            ));
+        }
+        Ok(Some(request))
+    }
+
+    fn subscription_requests(
+        &self,
+        kind: &str,
+        revision: &crate::belief::TheoryRevisionRef,
+        perspective: &PerspectiveKey,
+        branch: &crate::belief::BranchScope,
+        limit: usize,
+    ) -> Result<(Vec<crate::agent::AgentSubscriptionRequestV1>, bool), StorageError> {
+        let prefix = subscription_prefix(kind, revision, perspective, branch)?;
+        let mut values = Vec::new();
+        let mut rows = self.subscription_acceptances.scan_prefix(prefix);
+        for row in rows.by_ref().take(limit) {
+            let (_, id) = row.map_err(to_storage_io)?;
+            let request = self.subscription_request(&id)?;
+            if request.source_contract_revision != *revision
+                || request.belief_key.perspective != *perspective
+                || request.belief_key.branch_scope != *branch
+            {
+                return Err(StorageError::InvalidPath(
+                    "subscription index crosses its family or observation scope".into(),
+                ));
+            }
+            values.push(request);
+        }
+        let more = rows.next().transpose().map_err(to_storage_io)?.is_some();
+        Ok((values, more))
     }
 
     pub(super) fn subscription_acceptance(
@@ -430,12 +685,23 @@ impl BeliefStore {
                 serde_json::to_vec(revision).map_err(to_storage_data)?,
             )
             .map_err(to_storage_io)?;
-        self.revision_head
-            .insert(
-                revision.belief_key.index_key().as_bytes(),
-                revision.revision_id.as_bytes(),
-            )
-            .map_err(to_storage_io)?;
+        let pending_key = revision
+            .theory_revision
+            .as_ref()
+            .map(|reference| subscription_key("pending", reference, &revision.belief_key))
+            .transpose()?;
+        (&self.revision_head, &self.subscription_acceptances)
+            .transaction(|(heads, subscriptions)| {
+                heads.insert(
+                    revision.belief_key.index_key().as_bytes(),
+                    revision.revision_id.as_bytes(),
+                )?;
+                if let Some(key) = &pending_key {
+                    subscriptions.remove(key.as_bytes())?;
+                }
+                Ok(())
+            })
+            .map_err(subscription_transaction_error)?;
         match self.dirty_state(&revision.belief_key)? {
             Some(mut dirty) if dirty.latest_seq > lease.input_cursor_end => {
                 dirty.dirty_since_seq = lease.input_cursor_end.saturating_add(1);
@@ -661,10 +927,52 @@ impl BeliefStore {
 
     /// Clear dirty state after a successful commit.
     pub fn clear_dirty(&self, key: &BeliefKey) -> Result<(), StorageError> {
-        self.dirty_keys
-            .remove(key.index_key().as_bytes())
-            .map_err(to_storage_io)?;
+        let index_key = dirty_scope_key(key)?;
+        (&self.dirty_keys, &self.runtime_meta)
+            .transaction(|(dirty, index)| {
+                dirty.remove(key.index_key().as_bytes())?;
+                index.remove(index_key.as_bytes())?;
+                Ok(())
+            })
+            .map_err(subscription_transaction_error)?;
         Ok(())
+    }
+
+    /// Read only dirty work belonging to one configured family and complete scope.
+    pub fn scoped_dirty_key_states_bounded(
+        &self,
+        family: &crate::belief::BeliefFamilyRevision,
+        perspective: &PerspectiveKey,
+        branch: &crate::belief::BranchScope,
+        max_items: usize,
+    ) -> Result<(Vec<DirtyKeyState>, bool), StorageError> {
+        let prefix = dirty_scope_prefix(
+            &family.config.dimension_id,
+            &family.config.predicate_id,
+            &family.config.evidence_policy_id,
+            perspective,
+            branch,
+        )?;
+        let mut out = Vec::new();
+        for entry in self.runtime_meta.scan_prefix(prefix.as_bytes()) {
+            let (index_key, key) = entry.map_err(to_storage_io)?;
+            let Some(raw) = self.dirty_keys.get(&key).map_err(to_storage_io)? else {
+                continue;
+            };
+            if out.len() == max_items {
+                return Ok((out, true));
+            }
+            let state = decode_dirty_state(&raw)?;
+            if dirty_scope_key(&state.belief_key)?.as_bytes() != index_key.as_ref()
+                || state.belief_key.index_key().as_bytes() != key.as_ref()
+            {
+                return Err(StorageError::InvalidPath(
+                    "dirty scope index differs from its native record".into(),
+                ));
+            }
+            out.push(state);
+        }
+        Ok((out, false))
     }
 
     /// Return dirty key index entries for recovery and tests.
@@ -781,16 +1089,20 @@ impl BeliefStore {
     }
 
     fn put_dirty_state(&self, state: &DirtyKeyState) -> Result<(), StorageError> {
-        self.dirty_keys
-            .insert(
-                state.belief_key.index_key().as_bytes(),
-                serde_json::to_vec(state).map_err(to_storage_data)?,
-            )
-            .map_err(to_storage_io)?;
+        let index_key = dirty_scope_key(&state.belief_key)?;
+        let key = state.belief_key.index_key();
+        let body = serde_json::to_vec(state).map_err(to_storage_data)?;
+        (&self.dirty_keys, &self.runtime_meta)
+            .transaction(|(dirty, index)| {
+                dirty.insert(key.as_bytes(), body.as_slice())?;
+                index.insert(index_key.as_bytes(), key.as_bytes())?;
+                Ok(())
+            })
+            .map_err(subscription_transaction_error)?;
         Ok(())
     }
 
-    fn active_lease_for_key(
+    pub(super) fn active_lease_for_key(
         &self,
         key: &BeliefKey,
     ) -> Result<Option<AssessmentLease>, StorageError> {

@@ -15,6 +15,38 @@ use crate::planner::contracts::{
 use crate::world_state::graph::contracts::TraversalCutStatus;
 
 impl PlannerCut {
+    /// Identity of the admitted source material used to identify reusable products.
+    /// Transport watermarks still distinguish exact cuts and authorization checks,
+    /// but unrelated Event progress cannot create a new executable obligation.
+    pub fn source_basis_id(&self) -> String {
+        let mut basis = self.clone();
+        basis.cut_id.clear();
+        basis.traversal_cut.cut_id.clear();
+        basis.traversal_cut.event_position.after_seq = 0;
+        basis.traversal_cut.graph_position.after_seq = 0;
+        basis.traversal_result.cut_id.clear();
+        basis.traversal_result.result_id.clear();
+        for receipt in basis
+            .traversal_cut
+            .receipts
+            .iter_mut()
+            .chain(basis.traversal_result.receipts.iter_mut())
+        {
+            *receipt = receipt.semantic_basis();
+        }
+        for source in &mut basis.source_positions {
+            if source.kind == PlannerSourceKind::Graph
+                && source.source_id == self.traversal_cut.cut_id
+            {
+                source.source_id.clear();
+                source.revision_id.clear();
+                source.content_hash.clear();
+            }
+        }
+        let bytes = serde_json::to_vec(&basis).expect("Planner source basis is serializable");
+        format!("planner-source-basis-v1::{}", blake3::hash(&bytes).to_hex())
+    }
+
     /// Assemble one complete immutable cut or return every blocking refusal.
     pub fn assemble(mut request: PlannerAssemblyRequest) -> PlannerAssemblyOutcome {
         request.policy.required_sources.sort();
@@ -94,6 +126,11 @@ impl PlannerCut {
 
 fn validate_assembly_request(request: &PlannerAssemblyRequest) -> Vec<PlannerRefusalGround> {
     let mut grounds = Vec::new();
+    if &request.view_input.context.subject != request.context.observation_subject() {
+        grounds.push(PlannerRefusalGround::InvalidInput {
+            detail: "projected evidence belongs to another observation subject".into(),
+        });
+    }
     if request.policy.policy_revision_id.trim().is_empty()
         || request.context.context_id.trim().is_empty()
         || request.context.agent_id.trim().is_empty()
@@ -305,11 +342,18 @@ fn project_belief_view(
         .as_ref()
         .is_some_and(|observation| observation.open);
 
-    propositions.push(Proposition::Holds {
-        subject: subject.clone(),
-        dimension: Term::Dimension(confidence_dimension),
-        condition: Condition::Equals(Term::Literal(Literal::Number(confidence))),
-    });
+    // A prior remains inspectable in Belief, but a missing observation or
+    // unsettled assessment cannot establish a settled proposition.
+    if view.status == crate::belief::BeliefStatus::Settled
+        && !view.freshness.stale
+        && !observation_open
+    {
+        propositions.push(Proposition::Holds {
+            subject: subject.clone(),
+            dimension: Term::Dimension(confidence_dimension),
+            condition: Condition::Equals(Term::Literal(Literal::Number(confidence))),
+        });
+    }
     propositions.push(Proposition::Holds {
         subject: subject.clone(),
         dimension: Term::Dimension(stale_dimension),
@@ -415,9 +459,68 @@ mod cut_tests {
         assert_eq!(forward, reverse);
     }
 
+    #[test]
+    fn transport_progress_changes_the_cut_but_not_the_product_source_basis() {
+        let original = request();
+        let mut later = original.clone();
+        later.traversal_cut.event_position.after_seq += 1;
+        later.traversal_cut.graph_position.after_seq += 1;
+        later.traversal_cut.cut_id = traversal_cut_identity(&later.traversal_cut).unwrap();
+        later.traversal_result.cut_id = later.traversal_cut.cut_id.clone();
+        later.traversal_result.result_id =
+            traversal_result_identity(&later.traversal_cut.cut_id, &later.traversal_request)
+                .unwrap();
+        let PlannerAssemblyOutcome::Complete(before) = PlannerCut::assemble(original) else {
+            panic!("complete initial cut");
+        };
+        let PlannerAssemblyOutcome::Complete(after) = PlannerCut::assemble(later.clone()) else {
+            panic!("complete advanced cut");
+        };
+        assert_ne!(before.cut_id, after.cut_id);
+        assert_eq!(before.source_basis_id(), after.source_basis_id());
+        later
+            .source_positions
+            .iter_mut()
+            .find(|source| source.kind == PlannerSourceKind::Belief)
+            .unwrap()
+            .revision_id = "new-belief-revision".into();
+        let PlannerAssemblyOutcome::Complete(changed) = PlannerCut::assemble(later) else {
+            panic!("complete changed cut");
+        };
+        assert_ne!(after.source_basis_id(), changed.source_basis_id());
+    }
+
+    #[test]
+    fn observation_subject_is_explicit_and_does_not_replace_authority_scope() {
+        let mut request = request();
+        let authority_subject = request.context.subject.clone();
+        let observation =
+            DomainObjectRef::new("curation", "expected_nonce", "current-epoch").unwrap();
+        assert!(serde_json::to_value(&request.context)
+            .unwrap()
+            .get("observation_subject")
+            .is_none());
+        request.context.observation_subject = Some(observation.clone());
+        assert!(matches!(
+            PlannerCut::assemble(request.clone()),
+            PlannerAssemblyOutcome::Refused(_)
+        ));
+        request.view_input.context.subject = observation.clone();
+        let PlannerAssemblyOutcome::Complete(cut) = PlannerCut::assemble(request) else {
+            panic!("explicitly selected observation should assemble");
+        };
+        assert_eq!(cut.context.subject, authority_subject);
+        assert_eq!(cut.context.observation_subject(), &observation);
+        cut.validate().unwrap();
+        let mut substituted = *cut;
+        substituted.context.observation_subject = None;
+        assert!(substituted.validate().is_err());
+    }
+
     fn request() -> PlannerAssemblyRequest {
         let subject = DomainObjectRef::new("workspace_fs", "node", "meld").unwrap();
         let context = PlannerDecisionContext {
+            observation_subject: None,
             context_id: "context-v1".into(),
             agent_id: "agent-v1".into(),
             goal_id: "goal-v1".into(),
@@ -427,6 +530,7 @@ mod cut_tests {
             perspective_id: "default".into(),
             authority_scope_id: "authority-v1".into(),
             activation_generation: "activation-v1".into(),
+            admission_epoch: None,
         };
         let kinds = vec![
             PlannerSourceKind::Graph,
@@ -441,6 +545,7 @@ mod cut_tests {
         let mut cut = TraversalCut {
             cut_id: String::new(),
             owners: vec![TraversalOwnerRequirement {
+                event_source: None,
                 owner_id: "workspace_fs".into(),
                 scope: OwnerPublicationScope {
                     scope_id: "meld".into(),
@@ -492,6 +597,7 @@ mod cut_tests {
                 ],
             },
             traversal_result: TraversalResult {
+                absent_roots: Vec::new(),
                 result_id: traversal_result_identity(&cut.cut_id, &traversal).unwrap(),
                 cut_id: cut.cut_id.clone(),
                 objects: Vec::new(),

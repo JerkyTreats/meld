@@ -1,0 +1,49 @@
+{
+  "family_id": "startup_realization",
+  "dimension_id": "startup_realization",
+  "predicate_id": "realized",
+  "evidence_policy_id": "startup-realization",
+  "evidence_schemas": [
+    {
+      "schema_id": "curation_realization_v1",
+      "required": true,
+      "role": "Support",
+      "reliability": 1.0,
+      "precision": 1.0
+    }
+  ],
+  "source_mappings": [
+    {
+      "mapping_id": "curation_realization_to_expectation",
+      "source_kind": "curation_realization",
+      "evidence_schema_id": "curation_realization_v1",
+      "subject_from": "record.subject",
+      "value_field": "realization_probability",
+      "factor_id": "curation_realization"
+    }
+  ],
+  "comparator": {
+    "engine_id": "weighted_bayesian",
+    "engine_version": "1",
+    "update_policy": "LatestObservation",
+    "factors": [
+      {
+        "factor_id": "curation_realization",
+        "evidence_schema_id": "curation_realization_v1",
+        "weight": 1.0,
+        "polarity": "Supports"
+      }
+    ],
+    "missing_evidence_uncertainty": 0.9
+  },
+  "default_prior": 0.0,
+  "planner_projection": {
+    "confidence_field": "confidence",
+    "threshold": 0.7,
+    "posterior_meaning": "realization_probability",
+    "confidence_projection": "Probability"
+  },
+  "config_version": "1",
+  "observationality": "Observational",
+  "anchor_requirement": "Unanchored"
+}

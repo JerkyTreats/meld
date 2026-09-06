@@ -65,13 +65,13 @@ impl TraversalReducer {
         ledger_id: LedgerIdentity,
         event: &EventRecord,
     ) -> Result<bool, StorageError> {
+        let owner_route = store.owner_event_route(&event.domain_id, &event.event_type)?;
+        if event.event_type == OWNER_PUBLICATION_EVENT_TYPE || owner_route.is_some() {
+            self.apply_owner_publication(store, ledger_id, event, owner_route.as_ref())?;
+            return Ok(true);
+        }
         if !is_traversal_source_event(event) {
             return Ok(false);
-        }
-
-        if event.event_type == OWNER_PUBLICATION_EVENT_TYPE {
-            self.apply_owner_publication(store, ledger_id, event)?;
-            return Ok(true);
         }
 
         // The spine:: prefix is a frozen stored-identifier format: existing
@@ -106,12 +106,21 @@ impl TraversalReducer {
         store: &TraversalStore,
         ledger_id: LedgerIdentity,
         event: &EventRecord,
+        route: Option<&super::admission::GraphOwnerEventRoute>,
     ) -> Result<(), StorageError> {
         let operation: OwnerPublicationOperation = serde_json::from_value(event.data.clone())
             .map_err(|error| {
                 StorageError::InvalidPath(format!("invalid owner publication payload: {error}"))
             })?;
         operation.validate()?;
+        if route.is_some_and(|route| {
+            operation.enumeration_rule_revision != route.enumeration_rule_revision
+        }) {
+            return Err(StorageError::InvalidPath(
+                "owner publication does not match its installed Graph enumeration contract".into(),
+            ));
+        }
+
         if event.domain_id != operation.batch.owner_id {
             return Err(StorageError::InvalidPath(
                 "owner publication domain does not own its payload".to_string(),
@@ -132,6 +141,7 @@ impl TraversalReducer {
             ));
         }
         store.put_owner_publication(&ProjectedOwnerPublication {
+            source_route: route.map(|route| route.source_ref()).transpose()?,
             operation,
             source_event: EventRecordRef {
                 ledger_id,

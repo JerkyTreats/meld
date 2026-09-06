@@ -353,6 +353,7 @@ mod tests {
                 condition: "no_ready_tasks".to_string(),
                 subject_key: None,
                 detail: "no claimable task at network revision 0".to_string(),
+                wake_refs: Vec::new(),
             }],
         );
         publish(
@@ -362,6 +363,7 @@ mod tests {
                 condition: "task_admission_available".to_string(),
                 subject_key: None,
                 detail: "no admitted unlowered Task at network revision 0".to_string(),
+                wake_refs: Vec::new(),
             }],
         );
         publish(
@@ -372,6 +374,7 @@ mod tests {
                 subject_key: Some("workspace_fs::node::docs".to_string()),
                 detail: "eligible task remains unpublished until Execution admission exists"
                     .to_string(),
+                wake_refs: Vec::new(),
             }],
         );
         publish(
@@ -383,6 +386,7 @@ mod tests {
                 detail: "no current anchor for subject workspace_fs::node::docs under \
                          frame_type::analysis"
                     .to_string(),
+                wake_refs: Vec::new(),
             }],
         );
         (temp, reports)

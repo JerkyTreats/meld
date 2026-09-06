@@ -105,6 +105,7 @@ fn admitted_record(
                 authority_policy_content_hash: policy.content_hash.clone(),
                 authority_decision: Some(authority_decision(policy)),
                 activation_generation: generation.to_string(),
+                admission_epoch: None,
             },
             task,
             idempotency_key: "task-alpha".to_string(),

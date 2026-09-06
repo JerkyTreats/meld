@@ -141,9 +141,9 @@ pub fn run_world_init(
         observed_seq,
     };
 
-    let routed = routed_install(stores, &request, theory_source, observed_seq)?.ok_or_else(|| {
+    let routed = routed_install(stores, &binding.package, &request, theory_source, observed_seq)?.ok_or_else(|| {
         world_init_error(
-            "the canonical docs package is not installed; supply its package source to install-theory",
+            "no installed package matches the selected Strategy; supply its package source to install-theory",
         )
     })?;
     let complete_product =
@@ -163,6 +163,7 @@ pub fn run_world_init(
 
 fn routed_install(
     stores: &crate::runtime::storage::OpenProductStores,
+    selection: &crate::config::SelectedStewardshipPackage,
     request: &WorldInitRequest,
     theory_source: Option<&Path>,
     observed_seq: u64,
@@ -171,31 +172,42 @@ fn routed_install(
         if let Some(source) = theory_source.filter(|root| root.join("pds-package.json").is_file()) {
             let prior = stores
                 .pds_packages
-                .head(crate::docs::theory::DOCS_PACKAGE_ID)
-                .map_err(|failure| world_init_error(failure.to_string()))?;
-            let receipt = crate::docs::theory::install_package(stores, source, observed_seq)
-                .map_err(|failure| world_init_error(failure.to_string()))?;
-            let changed = prior.as_ref().map(|head| head.receipt_id.as_str())
-                != Some(receipt.receipt_id.as_str());
+                .heads()
+                .map_err(|error| world_init_error(error.to_string()))?;
+            let receipt = super::product::install_package(stores, source, None, observed_seq)
+                .map_err(|error| world_init_error(error.to_string()))?;
+            let changed = !prior
+                .iter()
+                .any(|head| head.receipt_id == receipt.receipt_id);
             return Ok(Some(RoutedTheoryInstall { receipt, changed }));
         }
     }
-    if let Some(head) = stores
+    let mut matches = Vec::new();
+    for head in stores
         .pds_packages
-        .head(crate::docs::theory::DOCS_PACKAGE_ID)
-        .map_err(|failure| world_init_error(failure.to_string()))?
+        .heads()
+        .map_err(|error| world_init_error(error.to_string()))?
     {
         let receipt = stores
             .pds_packages
             .resolve_receipt(&head.receipt_id)
-            .map_err(|failure| world_init_error(failure.to_string()))?
-            .ok_or_else(|| world_init_error("routed package head cites a missing receipt"))?;
-        return Ok(Some(RoutedTheoryInstall {
-            receipt,
-            changed: false,
-        }));
+            .map_err(|error| world_init_error(error.to_string()))?
+            .ok_or_else(|| world_init_error("package head cites a missing receipt"))?;
+        if receipt.components.iter().any(|component| {
+            component.route.owner_domain == "world-model"
+                && component.route.component_kind == "strategy-theory"
+                && component.owner_revision.id == selection.strategy_theory_id
+        }) {
+            matches.push(receipt);
+        }
     }
-    Ok(None)
+    if matches.len() > 1 {
+        return Err(world_init_error("multiple installed packages supply the selected Strategy; supply the exact package source"));
+    }
+    Ok(matches.pop().map(|receipt| RoutedTheoryInstall {
+        receipt,
+        changed: false,
+    }))
 }
 
 pub(crate) fn compile_product_initialization<'a>(
@@ -204,15 +216,30 @@ pub(crate) fn compile_product_initialization<'a>(
     package_receipt: &crate::theory::PdsPackageInstallationReceiptV1,
     observed_seq: u64,
 ) -> Result<CompleteProductInitialization<'a>, ApiError> {
-    let declaration = crate::docs::theory::product_declaration(
+    let observation_components: Vec<_> = package_receipt
+        .components
+        .iter()
+        .filter(|component| {
+            component.route.owner_domain == "world-model"
+                && component.route.component_kind == "belief-family"
+                && component.owner_revision.id == binding.package.belief_family_id
+        })
+        .collect();
+    if observation_components.len() != 1 {
+        return Err(world_init_error(
+            "selected observation family has no unique package component",
+        ));
+    }
+    let declaration = super::product::product_declaration(
         &binding.package.expression,
         &binding.package.principal_id,
         package_receipt,
-        "docs-belief-family",
+        &observation_components[0].component_id,
         &format!(
             "steward '{}' for subject '{}'",
             binding.package.expression, binding.subject
         ),
+        &binding.package.authority_policy_id,
     )
     .map_err(|error| world_init_error(error.to_string()))?;
     let compilation = ProductCompilationReceiptV1::compile(
@@ -295,6 +322,7 @@ pub(crate) fn compile_product_initialization<'a>(
     Ok(CompleteProductInitialization {
         product_store: stores.pds_products.as_ref(),
         maintained_conditions: stores.maintained_condition_registry.as_ref(),
+        curation_store: stores.curation_store.as_ref(),
         declaration,
         compilation,
         assignment,
@@ -405,5 +433,79 @@ mod tests {
     fn unknown_stage_arg_is_rejected() {
         let error = parse_stage_args(&["activate".to_string()]).unwrap_err();
         assert!(error.to_string().contains("unknown stage 'activate'"));
+    }
+    #[test]
+    fn shared_initializer_selects_security_components_and_authority_from_the_package() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let stores = crate::runtime::storage::OpenProductStores::open(
+            &crate::runtime::storage::ProductStorageLayout::from_root(root.path()),
+        )
+        .unwrap();
+        let selected = crate::config::SelectedStewardshipPackage {
+            expression: "dependency_security_fixture".into(),
+            principal_id: "workspace-owner".into(),
+            belief_family_id: "dependency_security_posture".into(),
+            evidence_mapping_id: "dependency_security_outcome_mapping_v1".into(),
+            curation_rule_id: "dependency_security_posture".into(),
+            maintained_condition_id: "dependency_security_posture".into(),
+            strategy_theory_id: "dependency_security_fixture".into(),
+            authority_policy_id: "dependency_security_fixture_read_only".into(),
+            claim_policy_id: String::new(),
+        };
+        let request = WorldInitRequest {
+            stages: vec![WorldInitStage::InstallTheory],
+        };
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/dependency_security");
+        let routed = routed_install(&stores, &selected, &request, Some(&source), 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            routed.receipt.package_id,
+            crate::dependency_security::theory::PACKAGE_ID
+        );
+        assert!(routed.changed);
+        crate::docs::theory::install_package(
+            &stores,
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/docs_freshness"),
+            2,
+        )
+        .unwrap();
+        let replay = routed_install(&stores, &selected, &request, None, 2)
+            .unwrap()
+            .unwrap();
+        assert_eq!(replay.receipt.receipt_id, routed.receipt.receipt_id);
+        assert!(!replay.changed);
+        let binding = PhysicalBinding {
+            workspace_root: workspace.path().into(),
+            subject: "dependency-graph".into(),
+            agent_id: "security-steward".into(),
+            provider_id: "unused-provider".into(),
+            package: selected,
+            storage_root: root.path().into(),
+        };
+        let product =
+            compile_product_initialization(&stores, &binding, &replay.receipt, 2).unwrap();
+        assert_eq!(
+            product.declaration.agent_topology[0].observation_scope_component_id,
+            "security-posture-belief"
+        );
+        assert_eq!(
+            product.declaration.agent_topology[0].required_subscriptions[0]
+                .source_contract_component_id,
+            "security-posture-belief"
+        );
+        assert_eq!(
+            product.assignment.requested_authority_ref,
+            "dependency_security_fixture_read_only"
+        );
+        assert_eq!(product.activation.selected_implementations.len(), 4);
+        assert!(product
+            .declaration
+            .participant_plan
+            .participants
+            .iter()
+            .any(|participant| participant.participant_id
+                == meld_world_model::agent::AGENT_RECONCILIATION_RUNTIME_ID));
     }
 }

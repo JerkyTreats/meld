@@ -292,6 +292,7 @@ impl<T> ExecutionRuntimeContext for T where
 impl From<&QueueEventContext> for meld_execution::ExecutionEventContext {
     fn from(value: &QueueEventContext) -> Self {
         Self {
+            effect_authority: None,
             session_id: value.session_id.clone(),
         }
     }
@@ -660,11 +661,26 @@ impl meld_execution::EventPublicationPort for ContextApi {
     type Error = ApiError;
     type EventEnvelope = EventEnvelope;
 
+    fn durable_event_append(&self) -> Option<meld_events::EventAppendCapability> {
+        ContextApi::durable_event_append(self)
+    }
+
     fn publish_execution_envelope(
         &self,
         _event_context: &meld_execution::ExecutionEventContext,
         envelope: EventEnvelope,
     ) -> Result<(), ApiError> {
+        if let Some(append) = ContextApi::durable_event_append(self) {
+            let mode = if envelope.record_id.is_some() {
+                meld_events::AppendMode::Idempotent
+            } else {
+                meld_events::AppendMode::Plain
+            };
+            return append
+                .append_durable(envelope, mode)
+                .map(|_| ())
+                .map_err(|error| ApiError::ConfigError(error.to_string()));
+        }
         // Execution outcomes are durable-class facts: the world model and
         // execution projection reduce them, so a dropped envelope would be
         // a permanent hole in canonical history.

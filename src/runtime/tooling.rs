@@ -141,10 +141,9 @@ pub struct RuntimeCliRunResult {
 /// One structured foreground account for one supervisor maintenance pass.
 ///
 /// Emission derives from the durable per-tick action records the supervisor
-/// already preserved; the account never becomes semantic truth. A quiescent
-/// pass still emits (with `quiescent: true` and no working actors), so the
-/// account alone distinguishes a dead process (no line), a quiescent
-/// runtime, and active work.
+/// already preserved; the account never becomes semantic truth. A clean pass
+/// still emits with `active_idle: true`. Activation-wide quiescence comes
+/// only from complete owner waits and viable wake evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RuntimeTickAccount {
     /// Stable account schema discriminator.
@@ -156,8 +155,8 @@ pub struct RuntimeTickAccount {
     pub at_ms: u64,
     /// Supervisor instance id.
     pub instance_id: String,
-    /// True when every bounded invocation truthfully found no work.
-    pub quiescent: bool,
+    /// True when a non-empty observed actor set all found no work.
+    pub active_idle: bool,
     /// One entry per bounded actor invocation this pass.
     pub actors: Vec<RuntimeTickActorAccount>,
 }
@@ -796,16 +795,15 @@ fn build_tick_account(
             budget_exhausted: action.metrics.budget_exhausted,
         })
         .collect();
-    // A pass is quiescent when every bounded invocation truthfully found no
-    // work; a pass with no bound actors at all is likewise quiescent. Both
-    // still emit, which is what separates quiescence from a dead process.
-    let quiescent = actors.iter().all(|actor| actor.outcome == "no_work");
+    // This is only the observed operational fact. An empty actor set is not
+    // active idle, and clean ticks do not prove activation-wide quiescence.
+    let active_idle = !actors.is_empty() && actors.iter().all(|actor| actor.outcome == "no_work");
     RuntimeTickAccount {
         kind: "runtime_tick_account".to_string(),
         tick,
         at_ms,
         instance_id: instance_id.to_string(),
-        quiescent,
+        active_idle,
         actors,
     }
 }
@@ -1457,7 +1455,7 @@ mod tests {
     }
 
     #[test]
-    fn foreground_run_emits_quiescent_accounts_and_durable_lifecycle_snapshots() {
+    fn foreground_run_emits_active_idle_accounts_and_durable_lifecycle_snapshots() {
         let temp = tempfile::tempdir().unwrap();
         let assembly =
             ProductRuntimeAssembly::load_for_product_root(temp.path().join("product")).unwrap();
@@ -1481,8 +1479,9 @@ mod tests {
             assert_eq!(account["type"], "runtime_tick_account");
             assert_eq!(account["tick"], (index + 1) as u64);
             assert_eq!(account["instance_id"], "tooling-account");
-            // An empty product has no committed work: quiescent passes.
-            assert_eq!(account["quiescent"], true);
+            // Plain composition still has active maintenance actors. Their
+            // clean passes are operationally active-idle only.
+            assert_eq!(account["active_idle"], true);
         }
 
         // Shutdown snapshot is durable and readable through the frozen
@@ -1574,7 +1573,7 @@ mod tests {
     }
 
     #[test]
-    fn tick_account_distinguishes_work_from_quiescence() {
+    fn tick_account_distinguishes_work_from_active_idle() {
         let working = RuntimeActionRecord::from_worker_tick(
             "action-1",
             "world_model.graph_replay",
@@ -1640,20 +1639,20 @@ mod tests {
         );
 
         let active = build_tick_account(1, 10, "instance-a", None, &[working]);
-        assert!(!active.quiescent);
+        assert!(!active.active_idle);
         assert_eq!(active.actors[0].outcome, "succeeded");
         assert_eq!(active.actors[0].items_committed, 4);
         assert_eq!(active.actors[0].checkpoint.as_ref().unwrap().output, 4);
 
         // A pass whose only invocation truthfully found no work is
-        // quiescent, and a pass with no bound actors at all is quiescent —
-        // both still emit, unlike a dead process.
+        // active-idle. A pass with no bound actors cannot make an
+        // activation-wide claim.
         let idle_pass = build_tick_account(2, 20, "instance-a", None, &[idle]);
-        assert!(idle_pass.quiescent);
+        assert!(idle_pass.active_idle);
         assert_eq!(idle_pass.actors[0].outcome, "no_work");
 
         let empty_pass = build_tick_account(3, 30, "instance-a", None, &[]);
-        assert!(empty_pass.quiescent);
+        assert!(!empty_pass.active_idle);
         assert!(empty_pass.actors.is_empty());
     }
 }

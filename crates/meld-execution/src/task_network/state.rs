@@ -415,6 +415,9 @@ pub struct TaskAdmissionAttribution {
     pub authority_policy_content_hash: String,
     /// Activation generation fencing realization.
     pub activation_generation: String,
+    /// Exact admission epoch retained from the accepted offer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission_epoch: Option<String>,
 }
 
 impl TaskAdmissionAttribution {
@@ -434,6 +437,7 @@ impl TaskAdmissionAttribution {
                 .authority_policy_content_hash
                 .clone(),
             activation_generation: record.request.lineage.activation_generation.clone(),
+            admission_epoch: record.request.lineage.admission_epoch.clone(),
         }
     }
 }

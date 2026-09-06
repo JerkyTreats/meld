@@ -7,6 +7,7 @@ use std::path::Path;
 use meld::config::{PhysicalBinding, SelectedStewardshipPackage};
 use meld::harness::boot::{HarnessBootRequest, HarnessRootSelection};
 use meld::runtime::assembly::StewardshipComposition;
+use meld::runtime::registration::{RegistrationKind, RegistrationSet, RuntimeRegistration};
 use meld::runtime::storage::{OpenProductStores, ProductStorageLayout};
 use meld_world_model::belief::{BeliefFamilyRegistry, BeliefFamilyRegistryStore};
 
@@ -145,5 +146,21 @@ pub fn survey_boot_request(
     request.stewardship = Some(StewardshipComposition {
         binding: binding.clone(),
     });
+    request.registration_set = Some(RegistrationSet {
+        registrations: ["world_model.graph_replay", "world_model.belief_assessment"]
+            .into_iter()
+            .map(|runtime_id| RuntimeRegistration {
+                registration_id: format!("survey::{runtime_id}"),
+                runtime_id: runtime_id.to_string(),
+                kind: RegistrationKind::ActiveActor,
+                required_resources: Vec::new(),
+            })
+            .collect(),
+    });
+    request.enabled_runtime_ids = vec![
+        "world_model.graph_replay".to_string(),
+        "world_model.belief_assessment".to_string(),
+    ];
+    request.disabled_runtime_ids = Some(Vec::new());
     request
 }

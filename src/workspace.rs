@@ -7,6 +7,7 @@ mod danger;
 pub mod events;
 mod facade;
 mod format;
+pub(crate) mod lifecycle;
 pub mod publish;
 pub(crate) mod reducer;
 pub mod scan;

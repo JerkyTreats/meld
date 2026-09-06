@@ -2,10 +2,10 @@
 
 use libfuzzer_sys::fuzz_target;
 use meld_execution::capability::CapabilityCatalog;
+use meld_execution::task::{CompiledTaskRecord, TaskRunContext};
 use meld_execution::task_admission::{
     ExecutionTask, TaskAdmissionApi, TaskAdmissionLineage, TaskAdmissionRequest,
 };
-use meld_execution::task::{CompiledTaskRecord, TaskRunContext};
 use meld_execution::task_network::{
     command::{Command, Request},
     mutation::{Inject, Mutation, ReadPrecondition, Set},
@@ -55,8 +55,11 @@ fn admission(index: usize, byte: u8) -> TaskAdmissionRequest {
             authority_policy_content_hash: String::new(),
             authority_decision: None,
             activation_generation: format!("generation-{byte}"),
+
+            admission_epoch: None,
         },
         task: ExecutionTask {
+            initial_inputs: Vec::new(),
             task_id: task_id.clone(),
             composition: Composition {
                 steps: Vec::new(),
@@ -91,13 +94,8 @@ fn apply(store: &mut InMemoryTaskNetworkStore, action: &Action) {
             request,
             live_generation,
         } => {
-            let _ = TaskAdmissionApi::new(
-                store,
-                &CapabilityCatalog::new(),
-                live_generation,
-                "",
-            )
-            .admit(request.clone());
+            let _ = TaskAdmissionApi::new(store, &CapabilityCatalog::new(), live_generation, "")
+                .admit(request.clone());
         }
         Action::Command(request) => {
             let _ = store.submit(request.clone());

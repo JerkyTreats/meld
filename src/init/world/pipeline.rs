@@ -115,6 +115,7 @@ pub(crate) struct RoutedTheoryInstall {
 pub(crate) struct CompleteProductInitialization<'a> {
     pub(crate) product_store: &'a PdsProductStore,
     pub(crate) maintained_conditions: &'a AgentMaintainedConditionRegistryStore,
+    pub(crate) curation_store: &'a meld_world_model::CurationStore,
     pub(crate) declaration: ProductDeclarationV1,
     pub(crate) compilation: ProductCompilationReceiptV1,
     pub(crate) assignment: StewardshipAssignmentV1,
@@ -430,11 +431,26 @@ impl<'a> WorldInitPipeline<'a> {
                 .get_agent(&assigned.agent_id)
                 .map_err(|error| WorldInitError::Identity(error.to_string()))?
                 .map_or(metadata.observed_seq, |record| record.created_at_seq);
+            let mut agent_owner_revisions = installed_owner_revisions.clone();
+            for template in installed_owner_revisions.iter().filter(|reference| {
+                reference.registry == meld_world_model::curation::CURATION_TEMPLATE_REGISTRY_ID
+            }) {
+                let prepared = product.curation_store.prepare_rule(template,
+                    &meld_world_model::curation::CurationRuleBinding {
+                        agent_id: assigned.agent_id.clone(), subject: product.assignment.subject.clone(),
+                        scope: meld_world_model::world_state::graph::contracts::OwnerPublicationScope {
+                            scope_id: product.assignment.subject.object_id.clone(),
+                            branch_id: Some(branch_scope.branch_id.clone()),
+                            perspective_id: Some(perspective.perspective_id.clone()), valid_at: None,
+                        },
+                    }, metadata.observed_seq).map_err(|error| WorldInitError::Identity(error.to_string()))?;
+                agent_owner_revisions.push(prepared.revision_ref());
+            }
             let intent = AgentGenesisIntentV1::new(
                 product.assignment.assignment_id.clone(),
                 product.compilation.compilation_receipt_id.clone(),
                 assigned.position_id.clone(),
-                installed_owner_revisions.clone(),
+                agent_owner_revisions,
                 SeedAgentRegistration {
                     agent_id: assigned.agent_id.clone(),
                     perspective_key: perspective.clone(),

@@ -1,6 +1,6 @@
 //! Independent soundness verification for constructed Strategy candidates.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use meld_lang::{evaluate, EdgeKind, Effect, EvalResult, Proposition, StepKind};
 
@@ -17,6 +17,14 @@ use super::{
 /// contribution, evidence routing, and content identity. It performs no
 /// repair and never relies on the candidate construction origin.
 pub fn verify_plan(problem: &StrategyProblem, candidate: &StrategyPlan) -> PlanVerification {
+    verify_with_history(problem, candidate, &[])
+}
+
+fn verify_with_history(
+    problem: &StrategyProblem,
+    candidate: &StrategyPlan,
+    history: &[super::StrategyCompletedHistoryEntry],
+) -> PlanVerification {
     let mut grounds = Vec::new();
     if candidate.problem_id != problem.problem_id
         || candidate.goal_id != problem.goal.goal_id
@@ -25,34 +33,140 @@ pub fn verify_plan(problem: &StrategyProblem, candidate: &StrategyPlan) -> PlanV
     {
         grounds.push(StrategyRejectionGround::IdentityMismatch);
     }
-    if !meld_lang::validate(&candidate.composition).valid {
-        grounds.push(StrategyRejectionGround::InvalidComposition);
+    if candidate.origin == super::StrategyPlanOrigin::Satisfied {
+        if !matches!(
+            evaluate(
+                &problem.planner_cut.world_model_view.world_state,
+                &problem.goal.target
+            ),
+            EvalResult::Satisfied
+        ) || !candidate.tasks.is_empty()
+            || !candidate.epistemic_operations.is_empty()
+            || !candidate.dependencies.is_empty()
+            || !candidate.composition.steps.is_empty()
+            || !candidate.composition.edges.is_empty()
+            || !candidate.capability_contract_ids.is_empty()
+            || candidate.evidence_route.is_some()
+            || candidate.conditions != vec![problem.goal.target.clone()]
+            || candidate.settlement_obligation != problem.goal.target
+            || candidate.frozen_context_id != problem.planner_cut.context.context_id
+            || candidate.explanation.trim().is_empty()
+            || candidate.evaluation != candidate_evaluation(candidate)
+        {
+            grounds.push(StrategyRejectionGround::InvalidComposition);
+        }
+        return if grounds.is_empty() {
+            PlanVerification::Valid {
+                evaluation: candidate.evaluation.clone(),
+            }
+        } else {
+            PlanVerification::Invalid { grounds }
+        };
     }
-    if candidate.tasks.len() != 1
-        || candidate.tasks[0].composition != candidate.composition
-        || candidate.tasks[0].capability_contract_ids != candidate.capability_contract_ids
-        || candidate.tasks[0].bindings != candidate.bindings
-        || candidate.tasks[0].return_milestone.is_none()
-        || candidate.conditions.is_empty()
+    let rule = problem.theory.settlement_rules.iter().find_map(|rule| {
+        meld_lang::unify(&rule.goal_pattern, &problem.goal.target).map(|bindings| (rule, bindings))
+    });
+    let Some((rule, bindings)) = rule else {
+        return PlanVerification::Invalid {
+            grounds: vec![StrategyRejectionGround::NoSettlementRule],
+        };
+    };
+    if super::search::ground_proposition(&rule.settlement_obligation, &bindings).as_ref()
+        != Ok(&candidate.settlement_obligation)
+        || candidate.evidence_route.as_ref() != Some(&rule.evidence_route)
+    {
+        grounds.push(StrategyRejectionGround::InvalidEvidenceRoute);
+    }
+    if candidate.conditions != vec![problem.goal.target.clone()]
         || candidate.explanation.trim().is_empty()
         || candidate.frozen_context_id != problem.planner_cut.context.context_id
+        || candidate.epistemic_operations != super::search::epistemic_products(problem)
+        || !dependencies_valid(candidate, history)
     {
         grounds.push(StrategyRejectionGround::InvalidComposition);
     }
-    if candidate.epistemic_operations.len() != problem.curation_operations.len().min(1) {
-        grounds.push(StrategyRejectionGround::InvalidComposition);
-    }
-    if let Some(operation) = candidate.epistemic_operations.first() {
-        let linked = candidate.dependencies.iter().any(|dependency| {
-            dependency.producer_product_id == operation.product_id
-                && dependency.consumer_product_id == candidate.tasks[0].task_id
-                && dependency.required_milestone
-                    == PlanMilestoneRequirement::CurationTerminal {
-                        operation_id: operation.operation.operation_id.clone(),
-                    }
-        });
-        if !linked || !problem.curation_operations.contains(&operation.operation) {
+    let confirmation = candidate.tasks.is_empty();
+    if confirmation {
+        if rule.epistemic_placement != super::StrategyEpistemicPlacement::Confirmation
+            || candidate.epistemic_operations.is_empty()
+            || !candidate.composition.steps.is_empty()
+            || !candidate.composition.edges.is_empty()
+            || candidate.bindings != meld_lang::Bindings::empty()
+            || !candidate.capability_contract_ids.is_empty()
+            || !candidate.epistemic_operations.iter().all(|operation| {
+                candidate.dependencies.iter().any(|dependency| {
+                    dependency.consumer_product_id == operation.product_id
+                        && history.iter().any(|entry| {
+                            entry.product_id == dependency.producer_product_id
+                                && entry.accepted_milestone == dependency.required_milestone
+                                && matches!(&entry.product, Some(super::StrategyProduct::Task(task))
+                                    if task.task_id == entry.product_id
+                                    && task.return_milestone.as_ref() == Some(&entry.accepted_milestone)
+                                    && composition_contributes(&task.composition, &candidate.settlement_obligation))
+                        })
+                })
+            })
+        {
             grounds.push(StrategyRejectionGround::InvalidComposition);
+        }
+    } else {
+        // The aggregate is a compatibility projection of independently complete Tasks.
+        let steps: Vec<_> = candidate
+            .tasks
+            .iter()
+            .flat_map(|task| task.composition.steps.clone())
+            .collect();
+        let edges: Vec<_> = candidate
+            .tasks
+            .iter()
+            .flat_map(|task| task.composition.edges.clone())
+            .collect();
+        let contracts: BTreeSet<_> = candidate
+            .tasks
+            .iter()
+            .flat_map(|task| task.capability_contract_ids.clone())
+            .collect();
+        if candidate.composition.steps != steps
+            || candidate.composition.edges != edges
+            || contracts != candidate.capability_contract_ids.iter().cloned().collect()
+            || candidate.tasks.iter().any(|task| {
+                !meld_lang::validate(&task.composition).valid
+                    || task.composition.steps.is_empty()
+                    || task.return_milestone
+                        != Some(PlanMilestoneRequirement::ExecutionTerminal {
+                            task_id: task.task_id.clone(),
+                        })
+            })
+        {
+            grounds.push(StrategyRejectionGround::InvalidComposition);
+        }
+        for operation in &candidate.epistemic_operations {
+            let linked = candidate.tasks.iter().any(|task| {
+                candidate
+                    .dependencies
+                    .iter()
+                    .any(|dependency| match rule.epistemic_placement {
+                        super::StrategyEpistemicPlacement::Prerequisite => {
+                            dependency.producer_product_id == operation.product_id
+                                && dependency.consumer_product_id == task.task_id
+                                && dependency.required_milestone
+                                    == PlanMilestoneRequirement::CurationTerminal {
+                                        operation_id: operation.operation.operation_id.clone(),
+                                    }
+                        }
+                        super::StrategyEpistemicPlacement::Confirmation => {
+                            dependency.producer_product_id == task.task_id
+                                && dependency.consumer_product_id == operation.product_id
+                                && dependency.required_milestone
+                                    == PlanMilestoneRequirement::ExecutionTerminal {
+                                        task_id: task.task_id.clone(),
+                                    }
+                        }
+                    })
+            });
+            if !linked {
+                grounds.push(StrategyRejectionGround::InvalidComposition);
+            }
         }
     }
     // The candidate carries an operational graph, but the problem remains
@@ -83,8 +197,10 @@ pub fn verify_plan(problem: &StrategyProblem, candidate: &StrategyPlan) -> PlanV
             grounds.push(StrategyRejectionGround::IdentityMismatch);
         }
         used_contracts.insert(capability.contract_id.clone());
-        evidence_outcome_supported |=
-            capability.outcome_contract_id == candidate.evidence_route.outcome_contract_id;
+        evidence_outcome_supported |= candidate
+            .evidence_route
+            .as_ref()
+            .is_some_and(|route| capability.outcome_contract_id == route.outcome_contract_id);
         for precondition in &operator.preconditions {
             match evaluate(
                 &problem.planner_cut.world_model_view.world_state,
@@ -104,7 +220,7 @@ pub fn verify_plan(problem: &StrategyProblem, candidate: &StrategyPlan) -> PlanV
             }
         }
     }
-    if !evidence_outcome_supported {
+    if !confirmation && !evidence_outcome_supported {
         grounds.push(StrategyRejectionGround::InvalidEvidenceRoute);
     }
     let declared_contracts: BTreeSet<_> =
@@ -112,42 +228,104 @@ pub fn verify_plan(problem: &StrategyProblem, candidate: &StrategyPlan) -> PlanV
     if used_contracts != declared_contracts {
         grounds.push(StrategyRejectionGround::IdentityMismatch);
     }
-    if !composition_contributes(&candidate.composition, &candidate.settlement_obligation) {
+    if !confirmation
+        && !composition_contributes(&candidate.composition, &candidate.settlement_obligation)
+    {
         grounds.push(StrategyRejectionGround::InvalidComposition);
     }
-    // Required inputs must either be wired inside the candidate or already
-    // exist in the planner projection used to construct it.
-    for step in &candidate.composition.steps {
-        let StepKind::Op(operator) = &step.kind else {
-            continue;
-        };
-        for input in operator
-            .resolution
-            .requires_inputs
+    // Required inputs must be wired inside each Task or carried as frozen values.
+    for task in &candidate.tasks {
+        let mut expected_inputs: Vec<_> = problem
+            .task_inputs
             .iter()
-            .filter(|slot| slot.required)
+            .filter(|input| {
+                task.composition
+                    .steps
+                    .iter()
+                    .any(|step| step.step_id == input.step_id)
+            })
+            .cloned()
+            .collect();
+        expected_inputs.sort_by(|left, right| {
+            (&left.step_id, &left.slot_id).cmp(&(&right.step_id, &right.slot_id))
+        });
+        if task.initial_inputs != expected_inputs
+            || task
+                .initial_inputs
+                .iter()
+                .any(|input| input.validate().is_err())
+            || task
+                .initial_inputs
+                .iter()
+                .map(|input| (&input.step_id, &input.slot_id))
+                .collect::<BTreeSet<_>>()
+                .len()
+                != task.initial_inputs.len()
         {
-            let wired = candidate.composition.edges.iter().any(|edge| {
-                edge.to == step.step_id
-                    && matches!(
-                        &edge.kind,
-                        EdgeKind::DataFlow { artifact_type }
-                            if artifact_type == &input.artifact_type
-                    )
+            grounds.push(StrategyRejectionGround::InvalidComposition);
+        }
+        let mut task_contracts = BTreeSet::new();
+        let mut task_authority = BTreeSet::new();
+        for step in &task.composition.steps {
+            let StepKind::Op(operator) = &step.kind else {
+                continue;
+            };
+            let capability = problem.capabilities.iter().find(|capability| {
+                capability.operator.resolution.specific == operator.resolution.specific
             });
-            let existing =
-                goal_scope(&problem.goal.target).is_some_and(|scope| {
-                    problem.planner_cut.world_model_view.world_state.satisfies(
-                        &Proposition::Exists {
-                            scope,
-                            artifact_type: input.artifact_type.clone(),
-                        },
-                    )
+            if let Some(capability) = capability {
+                task_contracts.insert(capability.contract_id.clone());
+                if let Some(specific) = &operator.resolution.specific {
+                    task_authority.insert(specific.capability_type_id.clone());
+                }
+                let template = meld_lang::Composition {
+                    steps: vec![meld_lang::Step {
+                        step_id: step.step_id.clone(),
+                        kind: StepKind::Op(capability.operator.clone()),
+                    }],
+                    edges: Vec::new(),
+                };
+                if !meld_lang::substitute(&template, &task.bindings)
+                    .is_ok_and(|grounded| grounded.steps[0].kind == step.kind)
+                {
+                    grounds.push(StrategyRejectionGround::InvalidComposition);
+                }
+            }
+        }
+        if task_contracts != task.capability_contract_ids.iter().cloned().collect()
+            || task_authority != task.authority_requirements.iter().cloned().collect()
+            || task.expected_outcome_contract_id != rule.evidence_route.outcome_contract_id
+        {
+            grounds.push(StrategyRejectionGround::IdentityMismatch);
+        }
+        for step in &task.composition.steps {
+            let StepKind::Op(operator) = &step.kind else {
+                continue;
+            };
+            for input in operator
+                .resolution
+                .requires_inputs
+                .iter()
+                .filter(|slot| slot.required)
+            {
+                let wired = task.composition.edges.iter().any(|edge| {
+                    edge.to == step.step_id
+                        && matches!(
+                            &edge.kind,
+                            EdgeKind::DataFlow { artifact_type }
+                                if artifact_type == &input.artifact_type
+                        )
                 });
-            if !wired && !existing {
-                grounds.push(StrategyRejectionGround::UnclosedArtifact {
-                    artifact_type: format!("{:?}", input.artifact_type),
+                let supplied = task.initial_inputs.iter().any(|value| {
+                    value.step_id == step.step_id
+                        && input.artifact_type
+                            == meld_lang::Term::ArtifactType(value.artifact_type_id.clone())
                 });
+                if !wired && !supplied {
+                    grounds.push(StrategyRejectionGround::UnclosedArtifact {
+                        artifact_type: format!("{:?}", input.artifact_type),
+                    });
+                }
             }
         }
     }
@@ -170,7 +348,11 @@ pub fn verify_successor_plan(
     successor: &StrategySuccessorPlan,
 ) -> PlanVerification {
     let predecessor = request.predecessor_plan.as_ref();
-    let standard = verify_plan(&request.search.problem, &successor.plan);
+    let standard = verify_with_history(
+        &request.search.problem,
+        &successor.plan,
+        &request.completed_history,
+    );
     if !matches!(standard, PlanVerification::Valid { .. }) {
         return standard;
     }
@@ -181,12 +363,97 @@ pub fn verify_successor_plan(
         || successor.plan.predecessor_plan_revision_id.as_ref()
             != Some(&predecessor.plan_revision_id)
         || successor.completed_history != request.completed_history
+        || request.completed_history.iter().any(|entry| {
+            if entry.source_plan_revision_id != predecessor.plan_revision_id {
+                return false;
+            }
+            match &entry.product {
+                Some(super::StrategyProduct::Task(task)) => !predecessor.tasks.contains(task),
+                Some(super::StrategyProduct::Epistemic(operation)) => {
+                    !predecessor.epistemic_operations.contains(operation)
+                }
+                None => false,
+            }
+        })
     {
         return PlanVerification::Invalid {
             grounds: vec![StrategyRejectionGround::InvalidPredecessor],
         };
     }
     standard
+}
+
+fn dependencies_valid(
+    candidate: &StrategyPlan,
+    history: &[super::StrategyCompletedHistoryEntry],
+) -> bool {
+    let mut products = BTreeMap::new();
+    for task in &candidate.tasks {
+        if products
+            .insert(
+                task.task_id.as_str(),
+                PlanMilestoneRequirement::ExecutionTerminal {
+                    task_id: task.task_id.clone(),
+                },
+            )
+            .is_some()
+        {
+            return false;
+        }
+    }
+    for operation in &candidate.epistemic_operations {
+        if products
+            .insert(
+                operation.product_id.as_str(),
+                PlanMilestoneRequirement::CurationTerminal {
+                    operation_id: operation.operation.operation_id.clone(),
+                },
+            )
+            .is_some()
+        {
+            return false;
+        }
+    }
+    let mut dependency_ids = BTreeSet::new();
+    for dependency in &candidate.dependencies {
+        if !dependency_ids.insert(&dependency.dependency_id)
+            || !products.contains_key(dependency.consumer_product_id.as_str())
+            || dependency.producer_product_id == dependency.consumer_product_id
+        {
+            return false;
+        }
+        let producer = products.get(dependency.producer_product_id.as_str());
+        if producer.is_some_and(|milestone| milestone != &dependency.required_milestone)
+            || producer.is_none()
+                && !history.iter().any(|entry| {
+                    entry.product_id == dependency.producer_product_id
+                        && entry.accepted_milestone == dependency.required_milestone
+                        && !entry.owner_position_id.is_empty()
+                })
+        {
+            return false;
+        }
+    }
+    let mut pending: BTreeSet<_> = products.keys().copied().collect();
+    while !pending.is_empty() {
+        let ready: Vec<_> = pending
+            .iter()
+            .copied()
+            .filter(|id| {
+                !candidate.dependencies.iter().any(|dependency| {
+                    dependency.consumer_product_id == *id
+                        && pending.contains(dependency.producer_product_id.as_str())
+                })
+            })
+            .collect();
+        if ready.is_empty() {
+            return false;
+        }
+        for id in ready {
+            pending.remove(id);
+        }
+    }
+    true
 }
 
 fn composition_contributes(composition: &meld_lang::Composition, obligation: &Proposition) -> bool {
@@ -196,18 +463,4 @@ fn composition_contributes(composition: &meld_lang::Composition, obligation: &Pr
         ),
         StepKind::Goal(_) => false,
     })
-}
-
-fn goal_scope(goal: &Proposition) -> Option<meld_lang::Term> {
-    match goal {
-        Proposition::Holds { subject, .. } => Some(subject.clone()),
-        Proposition::Exists { scope, .. } | Proposition::Accessible { scope } => {
-            Some(scope.clone())
-        }
-        Proposition::Related { src, .. } => Some(src.clone()),
-        Proposition::All(children) | Proposition::Any(children) => {
-            children.first().and_then(goal_scope)
-        }
-        Proposition::Not(child) => goal_scope(child),
-    }
 }

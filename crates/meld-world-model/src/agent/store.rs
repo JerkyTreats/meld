@@ -1,8 +1,10 @@
 //! Durable agent storage.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::sync::Arc;
 
+use sled::transaction::{ConflictableTransactionError, TransactionError, Transactional};
 use sled::{Db, Tree};
 
 use crate::agent::contracts::{
@@ -44,6 +46,7 @@ const KEY_PAD: usize = 20;
 #[derive(Clone)]
 #[allow(dead_code)]
 pub struct AgentStore {
+    resource_id: String,
     db: Db,
     agents: Tree,
     agent_by_status: Tree,
@@ -70,9 +73,15 @@ pub struct AgentStore {
 
 #[allow(dead_code)]
 impl AgentStore {
+    /// Exact durable world-model resource bound to this store instance.
+    pub fn resource_id(&self) -> &str {
+        &self.resource_id
+    }
+
     /// Open all agent trees from the shared world model database.
     pub fn new(db: Db) -> Result<Self, StorageError> {
         Ok(Self {
+            resource_id: crate::waiting::resource_identity(&db)?,
             agents: db.open_tree(TREE_AGENT_RECORDS).map_err(to_storage_io)?,
             agent_by_status: db.open_tree(TREE_AGENT_BY_STATUS).map_err(to_storage_io)?,
             subscriptions: db.open_tree(TREE_SUBSCRIPTIONS).map_err(to_storage_io)?,
@@ -156,6 +165,87 @@ impl AgentStore {
         put_immutable(&self.genesis_intents, &intent.intent_id, intent)
     }
 
+    /// Resolve this Agent's canonical genesis, without choosing among assignments.
+    pub fn genesis_intent_for_agent(
+        &self,
+        agent_id: &str,
+    ) -> Result<Option<AgentGenesisIntentV1>, StorageError> {
+        let Some(id) = self.genesis_by_agent.get(agent_id).map_err(to_storage_io)? else {
+            return Ok(None);
+        };
+        let id = std::str::from_utf8(&id)
+            .map_err(|error| StorageError::InvalidPath(error.to_string()))?;
+        get_immutable(&self.genesis_intents, id)
+    }
+
+    pub(crate) fn put_epoch_products(
+        &self,
+        products: &crate::agent::AgentEpochProducts,
+    ) -> Result<bool, StorageError> {
+        products.validate()?;
+        put_immutable(
+            &self.reconciliation_plans,
+            &format!("epoch-products::{}", products.specification.goal_id),
+            products,
+        )
+    }
+
+    pub fn epoch_subscription_receipt(
+        &self,
+        request_id: &str,
+    ) -> Result<Option<crate::agent::AgentEpochSubscriptionReceipt>, StorageError> {
+        get_immutable(
+            &self.reconciliation_receipts,
+            &format!("subscription::{request_id}"),
+        )
+    }
+
+    pub(crate) fn receive_epoch_subscription(
+        &self,
+        request: &crate::agent::AgentSubscriptionRequestV1,
+        proof: &crate::belief::BeliefSubscriptionAcceptanceProof,
+    ) -> Result<bool, StorageError> {
+        request.validate()?;
+        if proof.request_id() != request.request_id {
+            return Err(StorageError::InvalidPath(
+                "Belief acceptance names another subscription request".into(),
+            ));
+        }
+        self.put_subscription_request(request)?;
+        super::subscription::AgentSubscription::new(self).subscribe(
+            super::SubscribeAgentCommand {
+                agent_id: request.agent_id.clone(),
+                belief_key: request.belief_key.clone(),
+                created_at_seq: self.reconciliation_position(),
+            },
+        )?;
+        put_immutable(
+            &self.reconciliation_receipts,
+            &format!("subscription::{}", request.request_id),
+            &crate::agent::AgentEpochSubscriptionReceipt {
+                request_id: request.request_id.clone(),
+                acceptance_id: proof.acceptance_id().into(),
+                agent_id: request.agent_id.clone(),
+                belief_key: request.belief_key.clone(),
+            },
+        )
+    }
+
+    /// Retain exact owner inputs across restart and later admission epochs.
+    pub fn epoch_products(
+        &self,
+        goal_id: &str,
+    ) -> Result<Option<crate::agent::AgentEpochProducts>, StorageError> {
+        let products: Option<crate::agent::AgentEpochProducts> = get_immutable(
+            &self.reconciliation_plans,
+            &format!("epoch-products::{goal_id}"),
+        )?;
+        if let Some(products) = &products {
+            products.validate()?;
+        }
+        Ok(products)
+    }
+
     pub(crate) fn put_subscription_request(
         &self,
         request: &AgentSubscriptionRequestV1,
@@ -217,6 +307,26 @@ impl AgentStore {
         put_immutable(&self.reconciliation_goals, &record.goal.goal_id, record)
     }
 
+    /// Retain every transient Goal owned by this Agent, including closed epochs.
+    pub fn reconciliation_goals_for_agent(
+        &self,
+        agent_id: &str,
+    ) -> Result<Vec<AgentReconciliationGoal>, StorageError> {
+        let mut goals = Vec::new();
+        for row in &self.reconciliation_goals {
+            let (key, raw) = row.map_err(to_storage_io)?;
+            if key.starts_with(b"disposition::") {
+                continue;
+            }
+            let goal: AgentReconciliationGoal =
+                serde_json::from_slice(&raw).map_err(to_storage_data)?;
+            if goal.goal.agent_id == agent_id {
+                goals.push(goal);
+            }
+        }
+        Ok(goals)
+    }
+
     pub fn reconciliation_goal(
         &self,
         goal_id: &str,
@@ -224,7 +334,70 @@ impl AgentStore {
         get_immutable(&self.reconciliation_goals, goal_id)
     }
 
-    /// Persist one immutable Strategy Plan body as Agent history.
+    pub(crate) fn put_condition_judgment(
+        &self,
+        judgment: &crate::agent::AgentConditionJudgment,
+    ) -> Result<bool, StorageError> {
+        put_immutable(
+            &self.reconciliation_judgments,
+            &format!("condition::{}", judgment.judgment_id),
+            judgment,
+        )
+    }
+
+    pub fn condition_judgments(
+        &self,
+    ) -> Result<Vec<crate::agent::AgentConditionJudgment>, StorageError> {
+        self.reconciliation_judgments
+            .scan_prefix("condition::")
+            .map(|entry| {
+                let (_, value) = entry.map_err(to_storage_io)?;
+                serde_json::from_slice(&value).map_err(to_storage_data)
+            })
+            .collect()
+    }
+
+    /// Persist a separate Agent decision about the Goal's desired state.
+    pub(crate) fn put_goal_disposition(
+        &self,
+        disposition: &crate::agent::AgentGoalDisposition,
+    ) -> Result<bool, StorageError> {
+        put_immutable(
+            &self.reconciliation_goals,
+            &format!("disposition::{}", disposition.plan_revision_id),
+            disposition,
+        )
+    }
+
+    pub fn goal_disposition_for_plan(
+        &self,
+        plan_id: &str,
+    ) -> Result<Option<crate::agent::AgentGoalDisposition>, StorageError> {
+        get_immutable(
+            &self.reconciliation_goals,
+            &format!("disposition::{plan_id}"),
+        )
+    }
+
+    /// Retain the exact admitted cut for return attribution after an epoch closes.
+    pub(crate) fn put_reconciliation_cut(
+        &self,
+        cut: &crate::planner::PlannerCut,
+    ) -> Result<bool, StorageError> {
+        put_immutable(
+            &self.reconciliation_plans,
+            &format!("cut::{}", cut.cut_id),
+            cut,
+        )
+    }
+
+    pub(crate) fn reconciliation_cut(
+        &self,
+        cut_id: &str,
+    ) -> Result<Option<crate::planner::PlannerCut>, StorageError> {
+        get_immutable(&self.reconciliation_plans, &format!("cut::{cut_id}"))
+    }
+
     pub fn put_reconciliation_plan(
         &self,
         plan: &crate::strategy::StrategyPlan,
@@ -248,6 +421,165 @@ impl AgentStore {
         judgment_id: &str,
     ) -> Result<Option<AgentPlanJudgment>, StorageError> {
         get_immutable(&self.reconciliation_judgments, judgment_id)
+    }
+
+    /// Resolve the admitted leaf of a Goal's immutable Plan lineage.
+    /// Hash ordering and historical product authorizations never select the current Plan.
+    pub fn current_reconciliation_plan(
+        &self,
+        goal_id: &str,
+    ) -> Result<Option<crate::strategy::StrategyPlan>, StorageError> {
+        let mut admitted = BTreeMap::new();
+        let mut superseded = BTreeSet::new();
+        for row in &self.reconciliation_judgments {
+            let (key, raw) = row.map_err(to_storage_io)?;
+            if key.starts_with(b"condition::") {
+                continue;
+            }
+            let judgment: AgentPlanJudgment =
+                serde_json::from_slice(&raw).map_err(to_storage_data)?;
+            if judgment.goal_id != goal_id {
+                continue;
+            }
+            match judgment.kind {
+                crate::agent::AgentPlanJudgmentKind::Admitted => {
+                    admitted.insert(judgment.plan_revision_id.clone(), judgment);
+                }
+                crate::agent::AgentPlanJudgmentKind::Superseded { .. } => {
+                    superseded.insert(judgment.plan_revision_id);
+                }
+                crate::agent::AgentPlanJudgmentKind::Rejected { .. } => {}
+            }
+        }
+        admitted.retain(|id, _| !superseded.contains(id));
+        if admitted.len() > 1 {
+            return Err(StorageError::InvalidPath(
+                "Agent Goal has conflicting admitted Plan heads".to_string(),
+            ));
+        }
+        let Some((id, _)) = admitted.into_iter().next() else {
+            return Ok(None);
+        };
+        self.reconciliation_plan(&id)?
+            .map(Some)
+            .ok_or_else(|| StorageError::InvalidPath("admitted Agent Plan is absent".to_string()))
+    }
+
+    /// Completed facts remain attributed to the Plan that accepted them.
+    pub fn completed_history_for_goal(
+        &self,
+        goal_id: &str,
+    ) -> Result<Vec<crate::strategy::StrategyCompletedHistoryEntry>, StorageError> {
+        let mut history = Vec::new();
+        for row in &self.reconciliation_milestones {
+            let (_, raw) = row.map_err(to_storage_io)?;
+            let milestone: AgentMilestoneAcceptance =
+                serde_json::from_slice(&raw).map_err(to_storage_data)?;
+            if milestone.goal_id == goal_id {
+                let plan = self
+                    .reconciliation_plan(&milestone.plan_revision_id)?
+                    .filter(|plan| plan.goal_id == goal_id)
+                    .ok_or_else(|| {
+                        StorageError::InvalidPath(
+                            "completed milestone has no original Goal Plan".into(),
+                        )
+                    })?;
+                let product = plan
+                    .tasks
+                    .iter()
+                    .find(|task| task.task_id == milestone.product_id)
+                    .map(|task| crate::strategy::StrategyProduct::Task(Box::new(task.clone())))
+                    .or_else(|| {
+                        plan.epistemic_operations
+                            .iter()
+                            .find(|operation| operation.product_id == milestone.product_id)
+                            .map(|operation| {
+                                crate::strategy::StrategyProduct::Epistemic(Box::new(
+                                    operation.clone(),
+                                ))
+                            })
+                    })
+                    .ok_or_else(|| {
+                        StorageError::InvalidPath(
+                            "completed milestone has no original Plan product".into(),
+                        )
+                    })?;
+                history.push(crate::strategy::StrategyCompletedHistoryEntry {
+                    source_plan_revision_id: milestone.plan_revision_id,
+                    product_id: milestone.product_id,
+                    accepted_milestone: milestone.requirement,
+                    owner_position_id: milestone.owner_position_id,
+                    product: Some(product),
+                });
+            }
+        }
+        history
+            .sort_by_cached_key(|entry| serde_json::to_string(entry).expect("history serializes"));
+        history.dedup();
+        Ok(history)
+    }
+
+    pub fn reconciliation_plan_history(
+        &self,
+        plan_id: &str,
+    ) -> Result<Vec<crate::strategy::StrategyCompletedHistoryEntry>, StorageError> {
+        Ok(
+            get_immutable(&self.reconciliation_plans, &format!("history::{plan_id}"))?
+                .unwrap_or_default(),
+        )
+    }
+
+    /// Publish successor admission and predecessor supersession atomically.
+    /// The fixed predecessor decision key makes competing successors conflict.
+    pub(crate) fn admit_successor(
+        &self,
+        successor: &crate::strategy::StrategySuccessorPlan,
+        admitted: &AgentPlanJudgment,
+        superseded: &AgentPlanJudgment,
+    ) -> Result<(), StorageError> {
+        let plan_rows = [
+            (
+                successor.plan.plan_revision_id.clone(),
+                serde_json::to_vec(&successor.plan).map_err(to_storage_data)?,
+            ),
+            (
+                format!("history::{}", successor.plan.plan_revision_id),
+                serde_json::to_vec(&successor.completed_history).map_err(to_storage_data)?,
+            ),
+        ];
+        let judgment_rows = [
+            (
+                admitted.judgment_id.clone(),
+                serde_json::to_vec(admitted).map_err(to_storage_data)?,
+            ),
+            (
+                superseded.judgment_id.clone(),
+                serde_json::to_vec(superseded).map_err(to_storage_data)?,
+            ),
+        ];
+        (&self.reconciliation_plans, &self.reconciliation_judgments)
+            .transaction(|(plans, judgments)| {
+                for (tree, rows) in [(plans, &plan_rows), (judgments, &judgment_rows)] {
+                    for (key, value) in rows {
+                        if let Some(existing) = tree.get(key.as_bytes())? {
+                            if existing.as_ref() != value.as_slice() {
+                                return Err(ConflictableTransactionError::Abort(format!(
+                                    "Agent successor conflicts at '{key}'"
+                                )));
+                            }
+                        } else {
+                            tree.insert(key.as_bytes(), value.as_slice())?;
+                        }
+                    }
+                }
+                Ok(())
+            })
+            .map_err(|error| match error {
+                TransactionError::Abort(reason) => StorageError::InvalidPath(reason),
+                TransactionError::Storage(error) => to_storage_io(error),
+            })?;
+        self.db.flush().map_err(to_storage_io)?;
+        Ok(())
     }
 
     pub fn put_product_progress(

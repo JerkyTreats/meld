@@ -197,6 +197,24 @@ pub struct ComparatorConfig {
     pub engine_version: String,
     pub factors: Vec<ComparatorFactorConfig>,
     pub missing_evidence_uncertainty: f64,
+    #[serde(default, skip_serializing_if = "ComparatorUpdatePolicy::is_default")]
+    pub update_policy: ComparatorUpdatePolicy,
+}
+
+/// Whether evidence updates an accumulated estimate or replaces an observation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ComparatorUpdatePolicy {
+    /// Blend the prior and this window's weighted evidence equally.
+    #[default]
+    BlendPrior,
+    /// Use only the latest source position for each schema, without prior weight.
+    LatestObservation,
+}
+
+impl ComparatorUpdatePolicy {
+    fn is_default(&self) -> bool {
+        *self == Self::BlendPrior
+    }
 }
 
 /// One weighted factor consumed by the generic Bayesian comparator.
@@ -221,6 +239,22 @@ pub struct PlannerProjectionConfig {
     pub confidence_field: String,
     pub threshold: f64,
     pub posterior_meaning: String,
+    #[serde(default, skip_serializing_if = "ConfidenceProjection::is_default")]
+    pub confidence_projection: ConfidenceProjection,
+}
+
+/// Meaning of the confidence proposition exposed to Planner.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ConfidenceProjection {
+    #[default]
+    Complement,
+    Probability,
+}
+
+impl ConfidenceProjection {
+    fn is_default(&self) -> bool {
+        *self == Self::Complement
+    }
 }
 
 /// Normalized belief input derived from graph state or promoted facts.

@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "package_id": "meld.nonce",
+  "package_version": "1.0.0",
+  "description": "Reusable nonce emission and owner-qualified Graph publication",
+  "imports": [],
+  "components": [
+    {
+      "component_id": "nonce-capability-emit",
+      "owner_component_id": "nonce.emit.v1",
+      "route": {
+        "owner_domain": "execution",
+        "component_kind": "capability-contract",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "published_exact",
+        "publisher": "execution.capability-contract.v1",
+        "id": "nonce.emit.v1",
+        "content_identity": "capability-contract-3af04c2c31095381045d19cf8729b16951e60d61d486219e0a77f8f9b5ea4cbe"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "nonce-graph-event-route",
+      "owner_component_id": "nonce-owner-publication",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "graph-owner-event-route",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "graph_owner_event_route.nonce.json",
+        "content_hash": "14f6700b3ba04653e385593127376f460fead355b755c6abea4584a992faa421"
+      },
+      "requires": []
+    }
+  ]
+}

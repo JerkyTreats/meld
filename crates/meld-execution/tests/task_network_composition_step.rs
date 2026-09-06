@@ -192,6 +192,7 @@ fn fanout_composition(task_id: &str, steps: Vec<Step>, edges: Vec<Edge>) -> Exec
         .collect::<Vec<_>>();
     capability_contract_ids.sort();
     ExecutionTask {
+        initial_inputs: Vec::new(),
         task_id: task_id.to_string(),
         composition: Composition { steps, edges },
         bindings: Bindings::empty()
@@ -250,6 +251,7 @@ fn admission_request(task: ExecutionTask) -> TaskAdmissionRequest {
             authority_policy_content_hash: String::new(),
             authority_decision: None,
             activation_generation: "generation-fanout".to_string(),
+            admission_epoch: None,
         },
         idempotency_key: task.idempotency_key.clone(),
         task,

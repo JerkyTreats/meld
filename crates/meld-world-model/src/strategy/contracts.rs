@@ -21,6 +21,27 @@ pub struct StrategySettlementRule {
     pub settlement_obligation: Proposition,
     /// Evidence route required after action completes.
     pub evidence_route: ProspectiveEvidenceRoute,
+    /// Whether the configured epistemic products prepare work or confirm its effects.
+    #[serde(
+        default,
+        skip_serializing_if = "StrategyEpistemicPlacement::is_prerequisite"
+    )]
+    pub epistemic_placement: StrategyEpistemicPlacement,
+}
+
+/// Causal placement of configured epistemic work relative to executable realization.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StrategyEpistemicPlacement {
+    #[default]
+    Prerequisite,
+    Confirmation,
+}
+
+impl StrategyEpistemicPlacement {
+    fn is_prerequisite(&self) -> bool {
+        *self == Self::Prerequisite
+    }
 }
 
 /// Prospective route from action outcome to later evidence admission.
@@ -86,6 +107,9 @@ pub struct StrategyTheoryPackage {
 /// Complete immutable input to the pure Strategy function.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StrategyProblem {
+    /// Exact frozen inputs available to the selected Task steps.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub task_inputs: Vec<meld_lang::TaskInput>,
     /// Exact problem identity supplied by the caller.
     pub problem_id: String,
     /// Ground proposed Goal.
@@ -116,6 +140,10 @@ pub struct StrategySearchRequest {
 /// Origin of a constructed candidate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StrategyPlanOrigin {
+    /// Desired state is already established by the admitted Planner input.
+    Satisfied,
+    /// Remaining epistemic work confirms an already completed executable product.
+    Confirmation,
     /// Constructed directly from Capability contracts.
     Direct,
     /// Seeded by one reusable Method.
@@ -159,6 +187,9 @@ pub enum PlanMilestoneRequirement {
 /// One independently complete executable product retained by Agent only.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StrategyTask {
+    /// Exact frozen inputs available to the selected Task steps.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub initial_inputs: Vec<meld_lang::TaskInput>,
     pub task_id: String,
     pub composition: Composition,
     #[serde(default = "empty_bindings")]
@@ -184,6 +215,14 @@ pub struct StrategyEpistemicOperation {
     pub idempotency_key: String,
 }
 
+/// Canonical complete product body constructed by Strategy and authorized by Agent.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StrategyProduct {
+    Epistemic(Box<StrategyEpistemicOperation>),
+    Task(Box<StrategyTask>),
+}
+
 /// Exact causal or information dependency between Plan products.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StrategyPlanDependency {
@@ -194,7 +233,7 @@ pub struct StrategyPlanDependency {
 }
 
 /// One completed causal fact that reconstruction must preserve exactly.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StrategyCompletedHistoryEntry {
     /// Plan revision under which the product reached its milestone.
     pub source_plan_revision_id: String,
@@ -204,6 +243,9 @@ pub struct StrategyCompletedHistoryEntry {
     pub accepted_milestone: PlanMilestoneRequirement,
     /// Exact durable owner position that justified acceptance.
     pub owner_position_id: String,
+    /// Original product hydrated from its source Plan, absent in legacy identity-only history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product: Option<StrategyProduct>,
 }
 
 /// Ground immutable heterogeneous Plan returned for Agent judgment.
@@ -227,8 +269,9 @@ pub struct StrategyPlan {
     pub bindings: Bindings,
     /// Settlement obligation discharged by the root action.
     pub settlement_obligation: Proposition,
-    /// Prospective evidence route preserved for later reconciliation.
-    pub evidence_route: ProspectiveEvidenceRoute,
+    /// Prospective evidence from executable work, absent when no work is required.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence_route: Option<ProspectiveEvidenceRoute>,
     /// Exact Capability contract identities selected by the candidate.
     pub capability_contract_ids: Vec<String>,
     /// Independently complete executable products.

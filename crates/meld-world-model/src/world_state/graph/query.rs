@@ -67,13 +67,39 @@ impl<'a> TraversalQuery<'a> {
             });
         }
         for requirement in &request.owners {
+            let event_coverage = if let Some(source) = &requirement.event_source {
+                if !self.store.covers_event_source(
+                    request.event_position.ledger_id,
+                    &requirement.owner_id,
+                    source,
+                )? {
+                    if requirement.required {
+                        issues.push(TraversalCutIssue::MissingRequiredOwner {
+                            owner_id: requirement.owner_id.clone(),
+                            scope_id: requirement.scope.scope_id.clone(),
+                        });
+                    }
+                    continue;
+                }
+                Some(super::contracts::OwnerEventCoverageReceipt {
+                    source: source.clone(),
+                    through: request.event_position,
+                })
+            } else {
+                None
+            };
             let selected = publications
                 .iter()
                 .filter(|publication| {
                     let batch = &publication.operation.batch;
                     batch.owner_id == requirement.owner_id
                         && batch.scope == requirement.scope
-                        && batch.completeness.status == OwnerCompletenessStatus::Complete
+                        && requirement
+                            .event_source
+                            .as_ref()
+                            .is_none_or(|source| publication.source_route.as_ref() == Some(source))
+                        && (requirement.event_source.is_some()
+                            || batch.completeness.status == OwnerCompletenessStatus::Complete)
                 })
                 .max_by(|left, right| {
                     (left.source_event.seq, &left.operation.operation_id)
@@ -81,16 +107,50 @@ impl<'a> TraversalQuery<'a> {
                 });
             if let Some(publication) = selected {
                 let batch = &publication.operation.batch;
+                if batch.completeness.status != OwnerCompletenessStatus::Complete {
+                    if requirement.required {
+                        issues.push(TraversalCutIssue::MissingRequiredOwner {
+                            owner_id: requirement.owner_id.clone(),
+                            scope_id: requirement.scope.scope_id.clone(),
+                        });
+                    }
+                    continue;
+                }
                 receipts.push(OwnerGraphRevisionReceipt {
+                    event_coverage: event_coverage.clone(),
                     owner_id: batch.owner_id.clone(),
                     revision_id: batch.revision_id.clone(),
                     scope: batch.scope.clone(),
                     completeness: batch.completeness.clone(),
-                    source_event: publication.source_event,
+                    source_event: Some(publication.source_event),
                     projection_position: LedgerCursor {
                         ledger_id: publication.source_event.ledger_id,
                         after_seq: publication.source_event.seq,
                     },
+                });
+            } else if let Some(coverage) = event_coverage {
+                let bytes = serde_json::to_vec(&(
+                    &requirement.owner_id,
+                    &requirement.scope,
+                    &coverage.source,
+                ))
+                .map_err(|error| StorageError::InvalidPath(error.to_string()))?;
+                let revision_id = format!("empty-event-source::{}", blake3::hash(&bytes).to_hex());
+                receipts.push(OwnerGraphRevisionReceipt {
+                    event_coverage: Some(coverage),
+                    source_event: None,
+                    owner_id: requirement.owner_id.clone(),
+                    revision_id: revision_id.clone(),
+                    scope: requirement.scope.clone(),
+                    completeness: super::contracts::OwnerCompletenessReceipt {
+                        receipt_id: revision_id,
+                        scope: requirement.scope.clone(),
+                        included_ids: Vec::new(),
+                        exclusions: Vec::new(),
+                        failures: Vec::new(),
+                        status: OwnerCompletenessStatus::Complete,
+                    },
+                    projection_position: request.event_position,
                 });
             } else if requirement.required {
                 issues.push(TraversalCutIssue::MissingRequiredOwner {
@@ -143,6 +203,7 @@ impl<'a> TraversalQuery<'a> {
             cut,
         );
         let graph = PublicationGraph::new(publications);
+        let mut absent_roots = Vec::new();
         let mut selected_objects = BTreeMap::new();
         let mut selected_occurrences = BTreeMap::new();
         let mut paths = Vec::new();
@@ -152,13 +213,24 @@ impl<'a> TraversalQuery<'a> {
         let mut queue = VecDeque::new();
 
         for root in &request.roots {
-            if !graph.objects_by_address.contains_key(&root.index_key()) {
-                frontier.push(frontier_entry(
-                    root,
-                    0,
-                    TraversalFrontierReason::UnresolvedObject,
-                ));
-                continue;
+            let root_observed = graph.objects_by_address.contains_key(&root.index_key());
+            if !root_observed {
+                if cut.status == TraversalCutStatus::Complete
+                    && cut.receipts.iter().any(|receipt| {
+                        receipt.owner_id == root.domain_id
+                            && receipt.event_coverage.is_some()
+                            && receipt.completeness.status == OwnerCompletenessStatus::Complete
+                    })
+                {
+                    absent_roots.push(root.clone());
+                } else {
+                    frontier.push(frontier_entry(
+                        root,
+                        0,
+                        TraversalFrontierReason::UnresolvedObject,
+                    ));
+                    continue;
+                }
             }
             if !visited.insert(root.index_key()) {
                 continue;
@@ -173,12 +245,14 @@ impl<'a> TraversalQuery<'a> {
                 continue;
             }
             paths.push(path.clone());
-            if !select_objects(
-                &graph,
-                root,
-                request.bounds.max_objects,
-                &mut selected_objects,
-            ) {
+            if root_observed
+                && !select_objects(
+                    &graph,
+                    root,
+                    request.bounds.max_objects,
+                    &mut selected_objects,
+                )
+            {
                 truncation.objects = true;
                 frontier.push(frontier_entry(
                     root,
@@ -297,6 +371,7 @@ impl<'a> TraversalQuery<'a> {
         frontier.sort();
         frontier.dedup();
         Ok(TraversalResult {
+            absent_roots,
             result_id: traversal_result_identity(&cut.cut_id, &request)?,
             cut_id: cut.cut_id.clone(),
             objects,
@@ -448,7 +523,7 @@ fn selected_publications(
     let events = cut
         .receipts
         .iter()
-        .map(|receipt| receipt.source_event)
+        .filter_map(|receipt| receipt.source_event)
         .collect::<HashSet<_>>();
     publications
         .into_iter()
@@ -904,6 +979,7 @@ mod owner_publication_tests {
         let scope = scope(scope_id);
         TraversalCutRequest {
             owners: vec![TraversalOwnerRequirement {
+                event_source: None,
                 owner_id: owner_id.to_string(),
                 scope: scope.clone(),
                 required: true,

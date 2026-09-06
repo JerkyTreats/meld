@@ -54,6 +54,7 @@ fn stalled_action() -> RuntimeActionRecord {
                 condition: "graph_anchor_absent".to_string(),
                 subject_key: Some("workspace_fs::node::docs".to_string()),
                 detail: "no current anchor".to_string(),
+                wake_refs: Vec::new(),
             }],
         },
     )

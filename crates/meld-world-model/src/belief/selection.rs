@@ -150,44 +150,59 @@ impl<'a> BeliefWorkSelector<'a> {
                     },
                 });
             }
+            if !more_available {
+                let (requests, more) = self.store.pending_subscriptions(
+                    &family.revision_ref(),
+                    perspective,
+                    branch_scope,
+                    max_items.saturating_sub(items.len()),
+                )?;
+                more_available |= more;
+                for request in requests {
+                    let key = request.belief_key;
+                    if selected_keys.contains(&key.index_key())
+                        || self.store.dirty_state(&key)?.is_some()
+                    {
+                        continue;
+                    }
+                    selected_keys.push(key.index_key());
+                    items.push(BeliefWorkItem {
+                        family_id: family.family_id.clone(),
+                        kind: BeliefWorkKind::InitialAssessment {
+                            binding: BeliefSubjectBinding {
+                                subject: key.subject.clone(),
+                                anchor_perspective_kind: key.perspective.perspective_kind.clone(),
+                                anchor_perspective_id: key.perspective.perspective_id.clone(),
+                            },
+                        },
+                        key,
+                    });
+                }
+            }
             if more_available {
                 break;
             }
         }
 
-        let remaining = max_items - items.len();
-        let (dirty_states, dirty_more) = self.store.dirty_key_states_bounded(
-            // Read enough dirty records to fill the budget even if some were
-            // already selected, without scanning past the budget window.
-            remaining.saturating_add(selected_keys.len()),
-        )?;
-        more_available = more_available || dirty_more;
-        for state in dirty_states {
-            if selected_keys.contains(&state.belief_key.index_key()) {
-                continue;
+        for family in &ordered_families {
+            let (dirty_states, dirty_more) = self.store.scoped_dirty_key_states_bounded(
+                family,
+                perspective,
+                branch_scope,
+                max_items.saturating_sub(items.len()),
+            )?;
+            more_available |= dirty_more;
+            for state in dirty_states {
+                if selected_keys.contains(&state.belief_key.index_key()) {
+                    continue;
+                }
+                selected_keys.push(state.belief_key.index_key());
+                items.push(BeliefWorkItem {
+                    key: state.belief_key.clone(),
+                    family_id: family.family_id.clone(),
+                    kind: BeliefWorkKind::DirtyKey { state },
+                });
             }
-            if items.len() == max_items {
-                more_available = true;
-                break;
-            }
-            let family_id = ordered_families
-                .iter()
-                .find(|family| {
-                    family.config.dimension_id == state.belief_key.dimension_id
-                        && family.config.predicate_id == state.belief_key.predicate_id
-                        && family.config.evidence_policy_id == state.belief_key.evidence_policy_id
-                })
-                .map(|family| family.family_id.clone());
-            let Some(family_id) = family_id else {
-                // Dirty keys for families this selector does not serve stay
-                // durable for another selector; skipping is not a data loss.
-                continue;
-            };
-            items.push(BeliefWorkItem {
-                key: state.belief_key.clone(),
-                family_id,
-                kind: BeliefWorkKind::DirtyKey { state },
-            });
         }
 
         Ok(BeliefWorkSelection {
