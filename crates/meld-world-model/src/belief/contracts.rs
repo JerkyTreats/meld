@@ -264,6 +264,9 @@ impl ConfidenceProjection {
 /// record.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EvidenceItem {
+    /// Exact owner publication record interpreted into this evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publication_record_id: Option<String>,
     pub evidence_id: String,
     pub candidate_key: BeliefKey,
     pub source_fact_ids: Vec<String>,
@@ -292,6 +295,8 @@ pub struct EvidenceItem {
 /// The fields are runtime data rather than family-specific Rust types.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PromotedEvidenceRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publication_record_id: Option<String>,
     pub source_kind: String,
     pub source_id: String,
     pub subject: DomainObjectRef,

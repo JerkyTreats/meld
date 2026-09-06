@@ -34,6 +34,44 @@ fn verify_with_history(
         grounds.push(StrategyRejectionGround::IdentityMismatch);
     }
     if candidate.origin == super::StrategyPlanOrigin::Satisfied {
+        let confirmation_required = problem
+            .theory
+            .settlement_rules
+            .iter()
+            .find_map(|rule| {
+                meld_lang::unify(&rule.goal_pattern, &problem.goal.target)
+                    .map(|bindings| (rule, bindings))
+            })
+            .filter(|(rule, _)| {
+                rule.epistemic_placement == super::StrategyEpistemicPlacement::Confirmation
+            })
+            .and_then(|(rule, bindings)| {
+                super::search::ground_proposition(&rule.settlement_obligation, &bindings).ok()
+            })
+            .is_some_and(|settlement| {
+                history.iter().any(|entry| {
+                    matches!(&entry.product,
+                Some(super::StrategyProduct::Task(task)) if task.task_id == entry.product_id
+                    && task.return_milestone.as_ref() == Some(&entry.accepted_milestone)
+                    && composition_contributes(&task.composition, &settlement))
+                })
+            });
+        if confirmation_required {
+            let operations = super::search::epistemic_products(problem);
+            if operations.is_empty()
+                || !operations.iter().all(|operation| {
+                    history.iter().any(|entry| {
+                        matches!(&entry.product, Some(super::StrategyProduct::Epistemic(prior))
+                    if prior.same_request_as(operation)
+                    && prior.product_id == entry.product_id
+                    && prior.return_evidence == operation.return_evidence
+                    && prior.accepts_return(&entry.accepted_milestone))
+                    })
+                })
+            {
+                grounds.push(StrategyRejectionGround::InvalidEvidenceRoute);
+            }
+        }
         if !matches!(
             evaluate(
                 &problem.planner_cut.world_model_view.world_state,

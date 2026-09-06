@@ -276,6 +276,54 @@ fn planned_curation_reopens_after_result_before_event_without_duplicate_publicat
 }
 
 #[test]
+fn named_confirmation_is_not_a_retroactive_standing_acceptance() {
+    let fixture = Fixture::new(0);
+    fixture.actor.bounded_step(1);
+    let standing = CurationOperation::reconstruct(
+        authority(),
+        fixture.rule.revision_ref(),
+        fixture.traversal.cut.lock().unwrap().clone(),
+        fixture.rule.rule.traversal_request(),
+    )
+    .unwrap();
+    let requested = standing
+        .clone()
+        .for_request("agent-goal-confirmation".into())
+        .unwrap();
+    assert_ne!(requested.selection_id, standing.selection_id);
+    assert_ne!(requested.operation_id, standing.operation_id);
+    assert_eq!(
+        fixture.store.resolve_operation(requested.clone()).unwrap(),
+        requested
+    );
+    let planned = requested
+        .clone()
+        .with_planned_authorization(planned_authorization(&requested))
+        .unwrap();
+    fixture.store.submit_planned(&planned).unwrap();
+    assert!(fixture
+        .store
+        .acceptance_for_planned_operation(&requested.operation_id)
+        .unwrap()
+        .is_none());
+    let confirmation = fixture.actor.bounded_step(1);
+    assert!(confirmation.fatal_errors.is_empty(), "{confirmation:?}");
+    assert_eq!(confirmation.results_persisted, 1);
+    assert!(fixture
+        .store
+        .acceptance_for_planned_operation(&requested.operation_id)
+        .unwrap()
+        .is_some());
+    assert_eq!(
+        fixture.store.resolve_operation(requested.clone()).unwrap(),
+        requested
+    );
+    let mut tampered = requested;
+    tampered.request_id = Some("another-goal".into());
+    assert!(tampered.validate().is_err());
+}
+
+#[test]
 fn standing_then_planned_same_selection_converges_without_identity_drift() {
     let fixture = Fixture::new(0);
 

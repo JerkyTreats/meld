@@ -1175,13 +1175,30 @@ impl GoalReconciliation<'_, '_> {
     ) -> Result<Option<(StrategyPlan, bool)>, StorageError> {
         if let Some(plan) = current.as_ref() {
             if plan.planner_cut_id == cut.cut_id {
-                return Ok(Some((plan.clone(), false)));
+                let history = self.store.completed_history_for_goal(&self.goal.goal_id)?;
+                let confirmation_returned =
+                    plan.origin == crate::strategy::StrategyPlanOrigin::Confirmation
+                        && !plan.epistemic_operations.is_empty()
+                        && plan.epistemic_operations.iter().all(|operation| {
+                            product_completed(plan, &operation.product_id, &history)
+                        });
+                if !confirmation_returned
+                    || !matches!(
+                        meld_lang::evaluate(&cut.world_model_view.world_state, &self.goal.target),
+                        meld_lang::EvalResult::Satisfied
+                    )
+                {
+                    return Ok(Some((plan.clone(), false)));
+                }
             }
             for product_id in plan.tasks.iter().map(|task| &task.task_id).chain(
                 plan.epistemic_operations
                     .iter()
                     .map(|operation| &operation.product_id),
             ) {
+                if plan.planner_cut_id == cut.cut_id {
+                    continue;
+                }
                 self.put_progress(
                     cut,
                     plan,
@@ -1233,32 +1250,49 @@ impl GoalReconciliation<'_, '_> {
                 }
             }
         }
-        let operations = if matches!(
-            meld_lang::evaluate(&cut.world_model_view.world_state, &self.goal.target,),
-            meld_lang::EvalResult::Satisfied
-        ) {
+        let operations = if current.is_none()
+            && matches!(
+                meld_lang::evaluate(&cut.world_model_view.world_state, &self.goal.target,),
+                meld_lang::EvalResult::Satisfied
+            ) {
             Vec::new()
         } else {
-            vec![self
-                .curation
-                .resolve_operation(CurationOperation::reconstruct(
-                    self.curation_authority.clone(),
-                    match &self.products {
-                        Some(products) => products.curation_rule.revision_ref(),
-                        None => match &self.preparation {
-                            crate::agent::AgentPreparation::InstalledRule(rule) => {
-                                rule.revision_ref()
-                            }
-                            crate::agent::AgentPreparation::Epoch { .. } => {
-                                return Err(StorageError::InvalidPath(
-                                    "Agent epoch products were not prepared".into(),
-                                ))
-                            }
-                        },
+            let operation = CurationOperation::reconstruct(
+                self.curation_authority.clone(),
+                match &self.products {
+                    Some(products) => products.curation_rule.revision_ref(),
+                    None => match &self.preparation {
+                        crate::agent::AgentPreparation::InstalledRule(rule) => rule.revision_ref(),
+                        crate::agent::AgentPreparation::Epoch { .. } => {
+                            return Err(StorageError::InvalidPath(
+                                "Agent epoch products were not prepared".into(),
+                            ))
+                        }
                     },
-                    cut.traversal_cut.clone(),
-                    cut.traversal_request.clone(),
-                )?)?]
+                },
+                cut.traversal_cut.clone(),
+                cut.traversal_request.clone(),
+            )?;
+            let confirmation = self
+                .strategy
+                .package
+                .snapshot
+                .settlement_rules
+                .iter()
+                .find(|rule| meld_lang::unify(&rule.goal_pattern, &self.goal.target).is_some())
+                .is_some_and(|rule| {
+                    rule.epistemic_placement
+                        == crate::strategy::StrategyEpistemicPlacement::Confirmation
+                });
+            let operation = if confirmation {
+                operation.for_request(stable_id(
+                    "agent-curation-request-v1",
+                    &(&self.goal.agent_id, &self.goal.goal_id),
+                ))?
+            } else {
+                operation
+            };
+            vec![self.curation.resolve_operation(operation)?]
         };
         let mut problem = self
             .strategy
@@ -1375,12 +1409,28 @@ impl GoalReconciliation<'_, '_> {
                 "Goal satisfaction lacks admitted evidence".into(),
             ));
         }
+        let accepted_milestone_ids: Vec<_> = self
+            .store
+            .milestones_for_goal(&self.goal.goal_id)?
+            .into_iter()
+            .filter(|milestone| {
+                milestone.agent_id == self.goal.agent_id
+                    && milestone.activation_generation == cut.context.activation_generation
+            })
+            .map(|milestone| milestone.milestone_id)
+            .collect();
         self.store
             .put_goal_disposition(&crate::agent::AgentGoalDisposition {
                 disposition_id: stable_id(
-                    "agent-goal-disposition-v1",
-                    &(&self.goal.goal_id, &plan.plan_revision_id, &cut.cut_id),
+                    "agent-goal-disposition-v2",
+                    &(
+                        &self.goal.goal_id,
+                        &plan.plan_revision_id,
+                        &cut.cut_id,
+                        &accepted_milestone_ids,
+                    ),
                 ),
+                accepted_milestone_ids,
                 agent_id: self.goal.agent_id.clone(),
                 goal_id: self.goal.goal_id.clone(),
                 plan_revision_id: plan.plan_revision_id.clone(),
@@ -1707,7 +1757,7 @@ impl GoalReconciliation<'_, '_> {
             plan_revision_id: plan.plan_revision_id.clone(),
             product_id: epistemic.product_id.clone(),
             requirement: requirement.clone(),
-            owner_position_id: result.result_id,
+            owner_position_id: result.result_id.clone(),
             context_id: cut.context.context_id.clone(),
             activation_generation: cut.context.activation_generation.clone(),
         })?;
@@ -1728,6 +1778,87 @@ impl GoalReconciliation<'_, '_> {
         if used == budget {
             report.budget_exhausted = true;
             return Ok(());
+        }
+        if let Some(route) = &epistemic.return_evidence {
+            let Some(products) = &self.products else {
+                return Err(StorageError::InvalidPath(
+                    "confirmation requires an exact Belief source relationship".into(),
+                ));
+            };
+            let crate::agent::AgentPreparation::Epoch { subscriptions, .. } = &self.preparation
+            else {
+                unreachable!("epoch products require epoch preparation");
+            };
+            let mut returned = None;
+            for subscription in products
+                .subscription_requests()?
+                .into_iter()
+                .filter(|request| request.belief_key.dimension_id == route.dimension_id)
+            {
+                returned = subscriptions.returned_evidence(
+                    &crate::belief::BeliefEvidenceReturnRequest {
+                        subscription,
+                        revision_ids: cut.world_model_view.hydration_refs.revision_ids.clone(),
+                        publication_record_id: result.event_record_id(),
+                        evidence_schema_id: route.evidence_schema_id.clone(),
+                        mapping_revisions: products
+                            .specification
+                            .genesis
+                            .installed_owner_revisions
+                            .iter()
+                            .filter(|reference| reference.registry == "outcome_mapping")
+                            .cloned()
+                            .collect(),
+                    },
+                )?;
+                if returned.is_some() {
+                    break;
+                }
+            }
+            let Some(returned) = returned else {
+                report.waiting_on.push(waiting(
+                    "planner_cut_changed",
+                    &plan.plan_revision_id,
+                    "awaiting Belief evidence from this exact planned confirmation",
+                ));
+                return Ok(());
+            };
+            let requirement = PlanMilestoneRequirement::BeliefRevision {
+                belief_key: returned.belief_key().index_key(),
+                revision_id: returned.revision_id().to_string(),
+            };
+            let milestone_id = stable_id(
+                "agent-belief-return-v1",
+                &(
+                    &self.goal.goal_id,
+                    &plan.plan_revision_id,
+                    &epistemic.product_id,
+                    &requirement,
+                ),
+            );
+            let inserted = self.store.put_milestone(&AgentMilestoneAcceptance {
+                milestone_id: milestone_id.clone(),
+                agent_id: cut.context.agent_id.clone(),
+                goal_id: self.goal.goal_id.clone(),
+                plan_revision_id: plan.plan_revision_id.clone(),
+                product_id: epistemic.product_id.clone(),
+                requirement,
+                owner_position_id: returned.revision_id().to_string(),
+                context_id: cut.context.context_id.clone(),
+                activation_generation: cut.context.activation_generation.clone(),
+            })?;
+            self.put_progress(
+                cut,
+                plan,
+                &epistemic.product_id,
+                AgentCurrentnessCheck {
+                    frozen_cut_id: plan.planner_cut_id.clone(),
+                    observed_cut_id: (!self.historical_return).then(|| cut.cut_id.clone()),
+                    refusal: None,
+                },
+                AgentProductState::MilestoneAccepted { milestone_id },
+            )?;
+            report.milestones_accepted += usize::from(inserted);
         }
         if advance_products {
             self.advance_after_curation(cut, plan, epistemic, &requirement, report)
@@ -2137,10 +2268,7 @@ fn product_completed(
                     && task.return_milestone.as_ref() == Some(&entry.accepted_milestone)
             }) || plan.epistemic_operations.iter().any(|operation| {
                 operation.product_id == product_id
-                    && entry.accepted_milestone
-                        == PlanMilestoneRequirement::CurationTerminal {
-                            operation_id: operation.operation.operation_id.clone(),
-                        }
+                    && operation.accepts_return(&entry.accepted_milestone)
             }))
     })
 }
@@ -2428,7 +2556,10 @@ mod tests {
         change_planner(&mut actor, &fixture.cut);
         let confirmation = actor.bounded_step(8);
         assert!(confirmation.fatal_errors.is_empty(), "{confirmation:?}");
-        assert!(confirmation.retryable_errors.is_empty(), "{confirmation:?}");
+        assert!(confirmation
+            .retryable_errors
+            .iter()
+            .any(|error| error.contains("Belief source relationship")));
         assert_eq!(confirmation.products_authorized, 1);
         assert_eq!(confirmation.milestones_accepted, 1);
         let successor = fixture
@@ -2458,9 +2589,9 @@ mod tests {
         assert_eq!(replay.products_authorized, 0);
         assert_eq!(execution.submissions.lock().unwrap().len(), 1);
         assert!(replay
-            .waiting_on
+            .retryable_errors
             .iter()
-            .any(|wait| wait.condition == "goal_disposition"));
+            .any(|error| error.contains("Belief source relationship")));
         assert!(fixture
             .store
             .goal_disposition_for_plan(&successor.plan_revision_id)

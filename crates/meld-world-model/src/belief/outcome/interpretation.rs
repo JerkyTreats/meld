@@ -530,6 +530,7 @@ fn promote_matched_record(
             .map(|reference| reference.content_hash.as_str()),
     );
     let record = PromotedEvidenceRecord {
+        publication_record_id: Some(record_id.to_string()),
         source_kind: config.source_kind.clone(),
         // The frozen identity doubles as the promoted source id so the
         // evidence normalizer's per-schema ids derive from it and replay

@@ -184,6 +184,14 @@ pub trait AgentEpochSubscriptionPort: Send + Sync {
         &self,
         request: &super::AgentSubscriptionRequestV1,
     ) -> Result<crate::belief::BeliefSubscriptionAcceptanceProof, StorageError>;
+
+    /// Hydrate an exact revision from the subscribed source and prove its input lineage.
+    fn returned_evidence(
+        &self,
+        _request: &crate::belief::BeliefEvidenceReturnRequest,
+    ) -> Result<Option<crate::belief::BeliefEvidenceReturnProof>, StorageError> {
+        Ok(None)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

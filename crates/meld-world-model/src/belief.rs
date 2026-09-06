@@ -65,6 +65,7 @@ pub mod config;
 pub mod contracts;
 pub mod evidence;
 pub mod evidence_ingestion;
+mod evidence_return;
 pub mod genesis;
 pub mod ingestion;
 pub mod outcome;
@@ -88,6 +89,7 @@ pub use evidence_ingestion::{
     EvidenceEventReplaySource, EvidenceIngestionActor, EvidenceIngestionIssue,
     EvidenceIngestionReport, EvidenceIngestionRequest,
 };
+pub use evidence_return::{BeliefEvidenceReturnProof, BeliefEvidenceReturnRequest};
 pub use genesis::{
     UnobservedScopeDeclaration, EPISTEMIC_GENESIS_STREAM_ID, UNOBSERVED_SCOPE_EVENT_TYPE,
 };

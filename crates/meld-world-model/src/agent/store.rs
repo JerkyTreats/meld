@@ -471,10 +471,7 @@ impl AgentStore {
         goal_id: &str,
     ) -> Result<Vec<crate::strategy::StrategyCompletedHistoryEntry>, StorageError> {
         let mut history = Vec::new();
-        for row in &self.reconciliation_milestones {
-            let (_, raw) = row.map_err(to_storage_io)?;
-            let milestone: AgentMilestoneAcceptance =
-                serde_json::from_slice(&raw).map_err(to_storage_data)?;
+        for milestone in self.milestones_for_goal(goal_id)? {
             if milestone.goal_id == goal_id {
                 let plan = self
                     .reconciliation_plan(&milestone.plan_revision_id)?
@@ -690,6 +687,23 @@ impl AgentStore {
         milestone_id: &str,
     ) -> Result<Option<AgentMilestoneAcceptance>, StorageError> {
         get_immutable(&self.reconciliation_milestones, milestone_id)
+    }
+
+    pub fn milestones_for_goal(
+        &self,
+        goal_id: &str,
+    ) -> Result<Vec<AgentMilestoneAcceptance>, StorageError> {
+        let mut milestones = Vec::new();
+        for row in &self.reconciliation_milestones {
+            let (_, raw) = row.map_err(to_storage_io)?;
+            let milestone: AgentMilestoneAcceptance =
+                serde_json::from_slice(&raw).map_err(to_storage_data)?;
+            if milestone.goal_id == goal_id {
+                milestones.push(milestone);
+            }
+        }
+        milestones.sort_by(|left, right| left.milestone_id.cmp(&right.milestone_id));
+        Ok(milestones)
     }
 
     /// Monotonic durable position across the append-only reconciliation family.

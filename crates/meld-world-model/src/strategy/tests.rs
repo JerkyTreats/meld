@@ -565,6 +565,38 @@ fn confirmation_successor_keeps_completed_task_and_verifies_remaining_epistemic_
         search_successor(&request).recommendation,
         Some(successor.clone())
     );
+    let mut positive = request.clone();
+    positive
+        .search
+        .problem
+        .planner_cut
+        .world_model_view
+        .world_state = meld_lang::WorldState::new(vec![Proposition::Holds {
+        subject: subject(),
+        dimension: Term::Dimension("docs_freshness".into()),
+        condition: Condition::Equals(Term::Literal(meld_lang::Literal::Number(1.0))),
+    }])
+    .unwrap();
+    let confirmation = search_successor(&positive).recommendation.unwrap();
+    assert_eq!(confirmation.plan.origin, StrategyPlanOrigin::Confirmation);
+    assert!(matches!(
+        verify_successor_plan(&positive, &confirmation),
+        PlanVerification::Valid { .. }
+    ));
+    let mut bypass = search(&positive.search).recommendation.unwrap();
+    assert_eq!(bypass.origin, StrategyPlanOrigin::Satisfied);
+    bypass.predecessor_plan_revision_id = Some(positive.predecessor_plan.plan_revision_id.clone());
+    bypass.plan_revision_id = super::search::plan_revision_identity(&bypass);
+    assert!(matches!(
+        verify_successor_plan(
+            &positive,
+            &StrategySuccessorPlan {
+                plan: bypass,
+                completed_history: positive.completed_history.clone(),
+            }
+        ),
+        PlanVerification::Invalid { .. }
+    ));
     let mut forged = request.clone();
     let Some(StrategyProduct::Task(body)) = &mut forged.completed_history[0].product else {
         unreachable!()

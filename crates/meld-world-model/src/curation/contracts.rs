@@ -260,6 +260,9 @@ pub struct CurationOperation {
     pub rule_revision: TheoryRevisionRef,
     pub source_cut: TraversalCut,
     pub traversal_request: BoundedTraversalRequest,
+    /// Caller-owned request distinguishes planned intake from standing selection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
     /// Agent authorization attached only at planned publication time.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub planned_authorization: Option<CurationPlannedAuthorization>,
@@ -366,8 +369,32 @@ impl CurationOperation {
             rule_revision,
             source_cut,
             traversal_request,
+            request_id: None,
             planned_authorization: None,
         })
+    }
+
+    /// Freeze a distinct request while retaining transport-insensitive replay.
+    pub fn for_request(mut self, request_id: String) -> Result<Self, StorageError> {
+        if request_id.trim().is_empty() || self.planned_authorization.is_some() {
+            return invalid("Curation request must be named before authorization");
+        }
+        let base = Self::reconstruct(
+            self.authority.clone(),
+            self.rule_revision.clone(),
+            self.source_cut.clone(),
+            self.traversal_request.clone(),
+        )?;
+        self.selection_id = stable_identity(
+            "requested-curation-selection-v1",
+            &(&base.selection_id, &request_id),
+        )?;
+        self.operation_id = stable_identity(
+            "requested-curation-operation-v1",
+            &(&base.operation_id, &request_id),
+        )?;
+        self.request_id = Some(request_id);
+        Ok(self)
     }
 
     /// Attach one exact durable Agent authorization without changing semantic identity.
@@ -388,12 +415,15 @@ impl CurationOperation {
     }
 
     pub fn validate(&self) -> Result<(), StorageError> {
-        let expected = Self::reconstruct(
+        let mut expected = Self::reconstruct(
             self.authority.clone(),
             self.rule_revision.clone(),
             self.source_cut.clone(),
             self.traversal_request.clone(),
         )?;
+        if let Some(request_id) = &self.request_id {
+            expected = expected.for_request(request_id.clone())?;
+        }
         if expected.operation_id != self.operation_id || expected.selection_id != self.selection_id
         {
             return invalid("standing Curation operation identity is not canonical");

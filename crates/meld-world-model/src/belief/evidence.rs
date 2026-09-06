@@ -133,6 +133,7 @@ impl BeliefEvidenceNormalizer {
                 key.index_key()
             );
             out.push(EvidenceItem {
+                publication_record_id: None,
                 evidence_id: format!(
                     "evidence-{}",
                     stable_hash_hex(
@@ -227,8 +228,22 @@ impl BeliefEvidenceNormalizer {
                 &self.config.config_version,
             ))
             .map_err(|_| self.promoted_rejection(promoted, "promoted evidence seed failed"))?;
+            let evidence_id = match &promoted.publication_record_id {
+                Some(record_id) => {
+                    let publication_seed =
+                        serde_json::to_vec(&(&seed, record_id)).map_err(|_| {
+                            self.promoted_rejection(promoted, "publication evidence seed failed")
+                        })?;
+                    format!(
+                        "publication-evidence-{}",
+                        stable_hash_hex(&publication_seed)
+                    )
+                }
+                None => format!("evidence-{}", stable_hash_hex(&seed)),
+            };
             out.push(EvidenceItem {
-                evidence_id: format!("evidence-{}", stable_hash_hex(&seed)),
+                publication_record_id: promoted.publication_record_id.clone(),
+                evidence_id,
                 candidate_key: key,
                 source_fact_ids: promoted.source_fact_ids.clone(),
                 graph_anchor_ids: promoted.graph_anchor_ids.clone(),

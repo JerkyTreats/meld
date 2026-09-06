@@ -80,6 +80,7 @@ pub fn build_docs_task_success_evidence(
         // renaming.
         .unwrap_or_else(|| format!("event-spine::{}", event.seq));
     Ok(Some(PromotedEvidenceRecord {
+        publication_record_id: None,
         outcome_mapping_revision: None,
         source_kind: request.source_kind,
         source_id,

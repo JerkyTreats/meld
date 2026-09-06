@@ -83,6 +83,7 @@
 //! let mut fields = BTreeMap::new();
 //! fields.insert("stale_probability".to_string(), EvidenceValue::Scalar(0.0));
 //! let record = PromotedEvidenceRecord {
+//!     publication_record_id: None,
 //!     source_kind: "content_written".to_string(),
 //!     source_id: "event-spine::2".to_string(),
 //!     subject,

@@ -149,15 +149,6 @@ pub fn search_successor(request: &StrategySuccessorRequest) -> StrategySuccessor
 
 fn confirmation_successor(request: &StrategySuccessorRequest) -> Option<StrategySearchResult> {
     let problem = &request.search.problem;
-    if matches!(
-        evaluate(
-            &problem.planner_cut.world_model_view.world_state,
-            &problem.goal.target
-        ),
-        EvalResult::Satisfied
-    ) {
-        return None;
-    }
     let (rule, bindings) = problem.theory.settlement_rules.iter().find_map(|rule| {
         unify(&rule.goal_pattern, &problem.goal.target).map(|bindings| (rule, bindings))
     })?;
@@ -175,6 +166,17 @@ fn confirmation_successor(request: &StrategySuccessorRequest) -> Option<Strategy
     })?;
     let epistemic_operations = epistemic_products(problem);
     if epistemic_operations.is_empty() {
+        return None;
+    }
+    if epistemic_operations.iter().all(|operation| {
+        request.completed_history.iter().any(|entry| {
+            matches!(&entry.product, Some(StrategyProduct::Epistemic(prior))
+            if prior.same_request_as(operation)
+            && entry.product_id == prior.product_id
+                && prior.return_evidence == operation.return_evidence
+                && prior.accepts_return(&entry.accepted_milestone))
+        })
+    }) {
         return None;
     }
     let dependencies = epistemic_operations
@@ -220,15 +222,26 @@ fn confirmation_successor(request: &StrategySuccessorRequest) -> Option<Strategy
 }
 
 pub(crate) fn epistemic_products(problem: &StrategyProblem) -> Vec<StrategyEpistemicOperation> {
+    let return_evidence = problem
+        .theory
+        .settlement_rules
+        .iter()
+        .find(|rule| unify(&rule.goal_pattern, &problem.goal.target).is_some())
+        .filter(|rule| rule.epistemic_placement == StrategyEpistemicPlacement::Confirmation)
+        .map(|rule| rule.evidence_route.clone());
     problem
         .curation_operations
         .iter()
         .map(|operation| {
-            let product_id = stable_id(
+            let mut product_id = stable_id(
                 "strategy-epistemic-product-v1",
                 &(&problem.goal.goal_id, &operation.operation_id),
             );
+            if let Some(route) = &return_evidence {
+                product_id = stable_id("strategy-epistemic-return-v1", &(&product_id, route));
+            }
             StrategyEpistemicOperation {
+                return_evidence: return_evidence.clone(),
                 idempotency_key: format!("curation::{product_id}"),
                 product_id,
                 operation: operation.clone(),

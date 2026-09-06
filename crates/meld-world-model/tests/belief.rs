@@ -263,6 +263,7 @@ fn weighted_promoted_record(node: DomainObjectRef, seq: u64) -> PromotedEvidence
     fields.insert("scope_signal".to_string(), EvidenceValue::Scalar(1.0));
     fields.insert("aggregate_signal".to_string(), EvidenceValue::Scalar(0.0));
     PromotedEvidenceRecord {
+        publication_record_id: None,
         outcome_mapping_revision: None,
         source_kind: "execution_package_aggregate".to_string(),
         source_id: format!("package-aggregate-{seq}"),
@@ -320,6 +321,7 @@ fn promoted_content_record(node: DomainObjectRef, seq: u64) -> PromotedEvidenceR
     fields.insert("stale_probability".to_string(), EvidenceValue::Scalar(0.0));
     fields.insert("review_probability".to_string(), EvidenceValue::Scalar(0.2));
     PromotedEvidenceRecord {
+        publication_record_id: None,
         outcome_mapping_revision: None,
         source_kind: "content_written".to_string(),
         source_id: format!("content-written-{seq}"),

@@ -705,7 +705,10 @@ impl StandingCurationActor {
                 &operation.authority.perspective,
             ),
         )?;
-        if semantic_state_exists(&traversal, &object_id, &occurrence_id)
+        // A named request records its own observation even when standing state agrees.
+        // Replays still resolve to the same operation and never publish it twice.
+        if operation.request_id.is_none()
+            && semantic_state_exists(&traversal, &object_id, &occurrence_id)
             && realization.as_ref().is_none_or(|(_, _, id)| {
                 traversal
                     .occurrences

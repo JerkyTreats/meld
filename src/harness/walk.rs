@@ -932,6 +932,7 @@ mod tests {
             .unwrap();
         belief
             .put_evidence(&EvidenceItem {
+                publication_record_id: None,
                 outcome_mapping_revision: None,
                 evidence_id: EVIDENCE_ID.to_string(),
                 candidate_key: belief_key(),

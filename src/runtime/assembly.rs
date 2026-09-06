@@ -6776,7 +6776,7 @@ mod tests {
     }
 
     #[test]
-    fn installed_startup_selects_native_epoch_products_and_emits_through_execution() {
+    fn installed_startup_executes_confirms_and_accepts_belief_before_goal_satisfaction() {
         let mut harness = StewardshipHarness::new();
         harness.binding.subject = "startup".into();
         harness.binding.agent_id = "startup-agent".into();
@@ -6868,6 +6868,169 @@ mod tests {
             nonces.len(),
             1,
             "Startup did not emit one nonce through production Execution: {events:#?}"
+        );
+        let goals = assembly
+            .stores()
+            .agent_store
+            .reconciliation_goals_for_agent("startup-agent")
+            .unwrap();
+        assert_eq!(goals.len(), 1);
+        let history = assembly
+            .stores()
+            .agent_store
+            .completed_history_for_goal(&goals[0].goal.goal_id)
+            .unwrap();
+        assert!(
+            history.iter().any(|entry| matches!(
+                entry.accepted_milestone,
+                meld_world_model::strategy::PlanMilestoneRequirement::CurationTerminal { .. }
+            )),
+            "Startup skipped planned confirmation: {history:#?}"
+        );
+        assert!(
+            history.iter().any(|entry| matches!(
+                entry.accepted_milestone,
+                meld_world_model::strategy::PlanMilestoneRequirement::BeliefRevision { .. }
+            )),
+            "Startup did not accept returned Belief evidence: {history:#?}"
+        );
+        let plan = assembly
+            .stores()
+            .agent_store
+            .current_reconciliation_plan(&goals[0].goal.goal_id)
+            .unwrap()
+            .unwrap();
+        assert!(
+            assembly
+                .stores()
+                .agent_store
+                .goal_disposition_for_plan(&plan.plan_revision_id)
+                .unwrap()
+                .is_some(),
+            "Startup did not separately satisfy its Goal: {plan:#?}"
+        );
+        let disposition = assembly
+            .stores()
+            .agent_store
+            .goal_disposition_for_plan(&plan.plan_revision_id)
+            .unwrap()
+            .unwrap();
+        let milestones = assembly
+            .stores()
+            .agent_store
+            .milestones_for_goal(&goals[0].goal.goal_id)
+            .unwrap();
+        assert!(milestones.iter().any(|milestone| matches!(
+            milestone.requirement,
+            meld_world_model::strategy::PlanMilestoneRequirement::BeliefRevision { .. }
+        ) && disposition
+            .accepted_milestone_ids
+            .contains(&milestone.milestone_id)));
+        let returned = history
+            .iter()
+            .find(|entry| {
+                matches!(
+                    entry.accepted_milestone,
+                    meld_world_model::strategy::PlanMilestoneRequirement::BeliefRevision { .. }
+                )
+            })
+            .unwrap();
+        let meld_world_model::strategy::StrategyProduct::Epistemic(operation) =
+            returned.product.as_ref().unwrap()
+        else {
+            unreachable!()
+        };
+        let result = assembly
+            .stores()
+            .curation_store
+            .result_for_operation(&operation.operation.operation_id)
+            .unwrap()
+            .unwrap();
+        let products = assembly
+            .stores()
+            .agent_store
+            .epoch_products(&goals[0].goal.goal_id)
+            .unwrap()
+            .unwrap();
+        let request = meld_world_model::belief::BeliefEvidenceReturnRequest {
+            subscription: products.subscription_requests().unwrap().remove(0),
+            revision_ids: vec![returned.owner_position_id.clone()],
+            publication_record_id: result.event_record_id(),
+            evidence_schema_id: operation
+                .return_evidence
+                .as_ref()
+                .unwrap()
+                .evidence_schema_id
+                .clone(),
+            mapping_revisions: products
+                .specification
+                .genesis
+                .installed_owner_revisions
+                .iter()
+                .filter(|reference| reference.registry == "outcome_mapping")
+                .cloned()
+                .collect(),
+        };
+        let meld_world_model::agent::AgentPreparation::Epoch { subscriptions, .. } =
+            &factory.preparation
+        else {
+            unreachable!()
+        };
+        assert!(subscriptions.returned_evidence(&request).unwrap().is_some());
+        let mut foreign = request.clone();
+        foreign.publication_record_id = "curation-result::foreign-epoch".into();
+        assert!(subscriptions.returned_evidence(&foreign).unwrap().is_none());
+        foreign = request.clone();
+        foreign.mapping_revisions[0].content_hash = "foreign-mapping-revision".into();
+        assert!(subscriptions.returned_evidence(&foreign).unwrap().is_none());
+        foreign = request.clone();
+        foreign.evidence_schema_id = "foreign-schema".into();
+        assert!(subscriptions.returned_evidence(&foreign).unwrap().is_none());
+        for pass in 0..5 {
+            supervisor.tick(2_000 + pass * 10).unwrap();
+        }
+        assert_eq!(
+            assembly
+                .stores()
+                .agent_store
+                .completed_history_for_goal(&goals[0].goal.goal_id)
+                .unwrap(),
+            history
+        );
+        assert_eq!(
+            assembly
+                .stores()
+                .agent_store
+                .goal_disposition_for_plan(&plan.plan_revision_id)
+                .unwrap(),
+            Some(disposition.clone())
+        );
+        drop(supervisor);
+        drop(assembly);
+        let reopened = harness.assembly();
+        assert_eq!(
+            reopened
+                .stores()
+                .agent_store
+                .completed_history_for_goal(&goals[0].goal.goal_id)
+                .unwrap(),
+            history
+        );
+        assert_eq!(
+            reopened
+                .stores()
+                .agent_store
+                .goal_disposition_for_plan(&plan.plan_revision_id)
+                .unwrap(),
+            Some(disposition)
+        );
+        assert_eq!(
+            reopened
+                .stores()
+                .agent_store
+                .epoch_products(&goals[0].goal.goal_id)
+                .unwrap(),
+            Some(products)
         );
     }
 

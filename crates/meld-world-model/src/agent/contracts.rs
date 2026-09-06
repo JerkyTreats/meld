@@ -58,6 +58,9 @@ pub struct AgentReconciliationGoal {
 /// Agent's Goal judgment over exact admitted evidence, separate from product completion.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentGoalDisposition {
+    /// Exact native returns accepted before this separate Goal judgment.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub accepted_milestone_ids: Vec<String>,
     pub disposition_id: String,
     pub agent_id: String,
     pub goal_id: String,

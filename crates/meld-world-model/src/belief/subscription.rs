@@ -87,6 +87,21 @@ impl BeliefSubscriptionSource {
 }
 
 impl crate::agent::AgentEpochSubscriptionPort for BeliefSubscriptionSource {
+    fn returned_evidence(
+        &self,
+        request: &super::BeliefEvidenceReturnRequest,
+    ) -> Result<Option<super::BeliefEvidenceReturnProof>, StorageError> {
+        request.subscription.validate()?;
+        if self
+            .store
+            .subscription_acceptance(&request.subscription.request_id)?
+            .is_none()
+        {
+            return Ok(None);
+        }
+        super::evidence_return::resolve(&self.store, request)
+    }
+
     fn subscribe(
         &self,
         request: &AgentSubscriptionRequestV1,

@@ -212,10 +212,47 @@ fn empty_bindings() -> Bindings {
 /// One bounded epistemic product grounded from the Curation catalog.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StrategyEpistemicOperation {
+    /// Required evidence return beyond Curation terminality.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub return_evidence: Option<ProspectiveEvidenceRoute>,
     pub product_id: String,
     pub operation: crate::CurationOperation,
     pub authority_requirements: Vec<String>,
     pub idempotency_key: String,
+}
+
+impl StrategyEpistemicOperation {
+    /// A completed named request survives its own publication changing the source cut.
+    pub fn same_request_as(&self, other: &Self) -> bool {
+        if self.return_evidence != other.return_evidence {
+            return false;
+        }
+        match (&self.operation.request_id, &other.operation.request_id) {
+            (Some(left), Some(right)) => {
+                left == right
+                    && self.operation.authority == other.operation.authority
+                    && self.operation.rule_revision == other.operation.rule_revision
+                    && self.operation.traversal_request == other.operation.traversal_request
+            }
+            _ => self.operation.selection_id == other.operation.selection_id,
+        }
+    }
+
+    pub fn accepts_return(&self, milestone: &PlanMilestoneRequirement) -> bool {
+        match (&self.return_evidence, milestone) {
+            (
+                Some(_),
+                PlanMilestoneRequirement::BeliefRevision {
+                    belief_key,
+                    revision_id,
+                },
+            ) => !belief_key.is_empty() && !revision_id.is_empty(),
+            (None, PlanMilestoneRequirement::CurationTerminal { operation_id }) => {
+                operation_id == &self.operation.operation_id
+            }
+            _ => false,
+        }
+    }
 }
 
 /// Canonical complete product body constructed by Strategy and authorized by Agent.
