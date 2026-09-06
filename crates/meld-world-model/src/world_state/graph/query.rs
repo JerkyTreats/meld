@@ -39,7 +39,7 @@ use crate::world_state::graph::store::TraversalStore;
 
 /// Read facade over graph traversal storage.
 pub struct TraversalQuery<'a> {
-    store: &'a TraversalStore,
+    pub(super) store: &'a TraversalStore,
 }
 
 impl<'a> TraversalQuery<'a> {
@@ -722,11 +722,45 @@ mod owner_publication_tests {
             .iter()
             .any(|issue| matches!(issue, TraversalCutIssue::MissingRequiredOwner { .. })));
 
+        let expected =
+            super::super::contracts::OwnerPublicationExpectation::from_operation(&operation)
+                .unwrap();
+        assert!(query
+            .publication_visibility(&lagging, &expected)
+            .unwrap()
+            .is_none());
         runtime.catch_up().unwrap();
         let cut = query.cut(&cut_request).unwrap();
         assert_eq!(cut.status, TraversalCutStatus::Complete);
         assert_eq!(cut.receipts[0].revision_id, "revision-a");
         assert_eq!(query.cut(&cut_request).unwrap().cut_id, cut.cut_id);
+        let visibility = query
+            .publication_visibility(&cut, &expected)
+            .unwrap()
+            .unwrap();
+        assert_eq!(visibility.cut_id(), cut.cut_id);
+        assert_eq!(visibility.receipt(), &cut.receipts[0]);
+        let mut foreign = expected.clone();
+        foreign.event_record_id = "foreign-event-record".into();
+        assert!(query
+            .publication_visibility(&cut, &foreign)
+            .unwrap()
+            .is_none());
+        foreign = expected.clone();
+        foreign.scope.scope_id = "foreign-scope".into();
+        assert!(query
+            .publication_visibility(&cut, &foreign)
+            .unwrap()
+            .is_none());
+        let mut fabricated = cut.clone();
+        fabricated.receipts[0].revision_id = "fabricated-revision".into();
+        fabricated.cut_id = traversal_cut_identity(&fabricated).unwrap();
+        foreign = expected.clone();
+        foreign.revision_id = "fabricated-revision".into();
+        assert!(query
+            .publication_visibility(&fabricated, &foreign)
+            .unwrap()
+            .is_none());
         let request = traversal_request("docs", 16);
         let result = query.traverse(&cut, &request).unwrap();
         assert_eq!(result.occurrences.len(), 2);
@@ -763,6 +797,12 @@ mod owner_publication_tests {
             .cut(&cut_request)
             .unwrap();
         assert_eq!(reopened_cut.cut_id, cut.cut_id);
+        assert_eq!(
+            TraversalQuery::new(store.as_ref())
+                .publication_visibility(&cut, &expected)
+                .unwrap(),
+            Some(visibility)
+        );
     }
 
     #[test]

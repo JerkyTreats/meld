@@ -33,4 +33,4 @@ cargo run --bin meld -- runtime status --format json
 
 Initialization prepares the product without activating it. Runtime Run opens the shared admission gate and advances the native owners. The bounded CLI integration proof verifies planned confirmation, returned Belief, separate Goal satisfaction, and reopening. Runtime status reports lifecycle state; it is not a substitute for the Agent's Goal evidence.
 
-The runtime declares eight semantic participants. Shared CLI compatibility storage still exists under the product root. Confirmation while Execution return is uncertain and full successor-epoch completion remain under reconciliation work.
+The runtime declares eight semantic participants. Shared CLI compatibility storage still exists under the product root. Confirmation can proceed from exact Graph-visible nonce evidence while Execution retains its outstanding return. Full successor-epoch completion and fairness under continuous retries remain under reconciliation work.

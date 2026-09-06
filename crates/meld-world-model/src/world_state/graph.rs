@@ -24,6 +24,7 @@ mod source_intent;
 pub mod store;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
+pub mod visibility;
 
 pub use contracts::{
     AnchorEndInput, AnchorId, AnchorProvenanceRecord, AnchorSelectionInput, AnchorSelectionRecord,

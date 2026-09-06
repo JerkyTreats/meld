@@ -152,15 +152,15 @@ fn confirmation_successor(request: &StrategySuccessorRequest) -> Option<Strategy
     let (rule, bindings) = problem.theory.settlement_rules.iter().find_map(|rule| {
         unify(&rule.goal_pattern, &problem.goal.target).map(|bindings| (rule, bindings))
     })?;
-    if rule.epistemic_placement != StrategyEpistemicPlacement::Confirmation {
+    if !rule.epistemic_placement.is_confirmation() {
         return None;
     }
     let settlement = ground_proposition(&rule.settlement_obligation, &bindings).ok()?;
     let completed = request.completed_history.iter().find(|entry| {
         let Some(StrategyProduct::Task(task)) = &entry.product else { return false; };
         entry.product_id == task.task_id
-            && entry.accepted_milestone == PlanMilestoneRequirement::ExecutionTerminal { task_id: task.task_id.clone() }
-            && task.return_milestone.as_ref() == Some(&entry.accepted_milestone)
+            && confirmation_expectation_matches(problem, rule, task)
+            && entry.accepted_milestone == task.confirmation_milestone()
             && task.composition.steps.iter().any(|step| matches!(&step.kind, StepKind::Op(operator)
                 if operator.effects.iter().filter_map(effect_proposition).any(|effect| effect == &settlement)))
     })?;
@@ -209,7 +209,7 @@ fn confirmation_successor(request: &StrategySuccessorRequest) -> Option<Strategy
         dependencies,
         conditions: vec![problem.goal.target.clone()],
         frozen_context_id: problem.planner_cut.context.context_id.clone(),
-        explanation: "Confirm completed executable work under the new admitted cut".into(),
+        explanation: "Confirm an accepted executable effect under the new admitted cut".into(),
         predecessor_plan_revision_id: None,
         evaluation: StrategyPlanEvaluation {
             step_count: 0,
@@ -221,13 +221,31 @@ fn confirmation_successor(request: &StrategySuccessorRequest) -> Option<Strategy
     Some(SearchState::new(&request.search).finish(Some(plan)))
 }
 
+pub(crate) fn confirmation_expectation_matches(
+    problem: &StrategyProblem,
+    rule: &super::StrategySettlementRule,
+    task: &super::StrategyTask,
+) -> bool {
+    match rule.epistemic_placement {
+        StrategyEpistemicPlacement::GraphConfirmation => {
+            task.effect_visibility == problem.effect_visibility
+                && task
+                    .effect_visibility
+                    .as_ref()
+                    .is_some_and(|expected| expected.validate().is_ok())
+        }
+        StrategyEpistemicPlacement::Confirmation => task.effect_visibility.is_none(),
+        StrategyEpistemicPlacement::Prerequisite => false,
+    }
+}
+
 pub(crate) fn epistemic_products(problem: &StrategyProblem) -> Vec<StrategyEpistemicOperation> {
     let return_evidence = problem
         .theory
         .settlement_rules
         .iter()
         .find(|rule| unify(&rule.goal_pattern, &problem.goal.target).is_some())
-        .filter(|rule| rule.epistemic_placement == StrategyEpistemicPlacement::Confirmation)
+        .filter(|rule| rule.epistemic_placement.is_confirmation())
         .map(|rule| rule.evidence_route.clone());
     problem
         .curation_operations
@@ -687,10 +705,30 @@ fn finish_candidate(
         "strategy-task-subject-v1",
         &(&task_id, &request.problem.planner_cut.context.subject),
     );
+    let effect_visibility =
+        if rule.epistemic_placement == StrategyEpistemicPlacement::GraphConfirmation {
+            let Some(expected) = request
+                .problem
+                .effect_visibility
+                .clone()
+                .filter(|expected| expected.validate().is_ok())
+            else {
+                state.reject(StrategyRejectionGround::InvalidEvidenceRoute);
+                return None;
+            };
+            Some(expected)
+        } else {
+            None
+        };
+    let task_id = effect_visibility.as_ref().map_or_else(
+        || task_id.clone(),
+        |expected| stable_id("strategy-task-visibility-v1", &(&task_id, expected)),
+    );
     let return_milestone = PlanMilestoneRequirement::ExecutionTerminal {
         task_id: task_id.clone(),
     };
     let task = StrategyTask {
+        effect_visibility,
         execution_subject: Some(request.problem.planner_cut.context.subject.clone()),
         initial_inputs,
         task_id: task_id.clone(),
@@ -713,12 +751,11 @@ fn finish_candidate(
                     operation_id: operation.operation.operation_id.clone(),
                 },
             ),
-            StrategyEpistemicPlacement::Confirmation => dependency(
+            StrategyEpistemicPlacement::Confirmation
+            | StrategyEpistemicPlacement::GraphConfirmation => dependency(
                 &task_id,
                 &operation.product_id,
-                PlanMilestoneRequirement::ExecutionTerminal {
-                    task_id: task_id.clone(),
-                },
+                task.confirmation_milestone(),
             ),
         })
         .collect();

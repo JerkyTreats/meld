@@ -42,9 +42,7 @@ fn verify_with_history(
                 meld_lang::unify(&rule.goal_pattern, &problem.goal.target)
                     .map(|bindings| (rule, bindings))
             })
-            .filter(|(rule, _)| {
-                rule.epistemic_placement == super::StrategyEpistemicPlacement::Confirmation
-            })
+            .filter(|(rule, _)| rule.epistemic_placement.is_confirmation())
             .and_then(|(rule, bindings)| {
                 super::search::ground_proposition(&rule.settlement_obligation, &bindings).ok()
             })
@@ -52,7 +50,7 @@ fn verify_with_history(
                 history.iter().any(|entry| {
                     matches!(&entry.product,
                 Some(super::StrategyProduct::Task(task)) if task.task_id == entry.product_id
-                    && task.return_milestone.as_ref() == Some(&entry.accepted_milestone)
+                    && task.confirmation_milestone() == entry.accepted_milestone
                     && composition_contributes(&task.composition, &settlement))
                 })
             });
@@ -125,7 +123,7 @@ fn verify_with_history(
     }
     let confirmation = candidate.tasks.is_empty();
     if confirmation {
-        if rule.epistemic_placement != super::StrategyEpistemicPlacement::Confirmation
+        if !rule.epistemic_placement.is_confirmation()
             || candidate.epistemic_operations.is_empty()
             || !candidate.composition.steps.is_empty()
             || !candidate.composition.edges.is_empty()
@@ -139,7 +137,8 @@ fn verify_with_history(
                                 && entry.accepted_milestone == dependency.required_milestone
                                 && matches!(&entry.product, Some(super::StrategyProduct::Task(task))
                                     if task.task_id == entry.product_id
-                                    && task.return_milestone.as_ref() == Some(&entry.accepted_milestone)
+                                    && super::search::confirmation_expectation_matches(problem, rule, task)
+                                    && task.confirmation_milestone() == entry.accepted_milestone
                                     && composition_contributes(&task.composition, &candidate.settlement_obligation))
                         })
                 })
@@ -168,7 +167,21 @@ fn verify_with_history(
             || candidate.composition.edges != edges
             || contracts != candidate.capability_contract_ids.iter().cloned().collect()
             || candidate.tasks.iter().any(|task| {
-                !meld_lang::validate(&task.composition).valid
+                task.effect_visibility
+                    != if rule.epistemic_placement
+                        == super::StrategyEpistemicPlacement::GraphConfirmation
+                    {
+                        problem.effect_visibility.clone()
+                    } else {
+                        None
+                    }
+                    || rule.epistemic_placement
+                        == super::StrategyEpistemicPlacement::GraphConfirmation
+                        && task
+                            .effect_visibility
+                            .as_ref()
+                            .is_none_or(|expected| expected.validate().is_err())
+                    || !meld_lang::validate(&task.composition).valid
                     || task.composition.steps.is_empty()
                     || task.return_milestone
                         != Some(PlanMilestoneRequirement::ExecutionTerminal {
@@ -192,13 +205,11 @@ fn verify_with_history(
                                         operation_id: operation.operation.operation_id.clone(),
                                     }
                         }
-                        super::StrategyEpistemicPlacement::Confirmation => {
+                        super::StrategyEpistemicPlacement::Confirmation
+                        | super::StrategyEpistemicPlacement::GraphConfirmation => {
                             dependency.producer_product_id == task.task_id
                                 && dependency.consumer_product_id == operation.product_id
-                                && dependency.required_milestone
-                                    == PlanMilestoneRequirement::ExecutionTerminal {
-                                        task_id: task.task_id.clone(),
-                                    }
+                                && dependency.required_milestone == task.confirmation_milestone()
                         }
                     })
             });
@@ -433,9 +444,12 @@ fn dependencies_valid(
         if products
             .insert(
                 task.task_id.as_str(),
-                PlanMilestoneRequirement::ExecutionTerminal {
-                    task_id: task.task_id.clone(),
-                },
+                vec![
+                    task.confirmation_milestone(),
+                    PlanMilestoneRequirement::ExecutionTerminal {
+                        task_id: task.task_id.clone(),
+                    },
+                ],
             )
             .is_some()
         {
@@ -446,9 +460,9 @@ fn dependencies_valid(
         if products
             .insert(
                 operation.product_id.as_str(),
-                PlanMilestoneRequirement::CurationTerminal {
+                vec![PlanMilestoneRequirement::CurationTerminal {
                     operation_id: operation.operation.operation_id.clone(),
-                },
+                }],
             )
             .is_some()
         {
@@ -464,7 +478,7 @@ fn dependencies_valid(
             return false;
         }
         let producer = products.get(dependency.producer_product_id.as_str());
-        if producer.is_some_and(|milestone| milestone != &dependency.required_milestone)
+        if producer.is_some_and(|milestones| !milestones.contains(&dependency.required_milestone))
             || producer.is_none()
                 && !history.iter().any(|entry| {
                     entry.product_id == dependency.producer_product_id

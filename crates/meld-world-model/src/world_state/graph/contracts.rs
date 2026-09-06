@@ -345,6 +345,36 @@ impl OwnerPublicationOperation {
     }
 }
 
+/// Exact owner publication expected before a downstream product becomes eligible.
+/// This expectation grants no execution authority and does not prove publication.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerPublicationExpectation {
+    pub owner_id: String,
+    pub revision_id: String,
+    pub scope: OwnerPublicationScope,
+    pub event_record_id: String,
+}
+
+impl OwnerPublicationExpectation {
+    pub fn from_operation(operation: &OwnerPublicationOperation) -> Result<Self, StorageError> {
+        operation.validate()?;
+        Ok(Self {
+            owner_id: operation.batch.owner_id.clone(),
+            revision_id: operation.batch.revision_id.clone(),
+            scope: operation.batch.scope.clone(),
+            event_record_id: operation.event_record_id(),
+        })
+    }
+
+    pub fn validate(&self) -> Result<(), StorageError> {
+        require_non_empty("expected publication owner", &self.owner_id)?;
+        require_non_empty("expected publication revision", &self.revision_id)?;
+        require_non_empty("expected publication Event record", &self.event_record_id)?;
+        self.scope.validate()
+    }
+}
+
 /// Graph-owned projection of an intact producer operation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectedOwnerPublication {

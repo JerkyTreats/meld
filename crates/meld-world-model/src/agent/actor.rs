@@ -27,6 +27,18 @@ use crate::waiting::{StructuralWakeAddress, WaitingOnDeclaration};
 pub trait AgentPlannerPort: Send + Sync {
     fn assemble(&self) -> PlannerAssemblyOutcome;
 
+    /// Graph-owned evidence for one frozen publication expectation.
+    fn publication_visibility(
+        &self,
+        _cut: &crate::world_state::graph::contracts::TraversalCut,
+        _expected: &crate::world_state::graph::contracts::OwnerPublicationExpectation,
+    ) -> Result<
+        Option<crate::world_state::graph::visibility::OwnerPublicationVisibilityProof>,
+        StorageError,
+    > {
+        Ok(None)
+    }
+
     /// Assemble against the Agent-owned Goal and current admission authority.
     fn assemble_for(
         &self,
@@ -413,12 +425,7 @@ impl AgentReconciliationActor {
         }
         let pending: Vec<_> = authorizations
             .iter()
-            .filter(|authorization| {
-                !history.iter().any(|entry| {
-                    entry.source_plan_revision_id == authorization.plan_revision_id
-                        && entry.product_id == authorization.product_id
-                })
-            })
+            .filter(|authorization| !authorization_completed(authorization, &history))
             .collect();
         let checkpoint_ref = format!(
             "agent-reconciliation::{}::{position}",
@@ -612,10 +619,7 @@ impl AgentReconciliationActor {
                         fence.activation_generation == authorization.activation_generation
                             && fence.admission_epoch == authorization.admission_epoch
                     })
-                    || history.iter().any(|entry| {
-                        entry.source_plan_revision_id == authorization.plan_revision_id
-                            && entry.product_id == authorization.product_id
-                    })
+                    || authorization_completed(&authorization, &history)
                 {
                     continue;
                 }
@@ -809,6 +813,16 @@ struct EpochPlanner<'a> {
 }
 
 impl AgentPlannerPort for EpochPlanner<'_> {
+    fn publication_visibility(
+        &self,
+        cut: &crate::world_state::graph::contracts::TraversalCut,
+        expected: &crate::world_state::graph::contracts::OwnerPublicationExpectation,
+    ) -> Result<
+        Option<crate::world_state::graph::visibility::OwnerPublicationVisibilityProof>,
+        StorageError,
+    > {
+        self.port.publication_visibility(cut, expected)
+    }
     fn assemble(&self) -> PlannerAssemblyOutcome {
         match &self.products {
             Some(products) => self.port.assemble_epoch(products),
@@ -1035,6 +1049,41 @@ impl GoalReconciliation<'_, '_> {
                 return report;
             }
         };
+        let prior_history = match self.store.completed_history_for_goal(&self.goal.goal_id) {
+            Ok(history) => history,
+            Err(error) => {
+                report.fatal_errors.push(error.to_string());
+                return report;
+            }
+        };
+        for authorization in authorizations
+            .iter()
+            .filter(|authorization| {
+                current
+                    .as_ref()
+                    .is_some_and(|plan| plan.plan_revision_id != authorization.plan_revision_id)
+                    && matches!(authorization.product, AgentAuthorizedProduct::Task(_))
+                    && !authorization_completed(authorization, &prior_history)
+            })
+            .take(max_items)
+        {
+            let result = (|| -> Result<(), StorageError> {
+                let original = self
+                    .store
+                    .reconciliation_plan(&authorization.plan_revision_id)?
+                    .ok_or_else(|| {
+                        StorageError::InvalidPath("authorized original Plan is absent".into())
+                    })?;
+                let history = self.store.completed_history_for_goal(&self.goal.goal_id)?;
+                if !product_completed(&original, &authorization.product_id, &history) {
+                    self.reconcile_execution(&cut, &original, authorization, &mut report)?;
+                }
+                Ok(())
+            })();
+            if let Err(error) = result {
+                report.retryable_errors.push(error.to_string());
+            }
+        }
         let (plan, judgment_inserted) =
             match self.select_plan(&cut, current, &authorizations, &mut report) {
                 Ok(Some(selection)) => selection,
@@ -1213,20 +1262,22 @@ impl GoalReconciliation<'_, '_> {
                     },
                 )?;
             }
-            // Already admitted effects keep their original authority and history.
-            // Finish observing them before constructing replacement work, so a
-            // successor cannot accidentally duplicate an unresolved effect.
+            // An independently accepted effect can enable confirmation while the
+            // original Task still owes its terminal return. Without that evidence,
+            // unresolved admitted work prevents replacement execution.
             for authorization in authorizations
                 .iter()
                 .filter(|record| record.plan_revision_id == plan.plan_revision_id)
             {
                 match &authorization.product {
-                    AgentAuthorizedProduct::Task(_) => {
+                    AgentAuthorizedProduct::Task(task) => {
+                        let visible = self.accept_effect_visibility(cut, plan, task, report)?;
+                        let prior_waits = report.waiting_on.len();
                         self.reconcile_execution(cut, plan, authorization, report)?;
-                        if report
-                            .waiting_on
-                            .iter()
-                            .any(|wait| wait.condition != "execution_admission_rejected")
+                        if !visible
+                            && report.waiting_on[prior_waits..]
+                                .iter()
+                                .any(|wait| wait.condition != "execution_admission_rejected")
                         {
                             return Ok(None);
                         }
@@ -1280,10 +1331,7 @@ impl GoalReconciliation<'_, '_> {
                 .settlement_rules
                 .iter()
                 .find(|rule| meld_lang::unify(&rule.goal_pattern, &self.goal.target).is_some())
-                .is_some_and(|rule| {
-                    rule.epistemic_placement
-                        == crate::strategy::StrategyEpistemicPlacement::Confirmation
-                });
+                .is_some_and(|rule| rule.epistemic_placement.is_confirmation());
             let operation = if confirmation {
                 operation.for_request(stable_id(
                     "agent-curation-request-v1",
@@ -1299,6 +1347,7 @@ impl GoalReconciliation<'_, '_> {
             .problem(self.goal.clone(), cut.clone(), operations);
         if let Some(products) = &self.products {
             problem.task_inputs = products.task_inputs.clone();
+            problem.effect_visibility = products.effect_visibility.clone();
         }
         let request = StrategySearchRequest {
             problem: problem.clone(),
@@ -2061,6 +2110,72 @@ impl GoalReconciliation<'_, '_> {
         Ok(())
     }
 
+    fn accept_effect_visibility(
+        &self,
+        cut: &PlannerCut,
+        plan: &StrategyPlan,
+        task: &crate::strategy::StrategyTask,
+        report: &mut AgentReconciliationReport,
+    ) -> Result<bool, StorageError> {
+        let Some(expected) = &task.effect_visibility else {
+            return Ok(false);
+        };
+        let requirement = task.confirmation_milestone();
+        if self
+            .store
+            .completed_history_for_goal(&self.goal.goal_id)?
+            .iter()
+            .any(|entry| {
+                entry.source_plan_revision_id == plan.plan_revision_id
+                    && entry.product_id == task.task_id
+                    && entry.accepted_milestone == requirement
+            })
+        {
+            return Ok(true);
+        }
+        if self.authority.observe()?.as_ref() != Some(&self.frozen_authority) {
+            return Ok(false);
+        }
+        let Some(proof) = self
+            .planner
+            .publication_visibility(&cut.traversal_cut, expected)?
+        else {
+            return Ok(false);
+        };
+        if proof.cut_id() != cut.traversal_cut.cut_id || proof.expectation() != expected {
+            return Err(StorageError::InvalidPath(
+                "Graph visibility belongs to another cut or publication".into(),
+            ));
+        }
+        let position = stable_id(
+            "graph-publication-position-v1",
+            &(expected, proof.receipt()),
+        );
+        let milestone_id = stable_id(
+            "agent-graph-milestone-acceptance-v1",
+            &(
+                &self.goal.goal_id,
+                &plan.plan_revision_id,
+                &task.task_id,
+                &requirement,
+                &position,
+            ),
+        );
+        let inserted = self.store.put_milestone(&AgentMilestoneAcceptance {
+            milestone_id,
+            agent_id: cut.context.agent_id.clone(),
+            goal_id: self.goal.goal_id.clone(),
+            plan_revision_id: plan.plan_revision_id.clone(),
+            product_id: task.task_id.clone(),
+            requirement,
+            owner_position_id: position,
+            context_id: cut.context.context_id.clone(),
+            activation_generation: cut.context.activation_generation.clone(),
+        })?;
+        report.milestones_accepted += usize::from(inserted);
+        Ok(true)
+    }
+
     fn reconcile_execution(
         &self,
         cut: &PlannerCut,
@@ -2265,6 +2380,24 @@ impl GoalReconciliation<'_, '_> {
     }
 }
 
+fn authorization_completed(
+    authorization: &AgentProductAuthorization,
+    history: &[crate::strategy::StrategyCompletedHistoryEntry],
+) -> bool {
+    history.iter().any(|entry| {
+        entry.source_plan_revision_id == authorization.plan_revision_id
+            && entry.product_id == authorization.product_id
+            && match &authorization.product {
+                AgentAuthorizedProduct::Task(task) => {
+                    task.return_milestone.as_ref() == Some(&entry.accepted_milestone)
+                }
+                AgentAuthorizedProduct::Epistemic(operation) => {
+                    operation.accepts_return(&entry.accepted_milestone)
+                }
+            }
+    })
+}
+
 fn product_completed(
     plan: &StrategyPlan,
     product_id: &str,
@@ -2293,7 +2426,7 @@ fn dependencies_satisfied(
                 && entry.accepted_milestone == dependency.required_milestone
                 // A confirmation must be reconstructed from a successor cut,
                 // never authorized against the pre-execution frozen selection.
-                && !(matches!(dependency.required_milestone, PlanMilestoneRequirement::ExecutionTerminal { .. })
+                && !(matches!(dependency.required_milestone, PlanMilestoneRequirement::ExecutionTerminal { .. } | PlanMilestoneRequirement::GraphVisible { .. })
                     && plan.epistemic_operations.iter().any(|operation| operation.product_id == product_id)
                     && entry.source_plan_revision_id == plan.plan_revision_id)))
 }
@@ -3334,6 +3467,7 @@ mod tests {
                 specification: specification.clone(),
                 observation_subject: rule.rule.expected_object()?,
                 curation_rule: rule,
+                effect_visibility: None,
                 task_inputs: vec![meld_lang::TaskInput {
                     step_id: "inspect-docs-scope".into(),
                     slot_id: "epoch_input".into(),

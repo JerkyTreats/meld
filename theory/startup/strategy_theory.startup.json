@@ -34,7 +34,7 @@
           "outcome_contract_id": "nonce.emitted.v1",
           "evidence_schema_id": "curation_realization_v1"
         },
-        "epistemic_placement": "confirmation"
+        "epistemic_placement": "graph_confirmation"
       }
     ]
   },

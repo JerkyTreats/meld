@@ -129,7 +129,7 @@
       "content": {
         "kind": "relative_file",
         "path": "strategy_theory.startup.json",
-        "content_hash": "f486a06a2a1866e15d3bc4fa7c1992ddd4d8b96ee08c20dfccc10b53716acf52"
+        "content_hash": "4e0999a60c064163268f3efe3786c905dc5deee5521c5b25aa9b57a66696ec48"
       },
       "requires": [
         {

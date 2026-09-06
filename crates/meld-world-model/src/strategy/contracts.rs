@@ -35,10 +35,16 @@ pub struct StrategySettlementRule {
 pub enum StrategyEpistemicPlacement {
     #[default]
     Prerequisite,
+    /// Confirmation follows the Task's operational return.
     Confirmation,
+    /// Confirmation follows exact Graph visibility; operational return remains separate.
+    GraphConfirmation,
 }
 
 impl StrategyEpistemicPlacement {
+    pub fn is_confirmation(self) -> bool {
+        matches!(self, Self::Confirmation | Self::GraphConfirmation)
+    }
     fn is_prerequisite(&self) -> bool {
         *self == Self::Prerequisite
     }
@@ -107,6 +113,10 @@ pub struct StrategyTheoryPackage {
 /// Complete immutable input to the pure Strategy function.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StrategyProblem {
+    /// Exact producer publication that may enable confirmation before operational return.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect_visibility:
+        Option<crate::world_state::graph::contracts::OwnerPublicationExpectation>,
     /// Exact frozen inputs available to the selected Task steps.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub task_inputs: Vec<meld_lang::TaskInput>,
@@ -142,7 +152,7 @@ pub struct StrategySearchRequest {
 pub enum StrategyPlanOrigin {
     /// Desired state is already established by the admitted Planner input.
     Satisfied,
-    /// Remaining epistemic work confirms an already completed executable product.
+    /// Remaining epistemic work follows an accepted effect milestone from executable work.
     Confirmation,
     /// Constructed directly from Capability contracts.
     Direct,
@@ -187,6 +197,10 @@ pub enum PlanMilestoneRequirement {
 /// One independently complete executable product retained by Agent only.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StrategyTask {
+    /// Exact producer publication that may enable confirmation before operational return.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect_visibility:
+        Option<crate::world_state::graph::contracts::OwnerPublicationExpectation>,
     /// Subject on which Execution acts, independent of the Goal's observation subject.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution_subject: Option<meld_events::DomainObjectRef>,
@@ -203,6 +217,20 @@ pub struct StrategyTask {
     pub idempotency_key: String,
     #[serde(default)]
     pub return_milestone: Option<PlanMilestoneRequirement>,
+}
+
+impl StrategyTask {
+    pub fn confirmation_milestone(&self) -> PlanMilestoneRequirement {
+        self.effect_visibility.as_ref().map_or_else(
+            || PlanMilestoneRequirement::ExecutionTerminal {
+                task_id: self.task_id.clone(),
+            },
+            |expected| PlanMilestoneRequirement::GraphVisible {
+                owner_id: expected.owner_id.clone(),
+                revision_id: expected.revision_id.clone(),
+            },
+        )
+    }
 }
 
 fn empty_bindings() -> Bindings {

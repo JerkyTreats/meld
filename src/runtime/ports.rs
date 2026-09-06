@@ -165,6 +165,18 @@ impl ProductEpochAgentPlannerPort {
 }
 
 impl AgentPlannerPort for ProductEpochAgentPlannerPort {
+    fn publication_visibility(
+        &self,
+        cut: &meld_world_model::world_state::graph::contracts::TraversalCut,
+        expected: &meld_world_model::world_state::graph::contracts::OwnerPublicationExpectation,
+    ) -> Result<
+        Option<meld_world_model::world_state::graph::visibility::OwnerPublicationVisibilityProof>,
+        meld_world_model::error::StorageError,
+    > {
+        meld_world_model::TraversalQuery::new(self.traversal_store.as_ref())
+            .publication_visibility(cut, expected)
+    }
+
     fn assemble(&self) -> PlannerAssemblyOutcome {
         PlannerAssemblyOutcome::Refused(meld_world_model::PlannerRefusal {
             request_context_id: self.binding.context.context_id.clone(),
@@ -634,6 +646,18 @@ impl ProductAgentPlannerPort {
 }
 
 impl AgentPlannerPort for ProductAgentPlannerPort {
+    fn publication_visibility(
+        &self,
+        cut: &meld_world_model::world_state::graph::contracts::TraversalCut,
+        expected: &meld_world_model::world_state::graph::contracts::OwnerPublicationExpectation,
+    ) -> Result<
+        Option<meld_world_model::world_state::graph::visibility::OwnerPublicationVisibilityProof>,
+        meld_world_model::error::StorageError,
+    > {
+        meld_world_model::TraversalQuery::new(self.traversal_store.as_ref())
+            .publication_visibility(cut, expected)
+    }
+
     fn assemble(&self) -> PlannerAssemblyOutcome {
         self.assemble_request(self.request.clone())
     }

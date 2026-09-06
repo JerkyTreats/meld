@@ -121,6 +121,9 @@ impl AgentEpochSpecification {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentEpochProducts {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect_visibility:
+        Option<crate::world_state::graph::contracts::OwnerPublicationExpectation>,
     pub specification: AgentEpochSpecification,
     pub observation_subject: DomainObjectRef,
     pub task_inputs: Vec<TaskInput>,
@@ -155,6 +158,9 @@ impl AgentEpochProducts {
     pub fn validate(&self) -> Result<(), StorageError> {
         self.specification.validate()?;
         self.observation_subject.validate()?;
+        if let Some(expected) = &self.effect_visibility {
+            expected.validate()?;
+        }
         self.curation_rule.validate()?;
         self.curation_rule
             .rule

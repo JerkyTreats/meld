@@ -251,6 +251,7 @@ fn problem() -> StrategyProblem {
     )
     .unwrap();
     StrategyProblem {
+        effect_visibility: None,
         task_inputs: Vec::new(),
         problem_id: "problem-docs-v1".into(),
         goal: goal(),
@@ -513,9 +514,27 @@ fn pure_verification_rejects_missing_milestone_dependency() {
 
 #[test]
 fn confirmation_successor_keeps_completed_task_and_verifies_remaining_epistemic_work() {
+    prove_confirmation_successor(StrategyEpistemicPlacement::Confirmation);
+}
+
+#[test]
+fn graph_confirmation_successor_requires_visibility_instead_of_execution_terminality() {
+    prove_confirmation_successor(StrategyEpistemicPlacement::GraphConfirmation);
+}
+
+fn prove_confirmation_successor(placement: StrategyEpistemicPlacement) {
     let mut problem = problem();
-    problem.theory.settlement_rules[0].epistemic_placement =
-        StrategyEpistemicPlacement::Confirmation;
+    problem.theory.settlement_rules[0].epistemic_placement = placement;
+    if placement == StrategyEpistemicPlacement::GraphConfirmation {
+        problem.effect_visibility = Some(
+            crate::world_state::graph::contracts::OwnerPublicationExpectation {
+                owner_id: "test-owner".into(),
+                revision_id: "expected-effect".into(),
+                scope: problem.planner_cut.traversal_cut.scope.clone(),
+                event_record_id: "exact-owner-publication".into(),
+            },
+        );
+    }
     let mut search_request = StrategySearchRequest {
         problem,
         bounds: StrategySearchBounds {
@@ -543,7 +562,7 @@ fn confirmation_successor_keeps_completed_task_and_verifies_remaining_epistemic_
         completed_history: vec![StrategyCompletedHistoryEntry {
             source_plan_revision_id: predecessor.plan_revision_id.clone(),
             product_id: task.task_id.clone(),
-            accepted_milestone: task.return_milestone.clone().unwrap(),
+            accepted_milestone: task.confirmation_milestone(),
             owner_position_id: "execution-outcome-v1".into(),
             product: Some(StrategyProduct::Task(Box::new(task.clone()))),
         }],
@@ -565,6 +584,27 @@ fn confirmation_successor_keeps_completed_task_and_verifies_remaining_epistemic_
         search_successor(&request).recommendation,
         Some(successor.clone())
     );
+    if placement == StrategyEpistemicPlacement::GraphConfirmation {
+        let mut terminal_only = request.clone();
+        terminal_only.completed_history[0].accepted_milestone =
+            task.return_milestone.clone().unwrap();
+        assert!(matches!(
+            verify_successor_plan(&terminal_only, &successor),
+            PlanVerification::Invalid { .. }
+        ));
+        let mut foreign = request.clone();
+        foreign
+            .search
+            .problem
+            .effect_visibility
+            .as_mut()
+            .unwrap()
+            .event_record_id = "foreign-publication".into();
+        assert!(matches!(
+            verify_successor_plan(&foreign, &successor),
+            PlanVerification::Invalid { .. }
+        ));
+    }
     let mut positive = request.clone();
     positive
         .search

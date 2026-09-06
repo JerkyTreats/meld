@@ -6801,6 +6801,48 @@ mod tests {
         owner_publication_envelope("standing-curation-proof", &operation).unwrap()
     }
 
+    struct LostDispatchReturn {
+        inner: SharedClaimedTaskInvoker,
+        invoked: std::sync::atomic::AtomicBool,
+        lose_return: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    #[async_trait::async_trait]
+    impl meld_execution::task_network::dispatch_actor::ClaimedTaskInvoker for LostDispatchReturn {
+        async fn invoke_claimed_task(
+            &self,
+            node: &meld_execution::task_network::state::TaskNode,
+            claim: &meld_execution::task_network::dispatch::Claim,
+            payload: &meld_execution::task::TaskInitializationPayload,
+        ) -> Result<
+            meld_execution::task_network::dispatch_actor::ClaimedInvocationOutcome,
+            meld_execution::task_network::dispatch_actor::DispatchPortError,
+        > {
+            if self.lose_return.load(std::sync::atomic::Ordering::SeqCst)
+                && self.invoked.swap(true, std::sync::atomic::Ordering::SeqCst)
+            {
+                return Err(
+                    meld_execution::task_network::dispatch_actor::DispatchPortError::retryable(
+                        "callback recovery unavailable",
+                    ),
+                );
+            }
+            let result = self
+                .inner
+                .0
+                .invoke_claimed_task(node, claim, payload)
+                .await?;
+            if self.lose_return.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(
+                    meld_execution::task_network::dispatch_actor::DispatchPortError::retryable(
+                        "lost callback after real capability execution",
+                    ),
+                );
+            }
+            Ok(result)
+        }
+    }
+
     struct StewardshipHarness {
         _workspace: tempfile::TempDir,
         _external: tempfile::TempDir,
@@ -6810,6 +6852,14 @@ mod tests {
 
     impl StewardshipHarness {
         fn bind_production_routes(&self, assembly: &ProductRuntimeAssembly) {
+            self.bind_production_routes_with_loss(assembly, None);
+        }
+
+        fn bind_production_routes_with_loss(
+            &self,
+            assembly: &ProductRuntimeAssembly,
+            loss: Option<Arc<std::sync::atomic::AtomicBool>>,
+        ) {
             let route_storage = self._external.path().join("claimed-route");
             std::fs::create_dir_all(&route_storage).unwrap();
             let api = Arc::new(
@@ -6845,7 +6895,7 @@ mod tests {
                 .catalog
                 .get("workspace_scan", 1)
                 .is_none());
-            let routes = DispatchRouteBindings::production(
+            let mut routes = DispatchRouteBindings::production(
                 crate::runtime::ports::ProductionDispatchRouteContext {
                     api,
                     session_id: Some(seed.session_id),
@@ -6853,6 +6903,13 @@ mod tests {
                     registry: capability_runtime.registry,
                 },
             );
+            if let Some(lose_return) = loss {
+                routes.claim_invoker = SharedClaimedTaskInvoker(Arc::new(LostDispatchReturn {
+                    inner: routes.claim_invoker,
+                    invoked: std::sync::atomic::AtomicBool::new(false),
+                    lose_return,
+                }));
+            }
             assert!(assembly.bind_dispatch_routes(routes));
         }
 
@@ -6996,6 +7053,15 @@ mod tests {
 
     #[test]
     fn installed_startup_executes_confirms_and_accepts_belief_before_goal_satisfaction() {
+        prove_installed_startup(false);
+    }
+
+    #[test]
+    fn startup_confirms_visible_nonce_while_execution_return_remains_uncertain() {
+        prove_installed_startup(true);
+    }
+
+    fn prove_installed_startup(lose_callback: bool) {
         let mut harness = StewardshipHarness::new();
         harness.binding.subject = DomainObjectRef::new("runtime", "instance", "meld").unwrap();
         harness.binding.workspace_root = None;
@@ -7060,7 +7126,8 @@ mod tests {
         drop(registry);
         drop(assembly);
         let assembly = harness.assembly();
-        harness.bind_production_routes(&assembly);
+        let loss = Arc::new(std::sync::atomic::AtomicBool::new(lose_callback));
+        harness.bind_production_routes_with_loss(&assembly, Some(loss.clone()));
         let RuntimeSemanticHandleFactory::AgentActor(factory) = &assembly
             .handle_factories()
             .get(AGENT_RECONCILIATION_RUNTIME_ID)
@@ -7106,7 +7173,7 @@ mod tests {
             .reconciliation_goals_for_agent("startup-agent")
             .unwrap();
         assert_eq!(goals.len(), 1);
-        let history = assembly
+        let mut history = assembly
             .stores()
             .agent_store
             .completed_history_for_goal(&goals[0].goal.goal_id)
@@ -7116,7 +7183,7 @@ mod tests {
                 entry.accepted_milestone,
                 meld_world_model::strategy::PlanMilestoneRequirement::CurationTerminal { .. }
             )),
-            "Startup skipped planned confirmation: {history:#?}"
+            "Startup skipped planned confirmation: {history:#?}; reports: {reports:#?}"
         );
         assert!(
             history.iter().any(|entry| matches!(
@@ -7125,6 +7192,62 @@ mod tests {
             )),
             "Startup did not accept returned Belief evidence: {history:#?}"
         );
+        assert!(history.iter().any(|entry| matches!(
+            entry.accepted_milestone,
+            meld_world_model::strategy::PlanMilestoneRequirement::GraphVisible { .. }
+        )));
+        let mut pending_owner = None;
+        if lose_callback {
+            assert!(!history.iter().any(|entry| matches!(
+                entry.accepted_milestone,
+                meld_world_model::strategy::PlanMilestoneRequirement::ExecutionTerminal { .. }
+            )));
+            let RuntimeSemanticHandleFactory::TaskAdmission(execution) = &assembly
+                .handle_factories()
+                .get("execution.task_admission")
+                .unwrap()
+                .semantic
+            else {
+                unreachable!()
+            };
+            let network = execution.network.lock().unwrap();
+            assert!(!network.state().claims.is_empty());
+            assert!(network.state().outcomes.is_empty());
+            drop(network);
+            let native_owner = AgentReconciliationActor::new(
+                factory.runtime_id.clone(),
+                factory.intent.clone(),
+                factory.store.clone(),
+                factory.planner.clone(),
+                factory.authority_port.clone(),
+                factory.frozen_authority.clone(),
+                factory.curation.clone(),
+                factory.execution.clone(),
+                factory.strategy.clone(),
+                factory.authority.clone(),
+                factory.preparation.clone(),
+            )
+            .unwrap();
+            let pending: Vec<_> = assembly
+                .stores()
+                .agent_store
+                .product_authorizations_for_goal(&goals[0].goal.goal_id)
+                .unwrap()
+                .into_iter()
+                .filter(|authorization| {
+                    matches!(
+                        authorization.product,
+                        meld_world_model::agent::AgentAuthorizedProduct::Task(_)
+                    )
+                })
+                .collect();
+            assert_eq!(pending.len(), 1);
+            let pending_evidence = native_owner
+                .lifecycle_evidence()
+                .unwrap()
+                .unresolved_operation_summary_ref;
+            pending_owner = Some((native_owner, pending_evidence));
+        }
         let plan = assembly
             .stores()
             .agent_store
@@ -7217,6 +7340,53 @@ mod tests {
         foreign = request.clone();
         foreign.evidence_schema_id = "foreign-schema".into();
         assert!(subscriptions.returned_evidence(&foreign).unwrap().is_none());
+        if lose_callback {
+            loss.store(false, std::sync::atomic::Ordering::SeqCst);
+            for pass in 0..15 {
+                supervisor.tick(1_600 + pass * 10).unwrap();
+            }
+            history = assembly
+                .stores()
+                .agent_store
+                .completed_history_for_goal(&goals[0].goal.goal_id)
+                .unwrap();
+            assert!(
+                history.iter().any(|entry| matches!(
+                    entry.accepted_milestone,
+                    meld_world_model::strategy::PlanMilestoneRequirement::ExecutionTerminal { .. }
+                )),
+                "late Execution return was abandoned: {history:#?}"
+            );
+            let (native_owner, pending_evidence) = pending_owner.take().unwrap();
+            assert_ne!(
+                native_owner
+                    .lifecycle_evidence()
+                    .unwrap()
+                    .unresolved_operation_summary_ref,
+                pending_evidence,
+                "Graph visibility had hidden the outstanding Task from native lifecycle evidence"
+            );
+            let watermark = harness.authority.watermark_capability().snapshot().unwrap();
+            let events = harness
+                .authority
+                .replay_capability()
+                .replay(meld_events::ReplayRequest {
+                    cursor: meld_events::LedgerCursor {
+                        ledger_id: watermark.ledger_id,
+                        after_seq: 0,
+                    },
+                    limit: 1024,
+                })
+                .unwrap()
+                .records;
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|event| event.event_type == crate::nonce::EVENT_TYPE)
+                    .count(),
+                1
+            );
+        }
         for pass in 0..5 {
             supervisor.tick(2_000 + pass * 10).unwrap();
         }

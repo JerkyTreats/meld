@@ -149,6 +149,9 @@ impl AgentEpochPreparationPort for ProductNonceEpochPreparation {
                 .committed_seq,
         )?;
         let products = AgentEpochProducts {
+            effect_visibility: Some(meld_world_model::world_state::graph::contracts::OwnerPublicationExpectation::from_operation(
+                &request.publication().map_err(|error| StorageError::InvalidPath(error.to_string()))?
+            )?),
             specification: specification.clone(),
             observation_subject: rule.rule.expected_object()?,
             task_inputs: vec![meld_lang::TaskInput {
