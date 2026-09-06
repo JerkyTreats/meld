@@ -106,6 +106,139 @@ impl DocsObservationStore {
         Ok(revision)
     }
 
+    pub(crate) fn claim_progress(
+        &self,
+        binding_id: &str,
+        observation: &str,
+        policy: &str,
+    ) -> Result<Option<super::claim_observation::ObservedDocsClaimReport>, String> {
+        self.read(&format!(
+            "claim-progress::{binding_id}::{observation}::{policy}"
+        ))
+    }
+
+    pub(crate) fn save_claim_progress(
+        &self,
+        binding_id: &str,
+        predecessor: &str,
+        report: &super::claim_observation::ObservedDocsClaimReport,
+    ) -> Result<(), String> {
+        let _guard = self
+            .mutation
+            .lock()
+            .map_err(|_| "Docs observation lock poisoned")?;
+        let head = self
+            .head(binding_id)?
+            .ok_or("Docs claim progress has no source head")?;
+        if head.revision_id != predecessor || head.publication.is_none() {
+            return Err("Docs claim progress names an unpublished or superseded source".into());
+        }
+        let source = self
+            .revision(predecessor)?
+            .ok_or("Docs claim progress source is absent")?;
+        if !report
+            .matches_capture(&source.evidence)
+            .map_err(|error| error.to_string())?
+        {
+            return Err("Docs claim progress names another capture".into());
+        }
+        let key = format!(
+            "claim-progress::{binding_id}::{}::{}",
+            report.observation_revision_id, report.policy_identity
+        );
+        let previous: Option<super::claim_observation::ObservedDocsClaimReport> =
+            self.read(&key)?;
+        if previous.as_ref().is_some_and(|prior| {
+            prior
+                .readmes
+                .iter()
+                .any(|judgment| !report.readmes.contains(judgment))
+                || (prior.complete && prior != report)
+        }) {
+            return Err("Docs claim progress changed completed judgments".into());
+        }
+        let expected_head = encode(&head)?;
+        let expected_progress = previous.as_ref().map(encode).transpose()?;
+        let next = encode(report)?;
+        let head_key = format!("head::{binding_id}");
+        self.records
+            .transaction(|tree| {
+                if tree.get(head_key.as_bytes())?.as_deref() != Some(expected_head.as_slice())
+                    || tree.get(key.as_bytes())?.as_deref() != expected_progress.as_deref()
+                {
+                    return Err(sled::transaction::ConflictableTransactionError::Abort(
+                        "Docs source or claim progress advanced concurrently".to_string(),
+                    ));
+                }
+                tree.insert(key.as_bytes(), next.as_slice())?;
+                Ok(())
+            })
+            .map_err(|error| error.to_string())?;
+        self.flush()
+    }
+
+    pub(crate) fn prepare_claim_report(
+        &self,
+        binding_id: &str,
+        predecessor: &str,
+        report: super::claim_observation::ObservedDocsClaimReport,
+    ) -> Result<DocsObservationRevision, String> {
+        self.set_claim_report(binding_id, predecessor, Some(report))
+    }
+
+    pub(crate) fn invalidate_claim_report(
+        &self,
+        binding_id: &str,
+        predecessor: &str,
+    ) -> Result<DocsObservationRevision, String> {
+        self.set_claim_report(binding_id, predecessor, None)
+    }
+
+    fn set_claim_report(
+        &self,
+        binding_id: &str,
+        predecessor: &str,
+        report: Option<super::claim_observation::ObservedDocsClaimReport>,
+    ) -> Result<DocsObservationRevision, String> {
+        let _guard = self
+            .mutation
+            .lock()
+            .map_err(|_| "Docs observation lock poisoned")?;
+        let head = self
+            .head(binding_id)?
+            .ok_or("Docs claim judgment has no source head")?;
+        if head.revision_id != predecessor || head.publication.is_none() {
+            return Err("Docs source advanced or is not published for claim judgment".into());
+        }
+        let prior = self
+            .revision(predecessor)?
+            .ok_or("Docs claim judgment source is absent")?;
+        if prior.claim_report == report {
+            return Ok(prior);
+        }
+        let mut revision = DocsObservationRevision::new(
+            Some(prior.revision_id),
+            prior
+                .sequence
+                .checked_add(1)
+                .ok_or("Docs sequence exhausted")?,
+            prior.subject,
+            prior.scope,
+            prior.evidence,
+        )?;
+        if let Some(report) = report {
+            revision = revision.with_claim_report(report)?;
+        }
+        let next = DocsObservationHead {
+            revision_id: revision.revision_id.clone(),
+            ledger_id: head.ledger_id,
+            publication: None,
+        };
+        self.commit_head(binding_id, Some(&head), &next, Some(&revision))?;
+        self.flush()?;
+        Ok(revision)
+    }
+
     pub(crate) fn record_publication(
         &self,
         binding_id: &str,

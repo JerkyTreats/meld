@@ -675,6 +675,7 @@ fn activate_exact_capabilities(
 
 /// Stewardship values shared by the composed actor factories.
 struct ComposedStewardship {
+    provider_id: Option<String>,
     workspace_root: Option<PathBuf>,
     lifecycle: Option<ActivationLifecycleStore>,
     bindings: StewardshipActorBindings,
@@ -1431,6 +1432,7 @@ impl ProductRuntimeAssembly {
                     })
                     .transpose()?;
                 Some(ComposedStewardship {
+                    provider_id: composition.binding.provider_id.clone(),
                     workspace_root: composition.binding.workspace_root.clone(),
                     lifecycle,
                     dispatch_slot: DispatchRouteSlot::default(),
@@ -1630,6 +1632,39 @@ impl ProductRuntimeAssembly {
     /// Return the exact capability runtime shared by planning and dispatch.
     pub fn capability_runtime(&self) -> Option<&ProductCapabilityRuntime> {
         self.capability_runtime.as_ref()
+    }
+
+    pub fn bind_docs_claim_judge(
+        &self,
+        judge: Arc<dyn crate::docs::claim_validation::DocsClaimJudge>,
+    ) -> bool {
+        match self
+            .handle_factories
+            .get("docs.observation")
+            .map(|factory| &factory.semantic)
+        {
+            Some(RuntimeSemanticHandleFactory::DocsObservation(binding)) => {
+                binding.claim_judge.bind(judge)
+            }
+            _ => false,
+        }
+    }
+
+    pub fn bind_production_docs_claim_judge(&self, api: Arc<crate::api::ContextApi>) -> bool {
+        let Some(RuntimeSemanticHandleFactory::DocsObservation(binding)) = self
+            .handle_factories
+            .get("docs.observation")
+            .map(|factory| &factory.semantic)
+        else {
+            return false;
+        };
+        let Some(config) = binding.claim_config.clone() else {
+            return false;
+        };
+        self.bind_docs_claim_judge(Arc::new(crate::runtime::ports::ProductionDocsClaimJudge {
+            api,
+            config,
+        }))
     }
 
     /// Return whether execution routes are bound for the dispatch actor.
@@ -2175,6 +2210,28 @@ impl RuntimeSemanticHandleFactory {
                 Ok(Self::DocsObservation(Box::new(
                     crate::docs::runtime::DocsObservationBinding {
                         root: root.clone(),
+                        claim_policy: resolved.claim_policy.clone(),
+                        claim_config: composed
+                            .provider_id
+                            .as_ref()
+                            .map(|provider| {
+                                Ok::<_, RuntimeAssemblyError>(
+                                    crate::docs::capability::DocsCapabilityConfig {
+                                        target_root: root.clone(),
+                                        subject_id: composed.bindings.subject.object_id.clone(),
+                                        agent_id: composed.bindings.agent_id.clone(),
+                                        provider: crate::execution::ProviderExecutionBinding::new(
+                                            provider,
+                                            Default::default(),
+                                        )
+                                        .map_err(|error| {
+                                            RuntimeAssemblyError::Config(error.to_string())
+                                        })?,
+                                    },
+                                )
+                            })
+                            .transpose()?,
+                        claim_judge: Default::default(),
                         subject: composed.bindings.subject.clone(),
                         scope: rule.rule.scope.clone(),
                         session_id: composed.bindings.session_id.clone(),
@@ -7289,6 +7346,142 @@ mod tests {
         assert_eq!(
             binding.store.revision(&first.revision_id).unwrap(),
             Some(first)
+        );
+    }
+
+    #[test]
+    fn native_docs_claim_judgments_reach_graph_before_tasks_and_expire_on_source_change() {
+        use crate::docs::claim_observation::{
+            test_support::FixtureJudge, ObservedClaimDisposition,
+        };
+        use crate::docs::runtime::DocsObservationActor;
+        let harness = StewardshipHarness::new();
+        std::fs::write(
+            harness._workspace.path().join("lib.rs"),
+            "pub fn run() {}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            harness._workspace.path().join("README.md"),
+            "# run\n\n`run` exists.\n",
+        )
+        .unwrap();
+        {
+            let assembly = harness.assembly();
+            harness.run_world_genesis(&assembly);
+        }
+        let assembly = harness.assembly();
+        harness.bind_production_routes(&assembly);
+        let judge = Arc::new(FixtureJudge::default());
+        assert!(assembly.bind_docs_claim_judge(judge.clone()));
+        let RuntimeSemanticHandleFactory::DocsObservation(binding) = &assembly
+            .handle_factories()
+            .get("docs.observation")
+            .unwrap()
+            .semantic
+        else {
+            panic!("Docs factory missing")
+        };
+        let owner = DocsObservationActor::new(binding.as_ref().clone());
+        let mut supervisor = harness.start_supervisor(&assembly);
+        for pass in 0..4 {
+            supervisor.tick(1_000 + pass * 10).unwrap();
+        }
+        let assessed = owner.current_revision().unwrap().unwrap();
+        let report = assessed
+            .claim_report
+            .as_ref()
+            .expect("native pre-Task claim report");
+        assert!(
+            matches!(&report.readmes[0].disposition, ObservedClaimDisposition::Assessed { report } if report.accepted)
+        );
+        let operation = assessed.publication().unwrap();
+        assert!(operation
+            .batch
+            .objects
+            .iter()
+            .any(|object| object.object_ref.object_kind == "observed_claim_assessment"));
+        assert!(operation
+            .batch
+            .relations
+            .iter()
+            .any(|relation| relation.relation_type == "docs_judges_claim"));
+        assert!(operation
+            .batch
+            .objects
+            .iter()
+            .any(|object| object.object_ref.object_kind == "claim_assessment"
+                && object
+                    .qualifications
+                    .get("verdict")
+                    .is_some_and(|verdict| verdict == "supported")));
+        let query =
+            meld_world_model::TraversalQuery::new(assembly.stores().traversal_store.as_ref());
+        let cut = query.cut(&meld_world_model::world_state::graph::contracts::TraversalCutRequest {
+            owners: vec![meld_world_model::world_state::graph::contracts::TraversalOwnerRequirement { event_source: None, owner_id: "docs".into(), scope: assessed.scope.clone(), required: true }],
+            scope: assessed.scope.clone(), currentness: meld_world_model::world_state::graph::contracts::OwnerCurrentnessPolicy::LatestComplete,
+            event_position: assembly.graph_runtime().durable_event_cursor().unwrap(),
+        }).unwrap();
+        assert_eq!(
+            cut.status,
+            meld_world_model::world_state::graph::contracts::TraversalCutStatus::Complete
+        );
+        assert_eq!(cut.receipts[0].revision_id, assessed.revision_id);
+        let RuntimeSemanticHandleFactory::TaskAdmission(execution) = &assembly
+            .handle_factories()
+            .get("execution.task_admission")
+            .unwrap()
+            .semantic
+        else {
+            panic!("Execution absent")
+        };
+        assert!(execution
+            .network
+            .lock()
+            .unwrap()
+            .state()
+            .admissions
+            .is_empty());
+        let calls = judge.calls.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(calls > 0);
+        supervisor.tick(1_100).unwrap();
+        assert_eq!(judge.calls.load(std::sync::atomic::Ordering::SeqCst), calls);
+        std::fs::write(
+            harness._workspace.path().join("lib.rs"),
+            "pub fn replacement() {}\n",
+        )
+        .unwrap();
+        supervisor.tick(1_110).unwrap();
+        let changed = owner.current_revision().unwrap().unwrap();
+        assert!(changed.claim_report.is_none());
+        assert_eq!(changed.predecessor, Some(assessed.revision_id.clone()));
+        supervisor.tick(1_120).unwrap();
+        let successor = owner.current_revision().unwrap().unwrap();
+        assert!(
+            matches!(&successor.claim_report.as_ref().unwrap().readmes[0].disposition, ObservedClaimDisposition::Assessed { report } if !report.accepted)
+        );
+        assert_eq!(
+            std::fs::read_to_string(harness._workspace.path().join("README.md")).unwrap(),
+            "# run\n\n`run` exists.\n"
+        );
+        supervisor.request_shutdown(1_200).unwrap();
+        drop(supervisor);
+        drop(owner);
+        drop(assembly);
+        let reopened = harness.assembly();
+        let RuntimeSemanticHandleFactory::DocsObservation(binding) = &reopened
+            .handle_factories()
+            .get("docs.observation")
+            .unwrap()
+            .semantic
+        else {
+            panic!("Docs factory missing")
+        };
+        let owner = DocsObservationActor::new(binding.as_ref().clone());
+        assert_eq!(owner.current_revision().unwrap(), Some(successor));
+        assert_eq!(
+            binding.store.revision(&assessed.revision_id).unwrap(),
+            Some(assessed)
         );
     }
 

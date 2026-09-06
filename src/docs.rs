@@ -5,6 +5,7 @@
 //! consumes their exact contracts without knowing documentation semantics.
 
 pub mod capability;
+pub mod claim_observation;
 pub mod claim_validation;
 pub mod contribution;
 pub mod observation;

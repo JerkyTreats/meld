@@ -65,6 +65,45 @@ pub fn inspect_scope(root: &Path) -> Result<DocsEvidenceBundle, ApiError> {
     inspect_scope_with_read(root, |path| std::fs::read(path).map_err(io_error))
 }
 
+/// Verify captured bytes and their complete native observation identity without rereading files.
+pub fn validate_observation(bundle: &DocsEvidenceBundle) -> Result<(), ApiError> {
+    let observed = bundle
+        .observation
+        .as_ref()
+        .ok_or_else(|| ApiError::ConfigError("Docs evidence has no owner observation".into()))?;
+    for readme in &observed.readmes {
+        if let ObservedReadmeState::Present {
+            content,
+            content_hash,
+            claims,
+        } = &readme.state
+        {
+            if blake3::hash(content.as_bytes()).to_hex().as_str() != content_hash
+                || *claims != super::claim_validation::extract_claims(&readme.path, content)
+            {
+                return Err(ApiError::ConfigError(
+                    "Docs README observation disagrees with its captured bytes".into(),
+                ));
+            }
+        }
+    }
+    let seed = serde_json::to_vec(&(
+        &bundle.source_fingerprint,
+        &bundle.directories,
+        &observed.sources,
+        &observed.readmes,
+        &observed.exclusions,
+        &observed.coverage_gaps,
+    ))
+    .map_err(|error| ApiError::ConfigError(error.to_string()))?;
+    if observed.revision_id != format!("docs-observation::{}", blake3::hash(&seed).to_hex()) {
+        return Err(ApiError::ConfigError(
+            "Docs observation identity is invalid".into(),
+        ));
+    }
+    Ok(())
+}
+
 fn inspect_scope_with_read(
     root: &Path,
     mut read: impl FnMut(&Path) -> Result<Vec<u8>, ApiError>,

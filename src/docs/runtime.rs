@@ -26,6 +26,9 @@ pub(crate) struct DocsObservationBinding {
     pub session_id: String,
     pub store: Arc<DocsObservationStore>,
     pub events: EventAppendCapability,
+    pub claim_policy: Option<super::claim_validation::DocsClaimPolicyRevision>,
+    pub claim_config: Option<super::capability::DocsCapabilityConfig>,
+    pub claim_judge: super::claim_observation::DocsClaimJudgeSlot,
     pub route: meld_world_model::world_state::graph::admission::GraphOwnerEventRoute,
 }
 
@@ -135,7 +138,7 @@ impl DocsObservationActor {
 
     fn observe_and_publish(&self) -> Result<(bool, Option<String>), String> {
         let previous = self.binding.store.head(&self.binding_id)?;
-        let (revision, source_error) = if let Some(head) =
+        let (mut revision, source_error) = if let Some(head) =
             previous.as_ref().filter(|head| head.publication.is_none())
         {
             (
@@ -184,7 +187,83 @@ impl DocsObservationActor {
         if previous.as_ref().is_some_and(|head| {
             head.revision_id == revision.revision_id && head.publication.is_some()
         }) {
-            return Ok((false, source_error));
+            let Some(policy) = &self.binding.claim_policy else {
+                return Ok((false, source_error));
+            };
+            if revision
+                .evidence
+                .observation
+                .as_ref()
+                .is_none_or(|observation| observation.readmes.is_empty())
+            {
+                return Ok((false, source_error));
+            }
+            if revision
+                .claim_report
+                .as_ref()
+                .is_some_and(|report| report.policy_identity == policy.content_identity)
+            {
+                return Ok((false, source_error));
+            }
+            if revision.claim_report.is_some() {
+                revision = self
+                    .binding
+                    .store
+                    .invalidate_claim_report(&self.binding_id, &revision.revision_id)?;
+            } else {
+                let observation_id = &revision
+                    .evidence
+                    .observation
+                    .as_ref()
+                    .ok_or("Docs claim source has no observation")?
+                    .revision_id;
+                let prior = self.binding.store.claim_progress(
+                    &self.binding_id,
+                    observation_id,
+                    &policy.content_identity,
+                )?;
+                let report = if let Some(report) = prior.as_ref().filter(|report| report.complete) {
+                    if !report
+                        .matches_observation(&policy.policy, &revision.evidence)
+                        .map_err(|error| error.to_string())?
+                    {
+                        return Err("Docs retained claim report changed input binding".into());
+                    }
+                    report.clone()
+                } else {
+                    let judge = self
+                        .binding
+                        .claim_judge
+                        .current()
+                        .ok_or("Docs claim judgment provider is not bound")?;
+                    let runtime = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|error| error.to_string())?;
+                    runtime
+                        .block_on(super::claim_observation::advance_observed_claims(
+                            judge.as_ref(),
+                            &policy.policy,
+                            &revision.evidence,
+                            prior.as_ref(),
+                            1,
+                        ))
+                        .map_err(|error| error.to_string())?
+                };
+                self.binding.store.save_claim_progress(
+                    &self.binding_id,
+                    &revision.revision_id,
+                    &report,
+                )?;
+                if !report.complete {
+                    return Ok((true, source_error));
+                }
+                revision = self.binding.store.prepare_claim_report(
+                    &self.binding_id,
+                    &revision.revision_id,
+                    report,
+                )?;
+            }
         }
         let proof = self
             .binding
@@ -246,18 +325,75 @@ impl DocsObservationActor {
                 .revision(&head.revision_id)?
                 .ok_or("Docs lifecycle head revision is absent")?;
         }
-        let checkpoint = identity("docs-checkpoint", &(&self.binding_id, &head))?;
+        if let Some(policy) = &self.binding.claim_policy {
+            policy
+                .policy
+                .validate()
+                .map_err(|error| error.to_string())?;
+            if policy.content_identity != policy.policy.content_identity() {
+                return Err("Docs claim policy revision identity is invalid".into());
+            }
+        }
+        let current = self.current_revision()?;
+        let claim_progress = match current.as_ref().zip(self.binding.claim_policy.as_ref()) {
+            Some((revision, policy)) => match &revision.evidence.observation {
+                Some(observation) => self.binding.store.claim_progress(
+                    &self.binding_id,
+                    &observation.revision_id,
+                    &policy.content_identity,
+                )?,
+                None => None,
+            },
+            None => None,
+        };
+        let checkpoint = identity(
+            "docs-checkpoint",
+            &(&self.binding_id, &head, &claim_progress),
+        )?;
         let pending = head.as_ref().filter(|head| head.publication.is_none());
+        let claim_obligation = current
+            .as_ref()
+            .zip(self.binding.claim_policy.as_ref())
+            .filter(|(revision, policy)| {
+                revision
+                    .evidence
+                    .observation
+                    .as_ref()
+                    .is_some_and(|observation| !observation.readmes.is_empty())
+                    && revision
+                        .claim_report
+                        .as_ref()
+                        .is_none_or(|report| report.policy_identity != policy.content_identity)
+            })
+            .map(|(revision, policy)| (&revision.revision_id, &policy.content_identity));
+        let mut binding_refs = vec![self.binding_id.clone()];
+        if let Some(config) = &self.binding.claim_config {
+            binding_refs.push(identity(
+                "docs-claim-provider",
+                &(&config.provider, &config.agent_id, &config.subject_id),
+            )?);
+        }
         Ok(NativeLifecycleEvidence {
             checkpoint_ref: checkpoint.clone(),
-            installed_revision_refs: vec![
-                OBSERVATION_SCHEMA.into(),
-                format!("{}::{}::{}", route.registry, route.id, route.content_hash),
-            ],
-            binding_refs: vec![self.binding_id.clone()],
+            installed_revision_refs: std::iter::once(OBSERVATION_SCHEMA.into())
+                .chain(std::iter::once(format!(
+                    "{}::{}::{}",
+                    route.registry, route.id, route.content_hash
+                )))
+                .chain(
+                    self.binding
+                        .claim_policy
+                        .as_ref()
+                        .map(|policy| policy.content_identity.clone()),
+                )
+                .collect(),
+            binding_refs,
             subscription_refs: vec![format!("docs-source-poll::{}", self.binding_id)],
             proof_position_ref: checkpoint,
-            unresolved_operation_summary_ref: identity("docs-pending", &pending)?,
+            unresolved_operation_summary_ref: identity(
+                "docs-pending",
+                &(pending, claim_obligation),
+            )?,
         })
     }
 }
@@ -417,9 +553,185 @@ mod tests {
             store: Arc::new(DocsObservationStore::new(sled::open(db).unwrap()).unwrap()),
             events: authority.append_capability(),
             route: super::super::publication::graph_route(),
+            claim_policy: None,
+            claim_config: None,
+            claim_judge: Default::default(),
         });
         actor.running = true;
         actor
+    }
+
+    fn enable_claims(
+        owner: &mut DocsObservationActor,
+        judge: Option<Arc<dyn super::super::claim_validation::DocsClaimJudge>>,
+    ) {
+        let policy = super::super::claim_observation::test_support::policy();
+        owner.binding.claim_policy =
+            Some(super::super::claim_validation::DocsClaimPolicyRevision {
+                content_identity: policy.content_identity(),
+                policy,
+                installed_at_seq: 1,
+            });
+        if let Some(judge) = judge {
+            assert!(owner.binding.claim_judge.bind(judge));
+        }
+    }
+
+    #[test]
+    fn bounded_claim_judgments_resume_after_reopen_without_repeating_completed_readmes() {
+        use super::super::claim_observation::test_support::FixtureJudge;
+        use std::sync::atomic::Ordering;
+        let source = tempfile::tempdir().unwrap();
+        let storage = tempfile::tempdir().unwrap();
+        for directory in [".", "a", "b"] {
+            let root = source.path().join(directory);
+            std::fs::create_dir_all(&root).unwrap();
+            std::fs::write(root.join("lib.rs"), "pub fn run() {}\n").unwrap();
+            std::fs::write(root.join("README.md"), "# run\n").unwrap();
+        }
+        let authority = EventAuthority::open(
+            sled::open(storage.path().join("events")).unwrap(),
+            EventAuthorityOpenOptions::default(),
+        )
+        .unwrap();
+        let judge = Arc::new(FixtureJudge::default());
+        let mut first = actor(source.path(), &storage.path().join("docs"), &authority);
+        enable_claims(&mut first, Some(judge.clone()));
+        first.tick(WorkBudget { max_items: 1 });
+        let raw = first.current_revision().unwrap().unwrap();
+        let before = first.evidence().unwrap().proof_position_ref;
+        let tick = first.tick(WorkBudget { max_items: 1 });
+        assert_eq!(tick.items_committed, 1, "{tick:?}");
+        assert_eq!(judge.calls.load(Ordering::SeqCst), 1);
+        assert_eq!(first.current_revision().unwrap(), Some(raw.clone()));
+        assert_ne!(before, first.evidence().unwrap().proof_position_ref);
+        let progress = first
+            .binding
+            .store
+            .claim_progress(
+                &first.binding_id,
+                &raw.evidence.observation.as_ref().unwrap().revision_id,
+                &first
+                    .binding
+                    .claim_policy
+                    .as_ref()
+                    .unwrap()
+                    .content_identity,
+            )
+            .unwrap()
+            .unwrap();
+        assert!(!progress.complete);
+        assert_eq!(progress.readmes.len(), 1);
+        assert!(raw.clone().with_claim_report(progress).is_err());
+        drop(first);
+        let mut recovered = actor(source.path(), &storage.path().join("docs"), &authority);
+        enable_claims(&mut recovered, Some(judge.clone()));
+        recovered.tick(WorkBudget { max_items: 1 });
+        assert_eq!(judge.calls.load(Ordering::SeqCst), 2);
+        assert!(recovered
+            .current_revision()
+            .unwrap()
+            .unwrap()
+            .claim_report
+            .is_none());
+        recovered.tick(WorkBudget { max_items: 1 });
+        assert_eq!(judge.calls.load(Ordering::SeqCst), 3);
+        let complete = recovered.current_revision().unwrap().unwrap();
+        assert!(complete.claim_report.as_ref().unwrap().complete);
+        assert_eq!(complete.claim_report.as_ref().unwrap().readmes.len(), 3);
+        recovered.tick(WorkBudget { max_items: 1 });
+        assert_eq!(judge.calls.load(Ordering::SeqCst), 3);
+        assert_eq!(
+            authority.watermark_capability().snapshot().unwrap().tip_seq,
+            2
+        );
+        let selected = recovered.binding.claim_policy.as_mut().unwrap();
+        selected.policy.title_weight += 1.0;
+        selected.content_identity = selected.policy.content_identity();
+        recovered.tick(WorkBudget { max_items: 1 });
+        let invalidated = recovered.current_revision().unwrap().unwrap();
+        assert!(invalidated.claim_report.is_none());
+        assert_eq!(invalidated.predecessor, Some(complete.revision_id));
+        assert_eq!(judge.calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn completed_claim_publication_recovers_without_a_judge_or_repeated_semantic_work() {
+        use super::super::claim_observation::{assess_observed_claims, test_support::FixtureJudge};
+        for boundary in 0..3 {
+            let source = tempfile::tempdir().unwrap();
+            let storage = tempfile::tempdir().unwrap();
+            std::fs::write(source.path().join("lib.rs"), "pub fn run() {}\n").unwrap();
+            std::fs::write(source.path().join("README.md"), "# run\n").unwrap();
+            let authority = EventAuthority::open(
+                sled::open(storage.path().join("events")).unwrap(),
+                EventAuthorityOpenOptions::default(),
+            )
+            .unwrap();
+            let mut first = actor(source.path(), &storage.path().join("docs"), &authority);
+            enable_claims(&mut first, None);
+            first.tick(WorkBudget { max_items: 1 });
+            let raw = first.current_revision().unwrap().unwrap();
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let report = runtime
+                .block_on(assess_observed_claims(
+                    &FixtureJudge::default(),
+                    &first.binding.claim_policy.as_ref().unwrap().policy,
+                    &raw.evidence,
+                ))
+                .unwrap();
+            first
+                .binding
+                .store
+                .save_claim_progress(&first.binding_id, &raw.revision_id, &report)
+                .unwrap();
+            let pending = if boundary > 0 {
+                let pending = first
+                    .binding
+                    .store
+                    .prepare_claim_report(&first.binding_id, &raw.revision_id, report.clone())
+                    .unwrap();
+                if boundary == 2 {
+                    authority
+                        .append_capability()
+                        .append_durable_proven(
+                            pending.envelope("docs-observation-test").unwrap(),
+                            AppendMode::Idempotent,
+                        )
+                        .unwrap();
+                }
+                Some(pending)
+            } else {
+                None
+            };
+            drop(first);
+            let mut recovered = actor(source.path(), &storage.path().join("docs"), &authority);
+            enable_claims(&mut recovered, None);
+            let tick = recovered.tick(WorkBudget { max_items: 1 });
+            assert_eq!(tick.items_committed, 1, "{tick:?}");
+            assert!(tick.retryable_errors.is_empty());
+            let resumed = recovered.current_revision().unwrap().unwrap();
+            assert_eq!(resumed.claim_report, Some(report));
+            if let Some(pending) = pending {
+                assert_eq!(resumed, pending);
+            }
+            assert_eq!(
+                authority.watermark_capability().snapshot().unwrap().tip_seq,
+                2
+            );
+            assert!(recovered
+                .binding
+                .store
+                .save_claim_progress(
+                    &recovered.binding_id,
+                    &raw.revision_id,
+                    resumed.claim_report.as_ref().unwrap()
+                )
+                .is_err());
+        }
     }
 
     #[test]

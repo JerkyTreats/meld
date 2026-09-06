@@ -9,7 +9,9 @@ use crate::docs::capability::{
     DirectoryEvidence, DocsCapabilityConfig, DocsEvidenceBundle, DocsPatchSet, ReadmePatch,
 };
 use crate::error::ApiError;
-use crate::execution::{ExecutionEventContext, ExecutionRuntimeContext};
+use crate::execution::{
+    ExecutionEventContext, ExecutionRuntimeContext, ProviderExecutionPort, ProviderValidationPort,
+};
 use crate::provider::executor::{execute_completion, prepare_provider_for_request};
 use crate::provider::{ChatMessage, MessageRole};
 
@@ -297,10 +299,10 @@ pub fn verify_validated_patch_set(
 }
 
 #[derive(Debug, Clone)]
-struct EvidencePartitions {
-    inventory: String,
-    direct: String,
-    descendant: String,
+pub struct EvidencePartitions {
+    pub inventory: String,
+    pub direct: String,
+    pub descendant: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -309,12 +311,60 @@ struct ProviderAssessmentBatch {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct ProviderClaimAssessment {
-    claim_id: String,
-    verdict: ClaimVerdict,
-    confidence: f64,
-    citations: Vec<ClaimCitation>,
-    rationale: String,
+pub struct ProviderClaimAssessment {
+    pub claim_id: String,
+    pub verdict: ClaimVerdict,
+    pub confidence: f64,
+    pub citations: Vec<ClaimCitation>,
+    pub rationale: String,
+}
+
+/// Read-only evidence supplied to a claim judge. Proposals are reconciled and guarded by Docs.
+pub struct DocsClaimJudgmentRequest<'a> {
+    pub directory: &'a DirectoryEvidence,
+    pub patch: &'a ReadmePatch,
+    pub evidence: &'a EvidencePartitions,
+    pub claims: &'a [ReadmeClaim],
+    pub revision_attempt: usize,
+    pub batch_index: usize,
+}
+
+#[async_trait::async_trait]
+pub trait DocsClaimJudge: Send + Sync {
+    async fn assess(
+        &self,
+        request: &DocsClaimJudgmentRequest<'_>,
+    ) -> Result<Vec<ProviderClaimAssessment>, ApiError>;
+}
+
+/// The ordinary provider route, usable without Task execution or repair authority.
+pub struct ProviderDocsClaimJudge<'a, P: ?Sized> {
+    pub api: &'a P,
+    pub config: &'a DocsCapabilityConfig,
+    pub event_context: Option<&'a ExecutionEventContext>,
+}
+
+#[async_trait::async_trait]
+impl<P: ProviderValidationPort + ProviderExecutionPort + ?Sized> DocsClaimJudge
+    for ProviderDocsClaimJudge<'_, P>
+{
+    async fn assess(
+        &self,
+        request: &DocsClaimJudgmentRequest<'_>,
+    ) -> Result<Vec<ProviderClaimAssessment>, ApiError> {
+        assess_claim_batch(
+            self.api,
+            self.config,
+            request.directory,
+            request.patch,
+            request.evidence,
+            request.claims,
+            request.revision_attempt,
+            request.batch_index,
+            self.event_context,
+        )
+        .await
+    }
 }
 
 /// Validate and, when needed, revise every candidate README within policy bounds.
@@ -355,13 +405,16 @@ pub async fn validate_patch_set(
             ))
         })?;
         let partitions = evidence_partitions(directory, &accepted_by_directory);
-        let assessment = ReadmeAssessmentContext {
+        let judge = ProviderDocsClaimJudge {
             api,
             config,
+            event_context,
+        };
+        let assessment = ReadmeAssessmentContext {
+            judge: &judge,
             policy,
             directory,
             evidence: &partitions,
-            event_context,
         };
         let mut accepted_report = None;
         for revision_attempt in 0..=policy.maximum_revision_attempts {
@@ -439,13 +492,31 @@ pub async fn validate_patch_set(
     })
 }
 
+pub(crate) async fn assess_captured_readme(
+    judge: &dyn DocsClaimJudge,
+    policy: &DocsClaimPolicy,
+    directory: &DirectoryEvidence,
+    evidence: &EvidencePartitions,
+    patch: &ReadmePatch,
+) -> Result<ReadmeClaimReport, ApiError> {
+    assess_readme(
+        &ReadmeAssessmentContext {
+            judge,
+            policy,
+            directory,
+            evidence,
+        },
+        patch,
+        0,
+    )
+    .await
+}
+
 struct ReadmeAssessmentContext<'a> {
-    api: &'a dyn ExecutionRuntimeContext,
-    config: &'a DocsCapabilityConfig,
+    judge: &'a dyn DocsClaimJudge,
     policy: &'a DocsClaimPolicy,
     directory: &'a DirectoryEvidence,
     evidence: &'a EvidencePartitions,
-    event_context: Option<&'a ExecutionEventContext>,
 }
 
 async fn assess_readme(
@@ -467,18 +538,19 @@ async fn assess_readme(
         .collect::<VecDeque<_>>();
     let mut batch_attempt = 0;
     while let Some(batch) = pending_batches.pop_front() {
-        match assess_claim_batch(
-            context.api,
-            context.config,
-            context.directory,
+        let request = DocsClaimJudgmentRequest {
+            directory: context.directory,
             patch,
-            context.evidence,
-            &batch,
+            evidence: context.evidence,
+            claims: &batch,
             revision_attempt,
-            batch_attempt,
-            context.event_context,
-        )
-        .await
+            batch_index: batch_attempt,
+        };
+        match context
+            .judge
+            .assess(&request)
+            .await
+            .and_then(|proposals| reconcile_provider_assessments(&batch, proposals))
         {
             Ok(batch_assessments) => assessments.extend(batch_assessments),
             Err(ApiError::ConfigError(_)) if batch.len() > 1 => {
@@ -486,17 +558,6 @@ async fn assess_readme(
                 let left = batch[..batch.len() / 2].to_vec();
                 pending_batches.push_front(right);
                 pending_batches.push_front(left);
-            }
-            Err(ApiError::ConfigError(message))
-                if batch.len() == 1 && is_structurally_invalid_claim_response(&message) =>
-            {
-                assessments.push(ClaimAssessment {
-                    claim: batch[0].clone(),
-                    verdict: ClaimVerdict::Unsupported,
-                    confidence: 1.0,
-                    citations: Vec::new(),
-                    rationale: "verifier response was structurally invalid".to_string(),
-                });
             }
             Err(error) => return Err(error),
         }
@@ -525,17 +586,9 @@ async fn assess_readme(
     })
 }
 
-fn is_structurally_invalid_claim_response(message: &str) -> bool {
-    message.starts_with("provider returned invalid claim assessment JSON")
-        || message.starts_with("claim verifier returned unknown claim id")
-        || message.starts_with("claim verifier returned duplicate claim id")
-        || message.starts_with("claim verifier returned invalid confidence")
-        || message.starts_with("claim verifier omitted claim ids")
-}
-
 #[allow(clippy::too_many_arguments)]
-async fn assess_claim_batch(
-    api: &dyn ExecutionRuntimeContext,
+async fn assess_claim_batch<P: ProviderValidationPort + ProviderExecutionPort + ?Sized>(
+    api: &P,
     config: &DocsCapabilityConfig,
     directory: &DirectoryEvidence,
     patch: &ReadmePatch,
@@ -544,7 +597,7 @@ async fn assess_claim_batch(
     revision_attempt: usize,
     batch_index: usize,
     event_context: Option<&ExecutionEventContext>,
-) -> Result<Vec<ClaimAssessment>, ApiError> {
+) -> Result<Vec<ProviderClaimAssessment>, ApiError> {
     let request = validation_request(
         config,
         directory,
@@ -570,8 +623,7 @@ async fn assess_claim_batch(
         },
     ];
     let response = execute_completion(api, &request, &preparation, messages, event_context).await?;
-    let decoded = decode_provider_assessments(&response.content)?;
-    reconcile_provider_assessments(claims, decoded)
+    decode_provider_assessments(&response.content)
 }
 
 fn decode_provider_assessments(content: &str) -> Result<Vec<ProviderClaimAssessment>, ApiError> {
@@ -598,12 +650,10 @@ fn reconcile_provider_assessments(
         .collect::<BTreeMap<_, _>>();
     let mut seen = BTreeSet::new();
     let mut assessments = Vec::new();
-    let recover_singleton_id = expected.len() == 1 && provider.len() == 1;
     for assessment in provider {
         let claim = expected
             .get(assessment.claim_id.as_str())
             .copied()
-            .or_else(|| recover_singleton_id.then(|| *expected.values().next().unwrap()))
             .ok_or_else(|| {
                 ApiError::ConfigError(format!(
                     "claim verifier returned unknown claim id '{}'",
@@ -1056,7 +1106,7 @@ fn strip_unordered_list_marker(line: &str) -> Option<&str> {
         .find_map(|marker| line.strip_prefix(marker).map(str::trim))
 }
 
-fn evidence_partitions(
+pub(crate) fn evidence_partitions(
     directory: &DirectoryEvidence,
     accepted_by_directory: &BTreeMap<String, String>,
 ) -> EvidencePartitions {
@@ -1596,7 +1646,7 @@ mod tests {
     }
 
     #[test]
-    fn singleton_assessment_recovers_an_opaque_id_copy_error() {
+    fn singleton_assessment_rejects_another_claim_identity() {
         let claims = extract_claims("README.md", "# Tool\n");
         let provider = vec![ProviderClaimAssessment {
             claim_id: "wrong-opaque-id".to_string(),
@@ -1609,9 +1659,7 @@ mod tests {
             rationale: "supported".to_string(),
         }];
 
-        let reconciled = reconcile_provider_assessments(&claims, provider).unwrap();
-
-        assert_eq!(reconciled[0].claim.claim_id, claims[0].claim_id);
+        assert!(reconcile_provider_assessments(&claims, provider).is_err());
     }
 
     #[test]
@@ -1625,17 +1673,37 @@ mod tests {
         assert_eq!(decode_provider_assessments(assessment).unwrap().len(), 1);
     }
 
-    #[test]
-    fn only_verifier_structure_errors_can_become_unsupported_singletons() {
-        assert!(is_structurally_invalid_claim_response(
-            "provider returned invalid claim assessment JSON: bad shape"
-        ));
-        assert!(is_structurally_invalid_claim_response(
-            "claim verifier returned unknown claim id 'wrong'"
-        ));
-        assert!(!is_structurally_invalid_claim_response(
-            "provider configuration is missing"
-        ));
+    #[tokio::test]
+    async fn malformed_judgment_remains_an_error_without_inventing_a_claim_verdict() {
+        struct InvalidJudge;
+        #[async_trait::async_trait]
+        impl DocsClaimJudge for InvalidJudge {
+            async fn assess(
+                &self,
+                _: &DocsClaimJudgmentRequest<'_>,
+            ) -> Result<Vec<ProviderClaimAssessment>, ApiError> {
+                Err(ApiError::ConfigError(
+                    "provider returned invalid claim assessment JSON: bad shape".into(),
+                ))
+            }
+        }
+        let directory = DirectoryEvidence {
+            path: ".".into(),
+            direct_files: vec!["lib.rs".into()],
+            child_directories: vec![],
+            evidence: "pub fn run() {}".into(),
+        };
+        let evidence = evidence_partitions(&directory, &BTreeMap::new());
+        let patch = ReadmePatch {
+            path: "README.md".into(),
+            content: "# Tool\n\n`run` exists.\n".into(),
+            content_hash: "test".into(),
+        };
+        assert!(
+            assess_captured_readme(&InvalidJudge, &policy(), &directory, &evidence, &patch)
+                .await
+                .is_err()
+        );
     }
 
     #[test]

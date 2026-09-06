@@ -12,7 +12,7 @@ pub const OWNER_ID: &str = "docs";
 pub const OBSERVATION_SCHEMA: &str = "docs.observation.v1";
 pub const OBSERVATION_EVENT: &str = "docs.observation";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DocsObservationRevision {
     pub revision_id: String,
     pub predecessor: Option<String>,
@@ -20,6 +20,8 @@ pub struct DocsObservationRevision {
     pub subject: DomainObjectRef,
     pub scope: OwnerPublicationScope,
     pub evidence: DocsEvidenceBundle,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim_report: Option<super::claim_observation::ObservedDocsClaimReport>,
 }
 
 impl DocsObservationRevision {
@@ -51,17 +53,39 @@ impl DocsObservationRevision {
             subject,
             scope,
             evidence,
+            claim_report: None,
         })
     }
 
+    pub(crate) fn with_claim_report(
+        mut self,
+        report: super::claim_observation::ObservedDocsClaimReport,
+    ) -> Result<Self, String> {
+        if !report.complete
+            || !report
+                .matches_capture(&self.evidence)
+                .map_err(|error| error.to_string())?
+        {
+            return Err("Docs claim report names another captured observation".into());
+        }
+        let seed =
+            serde_json::to_vec(&(&self.revision_id, &report)).map_err(|error| error.to_string())?;
+        self.revision_id = format!("docs-revision::{}", blake3::hash(&seed).to_hex());
+        self.claim_report = Some(report);
+        Ok(self)
+    }
+
     pub fn publication(&self) -> Result<OwnerPublicationOperation, String> {
-        let expected = Self::new(
+        let mut expected = Self::new(
             self.predecessor.clone(),
             self.sequence,
             self.subject.clone(),
             self.scope.clone(),
             self.evidence.clone(),
         )?;
+        if let Some(report) = &self.claim_report {
+            expected = expected.with_claim_report(report.clone())?;
+        }
         if &expected != self {
             return Err("Docs observation revision identity is invalid".into());
         }
@@ -165,6 +189,94 @@ impl DocsObservationRevision {
                     })
                 }
                 ObservedReadmeState::Missing => {}
+            }
+        }
+        let mut semantic_qualifications = BTreeMap::new();
+        if let Some(report) = &self.claim_report {
+            let scope_judgment = add(
+                "observed_claim_assessment",
+                &report.report_id,
+                serde_json::to_value(report).map_err(|error| error.to_string())?,
+            )?;
+            relate(
+                "docs_judges_observed_claims",
+                scope_judgment.clone(),
+                root.clone(),
+            );
+            for judgment in &report.readmes {
+                let readme_key = format!("{}::{}", self.scope.scope_id, judgment.path);
+                let key = format!("{}::{}", report.report_id, judgment.path);
+                let readme_judgment = add(
+                    "readme_claim_assessment",
+                    &key,
+                    serde_json::to_value(judgment).map_err(|error| error.to_string())?,
+                )?;
+                relate(
+                    "docs_readme_judgment_in_scope",
+                    readme_judgment.clone(),
+                    scope_judgment.clone(),
+                );
+                relate(
+                    "docs_judges_readme",
+                    readme_judgment.clone(),
+                    DomainObjectRef::new(OWNER_ID, "readme_observation", &readme_key)
+                        .map_err(|error| error.to_string())?,
+                );
+                if let super::claim_observation::ObservedClaimDisposition::Assessed {
+                    report: readme,
+                } = &judgment.disposition
+                {
+                    semantic_qualifications.insert(
+                        readme_judgment.clone(),
+                        BTreeMap::from([
+                            (
+                                "assertions_supported".to_string(),
+                                readme.accepted.to_string(),
+                            ),
+                            ("claim_policy".to_string(), report.policy_identity.clone()),
+                        ]),
+                    );
+                    for assessment in &readme.assessments {
+                        let key = format!("{key}::{}", assessment.claim.claim_id);
+                        let claim_judgment = add(
+                            "claim_assessment",
+                            &key,
+                            serde_json::to_value(assessment).map_err(|error| error.to_string())?,
+                        )?;
+                        let claim_key = format!(
+                            "{readme_key}::{}::{}",
+                            readme.content_hash, assessment.claim.claim_id
+                        );
+                        relate(
+                            "docs_judges_claim",
+                            claim_judgment.clone(),
+                            DomainObjectRef::new(OWNER_ID, "observed_claim", &claim_key)
+                                .map_err(|error| error.to_string())?,
+                        );
+                        relate(
+                            "docs_claim_judgment_in_readme",
+                            claim_judgment.clone(),
+                            readme_judgment.clone(),
+                        );
+                        let verdict = match assessment.verdict {
+                            super::claim_validation::ClaimVerdict::Supported => "supported",
+                            super::claim_validation::ClaimVerdict::Unsupported => "unsupported",
+                            super::claim_validation::ClaimVerdict::Contradicted => "contradicted",
+                        };
+                        semantic_qualifications.insert(
+                            claim_judgment,
+                            BTreeMap::from([
+                                ("verdict".to_string(), verdict.to_string()),
+                                ("claim_policy".to_string(), report.policy_identity.clone()),
+                            ]),
+                        );
+                    }
+                }
+            }
+        }
+        for object in &mut objects {
+            if let Some(qualifications) = semantic_qualifications.remove(&object.object_ref) {
+                object.qualifications.extend(qualifications);
             }
         }
         let included_ids = objects
