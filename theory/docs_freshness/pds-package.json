@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "package_id": "meld.docs-freshness",
-  "package_version": "1.8.0",
+  "package_version": "1.9.0",
   "description": "Documentation freshness stewardship theory",
   "imports": [],
   "components": [
@@ -116,7 +116,7 @@
       "content": {
         "kind": "relative_file",
         "path": "strategy_theory.docs_freshness.json",
-        "content_hash": "23fb86cbcfa0cb5b8b9df98a056c3ecb8d37d31ca98b4a822ddbd588ffc2e7a5"
+        "content_hash": "51f6a5167774d196afa8b15dc21a13b55755148502e9d0eb8c75920c2e3cb2a4"
       },
       "requires": [
         {
@@ -153,13 +153,6 @@
           },
           "component_id": "docs-capability-publish",
           "required_route": null
-        },
-        {
-          "package": {
-            "kind": "self_package"
-          },
-          "component_id": "docs-capability-assess",
-          "required_route": null
         }
       ]
     },
@@ -175,7 +168,7 @@
       "content": {
         "kind": "relative_file",
         "path": "authority_policy.docs_workspace_local.json",
-        "content_hash": "fa839fb8616fa17d0ad1892e41724210db2181106b24ad7d1b1854675f712e6c"
+        "content_hash": "cf1e8d3751ed531649c35a55d28126c1e437335dcb9d52a7fa416287d49fc06d"
       },
       "requires": [
         {
@@ -205,13 +198,6 @@
           },
           "component_id": "docs-capability-publish",
           "required_route": null
-        },
-        {
-          "package": {
-            "kind": "self_package"
-          },
-          "component_id": "docs-capability-assess",
-          "required_route": null
         }
       ]
     },
@@ -227,7 +213,7 @@
       "content": {
         "kind": "relative_file",
         "path": "claim_policy.docs-claims-strict-v1.json",
-        "content_hash": "cb51c5c526fc02ee3943498573719ad0837a9cd90b978ae1abcb041249207583"
+        "content_hash": "2d167450192b6eda33991e9deef938015f27de122cc8d98426d2727a187b2b36"
       },
       "requires": []
     },
@@ -304,31 +290,6 @@
         "publisher": "execution.capability-contract.v1",
         "id": "docs.publish_patch_set.v1",
         "content_identity": "capability-contract-be6d8d1ddbcf0f2a1e5605b31777db71b7ac081286189912b18a4b90495e79c8"
-      },
-      "requires": [
-        {
-          "package": {
-            "kind": "self_package"
-          },
-          "component_id": "docs-claim-policy",
-          "required_route": null
-        }
-      ]
-    },
-    {
-      "component_id": "docs-capability-assess",
-      "owner_component_id": "docs.assess_published_scope.v1",
-      "route": {
-        "owner_domain": "execution",
-        "component_kind": "capability-contract",
-        "route_version": 1
-      },
-      "component_schema_version": 1,
-      "content": {
-        "kind": "published_exact",
-        "publisher": "execution.capability-contract.v1",
-        "id": "docs.assess_published_scope.v1",
-        "content_identity": "capability-contract-74c5ccba6c32c36a32b4d093f92b4ca463a6c6a997008d366a8d6a36cd14bd60"
       },
       "requires": [
         {

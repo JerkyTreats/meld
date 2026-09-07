@@ -22,6 +22,10 @@
       "literal_presence_v1",
       "code_line_direct_presence_v1",
       "clause_term_coverage_v1"
+    ],
+    "repair_actions": [
+      "revise_v1",
+      "prune_rejected_claims_v1"
     ]
   }
 }

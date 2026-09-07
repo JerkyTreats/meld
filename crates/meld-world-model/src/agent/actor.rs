@@ -182,7 +182,7 @@ impl AgentReconciliationActor {
             }
         }
         match &preparation {
-            crate::agent::AgentPreparation::InstalledRule(rule) => rule.validate()?,
+            crate::agent::AgentPreparation::InstalledRule { rule, .. } => rule.validate()?,
             crate::agent::AgentPreparation::Epoch { .. }
                 if !matches!(
                     intent,
@@ -454,7 +454,7 @@ impl AgentReconciliationActor {
                 crate::lifecycle::evidence_ref(
                     "curation-rule",
                     &match &self.preparation {
-                        crate::agent::AgentPreparation::InstalledRule(rule) => {
+                        crate::agent::AgentPreparation::InstalledRule { rule, .. } => {
                             Some(rule.revision_ref())
                         }
                         crate::agent::AgentPreparation::Epoch { .. } => None,
@@ -1313,7 +1313,9 @@ impl GoalReconciliation<'_, '_> {
                 match &self.products {
                     Some(products) => products.curation_rule.revision_ref(),
                     None => match &self.preparation {
-                        crate::agent::AgentPreparation::InstalledRule(rule) => rule.revision_ref(),
+                        crate::agent::AgentPreparation::InstalledRule { rule, .. } => {
+                            rule.revision_ref()
+                        }
                         crate::agent::AgentPreparation::Epoch { .. } => {
                             return Err(StorageError::InvalidPath(
                                 "Agent epoch products were not prepared".into(),
@@ -1829,18 +1831,52 @@ impl GoalReconciliation<'_, '_> {
             return Ok(());
         }
         if let Some(route) = &epistemic.return_evidence {
-            let Some(products) = &self.products else {
-                return Err(StorageError::InvalidPath(
-                    "confirmation requires an exact Belief source relationship".into(),
-                ));
+            let (subscriptions, requests, mapping_revisions) = match &self.preparation {
+                crate::agent::AgentPreparation::Epoch { subscriptions, .. } => {
+                    let products =
+                        self.store
+                            .epoch_products(&self.goal.goal_id)?
+                            .ok_or_else(|| {
+                                StorageError::InvalidPath(
+                                    "confirmation has no retained epoch products".into(),
+                                )
+                            })?;
+                    (
+                        subscriptions,
+                        products.subscription_requests()?,
+                        products.specification.genesis.installed_owner_revisions,
+                    )
+                }
+                crate::agent::AgentPreparation::InstalledRule {
+                    subscriptions: Some(subscriptions),
+                    ..
+                } => {
+                    let genesis = self
+                        .store
+                        .genesis_intent_for_agent(&self.goal.agent_id)?
+                        .ok_or_else(|| {
+                            StorageError::InvalidPath(
+                                "confirmation has no native Agent genesis".into(),
+                            )
+                        })?;
+                    (
+                        subscriptions,
+                        genesis.required_subscriptions,
+                        genesis.installed_owner_revisions,
+                    )
+                }
+                _ => {
+                    return Err(StorageError::InvalidPath(
+                        "confirmation requires an exact Belief source relationship".into(),
+                    ))
+                }
             };
-            let crate::agent::AgentPreparation::Epoch { subscriptions, .. } = &self.preparation
-            else {
-                unreachable!("epoch products require epoch preparation");
-            };
+            let mapping_revisions: Vec<_> = mapping_revisions
+                .into_iter()
+                .filter(|reference| reference.registry == "outcome_mapping")
+                .collect();
             let mut returned = None;
-            for subscription in products
-                .subscription_requests()?
+            for subscription in requests
                 .into_iter()
                 .filter(|request| request.belief_key.dimension_id == route.dimension_id)
             {
@@ -1850,14 +1886,7 @@ impl GoalReconciliation<'_, '_> {
                         revision_ids: cut.world_model_view.hydration_refs.revision_ids.clone(),
                         publication_record_id: result.event_record_id(),
                         evidence_schema_id: route.evidence_schema_id.clone(),
-                        mapping_revisions: products
-                            .specification
-                            .genesis
-                            .installed_owner_revisions
-                            .iter()
-                            .filter(|reference| reference.registry == "outcome_mapping")
-                            .cloned()
-                            .collect(),
+                        mapping_revisions: mapping_revisions.clone(),
                     },
                 )?;
                 if returned.is_some() {
@@ -2848,6 +2877,18 @@ mod tests {
         }
     }
 
+    fn prerequisite_package() -> StrategyTheoryPackage {
+        let mut package: StrategyTheoryPackage = serde_json::from_str(include_str!(
+            "../../../../theory/docs_freshness/strategy_theory.docs_freshness.json"
+        ))
+        .unwrap();
+        // These fixtures exercise prerequisite Curation independently of the
+        // installed Docs product's post-execution confirmation sequence.
+        package.snapshot.settlement_rules[0].epistemic_placement =
+            crate::strategy::StrategyEpistemicPlacement::Prerequisite;
+        package
+    }
+
     struct Fixture {
         _temp: tempfile::TempDir,
         db: sled::Db,
@@ -2872,10 +2913,7 @@ mod tests {
                 .unwrap();
             let cut = planner_cut(&rule_body);
             let goal = goal();
-            let package: StrategyTheoryPackage = serde_json::from_str(include_str!(
-                "../../../../theory/docs_freshness/strategy_theory.docs_freshness.json"
-            ))
-            .unwrap();
+            let package = prerequisite_package();
             let strategy =
                 AgentStrategyRuntimeConfig::activate_installed(package, subject(), "agent-docs")
                     .unwrap();
@@ -4056,10 +4094,7 @@ mod tests {
         };
         let cut = planner_cut(&rule_body);
         let goal = goal();
-        let package: StrategyTheoryPackage = serde_json::from_str(include_str!(
-            "../../../../theory/docs_freshness/strategy_theory.docs_freshness.json"
-        ))
-        .unwrap();
+        let package = prerequisite_package();
         let strategy =
             AgentStrategyRuntimeConfig::activate_installed(package, subject(), "agent-docs")
                 .unwrap();

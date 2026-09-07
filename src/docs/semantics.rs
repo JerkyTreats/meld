@@ -17,6 +17,18 @@ pub struct DocsSemanticTheory {
     pub drafting: String,
     pub revision: String,
     pub claim_guards: Vec<DocsClaimGuard>,
+    /// Absent in historical revisions. An explicit empty list refuses repair.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair_actions: Option<Vec<DocsRepairAction>>,
+}
+
+/// Bounded responses inside an authorized validation invocation. These do not
+/// admit Tasks or grant permission to publish workspace changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocsRepairAction {
+    ReviseV1,
+    PruneRejectedClaimsV1,
 }
 
 /// Named evaluator contracts. An empty selection delegates semantic entailment
@@ -57,6 +69,7 @@ impl DocsJudgmentOperation {
 
 impl DocsSemanticTheory {
     pub fn validate(&self) -> Result<(), ApiError> {
+        self.repair_actions()?;
         if self.schema_version != 1 {
             return Err(invalid("unsupported Docs semantic theory schema"));
         }
@@ -78,6 +91,12 @@ impl DocsSemanticTheory {
             return Err(invalid("Docs semantic theory repeats a guard operator"));
         }
         Ok(())
+    }
+
+    pub(crate) fn repair_actions(&self) -> Result<&[DocsRepairAction], ApiError> {
+        self.repair_actions.as_deref().ok_or_else(|| {
+            invalid("Docs semantic theory requires an explicit repair response selection")
+        })
     }
 
     /// Fingerprint the actual bounded messages and selected bindings, so source

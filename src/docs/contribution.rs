@@ -12,9 +12,9 @@ use crate::capability::{
     ProductCapabilityContributor,
 };
 use crate::docs::capability::{
-    AssessPublishedScopeCapability, DocsCapabilityConfig, DraftPatchSetCapability,
-    InspectScopeCapability, PublishPatchSetCapability, ValidatePatchSetCapability,
-    ASSESS_PUBLISHED_SCOPE, DRAFT_PATCH_SET, INSPECT_SCOPE, PUBLISH_PATCH_SET, VALIDATE_PATCH_SET,
+    DocsCapabilityConfig, DraftPatchSetCapability, InspectScopeCapability,
+    PublishPatchSetCapability, ValidatePatchSetCapability, DRAFT_PATCH_SET, INSPECT_SCOPE,
+    PUBLISH_PATCH_SET, VALIDATE_PATCH_SET,
 };
 use crate::docs::claim_validation::{DocsClaimPolicy, DocsClaimPolicyRevision};
 use crate::error::ApiError;
@@ -76,10 +76,7 @@ impl ProductCapabilityContributor for DocsCapabilityContributor {
                 }
                 if matches!(
                     type_id.as_str(),
-                    DRAFT_PATCH_SET
-                        | VALIDATE_PATCH_SET
-                        | PUBLISH_PATCH_SET
-                        | ASSESS_PUBLISHED_SCOPE
+                    DRAFT_PATCH_SET | VALIDATE_PATCH_SET | PUBLISH_PATCH_SET
                 ) {
                     required_binding_ids.insert(CLAIM_POLICY_BINDING.to_string());
                 }
@@ -174,10 +171,6 @@ impl CapabilityInvokerFactory for DocsInvokerFactory {
                 selected_claim_policy(bindings)?,
             )),
             PUBLISH_PATCH_SET => Arc::new(PublishPatchSetCapability::new(
-                config,
-                selected_claim_policy(bindings)?,
-            )),
-            ASSESS_PUBLISHED_SCOPE => Arc::new(AssessPublishedScopeCapability::new(
                 config,
                 selected_claim_policy(bindings)?,
             )),
@@ -328,12 +321,7 @@ mod tests {
             (AGENT_BINDING.into(), "agent".into()),
             (PROVIDER_BINDING.into(), "provider".into()),
         ]));
-        for capability in [
-            DRAFT_PATCH_SET,
-            VALIDATE_PATCH_SET,
-            PUBLISH_PATCH_SET,
-            ASSESS_PUBLISHED_SCOPE,
-        ] {
+        for capability in [DRAFT_PATCH_SET, VALIDATE_PATCH_SET, PUBLISH_PATCH_SET] {
             let contract = inventory
                 .contracts()
                 .find(|revision| revision.contract.capability_type_id == capability)

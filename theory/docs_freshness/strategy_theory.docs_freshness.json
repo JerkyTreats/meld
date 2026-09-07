@@ -5,23 +5,36 @@
       {
         "goal_pattern": {
           "Holds": {
-            "subject": { "Variable": "?subject" },
-            "dimension": { "Dimension": "docs_freshness" },
-            "condition": { "Above": { "Variable": "?threshold" } }
+            "subject": {
+              "Variable": "?subject"
+            },
+            "dimension": {
+              "Dimension": "docs_freshness"
+            },
+            "condition": {
+              "Above": {
+                "Variable": "?threshold"
+              }
+            }
           }
         },
         "settlement_obligation": {
           "Exists": {
-            "scope": { "Variable": "?subject" },
-            "artifact_type": { "ArtifactType": "docs_freshness_assessment" }
+            "scope": {
+              "Variable": "?subject"
+            },
+            "artifact_type": {
+              "ArtifactType": "docs_publication_receipt"
+            }
           }
         },
         "evidence_route": {
-          "route_id": "docs-freshness-assessment-route-v1",
+          "route_id": "docs-required-coverage-return-v1",
           "dimension_id": "docs_freshness",
-          "outcome_contract_id": "docs.freshness_assessed.v1",
-          "evidence_schema_id": "docs_freshness_assessment_v1"
-        }
+          "outcome_contract_id": "docs.patch_set_published.v1",
+          "evidence_schema_id": "docs_required_coverage_v1"
+        },
+        "epistemic_placement": "confirmation"
       }
     ]
   },
@@ -32,15 +45,29 @@
         "operator_id": "inspect-docs-scope",
         "preconditions": [],
         "effects": [],
-        "cost": { "time_ms": 100, "money_microdollars": 0, "provider_calls": 0 },
+        "cost": {
+          "time_ms": 100,
+          "money_microdollars": 0,
+          "provider_calls": 0
+        },
         "resolution": {
           "requires_inputs": [],
           "requires_outputs": [
-            { "artifact_type": { "ArtifactType": "docs_evidence_bundle" }, "required": true }
+            {
+              "artifact_type": {
+                "ArtifactType": "docs_evidence_bundle"
+              },
+              "required": true
+            }
           ],
           "scope_kind": "repository",
-          "tags": ["docs"],
-          "specific": { "capability_type_id": "docs.inspect_scope", "capability_version": 1 }
+          "tags": [
+            "docs"
+          ],
+          "specific": {
+            "capability_type_id": "docs.inspect_scope",
+            "capability_version": 1
+          }
         }
       },
       "outcome_contract_id": "docs.scope_inspected.v1"
@@ -51,17 +78,36 @@
         "operator_id": "draft-docs-patch-set",
         "preconditions": [],
         "effects": [],
-        "cost": { "time_ms": 60000, "money_microdollars": 0, "provider_calls": 1 },
+        "cost": {
+          "time_ms": 60000,
+          "money_microdollars": 0,
+          "provider_calls": 1
+        },
         "resolution": {
           "requires_inputs": [
-            { "artifact_type": { "ArtifactType": "docs_evidence_bundle" }, "required": true }
+            {
+              "artifact_type": {
+                "ArtifactType": "docs_evidence_bundle"
+              },
+              "required": true
+            }
           ],
           "requires_outputs": [
-            { "artifact_type": { "ArtifactType": "docs_patch_set" }, "required": true }
+            {
+              "artifact_type": {
+                "ArtifactType": "docs_patch_set"
+              },
+              "required": true
+            }
           ],
           "scope_kind": "repository",
-          "tags": ["docs"],
-          "specific": { "capability_type_id": "docs.draft_patch_set", "capability_version": 1 }
+          "tags": [
+            "docs"
+          ],
+          "specific": {
+            "capability_type_id": "docs.draft_patch_set",
+            "capability_version": 1
+          }
         }
       },
       "outcome_contract_id": "docs.patch_set_drafted.v1"
@@ -72,18 +118,42 @@
         "operator_id": "validate-docs-patch-set",
         "preconditions": [],
         "effects": [],
-        "cost": { "time_ms": 60000, "money_microdollars": 0, "provider_calls": 1 },
+        "cost": {
+          "time_ms": 60000,
+          "money_microdollars": 0,
+          "provider_calls": 1
+        },
         "resolution": {
           "requires_inputs": [
-            { "artifact_type": { "ArtifactType": "docs_evidence_bundle" }, "required": true },
-            { "artifact_type": { "ArtifactType": "docs_patch_set" }, "required": true }
+            {
+              "artifact_type": {
+                "ArtifactType": "docs_evidence_bundle"
+              },
+              "required": true
+            },
+            {
+              "artifact_type": {
+                "ArtifactType": "docs_patch_set"
+              },
+              "required": true
+            }
           ],
           "requires_outputs": [
-            { "artifact_type": { "ArtifactType": "docs_validated_patch_set" }, "required": true }
+            {
+              "artifact_type": {
+                "ArtifactType": "docs_validated_patch_set"
+              },
+              "required": true
+            }
           ],
           "scope_kind": "repository",
-          "tags": ["docs"],
-          "specific": { "capability_type_id": "docs.validate_patch_set", "capability_version": 1 }
+          "tags": [
+            "docs"
+          ],
+          "specific": {
+            "capability_type_id": "docs.validate_patch_set",
+            "capability_version": 1
+          }
         }
       },
       "outcome_contract_id": "docs.patch_set_validated.v1"
@@ -93,64 +163,70 @@
       "operator": {
         "operator_id": "publish-docs-patch-set",
         "preconditions": [],
-        "effects": [],
-        "cost": { "time_ms": 100, "money_microdollars": 0, "provider_calls": 0 },
-        "resolution": {
-          "requires_inputs": [
-            { "artifact_type": { "ArtifactType": "docs_validated_patch_set" }, "required": true }
-          ],
-          "requires_outputs": [
-            { "artifact_type": { "ArtifactType": "docs_publication_receipt" }, "required": true }
-          ],
-          "scope_kind": "repository",
-          "tags": ["docs"],
-          "specific": { "capability_type_id": "docs.publish_patch_set", "capability_version": 1 }
-        }
-      },
-      "outcome_contract_id": "docs.patch_set_published.v1"
-    },
-    {
-      "contract_id": "capability-contract-74c5ccba6c32c36a32b4d093f92b4ca463a6c6a997008d366a8d6a36cd14bd60",
-      "operator": {
-        "operator_id": "assess-published-docs-scope",
-        "preconditions": [],
         "effects": [
           {
             "Assert": {
               "Exists": {
-                "scope": { "Variable": "?subject" },
-                "artifact_type": { "ArtifactType": "docs_freshness_assessment" }
+                "scope": {
+                  "Variable": "?subject"
+                },
+                "artifact_type": {
+                  "ArtifactType": "docs_publication_receipt"
+                }
               }
             }
           }
         ],
-        "cost": { "time_ms": 100, "money_microdollars": 0, "provider_calls": 0 },
+        "cost": {
+          "time_ms": 100,
+          "money_microdollars": 0,
+          "provider_calls": 0
+        },
         "resolution": {
           "requires_inputs": [
-            { "artifact_type": { "ArtifactType": "docs_publication_receipt" }, "required": true }
+            {
+              "artifact_type": {
+                "ArtifactType": "docs_validated_patch_set"
+              },
+              "required": true
+            }
           ],
           "requires_outputs": [
-            { "artifact_type": { "ArtifactType": "docs_freshness_assessment" }, "required": true }
+            {
+              "artifact_type": {
+                "ArtifactType": "docs_publication_receipt"
+              },
+              "required": true
+            }
           ],
           "scope_kind": "repository",
-          "tags": ["docs"],
-          "specific": { "capability_type_id": "docs.assess_published_scope", "capability_version": 1 }
+          "tags": [
+            "docs"
+          ],
+          "specific": {
+            "capability_type_id": "docs.publish_patch_set",
+            "capability_version": 1
+          }
         }
       },
-      "outcome_contract_id": "docs.freshness_assessed.v1"
+      "outcome_contract_id": "docs.patch_set_published.v1"
     }
   ],
   "evaluation_policy": {
     "policy_id": "minimal-capability-chain-v1",
     "prefer_fewer_steps": true
   },
-  "search_bounds": { "max_expansions": 32, "max_depth": 8 },
-  "requested_dimensions": ["docs_freshness"],
+  "search_bounds": {
+    "max_expansions": 32,
+    "max_depth": 8
+  },
+  "requested_dimensions": [
+    "docs_freshness"
+  ],
   "requested_authority": [
     "docs.inspect_scope",
     "docs.draft_patch_set",
     "docs.validate_patch_set",
-    "docs.publish_patch_set",
-    "docs.assess_published_scope"
+    "docs.publish_patch_set"
   ]
 }

@@ -211,7 +211,10 @@ pub struct AgentEpochSubscriptionReceipt {
 /// One source of reconciliation products, selected before the actor starts.
 #[derive(Clone)]
 pub enum AgentPreparation {
-    InstalledRule(Box<StandingCurationRuleRevision>),
+    InstalledRule {
+        rule: Box<StandingCurationRuleRevision>,
+        subscriptions: Option<std::sync::Arc<dyn AgentEpochSubscriptionPort>>,
+    },
     Epoch {
         products: std::sync::Arc<dyn AgentEpochPreparationPort>,
         subscriptions: std::sync::Arc<dyn AgentEpochSubscriptionPort>,
@@ -220,7 +223,10 @@ pub enum AgentPreparation {
 
 impl From<StandingCurationRuleRevision> for AgentPreparation {
     fn from(rule: StandingCurationRuleRevision) -> Self {
-        Self::InstalledRule(Box::new(rule))
+        Self::InstalledRule {
+            rule: Box::new(rule),
+            subscriptions: None,
+        }
     }
 }
 

@@ -115,7 +115,7 @@ mod tests {
             OpenProductStores::open(&ProductStorageLayout::from_root(root.path())).unwrap();
         let receipt = install_package(&stores, &package_root(), 1).unwrap();
         assert_eq!(receipt.package_id, DOCS_PACKAGE_ID);
-        assert_eq!(receipt.components.len(), 14);
+        assert_eq!(receipt.components.len(), 13);
 
         let catalog = current_product_route_catalog(&stores).unwrap();
         let package_store =
@@ -131,7 +131,7 @@ mod tests {
                 .get(&TheoryRouteId::new("execution", "capability-contract", 1))
                 .unwrap()
                 .len(),
-            5
+            4
         );
     }
 
@@ -176,7 +176,7 @@ mod tests {
         .unwrap();
         assert_eq!(resolved.package_receipt_ids, vec![receipt.receipt_id]);
         assert!(resolved.product_compilation_receipt_id.is_none());
-        assert_eq!(resolved.executable_contracts.len(), 5);
+        assert_eq!(resolved.executable_contracts.len(), 4);
         assert_eq!(resolved.receipt.selection, selection);
     }
 

@@ -4,7 +4,9 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
 
-use super::semantics::{DocsClaimGuard, DocsJudgmentOperation, DocsSemanticTheory};
+use super::semantics::{
+    DocsClaimGuard, DocsJudgmentOperation, DocsRepairAction, DocsSemanticTheory,
+};
 use crate::docs::capability::{
     DirectoryEvidence, DocsCapabilityConfig, DocsEvidenceBundle, DocsPatchSet, ReadmePatch,
 };
@@ -57,6 +59,11 @@ impl DocsClaimPolicy {
     pub fn validate(&self) -> Result<(), ApiError> {
         self.validate_historical()?;
         self.semantics()?.validate()?;
+        if self.semantics()?.repair_actions()?.len() > self.maximum_revision_attempts {
+            return Err(ApiError::ConfigError(
+                "Docs repair response selection exceeds its attempt budget".into(),
+            ));
+        }
         if self.acceptance_evaluator.is_none() {
             return Err(ApiError::ConfigError(
                 "Docs policy requires an explicit acceptance evaluator".into(),
@@ -510,48 +517,41 @@ pub async fn validate_patch_set<P: ProviderValidationPort + ProviderExecutionPor
             directory,
             evidence: &partitions,
         };
-        let mut accepted_report = None;
-        for revision_attempt in 0..=policy.maximum_revision_attempts {
-            let report = assess_readme(&assessment, &patch, revision_attempt).await?;
+        let mut report = assess_readme(&assessment, &patch, 0).await?;
+        for (index, action) in policy.semantics()?.repair_actions()?.iter().enumerate() {
             if report.accepted {
-                accepted_report = Some(report);
                 break;
             }
-            if revision_attempt == policy.maximum_revision_attempts {
-                return Err(ApiError::ConfigError(format!(
-                    "README claim validation exhausted for '{}': {}",
-                    patch.path,
-                    rejection_summary(&report)
-                )));
+            let revision_attempt = index + 1;
+            match action {
+                DocsRepairAction::ReviseV1 => {
+                    patch = revise_readme(
+                        api,
+                        config,
+                        policy,
+                        directory,
+                        &patch,
+                        &partitions,
+                        &report,
+                        revision_attempt,
+                        event_context,
+                    )
+                    .await?;
+                    report = assess_readme(&assessment, &patch, revision_attempt).await?;
+                }
+                DocsRepairAction::PruneRejectedClaimsV1 => {
+                    (patch, report) =
+                        prune_rejected_claims(policy, &patch, &report, revision_attempt)?;
+                }
             }
-            let next_revision_attempt = revision_attempt + 1;
-            if next_revision_attempt == policy.maximum_revision_attempts {
-                let (pruned_patch, pruned_report) = prune_rejected_claims(
-                    policy,
-                    directory,
-                    &partitions,
-                    &patch,
-                    &report,
-                    next_revision_attempt,
-                )?;
-                patch = pruned_patch;
-                accepted_report = Some(pruned_report);
-                break;
-            }
-            patch = revise_readme(
-                api,
-                config,
-                policy,
-                directory,
-                &patch,
-                &partitions,
-                &report,
-                next_revision_attempt,
-                event_context,
-            )
-            .await?;
         }
-        let report = accepted_report.expect("accepted report is set before loop exit");
+        if !report.accepted {
+            return Err(ApiError::ConfigError(format!(
+                "installed Docs repair responses did not establish acceptance for '{}': {}",
+                patch.path,
+                rejection_summary(&report)
+            )));
+        }
         accepted_by_directory.insert(
             directory.path.clone(),
             supported_readme_evidence(&report, &patch.content),
@@ -948,29 +948,14 @@ async fn revise_readme<P: ProviderValidationPort + ProviderExecutionPort + ?Size
 
 fn prune_rejected_claims(
     policy: &DocsClaimPolicy,
-    directory: &DirectoryEvidence,
-    evidence: &EvidencePartitions,
     patch: &ReadmePatch,
     report: &ReadmeClaimReport,
     revision_attempt: usize,
 ) -> Result<(ReadmePatch, ReadmeClaimReport), ApiError> {
-    let canonical_title = canonical_directory_title(&directory.path);
-    let rejected_title_lines = report
-        .assessments
-        .iter()
-        .filter(|assessment| {
-            assessment.verdict != ClaimVerdict::Supported
-                && assessment.claim.kind == ClaimKind::Title
-        })
-        .map(|assessment| assessment.claim.source_line_start)
-        .collect::<BTreeSet<_>>();
     let rejected_lines = report
         .assessments
         .iter()
-        .filter(|assessment| {
-            assessment.verdict != ClaimVerdict::Supported
-                && assessment.claim.kind != ClaimKind::Title
-        })
+        .filter(|assessment| assessment.verdict != ClaimVerdict::Supported)
         .flat_map(|assessment| {
             assessment.claim.source_line_start..=assessment.claim.source_line_end
         })
@@ -980,13 +965,7 @@ fn prune_rejected_claims(
         .lines()
         .enumerate()
         .filter(|(index, _)| !rejected_lines.contains(&(index + 1)))
-        .map(|(index, line)| {
-            if rejected_title_lines.contains(&(index + 1)) {
-                canonical_title.as_str()
-            } else {
-                line
-            }
-        })
+        .map(|(_, line)| line)
         .collect::<Vec<_>>()
         .join("\n");
     content = normalize_pruned_markdown(&content);
@@ -1024,8 +1003,6 @@ fn prune_rejected_claims(
             .and_then(VecDeque::pop_front)
         {
             assessment
-        } else if claim.kind == ClaimKind::Title && claim.statement == canonical_title[2..] {
-            canonical_title_assessment(&claim, directory, evidence)?
         } else {
             return Err(ApiError::ConfigError(format!(
                 "deterministic README pruning cannot preserve a supported assessment for '{}'",
@@ -1043,12 +1020,6 @@ fn prune_rejected_claims(
     }
     let (groundedness, unsupported, contradiction) = aggregate_assessments(policy, &assessments);
     let accepted = policy.accepts(&assessments)?;
-    if !accepted {
-        return Err(ApiError::ConfigError(format!(
-            "deterministic README pruning did not satisfy policy for '{}'",
-            patch.path
-        )));
-    }
     let pruned_report = ReadmeClaimReport {
         path: pruned_patch.path.clone(),
         content_hash: pruned_patch.content_hash.clone(),
@@ -1060,38 +1031,6 @@ fn prune_rejected_claims(
         accepted,
     };
     Ok((pruned_patch, pruned_report))
-}
-
-fn canonical_directory_title(path: &str) -> String {
-    if path == "." {
-        "# Workspace root".to_string()
-    } else {
-        format!("# {}", path.rsplit('/').next().unwrap_or(path))
-    }
-}
-
-fn canonical_title_assessment(
-    claim: &ReadmeClaim,
-    directory: &DirectoryEvidence,
-    evidence: &EvidencePartitions,
-) -> Result<ClaimAssessment, ApiError> {
-    let quote = format!("current directory: {}", directory.path);
-    if !evidence.inventory.contains(&quote) {
-        return Err(ApiError::ConfigError(format!(
-            "directory identity evidence is absent for '{}'",
-            directory.path
-        )));
-    }
-    Ok(ClaimAssessment {
-        claim: claim.clone(),
-        verdict: ClaimVerdict::Supported,
-        confidence: 1.0,
-        citations: vec![ClaimCitation {
-            scope: CitationScope::Inventory,
-            quote,
-        }],
-        rationale: "title matches the observed directory identity".to_string(),
-    })
 }
 
 fn claim_statement_key(claim: &ReadmeClaim) -> String {
@@ -1619,7 +1558,7 @@ mod tests {
             minimum_groundedness: 0.8,
             maximum_unsupported_claim_mass: 0.0,
             maximum_contradiction_claim_mass: 0.0,
-            maximum_revision_attempts: 1,
+            maximum_revision_attempts: 2,
             title_weight: 1.0,
             prose_weight: 1.0,
             list_item_weight: 1.0,
@@ -1977,17 +1916,7 @@ mod tests {
         let receipt =
             crate::docs::capability::publish_patch_set(root.path(), &permissive.policy, &validated)
                 .unwrap();
-        assert_eq!(
-            crate::docs::capability::assess_published_scope(
-                root.path(),
-                "subject",
-                &permissive.policy,
-                &receipt
-            )
-            .unwrap()
-            .stale_probability,
-            0.0
-        );
+        assert_eq!(receipt.published.len(), 1);
         assert_eq!(
             std::fs::read_to_string(root.path().join("README.md")).unwrap(),
             patch.content
@@ -2081,13 +2010,6 @@ mod tests {
 
     #[test]
     fn final_bounded_revision_deterministically_removes_rejected_claim_blocks() {
-        let directory = DirectoryEvidence {
-            path: ".".to_string(),
-            direct_files: vec!["tool.rs".to_string()],
-            child_directories: Vec::new(),
-            evidence: "run".to_string(),
-        };
-        let evidence = evidence_partitions(&directory, &BTreeMap::new());
         let content = "# Tool\n\nSupported summary.\n\nInvented behavior.\n\n- `run` exists.\n";
         let patch = ReadmePatch {
             path: "README.md".to_string(),
@@ -2123,8 +2045,7 @@ mod tests {
             accepted: false,
         };
 
-        let (pruned, pruned_report) =
-            prune_rejected_claims(&policy(), &directory, &evidence, &patch, &report, 1).unwrap();
+        let (pruned, pruned_report) = prune_rejected_claims(&policy(), &patch, &report, 1).unwrap();
 
         assert!(pruned.content.contains("Supported summary."));
         assert!(pruned.content.contains("`run` exists."));
@@ -2135,14 +2056,7 @@ mod tests {
     }
 
     #[test]
-    fn final_bounded_revision_replaces_a_rejected_title_with_observed_identity() {
-        let directory = DirectoryEvidence {
-            path: ".".to_string(),
-            direct_files: vec!["tool.rs".to_string()],
-            child_directories: Vec::new(),
-            evidence: "The tool runs.".to_string(),
-        };
-        let evidence = evidence_partitions(&directory, &BTreeMap::new());
+    fn pruning_cannot_replace_a_rejected_title_or_author_new_evidence() {
         let content = "# Invented product\n\nThe tool runs.\n";
         let patch = ReadmePatch {
             path: "README.md".to_string(),
@@ -2175,15 +2089,7 @@ mod tests {
             accepted: false,
         };
 
-        let (pruned, pruned_report) =
-            prune_rejected_claims(&policy(), &directory, &evidence, &patch, &report, 1).unwrap();
-
-        assert!(pruned.content.starts_with("# Workspace root\n"));
-        assert!(pruned_report.accepted);
-        assert_eq!(
-            pruned_report.assessments[0].citations[0].quote,
-            "current directory: ."
-        );
+        assert!(prune_rejected_claims(&policy(), &patch, &report, 1).is_err());
     }
 
     #[test]

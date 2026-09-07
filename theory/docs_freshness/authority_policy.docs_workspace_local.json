@@ -7,14 +7,12 @@
     "object_id": "docs"
   },
   "principal_granted_action_ids": [
-    "docs.assess_published_scope",
     "docs.draft_patch_set",
     "docs.inspect_scope",
     "docs.publish_patch_set",
     "docs.validate_patch_set"
   ],
   "runtime_allowed_action_ids": [
-    "docs.assess_published_scope",
     "docs.draft_patch_set",
     "docs.inspect_scope",
     "docs.publish_patch_set",

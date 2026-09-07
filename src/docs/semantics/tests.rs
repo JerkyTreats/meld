@@ -48,6 +48,7 @@ struct RecordingProvider {
     calls: Mutex<Vec<(GenerationOrchestrationRequest, Vec<ChatMessage>)>>,
     reject_first: bool,
     forged_quote: bool,
+    reject_invented: bool,
 }
 impl meld_execution::ProviderValidationPort for RecordingProvider {
     type Error = ApiError;
@@ -111,7 +112,7 @@ impl meld_execution::ProviderExecutionPort for RecordingProvider {
                 let supported = !(instruction.contains("reject all")
                     || self.reject_first && request.retry_count == 0);
                 let assessments = input["claims"].as_array().unwrap().iter().map(|claim| serde_json::json!({
-                    "claim_id":claim["claim_id"], "verdict":if supported {"supported"} else {"unsupported"}, "confidence":1.0,
+                    "claim_id":claim["claim_id"], "verdict":if supported && !(self.reject_invented && claim["statement"].as_str().unwrap().contains("invented")) {"supported"} else {"unsupported"}, "confidence":1.0,
                     "citations":if supported {vec![serde_json::json!({"scope":"direct","quote":if self.forged_quote {"foreign text"} else {"pub fn run"}})]} else {vec![]},
                     "rationale":"deterministic proposal under selected test instruction"
                 })).collect::<Vec<_>>();
@@ -413,4 +414,78 @@ async fn selected_guards_change_semantic_admissibility_but_cannot_admit_forged_e
     let mut unknown = serde_json::to_value(&policy).unwrap();
     unknown["semantic_theory"]["claim_guards"] = serde_json::json!(["unknown_guard"]);
     assert!(serde_json::from_value::<DocsClaimPolicy>(unknown).is_err());
+}
+
+#[tokio::test]
+async fn installed_repair_responses_choose_refusal_revision_or_pruning() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("lib.rs"), "pub fn run() {}\n").unwrap();
+    let bundle = inspect_scope(root.path()).unwrap();
+    let config = config(root.path());
+    let content = "# run module\n\n`run` exists in this module.\n\nAn invented assertion.\n";
+    let patch = ReadmePatch {
+        path: "README.md".into(),
+        content: content.into(),
+        content_hash: blake3::hash(content.as_bytes()).to_hex().to_string(),
+    };
+    let patches = DocsPatchSet {
+        source_fingerprint: bundle.source_fingerprint.clone(),
+        patches: vec![patch],
+    };
+    let store =
+        DocsClaimPolicyRegistryStore::new(sled::Config::new().temporary(true).open().unwrap())
+            .unwrap();
+    for actions in [
+        vec![],
+        vec![DocsRepairAction::ReviseV1],
+        vec![DocsRepairAction::PruneRejectedClaimsV1],
+        vec![
+            DocsRepairAction::PruneRejectedClaimsV1,
+            DocsRepairAction::ReviseV1,
+        ],
+    ] {
+        let mut selected = policy();
+        selected.semantic_theory.as_mut().unwrap().repair_actions = Some(actions.clone());
+        let (_, revision) = store.install(selected, 1).unwrap();
+        let api = RecordingProvider {
+            reject_invented: true,
+            ..Default::default()
+        };
+        let result =
+            validate_patch_set(&api, &config, &revision.policy, &bundle, &patches, None).await;
+        if actions.is_empty() {
+            assert!(result
+                .unwrap_err()
+                .to_string()
+                .contains("installed Docs repair responses"));
+        } else {
+            let accepted = result.unwrap();
+            assert_eq!(accepted.reports[0].revision_attempts, 1);
+            assert!(!accepted.patches[0].content.contains("invented"));
+            assert_eq!(
+                accepted.patches[0]
+                    .content
+                    .starts_with("# Installed theory title"),
+                actions[0] == DocsRepairAction::ReviseV1
+            );
+        }
+        let calls = api.calls.lock().unwrap();
+        let expected_calls = if actions.first() == Some(&DocsRepairAction::ReviseV1) {
+            3
+        } else {
+            1
+        };
+        assert_eq!(calls.len(), expected_calls);
+        assert!(!root.path().join("README.md").exists());
+    }
+    let mut missing = policy();
+    missing.semantic_theory.as_mut().unwrap().repair_actions = None;
+    assert!(store.install(missing, 2).is_err());
+    let mut over_budget = policy();
+    over_budget.maximum_revision_attempts = 0;
+    assert!(store.install(over_budget, 2).is_err());
+    let mut unsupported = serde_json::to_value(policy()).unwrap();
+    unsupported["semantic_theory"]["repair_actions"] =
+        serde_json::json!(["unimplemented_response"]);
+    assert!(serde_json::from_value::<DocsClaimPolicy>(unsupported).is_err());
 }

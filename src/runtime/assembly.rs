@@ -11,6 +11,9 @@
 //! manufactured state; a later process start after explicit initialization
 //! resolves them.
 
+#[cfg(test)]
+mod docs_fixture;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -2785,7 +2788,16 @@ impl RuntimeSemanticHandleFactory {
                                 ports.event_append().clone(),
                                 planner_request,
                             )),
-                            (*rule).into(),
+                            meld_world_model::agent::AgentPreparation::InstalledRule {
+                                rule: Box::new(*rule),
+                                subscriptions: Some(Arc::new(
+                                    meld_world_model::belief::BeliefSubscriptionSource::new(
+                                        Arc::clone(belief),
+                                        Arc::clone(registry)
+                                            as Arc<dyn BeliefFamilyRegistry + Send + Sync>,
+                                    ),
+                                )),
+                            },
                         )
                     }
                     crate::runtime::theory::PreparedCurationSelection::Epoch(template) => {
@@ -6216,7 +6228,6 @@ mod tests {
         assert_eq!(
             capability_type_ids,
             vec![
-                "docs.assess_published_scope",
                 "docs.draft_patch_set",
                 "docs.inspect_scope",
                 "docs.publish_patch_set",
@@ -6270,12 +6281,12 @@ mod tests {
                     })
                 })
                 .collect::<Vec<_>>();
-            assert_eq!(admitted_nodes.len(), 5);
+            assert_eq!(admitted_nodes.len(), 4);
             let init_sources = admitted_nodes
                 .iter()
                 .flat_map(|node| &node.init_sources)
                 .collect::<Vec<_>>();
-            assert_eq!(init_sources.len(), 5);
+            assert_eq!(init_sources.len(), 4);
             assert!(init_sources.iter().all(|source| matches!(
                 source,
                 meld_execution::task_network::TaskInitSource::UpstreamArtifact(_)
@@ -7012,7 +7023,7 @@ mod tests {
             &self,
             assembly: &ProductRuntimeAssembly,
             loss: Option<(Arc<std::sync::atomic::AtomicBool>, bool)>,
-        ) {
+        ) -> Arc<crate::api::ContextApi> {
             let route_storage = self._external.path().join("claimed-route");
             std::fs::create_dir_all(&route_storage).unwrap();
             let api = Arc::new(
@@ -7050,7 +7061,7 @@ mod tests {
                 .is_none());
             let mut routes = DispatchRouteBindings::production(
                 crate::runtime::ports::ProductionDispatchRouteContext {
-                    api,
+                    api: api.clone(),
                     session_id: Some(seed.session_id),
                     catalog: capability_runtime.catalog,
                     registry: capability_runtime.registry,
@@ -7065,6 +7076,7 @@ mod tests {
                 }));
             }
             assert!(assembly.bind_dispatch_routes(routes));
+            api
         }
 
         fn start_supervisor<'a>(
@@ -7154,11 +7166,24 @@ mod tests {
                 &bytes,
             )
             .unwrap();
+            // This fixture proves prerequisite Curation and Task admission. The
+            // native Docs repair test proves the installed confirmation sequence.
+            let strategy_path = package.path().join("strategy_theory.docs_freshness.json");
+            let mut strategy: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&strategy_path).unwrap()).unwrap();
+            strategy["snapshot"]["settlement_rules"][0]["epistemic_placement"] =
+                "prerequisite".into();
+            let strategy_bytes = serde_json::to_vec(&strategy).unwrap();
+            std::fs::write(strategy_path, &strategy_bytes).unwrap();
             let mut manifest: serde_json::Value = serde_json::from_slice(
                 &std::fs::read(package.path().join("pds-package.json")).unwrap(),
             )
             .unwrap();
             for component in manifest["components"].as_array_mut().unwrap() {
+                if component["content"]["path"] == "strategy_theory.docs_freshness.json" {
+                    component["content"]["content_hash"] =
+                        blake3::hash(&strategy_bytes).to_hex().to_string().into();
+                }
                 if component["content"]["path"] == "epistemic_rule.docs_freshness.json" {
                     component["owner_component_id"] = template.rule_id.clone().into();
                     component["content"]["content_hash"] =
@@ -7525,6 +7550,144 @@ mod tests {
             binding.store.revision(&first.revision_id).unwrap(),
             Some(first)
         );
+    }
+
+    #[test]
+    fn native_docs_repair_returns_owner_evidence_and_satisfies_goal() {
+        let provider = super::docs_fixture::ProviderServer::new();
+        let harness = StewardshipHarness::new();
+        std::fs::write(
+            harness._workspace.path().join("lib.rs"),
+            "pub fn run() {}\n",
+        )
+        .unwrap();
+        {
+            let assembly = harness.assembly();
+            harness.run_world_genesis(&assembly);
+        }
+        let assembly = harness.assembly();
+        let api = harness.bind_production_routes_with_loss(&assembly, None);
+        let mut config =
+            stewardship_merkle_config(harness._workspace.path(), &harness.binding.storage_root);
+        config.providers.get_mut("main-provider").unwrap().endpoint = Some(provider.endpoint());
+        api.provider_registry()
+            .write()
+            .load_from_config(&config)
+            .unwrap();
+        assert!(assembly.bind_production_docs_claim_judge(api));
+        let mut supervisor = harness.start_supervisor(&assembly);
+        assert!(assembly
+            .capability_runtime()
+            .unwrap()
+            .catalog
+            .get("docs.assess_published_scope", 1)
+            .is_none());
+        let mut reports = Vec::new();
+        for pass in 0..60 {
+            reports.push(supervisor.tick(1_000 + pass * 10).unwrap());
+        }
+        let readme = std::fs::read_to_string(harness._workspace.path().join("README.md"));
+        assert_eq!(
+            readme.as_deref().ok(),
+            Some(super::docs_fixture::README),
+            "calls: {:?}; reports: {reports:#?}",
+            provider.calls()
+        );
+        let store = &assembly.stores().agent_store;
+        let goals = store
+            .reconciliation_goals_for_agent(STEWARD_AGENT_ID)
+            .unwrap();
+        assert_eq!(goals.len(), 1);
+        let plan = store
+            .current_reconciliation_plan(&goals[0].goal.goal_id)
+            .unwrap()
+            .unwrap();
+        assert!(
+            store
+                .goal_disposition_for_plan(&plan.plan_revision_id)
+                .unwrap()
+                .is_some(),
+            "calls: {:?}; plan: {plan:#?}; reports: {reports:#?}",
+            provider.calls()
+        );
+        let history = store
+            .completed_history_for_goal(&goals[0].goal.goal_id)
+            .unwrap();
+        assert!(
+            history.iter().any(|entry| matches!(
+                entry.accepted_milestone,
+                meld_world_model::strategy::PlanMilestoneRequirement::ExecutionTerminal { .. }
+            )),
+            "{history:#?}"
+        );
+        assert!(
+            history.iter().any(|entry| matches!(
+                entry.accepted_milestone,
+                meld_world_model::strategy::PlanMilestoneRequirement::BeliefRevision { .. }
+            )),
+            "{history:#?}"
+        );
+        assert!(history.iter().any(|entry| matches!(
+            entry.accepted_milestone,
+            meld_world_model::strategy::PlanMilestoneRequirement::CurationTerminal { .. }
+        )));
+        let calls = provider.calls();
+        assert_eq!(
+            calls,
+            [
+                "source",
+                "draft",
+                "assessment",
+                "assessment",
+                "correspondence"
+            ]
+        );
+        let goal_id = goals[0].goal.goal_id.clone();
+        let readme_metadata =
+            std::fs::metadata(harness._workspace.path().join("README.md")).unwrap();
+        supervisor.request_shutdown(2_000).unwrap();
+        drop(supervisor);
+        drop(assembly);
+        let reopened = harness.assembly();
+        harness.bind_production_routes(&reopened);
+        let mut command = SupervisorStartCommand::new("docs-repair-reopened", 3_000);
+        command.registration_set = reopened.registration_set().cloned();
+        let mut resumed =
+            RuntimeSupervisor::start(reopened.supervisor_startup_package(), command).unwrap();
+        for pass in 0..16 {
+            resumed.tick(3_100 + pass * 10).unwrap();
+        }
+        assert_eq!(provider.calls(), calls);
+        assert_eq!(
+            reopened
+                .stores()
+                .agent_store
+                .completed_history_for_goal(&goal_id)
+                .unwrap(),
+            history
+        );
+        assert_eq!(
+            reopened
+                .stores()
+                .agent_store
+                .reconciliation_goals_for_agent(STEWARD_AGENT_ID)
+                .unwrap()
+                .len(),
+            1
+        );
+        let after = reopened.stores().agent_store.condition_judgments().unwrap();
+        assert_eq!(
+            after.last().unwrap().evaluation,
+            meld_lang::EvalResult::Satisfied
+        );
+        assert_eq!(
+            std::fs::metadata(harness._workspace.path().join("README.md"))
+                .unwrap()
+                .modified()
+                .unwrap(),
+            readme_metadata.modified().unwrap()
+        );
+        resumed.request_shutdown(3_500).unwrap();
     }
 
     #[test]
@@ -8999,7 +9162,7 @@ mod tests {
         let RuntimeSemanticHandleFactory::AgentActor(native_agent) = &factory.semantic else {
             panic!("Agent factory unresolved");
         };
-        let meld_world_model::agent::AgentPreparation::InstalledRule(rule) =
+        let meld_world_model::agent::AgentPreparation::InstalledRule { rule, .. } =
             &native_agent.preparation
         else {
             panic!("static observation must retain its exact prepared rule")

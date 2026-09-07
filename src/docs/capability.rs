@@ -1,6 +1,6 @@
 //! Atomic documentation capability publication and invocation.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
@@ -30,13 +30,11 @@ pub const INSPECT_SCOPE: &str = "docs.inspect_scope";
 pub const DRAFT_PATCH_SET: &str = "docs.draft_patch_set";
 pub const VALIDATE_PATCH_SET: &str = "docs.validate_patch_set";
 pub const PUBLISH_PATCH_SET: &str = "docs.publish_patch_set";
-pub const ASSESS_PUBLISHED_SCOPE: &str = "docs.assess_published_scope";
 
 pub const EVIDENCE_BUNDLE: &str = "docs_evidence_bundle";
 pub const PATCH_SET: &str = "docs_patch_set";
 pub const VALIDATED_PATCH_SET: &str = "docs_validated_patch_set";
 pub const PUBLICATION_RECEIPT: &str = "docs_publication_receipt";
-pub const FRESHNESS_ASSESSMENT: &str = "docs_freshness_assessment";
 
 const VERSION: u32 = 1;
 const MAX_CHILD_README_BYTES: usize = 3 * 1024;
@@ -97,20 +95,6 @@ pub struct DocsPublicationReceipt {
     pub published: Vec<PublishedReadme>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DocsFreshnessAssessment {
-    pub subject_id: String,
-    pub source_fingerprint: String,
-    pub stale_probability: f64,
-    pub expected_readmes: usize,
-    pub verified_readmes: usize,
-    pub policy_identity: String,
-    pub validation_fingerprint: String,
-    pub weighted_groundedness: f64,
-    pub unsupported_claim_mass: f64,
-    pub contradiction_claim_mass: f64,
-}
-
 #[derive(Debug, Clone)]
 pub struct InspectScopeCapability {
     config: DocsCapabilityConfig,
@@ -134,12 +118,6 @@ pub struct PublishPatchSetCapability {
     policy: DocsClaimPolicy,
 }
 
-#[derive(Debug, Clone)]
-pub struct AssessPublishedScopeCapability {
-    config: DocsCapabilityConfig,
-    policy: DocsClaimPolicy,
-}
-
 impl InspectScopeCapability {
     pub fn new(config: DocsCapabilityConfig) -> Self {
         Self { config }
@@ -159,12 +137,6 @@ impl ValidatePatchSetCapability {
 }
 
 impl PublishPatchSetCapability {
-    pub fn new(config: DocsCapabilityConfig, policy: DocsClaimPolicy) -> Self {
-        Self { config, policy }
-    }
-}
-
-impl AssessPublishedScopeCapability {
     pub fn new(config: DocsCapabilityConfig, policy: DocsClaimPolicy) -> Self {
         Self { config, policy }
     }
@@ -309,45 +281,6 @@ impl CapabilityInvoker for PublishPatchSetCapability {
     }
 }
 
-#[async_trait]
-impl CapabilityInvoker for AssessPublishedScopeCapability {
-    type Error = ApiError;
-    type ExecutionApi = dyn ExecutionRuntimeContext;
-
-    fn contract(&self) -> CapabilityTypeContract {
-        contract(
-            ASSESS_PUBLISHED_SCOPE,
-            &[PUBLICATION_RECEIPT],
-            FRESHNESS_ASSESSMENT,
-            EffectKind::Emit,
-        )
-    }
-
-    async fn invoke(
-        &self,
-        _api: &dyn ExecutionRuntimeContext,
-        runtime_init: &CapabilityRuntimeInit,
-        payload: &CapabilityInvocationPayload,
-        _event_context: Option<&ExecutionEventContext>,
-    ) -> Result<CapabilityInvocationResult, ApiError> {
-        payload.validate_against(runtime_init)?;
-        let receipt: DocsPublicationReceipt = decode_input(payload, PUBLICATION_RECEIPT)?;
-        let assessment = assess_published_scope(
-            &self.config.target_root,
-            &self.config.subject_id,
-            &self.policy,
-            &receipt,
-        )
-        .map_err(terminalize_docs_error)?;
-        Ok(single_artifact(
-            payload,
-            runtime_init,
-            FRESHNESS_ASSESSMENT,
-            to_value(assessment)?,
-        ))
-    }
-}
-
 fn contract(
     capability_type_id: &str,
     input_artifacts: &[&str],
@@ -425,12 +358,6 @@ pub fn published_contracts() -> Vec<CapabilityTypeContract> {
             PUBLICATION_RECEIPT,
             EffectKind::Write,
         ),
-        contract(
-            ASSESS_PUBLISHED_SCOPE,
-            &[PUBLICATION_RECEIPT],
-            FRESHNESS_ASSESSMENT,
-            EffectKind::Emit,
-        ),
     ]
 }
 
@@ -467,13 +394,7 @@ pub fn register_exact_contracts(
         registry,
     )? as usize;
     registered += register_exact(
-        PublishPatchSetCapability::new(config.clone(), claim_policy.clone()),
-        exact_contracts,
-        catalog,
-        registry,
-    )? as usize;
-    registered += register_exact(
-        AssessPublishedScopeCapability::new(config, claim_policy),
+        PublishPatchSetCapability::new(config, claim_policy),
         exact_contracts,
         catalog,
         registry,
@@ -831,78 +752,6 @@ fn replace_readme(
     Ok(())
 }
 
-pub fn assess_published_scope(
-    root: &Path,
-    subject_id: &str,
-    policy: &DocsClaimPolicy,
-    receipt: &DocsPublicationReceipt,
-) -> Result<DocsFreshnessAssessment, ApiError> {
-    policy.validate()?;
-    if receipt.policy_identity != policy.content_identity() {
-        return Err(ApiError::ConfigError(
-            "Docs publication receipt belongs to another policy".into(),
-        ));
-    }
-    let current = inspect_scope(root)?;
-    let observation = current
-        .observation
-        .as_ref()
-        .expect("native inspection supplies observations");
-    if !observation.coverage_gaps.is_empty()
-        || observation.readmes.iter().any(|readme| {
-            matches!(
-                readme.state,
-                super::observation::ObservedReadmeState::Unavailable { .. }
-            )
-        })
-    {
-        return Err(ApiError::ConfigError(
-            "docs assessment has incomplete observation evidence".into(),
-        ));
-    }
-    let mut verified = 0;
-    let mut named = BTreeSet::new();
-    for expected in &receipt.published {
-        safe_readme_path(&expected.path)?;
-        if !named.insert(expected.path.as_str()) {
-            continue;
-        }
-        if observation.readmes.iter().any(|observed| {
-            observed.path == expected.path
-                && matches!(
-                    &observed.state,
-                    super::observation::ObservedReadmeState::Present { content_hash, content, .. }
-                        if content_hash == &expected.content_hash && !content.is_empty()
-                )
-        }) {
-            verified += 1;
-        }
-    }
-    let complete = current.source_fingerprint == receipt.source_fingerprint
-        && verified == receipt.published.len()
-        && verified == observation.readmes.len()
-        && !receipt.published.is_empty()
-        && !receipt.policy_identity.is_empty()
-        && !receipt.validation_fingerprint.is_empty()
-        && policy.accepts_metrics((
-            receipt.weighted_groundedness,
-            receipt.unsupported_claim_mass,
-            receipt.contradiction_claim_mass,
-        ))?;
-    Ok(DocsFreshnessAssessment {
-        subject_id: subject_id.to_string(),
-        source_fingerprint: current.source_fingerprint,
-        stale_probability: if complete { 0.0 } else { 1.0 },
-        expected_readmes: observation.readmes.len(),
-        verified_readmes: verified,
-        policy_identity: receipt.policy_identity.clone(),
-        validation_fingerprint: receipt.validation_fingerprint.clone(),
-        weighted_groundedness: receipt.weighted_groundedness,
-        unsupported_claim_mass: receipt.unsupported_claim_mass,
-        contradiction_claim_mass: receipt.contradiction_claim_mass,
-    })
-}
-
 fn safe_readme_path(path: &str) -> Result<PathBuf, ApiError> {
     let relative = PathBuf::from(path);
     if relative.is_absolute()
@@ -969,7 +818,7 @@ mod tests {
             minimum_groundedness: 0.8,
             maximum_unsupported_claim_mass: 0.0,
             maximum_contradiction_claim_mass: 0.0,
-            maximum_revision_attempts: 1,
+            maximum_revision_attempts: 2,
             title_weight: 1.0,
             prose_weight: 1.0,
             list_item_weight: 1.0,
@@ -1151,70 +1000,6 @@ mod tests {
     }
 
     #[test]
-    fn publication_and_assessment_verify_exact_bytes() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::write(root.path().join("lib.rs"), "pub fn run() {}\n").unwrap();
-        let inspection = inspect_scope(root.path()).unwrap();
-        let content = "# Example\n\nGenerated documentation.\n".to_string();
-        let patches = validated_patch_set(inspection.source_fingerprint, content);
-        let receipt = publish_patch_set(root.path(), &claim_policy(), &patches).unwrap();
-        let fresh =
-            assess_published_scope(root.path(), "subject", &claim_policy(), &receipt).unwrap();
-        assert_eq!(fresh.stale_probability, 0.0);
-        std::fs::write(root.path().join("README.md"), "# Drifted\n").unwrap();
-        let stale =
-            assess_published_scope(root.path(), "subject", &claim_policy(), &receipt).unwrap();
-        assert_eq!(stale.stale_probability, 1.0);
-    }
-
-    #[test]
-    fn reobservation_rejects_partial_duplicated_and_missing_readme_returns() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::write(root.path().join("lib.rs"), "pub fn run() {}\n").unwrap();
-        let inspection = inspect_scope(root.path()).unwrap();
-        let patches = validated_patch_set(inspection.source_fingerprint, "# Tool\n".into());
-        let mut receipt = publish_patch_set(root.path(), &claim_policy(), &patches).unwrap();
-        std::fs::create_dir(root.path().join("child")).unwrap();
-        std::fs::write(root.path().join("child/lib.rs"), "child source\n").unwrap();
-        // Exercise an incomplete receipt even when its claimed source position is current.
-        receipt.source_fingerprint = inspect_scope(root.path()).unwrap().source_fingerprint;
-        let partial =
-            assess_published_scope(root.path(), "subject", &claim_policy(), &receipt).unwrap();
-        assert_eq!(partial.expected_readmes, 2);
-        assert_eq!(partial.verified_readmes, 1);
-        assert_eq!(partial.stale_probability, 1.0);
-        let mut duplicated = receipt.clone();
-        duplicated.published.push(receipt.published[0].clone());
-        assert_eq!(
-            assess_published_scope(root.path(), "subject", &claim_policy(), &duplicated)
-                .unwrap()
-                .verified_readmes,
-            1
-        );
-        std::fs::remove_file(root.path().join("README.md")).unwrap();
-        let absent =
-            assess_published_scope(root.path(), "subject", &claim_policy(), &receipt).unwrap();
-        assert_eq!(absent.verified_readmes, 0);
-        assert_eq!(absent.stale_probability, 1.0);
-    }
-
-    #[test]
-    fn incomplete_source_evidence_cannot_be_projected_as_fresh_or_stale() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::write(root.path().join("lib.rs"), "pub fn run() {}\n").unwrap();
-        let inspection = inspect_scope(root.path()).unwrap();
-        let patches = validated_patch_set(inspection.source_fingerprint, "# Tool\n".into());
-        let receipt = publish_patch_set(root.path(), &claim_policy(), &patches).unwrap();
-        std::fs::write(root.path().join("lib.rs"), "source\n".repeat(2048)).unwrap();
-        assert!(
-            assess_published_scope(root.path(), "subject", &claim_policy(), &receipt)
-                .unwrap_err()
-                .to_string()
-                .contains("incomplete observation")
-        );
-    }
-
-    #[test]
     fn changed_source_is_rejected_before_publication_writes() {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join("lib.rs"), "original\n").unwrap();
@@ -1241,23 +1026,6 @@ mod tests {
 
         assert!(publish_patch_set(root.path(), &claim_policy(), &patches).is_err());
         assert!(!root.path().join("README.md").exists());
-    }
-
-    #[test]
-    fn final_assessment_refuses_invalid_claim_metrics() {
-        let root = tempfile::tempdir().unwrap();
-        std::fs::write(root.path().join("lib.rs"), "pub fn run() {}\n").unwrap();
-        let inspection = inspect_scope(root.path()).unwrap();
-        let patches = validated_patch_set(
-            inspection.source_fingerprint,
-            "# Example\n\nGenerated documentation.\n".to_string(),
-        );
-        let mut receipt = publish_patch_set(root.path(), &claim_policy(), &patches).unwrap();
-        receipt.unsupported_claim_mass = 0.1;
-
-        let assessment =
-            assess_published_scope(root.path(), "subject", &claim_policy(), &receipt).unwrap();
-        assert_eq!(assessment.stale_probability, 1.0);
     }
 
     #[test]

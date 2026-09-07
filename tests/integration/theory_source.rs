@@ -111,7 +111,7 @@ fn shipped_theory_provisions_and_loads_through_every_selection_identity() {
 
         let strategy = load_strategy_theory_package("docs_freshness").unwrap();
         assert_eq!(strategy.snapshot.theory_id, "docs_freshness");
-        assert_eq!(strategy.capabilities.len(), 5);
+        assert_eq!(strategy.capabilities.len(), 4);
 
         let authority = load_authority_policy("docs_workspace_local").unwrap();
         assert_eq!(authority.principal_id, "workspace-owner");

@@ -569,7 +569,6 @@ fn prepared_product_activates_routes_and_ignores_loose_owner_heads() {
             "docs.draft_patch_set",
             "docs.validate_patch_set",
             "docs.publish_patch_set",
-            "docs.assess_published_scope",
         ] {
             assert!(capability_runtime.catalog.contains(capability_type, 1));
             assert!(capability_runtime
