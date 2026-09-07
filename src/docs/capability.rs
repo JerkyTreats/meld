@@ -261,16 +261,63 @@ impl CapabilityInvoker for PublishPatchSetCapability {
         )
     }
 
-    async fn invoke(
+    async fn recover(
         &self,
-        _api: &dyn ExecutionRuntimeContext,
+        events: Option<&meld_events::EventReplayCapability>,
         runtime_init: &CapabilityRuntimeInit,
         payload: &CapabilityInvocationPayload,
-        _event_context: Option<&ExecutionEventContext>,
+        event_context: Option<&ExecutionEventContext>,
+    ) -> Result<Option<CapabilityInvocationResult>, ApiError> {
+        let patches: ValidatedDocsPatchSet = decode_input(payload, VALIDATED_PATCH_SET)?;
+        let invocation = super::publication_return::PublicationInvocation::new(
+            &self.config,
+            &self.policy,
+            &patches,
+            runtime_init,
+            payload,
+            event_context,
+        )?;
+        let Some(events) = events else {
+            return Ok(None);
+        };
+        invocation
+            .recover(events)?
+            .map(|receipt| {
+                Ok(single_artifact(
+                    payload,
+                    runtime_init,
+                    PUBLICATION_RECEIPT,
+                    to_value(receipt)?,
+                ))
+            })
+            .transpose()
+    }
+
+    async fn invoke(
+        &self,
+        api: &dyn ExecutionRuntimeContext,
+        runtime_init: &CapabilityRuntimeInit,
+        payload: &CapabilityInvocationPayload,
+        event_context: Option<&ExecutionEventContext>,
     ) -> Result<CapabilityInvocationResult, ApiError> {
         payload.validate_against(runtime_init)?;
         let patches: ValidatedDocsPatchSet = decode_input(payload, VALIDATED_PATCH_SET)?;
-        let receipt = publish_patch_set(&self.config.target_root, &self.policy, &patches)
+        let invocation = super::publication_return::PublicationInvocation::new(
+            &self.config,
+            &self.policy,
+            &patches,
+            runtime_init,
+            payload,
+            event_context,
+        )
+        .map_err(terminalize_docs_error)?;
+        let events = api.durable_event_append().ok_or_else(|| {
+            terminalize_docs_error(ApiError::ConfigError(
+                "Docs publication has no durable Event authority".into(),
+            ))
+        })?;
+        let receipt = invocation
+            .publish(&events)
             .map_err(terminalize_docs_error)?;
         Ok(single_artifact(
             payload,
@@ -639,7 +686,7 @@ fn is_context_limit_error(message: &str) -> bool {
     .any(|needle| normalized.contains(needle))
 }
 
-pub fn publish_patch_set(
+pub(super) fn publish_patch_set(
     root: &Path,
     policy: &DocsClaimPolicy,
     patches: &ValidatedDocsPatchSet,
@@ -872,6 +919,175 @@ mod tests {
             unsupported_claim_mass: 0.0,
             contradiction_claim_mass: 0.0,
         }
+    }
+
+    #[tokio::test]
+    async fn publication_receipt_recovers_exact_history_without_touching_changed_workspace() {
+        use super::super::publication_return::PublicationInvocation;
+        use crate::capability::{CapabilityExecutionContext, InputValueSource, SuppliedInputValue};
+        use meld_events::{DomainObjectRef, EventAuthority, EventAuthorityOpenOptions};
+
+        let root = tempfile::tempdir().unwrap();
+        let source_path = root.path().join("lib.rs");
+        let readme_path = root.path().join("README.md");
+        std::fs::write(&source_path, "pub fn run() {}\n").unwrap();
+        let patches = validated_patch_set(
+            inspect_scope(root.path()).unwrap().source_fingerprint,
+            "# run\n\n`run` exists.\n".into(),
+        );
+        let config = capability_config(root.path());
+        let policy = claim_policy();
+        let publisher = PublishPatchSetCapability::new(config.clone(), policy.clone());
+        let contract = publisher.contract();
+        let runtime = CapabilityRuntimeInit {
+            capability_instance_id: "publication-instance".into(),
+            capability_type_id: contract.capability_type_id,
+            capability_version: contract.capability_version,
+            scope_ref: config.subject_id.clone(),
+            scope_kind: contract.scope_contract.scope_kind,
+            binding_values: Vec::new(),
+            input_contract: contract.input_contract,
+            output_contract: contract.output_contract,
+            effect_contract: contract.effect_contract,
+            execution_contract: contract.execution_contract,
+        };
+        let payload = CapabilityInvocationPayload {
+            invocation_id: "publication-invocation".into(),
+            capability_instance_id: runtime.capability_instance_id.clone(),
+            supplied_inputs: vec![SuppliedInputValue {
+                slot_id: VALIDATED_PATCH_SET.into(),
+                source: InputValueSource::ArtifactHandoff,
+                value: SuppliedValueRef::StructuredValue(serde_json::to_value(&patches).unwrap()),
+            }],
+            upstream_lineage: None,
+            execution_context: CapabilityExecutionContext::default(),
+        };
+        let context = ExecutionEventContext {
+            session_id: "publication-session".into(),
+            effect_authority: Some(meld_execution::ExecutionEffectAuthority {
+                issuer_ref: config.agent_id.clone(),
+                principal_id: "workspace-owner".into(),
+                subject: DomainObjectRef::new("workspace", "repository", &config.subject_id)
+                    .unwrap(),
+                fence_ref: "task-fence".into(),
+            }),
+        };
+        let events = EventAuthority::open(
+            sled::Config::new().temporary(true).open().unwrap(),
+            EventAuthorityOpenOptions::default(),
+        )
+        .unwrap();
+        let replay = events.replay_capability();
+        assert!(
+            PublicationInvocation::new(&config, &policy, &patches, &runtime, &payload, None)
+                .is_err()
+        );
+        assert!(publisher
+            .recover(Some(&replay), &runtime, &payload, Some(&context))
+            .await
+            .unwrap()
+            .is_none());
+        assert!(!readme_path.exists());
+        let invocation = PublicationInvocation::new(
+            &config,
+            &policy,
+            &patches,
+            &runtime,
+            &payload,
+            Some(&context),
+        )
+        .unwrap();
+        let receipt = invocation.publish(&events.append_capability()).unwrap();
+        assert!(receipt.published[0].changed);
+        let original = publisher
+            .recover(Some(&replay), &runtime, &payload, Some(&context))
+            .await
+            .unwrap()
+            .unwrap();
+        let watermark = events.watermark_capability().snapshot().unwrap();
+
+        std::fs::write(&source_path, "pub fn changed() {}\n").unwrap();
+        std::fs::write(&readme_path, "external revision\n").unwrap();
+        let modified = std::fs::metadata(&readme_path).unwrap().modified().unwrap();
+        assert_eq!(
+            invocation.publish(&events.append_capability()).unwrap(),
+            receipt
+        );
+        assert_eq!(
+            publisher
+                .recover(Some(&replay), &runtime, &payload, Some(&context))
+                .await
+                .unwrap()
+                .unwrap()
+                .emitted_artifacts,
+            original.emitted_artifacts
+        );
+        assert_eq!(
+            std::fs::read_to_string(&readme_path).unwrap(),
+            "external revision\n"
+        );
+        assert_eq!(
+            std::fs::metadata(&readme_path).unwrap().modified().unwrap(),
+            modified
+        );
+
+        let mut foreign_payload = payload.clone();
+        foreign_payload.invocation_id = "another-invocation".into();
+        assert!(publisher
+            .recover(Some(&replay), &runtime, &foreign_payload, Some(&context))
+            .await
+            .unwrap()
+            .is_none());
+        let mut foreign_context = context.clone();
+        foreign_context.effect_authority.as_mut().unwrap().fence_ref = "another-fence".into();
+        assert!(publisher
+            .recover(Some(&replay), &runtime, &payload, Some(&foreign_context))
+            .await
+            .unwrap()
+            .is_none());
+        foreign_context
+            .effect_authority
+            .as_mut()
+            .unwrap()
+            .issuer_ref = "another-agent".into();
+        assert!(publisher
+            .recover(Some(&replay), &runtime, &payload, Some(&foreign_context))
+            .await
+            .is_err());
+        let foreign_events = EventAuthority::open(
+            sled::Config::new().temporary(true).open().unwrap(),
+            EventAuthorityOpenOptions::default(),
+        )
+        .unwrap();
+        assert!(publisher
+            .recover(
+                Some(&foreign_events.replay_capability()),
+                &runtime,
+                &payload,
+                Some(&context)
+            )
+            .await
+            .unwrap()
+            .is_none());
+        let mut changed_policy = policy.clone();
+        changed_policy.policy_id = "another-policy".into();
+        let changed_publisher = PublishPatchSetCapability::new(config.clone(), changed_policy);
+        assert!(changed_publisher
+            .recover(Some(&replay), &runtime, &payload, Some(&context))
+            .await
+            .is_err());
+
+        std::fs::remove_dir_all(root.path()).unwrap();
+        assert_eq!(
+            publisher
+                .recover(Some(&replay), &runtime, &payload, Some(&context))
+                .await
+                .unwrap()
+                .unwrap()
+                .emitted_artifacts,
+            original.emitted_artifacts
+        );
+        assert_eq!(events.watermark_capability().snapshot().unwrap(), watermark);
     }
 
     #[test]

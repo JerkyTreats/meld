@@ -6978,6 +6978,7 @@ mod tests {
         inner: SharedClaimedTaskInvoker,
         invoked: std::sync::atomic::AtomicBool,
         continuous_retry: bool,
+        capability_filter: Option<&'static str>,
         lose_return: Arc<std::sync::atomic::AtomicBool>,
     }
 
@@ -6992,6 +6993,12 @@ mod tests {
             meld_execution::task_network::dispatch_actor::ClaimedInvocationOutcome,
             meld_execution::task_network::dispatch_actor::DispatchPortError,
         > {
+            if self
+                .capability_filter
+                .is_some_and(|selected| node.lineage.capability_type_id != selected)
+            {
+                return self.inner.0.invoke_claimed_task(node, claim, payload).await;
+            }
             if !self.continuous_retry
                 && self.lose_return.load(std::sync::atomic::Ordering::SeqCst)
                 && self.invoked.swap(true, std::sync::atomic::Ordering::SeqCst)
@@ -7033,7 +7040,11 @@ mod tests {
         fn bind_production_routes_with_loss(
             &self,
             assembly: &ProductRuntimeAssembly,
-            loss: Option<(Arc<std::sync::atomic::AtomicBool>, bool)>,
+            loss: Option<(
+                Arc<std::sync::atomic::AtomicBool>,
+                bool,
+                Option<&'static str>,
+            )>,
         ) -> Arc<crate::api::ContextApi> {
             let route_storage = self._external.path().join("claimed-route");
             std::fs::create_dir_all(&route_storage).unwrap();
@@ -7078,11 +7089,12 @@ mod tests {
                     registry: capability_runtime.registry,
                 },
             );
-            if let Some((lose_return, continuous_retry)) = loss {
+            if let Some((lose_return, continuous_retry, capability_filter)) = loss {
                 routes.claim_invoker = SharedClaimedTaskInvoker(Arc::new(LostDispatchReturn {
                     inner: routes.claim_invoker,
                     invoked: std::sync::atomic::AtomicBool::new(false),
                     continuous_retry,
+                    capability_filter,
                     lose_return,
                 }));
             }
@@ -7656,6 +7668,7 @@ mod tests {
         let goal_id = goals[0].goal.goal_id.clone();
         let readme_metadata =
             std::fs::metadata(harness._workspace.path().join("README.md")).unwrap();
+        let judgments_before_reopen = store.condition_judgments().unwrap();
         supervisor.request_shutdown(2_000).unwrap();
         drop(supervisor);
         drop(assembly);
@@ -7687,10 +7700,7 @@ mod tests {
             1
         );
         let after = reopened.stores().agent_store.condition_judgments().unwrap();
-        assert_eq!(
-            after.last().unwrap().evaluation,
-            meld_lang::EvalResult::Satisfied
-        );
+        assert_new_satisfied_judgments(&judgments_before_reopen, &after);
         assert_eq!(
             std::fs::metadata(harness._workspace.path().join("README.md"))
                 .unwrap()
@@ -7699,6 +7709,187 @@ mod tests {
             readme_metadata.modified().unwrap()
         );
         resumed.request_shutdown(3_500).unwrap();
+    }
+
+    fn assert_new_satisfied_judgments(
+        before: &[meld_world_model::agent::AgentConditionJudgment],
+        after: &[meld_world_model::agent::AgentConditionJudgment],
+    ) {
+        // Judgment IDs are hashes, so storage iteration order is not chronology.
+        let new: Vec<_> = after
+            .iter()
+            .filter(|judgment| !before.contains(judgment))
+            .collect();
+        assert!(
+            !new.is_empty(),
+            "reopened Agent made no new condition judgment"
+        );
+        assert!(
+            new.iter()
+                .all(|judgment| judgment.evaluation == meld_lang::EvalResult::Satisfied),
+            "{new:#?}"
+        );
+    }
+
+    #[test]
+    fn native_docs_publication_recovers_a_lost_callback_without_rewriting() {
+        assert_docs_publication_recovery(false);
+    }
+
+    #[test]
+    fn native_docs_publication_recovers_a_lost_callback_across_epoch_restart() {
+        assert_docs_publication_recovery(true);
+    }
+
+    fn assert_docs_publication_recovery(restart: bool) {
+        fn publications(harness: &StewardshipHarness) -> Vec<meld_events::EventRecord> {
+            let watermark = harness.authority.watermark_capability().snapshot().unwrap();
+            let page = harness
+                .authority
+                .replay_capability()
+                .replay(meld_events::ReplayRequest {
+                    cursor: meld_events::LedgerCursor {
+                        ledger_id: watermark.ledger_id,
+                        after_seq: 0,
+                    },
+                    limit: 1024,
+                })
+                .unwrap();
+            assert_eq!(page.next_cursor.after_seq, watermark.committed_seq);
+            page.records
+                .into_iter()
+                .filter(|record| record.event_type == crate::docs::publication_return::EVENT_TYPE)
+                .collect()
+        }
+        let provider = super::docs_fixture::ProviderServer::new();
+        let harness = StewardshipHarness::new();
+        std::fs::write(
+            harness._workspace.path().join("lib.rs"),
+            "pub fn run() {}\n",
+        )
+        .unwrap();
+        {
+            let assembly = harness.assembly();
+            harness.run_world_genesis(&assembly);
+        }
+        let assembly = harness.assembly();
+        let loss = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let api = harness.bind_production_routes_with_loss(
+            &assembly,
+            Some((loss.clone(), false, Some("docs.publish_patch_set"))),
+        );
+        let mut config =
+            stewardship_merkle_config(harness._workspace.path(), &harness.binding.storage_root);
+        config.providers.get_mut("main-provider").unwrap().endpoint = Some(provider.endpoint());
+        api.provider_registry()
+            .write()
+            .load_from_config(&config)
+            .unwrap();
+        assert!(assembly.bind_production_docs_claim_judge(api));
+        let mut supervisor = harness.start_supervisor(&assembly);
+        for pass in 0..60 {
+            supervisor.tick(1_000 + pass * 10).unwrap();
+        }
+        let readme = harness._workspace.path().join("README.md");
+        assert_eq!(
+            std::fs::read_to_string(&readme).unwrap(),
+            super::docs_fixture::README
+        );
+        let writes = publications(&harness);
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0].data["receipt"]["published"][0]["changed"], true);
+        let modified = std::fs::metadata(&readme).unwrap().modified().unwrap();
+        let calls = provider.calls();
+        let goals = assembly
+            .stores()
+            .agent_store
+            .reconciliation_goals_for_agent(STEWARD_AGENT_ID)
+            .unwrap();
+        assert_eq!(goals.len(), 1);
+        let goal_id = goals[0].goal.goal_id.clone();
+        assert!(!assembly
+            .stores()
+            .agent_store
+            .completed_history_for_goal(&goal_id)
+            .unwrap()
+            .iter()
+            .any(|entry| matches!(
+                entry.accepted_milestone,
+                meld_world_model::strategy::PlanMilestoneRequirement::ExecutionTerminal { .. }
+            )));
+        if !restart {
+            loss.store(false, std::sync::atomic::Ordering::SeqCst);
+            for pass in 0..30 {
+                supervisor.tick(1_700 + pass * 10).unwrap();
+            }
+            let plan = assembly
+                .stores()
+                .agent_store
+                .current_reconciliation_plan(&goal_id)
+                .unwrap()
+                .unwrap();
+            assert!(assembly
+                .stores()
+                .agent_store
+                .goal_disposition_for_plan(&plan.plan_revision_id)
+                .unwrap()
+                .is_some());
+            let history = assembly
+                .stores()
+                .agent_store
+                .completed_history_for_goal(&goal_id)
+                .unwrap();
+            assert!(history.iter().any(|entry| matches!(
+                entry.accepted_milestone,
+                meld_world_model::strategy::PlanMilestoneRequirement::BeliefRevision { .. }
+            )));
+        }
+        let judgments_before_reopen = assembly.stores().agent_store.condition_judgments().unwrap();
+        supervisor.request_shutdown(2_100).unwrap();
+        drop(supervisor);
+        drop(assembly);
+        let reopened = harness.assembly();
+        harness.bind_production_routes(&reopened);
+        let mut command = SupervisorStartCommand::new("docs-publication-recovery", 3_000);
+        command.registration_set = reopened.registration_set().cloned();
+        let mut resumed =
+            RuntimeSupervisor::start(reopened.supervisor_startup_package(), command).unwrap();
+        let mut reports = Vec::new();
+        for pass in 0..40 {
+            reports.push(resumed.tick(3_100 + pass * 10).unwrap());
+        }
+        let history = reopened
+            .stores()
+            .agent_store
+            .completed_history_for_goal(&goal_id)
+            .unwrap();
+        assert!(
+            history.iter().any(|entry| matches!(
+                entry.accepted_milestone,
+                meld_world_model::strategy::PlanMilestoneRequirement::ExecutionTerminal { .. }
+            )),
+            "{history:#?}; {reports:#?}"
+        );
+        assert_eq!(provider.calls(), calls);
+        assert_eq!(
+            std::fs::metadata(&readme).unwrap().modified().unwrap(),
+            modified
+        );
+        assert_eq!(publications(&harness), writes);
+        assert_new_satisfied_judgments(
+            &judgments_before_reopen,
+            &reopened.stores().agent_store.condition_judgments().unwrap(),
+        );
+        assert_eq!(
+            reopened
+                .stores()
+                .agent_store
+                .reconciliation_goals_for_agent(STEWARD_AGENT_ID)
+                .unwrap()
+                .len(),
+            1
+        );
+        resumed.request_shutdown(3_600).unwrap();
     }
 
     #[test]
@@ -8587,7 +8778,10 @@ mod tests {
         drop(assembly);
         let assembly = harness.assembly();
         let loss = Arc::new(std::sync::atomic::AtomicBool::new(lose_callback));
-        harness.bind_production_routes_with_loss(&assembly, Some((loss.clone(), continuous_retry)));
+        harness.bind_production_routes_with_loss(
+            &assembly,
+            Some((loss.clone(), continuous_retry, None)),
+        );
         let RuntimeSemanticHandleFactory::AgentActor(factory) = &assembly
             .handle_factories()
             .get(AGENT_RECONCILIATION_RUNTIME_ID)

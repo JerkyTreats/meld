@@ -15,6 +15,7 @@ pub mod observation_store;
 #[cfg(test)]
 pub mod pds;
 pub mod publication;
+pub(crate) mod publication_return;
 pub(crate) mod runtime;
 pub mod semantics;
 pub mod source_claims;

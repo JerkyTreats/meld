@@ -558,6 +558,35 @@ impl EventReplayCapability {
         self.inner.ledger_id
     }
 
+    /// Read one retained, committed record by its exact producer identity.
+    /// An unflushed append is not evidence of completed publication.
+    pub fn committed_record(
+        &self,
+        record_id: &str,
+    ) -> Result<Option<EventRecord>, EventAuthorityError> {
+        if record_id.trim().is_empty() {
+            return Err(EventAuthorityError::invalid_request(
+                "committed Event lookup requires a record ID",
+            ));
+        }
+        let committed = self.inner.writer.watermark().committed_seq();
+        let Some(seq) = self.inner.store.lookup_record_seq(record_id)? else {
+            return Ok(None);
+        };
+        if seq == 0 || seq > committed {
+            return Ok(None);
+        }
+        let Some(record) = self.inner.store.event_at(seq)? else {
+            return Ok(None);
+        };
+        if record.envelope.record_id.as_deref() != Some(record_id) {
+            return Err(EventAuthorityError::invalid_request(
+                "Event record index contains another identity",
+            ));
+        }
+        Ok(Some(record))
+    }
+
     /// Prove an already committed exact envelope without appending or flushing.
     /// Missing, uncommitted, or no longer retained records remain unproven.
     pub fn prove_existing(
@@ -571,16 +600,10 @@ impl EventReplayCapability {
             .ok_or_else(|| {
                 EventAuthorityError::invalid_request("existing Event proof requires a record ID")
             })?;
-        let committed = self.inner.writer.watermark().committed_seq();
-        let Some(seq) = self.inner.store.lookup_record_seq(record_id)? else {
+        let Some(record) = self.committed_record(record_id)? else {
             return Ok(None);
         };
-        if seq == 0 || seq > committed {
-            return Ok(None);
-        }
-        let Some(record) = self.inner.store.event_at(seq)? else {
-            return Ok(None);
-        };
+        let seq = record.seq;
         if !same_proven_envelope(&record.envelope, expected) {
             return Err(EventAuthorityError::invalid_request(
                 "existing Event identity contains another envelope",
@@ -999,6 +1022,7 @@ mod tests {
             Err(EventAuthorityError::DurabilityIndeterminate { .. })
         ));
         assert!(read.prove_existing(&expected).unwrap().is_none());
+        assert!(read.committed_record("effect::one").unwrap().is_none());
         assert_eq!(
             authority
                 .watermark_capability()
@@ -1010,6 +1034,11 @@ mod tests {
         let appended = append
             .append_durable_proven(expected.clone(), AppendMode::Idempotent)
             .unwrap();
+        let record = read.committed_record("effect::one").unwrap().unwrap();
+        assert_eq!(record.seq, appended.seq());
+        assert_eq!(record.envelope, expected);
+        assert!(read.committed_record("effect::absent").unwrap().is_none());
+        assert!(read.committed_record("").is_err());
         let proven = read.prove_existing(&expected).unwrap().unwrap();
         assert_eq!(proven, appended);
         let mut wrong = expected.clone();
