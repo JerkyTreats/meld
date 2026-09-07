@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "package_id": "meld.docs-freshness",
-  "package_version": "1.7.0",
+  "package_version": "1.8.0",
   "description": "Documentation freshness stewardship theory",
   "imports": [],
   "components": [
@@ -227,7 +227,7 @@
       "content": {
         "kind": "relative_file",
         "path": "claim_policy.docs-claims-strict-v1.json",
-        "content_hash": "49a12c66dcf94d7a4b05020306deb2bc960e6b57abdf82a198a8c6d70b6901d1"
+        "content_hash": "cb51c5c526fc02ee3943498573719ad0837a9cd90b978ae1abcb041249207583"
       },
       "requires": []
     },

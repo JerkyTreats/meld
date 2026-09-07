@@ -76,7 +76,10 @@ impl ProductCapabilityContributor for DocsCapabilityContributor {
                 }
                 if matches!(
                     type_id.as_str(),
-                    VALIDATE_PATCH_SET | PUBLISH_PATCH_SET | ASSESS_PUBLISHED_SCOPE
+                    DRAFT_PATCH_SET
+                        | VALIDATE_PATCH_SET
+                        | PUBLISH_PATCH_SET
+                        | ASSESS_PUBLISHED_SCOPE
                 ) {
                     required_binding_ids.insert(CLAIM_POLICY_BINDING.to_string());
                 }
@@ -162,7 +165,10 @@ impl CapabilityInvokerFactory for DocsInvokerFactory {
             dyn CapabilityInvoker<Error = ApiError, ExecutionApi = dyn ExecutionRuntimeContext>,
         > = match self.capability_type_id.as_str() {
             INSPECT_SCOPE => Arc::new(InspectScopeCapability::new(config)),
-            DRAFT_PATCH_SET => Arc::new(DraftPatchSetCapability::new(config)),
+            DRAFT_PATCH_SET => Arc::new(DraftPatchSetCapability::new(
+                config,
+                selected_claim_policy(bindings)?,
+            )),
             VALIDATE_PATCH_SET => Arc::new(ValidatePatchSetCapability::new(
                 config,
                 selected_claim_policy(bindings)?,
@@ -237,7 +243,7 @@ mod tests {
     }
 
     #[test]
-    fn provider_backed_selection_requires_only_its_declared_provider_binding() {
+    fn drafting_requires_provider_even_with_installed_semantic_policy() {
         let contributor = Arc::new(DocsCapabilityContributor);
         let inventory = ProductCapabilityInventory::assemble(vec![contributor]).unwrap();
         let contract = inventory
@@ -245,6 +251,21 @@ mod tests {
             .find(|revision| revision.contract.capability_type_id == DRAFT_PATCH_SET)
             .unwrap()
             .revision_ref();
+        let policy = crate::docs::claim_observation::test_support::policy();
+        let revision = DocsClaimPolicyRevision {
+            content_identity: policy.content_identity(),
+            policy,
+            installed_at_seq: 1,
+        };
+        let bindings = bind_claim_policy(
+            OwnerBindingView::new(BTreeMap::from([
+                (WORKSPACE_BINDING.to_string(), "/tmp".to_string()),
+                (SUBJECT_BINDING.to_string(), "docs".to_string()),
+                (AGENT_BINDING.to_string(), "agent".to_string()),
+            ])),
+            &revision,
+        )
+        .unwrap();
         let error = inventory
             .prepare(
                 ExactCapabilityActivationRequest {
@@ -257,15 +278,12 @@ mod tests {
                     )]),
                     compatibility_policy_revision: "capability-compatibility.v1".into(),
                 },
-                &OwnerBindingView::new(BTreeMap::from([
-                    (WORKSPACE_BINDING.to_string(), "/tmp".to_string()),
-                    (SUBJECT_BINDING.to_string(), "docs".to_string()),
-                    (AGENT_BINDING.to_string(), "agent".to_string()),
-                ])),
+                &bindings,
             )
             .err()
             .unwrap();
         assert_eq!(error.code, "selected_binding_missing");
+        assert!(error.message.contains("binding 'provider'"));
     }
 
     #[test]
@@ -311,6 +329,7 @@ mod tests {
             (PROVIDER_BINDING.into(), "provider".into()),
         ]));
         for capability in [
+            DRAFT_PATCH_SET,
             VALIDATE_PATCH_SET,
             PUBLISH_PATCH_SET,
             ASSESS_PUBLISHED_SCOPE,

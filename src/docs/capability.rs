@@ -9,20 +9,20 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::observation::MAX_DIRECTORY_EVIDENCE_BYTES;
+use super::semantics::DocsJudgmentOperation;
 use crate::capability::{
     ArtifactSchemaVersionRange, CapabilityInvocationPayload, CapabilityInvocationResult,
     CapabilityInvoker, CapabilityRuntimeInit, CapabilityTypeContract, EffectKind, EffectSpec,
     ExecutionClass, ExecutionContract, InputCardinality, InputSlotSpec, OutputSlotSpec,
     ScopeContract, SuppliedValueRef,
 };
-use crate::context::generation::contracts::GenerationOrchestrationRequest;
 use crate::docs::claim_validation::{
     validate_patch_set, verify_validated_patch_set, DocsClaimPolicy, ValidatedDocsPatchSet,
 };
 use crate::error::ApiError;
 use crate::execution::{ExecutionEventContext, ExecutionRuntimeContext};
 use crate::provider::executor::{execute_completion, prepare_provider_for_request};
-use crate::provider::{ChatMessage, MessageRole, ProviderExecutionBinding};
+use crate::provider::ProviderExecutionBinding;
 use crate::task::{ArtifactProducerRef, ArtifactRecord};
 use meld_execution::error::TERMINAL_CAPABILITY_FAILURE_MARKER;
 
@@ -119,6 +119,7 @@ pub struct InspectScopeCapability {
 #[derive(Debug, Clone)]
 pub struct DraftPatchSetCapability {
     config: DocsCapabilityConfig,
+    policy: DocsClaimPolicy,
 }
 
 #[derive(Debug, Clone)]
@@ -146,8 +147,8 @@ impl InspectScopeCapability {
 }
 
 impl DraftPatchSetCapability {
-    pub fn new(config: DocsCapabilityConfig) -> Self {
-        Self { config }
+    pub fn new(config: DocsCapabilityConfig, policy: DocsClaimPolicy) -> Self {
+        Self { config, policy }
     }
 }
 
@@ -219,7 +220,7 @@ impl CapabilityInvoker for DraftPatchSetCapability {
     ) -> Result<CapabilityInvocationResult, ApiError> {
         payload.validate_against(runtime_init)?;
         let bundle: DocsEvidenceBundle = decode_input(payload, EVIDENCE_BUNDLE)?;
-        let patches = draft_patch_set(api, &self.config, &bundle, event_context)
+        let patches = draft_patch_set(api, &self.config, &self.policy, &bundle, event_context)
             .await
             .map_err(terminalize_docs_error)?;
         Ok(single_artifact(
@@ -454,7 +455,7 @@ pub fn register_exact_contracts(
         registry,
     )? as usize;
     registered += register_exact(
-        DraftPatchSetCapability::new(config.clone()),
+        DraftPatchSetCapability::new(config.clone(), claim_policy.clone()),
         exact_contracts,
         catalog,
         registry,
@@ -577,12 +578,16 @@ fn single_artifact(
 
 pub use super::observation::inspect_scope;
 
-async fn draft_patch_set(
-    api: &dyn ExecutionRuntimeContext,
+pub(crate) async fn draft_patch_set<
+    P: crate::execution::ProviderValidationPort + crate::execution::ProviderExecutionPort + ?Sized,
+>(
+    api: &P,
     config: &DocsCapabilityConfig,
+    policy: &DocsClaimPolicy,
     bundle: &DocsEvidenceBundle,
     event_context: Option<&ExecutionEventContext>,
 ) -> Result<DocsPatchSet, ApiError> {
+    policy.validate()?;
     let mut child_readmes = BTreeMap::<String, String>::new();
     let mut patches = Vec::new();
     for directory in &bundle.directories {
@@ -600,8 +605,8 @@ async fn draft_patch_set(
         let content = generate_readme(
             api,
             config,
+            policy,
             directory,
-            &bundle.source_fingerprint,
             &directory.evidence,
             &child_context,
             event_context,
@@ -626,26 +631,41 @@ async fn draft_patch_set(
     })
 }
 
-async fn generate_readme(
-    api: &dyn ExecutionRuntimeContext,
+#[allow(clippy::too_many_arguments)]
+async fn generate_readme<
+    P: crate::execution::ProviderValidationPort + crate::execution::ProviderExecutionPort + ?Sized,
+>(
+    api: &P,
     config: &DocsCapabilityConfig,
+    policy: &DocsClaimPolicy,
     directory: &DirectoryEvidence,
-    source_fingerprint: &str,
     direct_evidence: &str,
     child_evidence: &str,
     event_context: Option<&ExecutionEventContext>,
 ) -> Result<String, ApiError> {
-    let preparation_request = generation_request(config, directory, source_fingerprint, 0);
-    let preparation = prepare_provider_for_request(api, &preparation_request)?;
     let mut evidence_limit = MAX_DIRECTORY_EVIDENCE_BYTES + MAX_CHILD_README_BYTES;
     let mut last_error = None;
     for retry in 0..=2 {
-        let request = generation_request(config, directory, source_fingerprint, retry);
-        let messages = readme_messages(directory, direct_evidence, child_evidence, evidence_limit);
-        match execute_completion(api, &request, &preparation, messages, event_context).await {
+        let generation = policy.semantics()?.generation(
+            config,
+            &policy.content_identity(),
+            DocsJudgmentOperation::Drafting,
+            readme_input(directory, direct_evidence, child_evidence, evidence_limit),
+            retry,
+            0,
+        )?;
+        let preparation = prepare_provider_for_request(api, &generation.request)?;
+        match execute_completion(
+            api,
+            &generation.request,
+            &preparation,
+            generation.messages,
+            event_context,
+        )
+        .await
+        {
             Ok(response) => {
-                let content =
-                    stabilize_aggregate_heading(&normalize_markdown(&response.content), directory);
+                let content = normalize_markdown(&response.content);
                 if content.starts_with('#') && content.len() >= 32 {
                     return Ok(content);
                 }
@@ -668,65 +688,21 @@ async fn generate_readme(
     )))
 }
 
-fn readme_messages(
+fn readme_input(
     directory: &DirectoryEvidence,
     direct_evidence: &str,
     child_evidence: &str,
     evidence_limit: usize,
-) -> Vec<ChatMessage> {
+) -> serde_json::Value {
     let direct_limit = evidence_limit.min(MAX_DIRECTORY_EVIDENCE_BYTES);
     let child_limit = evidence_limit.saturating_sub(direct_limit);
-    let direct_files = if directory.direct_files.is_empty() {
-        "- none".to_string()
-    } else {
-        directory
-            .direct_files
-            .iter()
-            .map(|path| format!("- {path}"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    let child_directories = if directory.child_directories.is_empty() {
-        "- none".to_string()
-    } else {
-        directory
-            .child_directories
-            .iter()
-            .map(|path| format!("- {path}"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    let prompt = format!(
-        "Current directory path:\n{}\n\nDirect source files in this directory:\n{}\n\nDirect child directories in the managed scope:\n{}\n\nDirect source evidence:\n{}\n\nDescendant README evidence:\n{}\n\nWrite the README for the current directory only and keep it under 450 words. Descendant README evidence describes child components, not files or APIs directly owned by the current directory. Preserve every identifier, path, filename, command, and environment variable exactly as supplied. Never rewrite hyphens as underscores or otherwise normalize identifiers. Do not claim a project name unless direct source evidence establishes it. Do not invent clone URLs, external links, installation steps, credential filenames, configuration filenames, commands, test frameworks, or test invocations. Include any of those only when their exact form is present in direct source evidence. Do not turn a filename or symbol name alone into an unsupported behavioral claim. When the current directory has no direct source files, describe it as an organizational scope over its listed children. Avoid repeating the same inventory in multiple sections. Omit sections that the evidence cannot support. End with a complete sentence or complete list item.",
-        directory.path,
-        direct_files,
-        child_directories,
-        truncate_chars(direct_evidence, direct_limit),
-        truncate_chars(child_evidence, child_limit),
-    );
-    vec![
-        ChatMessage {
-            role: MessageRole::System,
-            content: "Write a concise and accurate Markdown README from bounded evidence. Ground every factual claim in the supplied direct or descendant evidence. Keep ownership boundaries explicit and preserve source identifiers exactly. Return Markdown only.".to_string(),
-        },
-        ChatMessage {
-            role: MessageRole::User,
-            content: prompt,
-        },
-    ]
-}
-
-fn stabilize_aggregate_heading(content: &str, directory: &DirectoryEvidence) -> String {
-    if !directory.direct_files.is_empty() {
-        return content.to_string();
-    }
-    let heading = if directory.path == "." {
-        "Repository root"
-    } else {
-        &directory.path
-    };
-    let body = content.lines().skip(1).collect::<Vec<_>>().join("\n");
-    format!("# {heading}\n{}\n", body.trim_end())
+    serde_json::json!({
+        "directory": directory.path,
+        "direct_files": directory.direct_files,
+        "child_directories": directory.child_directories,
+        "direct_evidence": truncate_chars(direct_evidence, direct_limit),
+        "descendant_drafts": truncate_chars(child_evidence, child_limit),
+    })
 }
 
 fn is_context_limit_error(message: &str) -> bool {
@@ -740,26 +716,6 @@ fn is_context_limit_error(message: &str) -> bool {
     ]
     .iter()
     .any(|needle| normalized.contains(needle))
-}
-
-fn generation_request(
-    config: &DocsCapabilityConfig,
-    directory: &DirectoryEvidence,
-    fingerprint: &str,
-    retry_count: usize,
-) -> GenerationOrchestrationRequest {
-    let digest = blake3::hash(format!("{}::{fingerprint}", directory.path).as_bytes());
-    let mut request_bytes = [0_u8; 8];
-    request_bytes.copy_from_slice(&digest.as_bytes()[..8]);
-    GenerationOrchestrationRequest {
-        request_id: u64::from_le_bytes(request_bytes),
-        node_id: *digest.as_bytes(),
-        agent_id: config.agent_id.clone(),
-        provider: config.provider.clone(),
-        frame_type: "docs-readme".to_string(),
-        retry_count,
-        force: true,
-    }
 }
 
 pub fn publish_patch_set(
@@ -1005,6 +961,7 @@ mod tests {
     fn claim_policy() -> DocsClaimPolicy {
         DocsClaimPolicy {
             policy_id: "test-policy".to_string(),
+            semantic_theory: crate::docs::claim_observation::test_support::policy().semantic_theory,
             acceptance_evaluator: Some(
                 crate::docs::claim_validation::DocsAcceptanceEvaluator::WeightedClaimMassV1,
             ),
@@ -1375,39 +1332,21 @@ mod tests {
     }
 
     #[test]
-    fn readme_prompt_keeps_direct_and_descendant_evidence_separate() {
+    fn readme_input_keeps_source_and_unvalidated_descendant_drafts_separate() {
         let directory = DirectoryEvidence {
-            path: "production".to_string(),
-            direct_files: Vec::new(),
-            child_directories: vec!["production/scripts".to_string()],
+            path: "production".into(),
+            direct_files: vec![],
+            child_directories: vec!["production/scripts".into()],
             evidence: String::new(),
         };
-        let messages = readme_messages(
+        let input = readme_input(
             &directory,
             "",
-            "--- child production/scripts README ---\n# Scripts\n",
+            "child draft",
             MAX_DIRECTORY_EVIDENCE_BYTES + MAX_CHILD_README_BYTES,
         );
-        let prompt = &messages[1].content;
-        assert!(prompt.contains("Direct source files in this directory:\n- none"));
-        assert!(prompt.contains("Descendant README evidence:"));
-        assert!(prompt.contains("not files or APIs directly owned"));
-        assert!(prompt.contains("Never rewrite hyphens as underscores"));
-        assert!(prompt.contains("Do not invent clone URLs"));
-        assert!(prompt.contains("keep it under 450 words"));
-    }
-
-    #[test]
-    fn aggregate_headings_are_bound_to_the_current_scope() {
-        let directory = DirectoryEvidence {
-            path: ".".to_string(),
-            direct_files: Vec::new(),
-            child_directories: vec!["production".to_string()],
-            evidence: String::new(),
-        };
-        assert_eq!(
-            stabilize_aggregate_heading("# Staging\n\nBody\n", &directory),
-            "# Repository root\n\nBody\n"
-        );
+        assert_eq!(input["directory"], "production");
+        assert_eq!(input["direct_files"], serde_json::json!([]));
+        assert_eq!(input["descendant_drafts"], "child draft");
     }
 }

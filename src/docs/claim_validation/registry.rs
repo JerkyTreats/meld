@@ -128,6 +128,7 @@ mod tests {
             let db = sled::open(root.path()).unwrap();
             let mut old = policy();
             old.acceptance_evaluator = None;
+            old.semantic_theory = None;
             let revision = DocsClaimPolicyRevision {
                 content_identity: old.content_identity(),
                 policy: old,
@@ -153,17 +154,28 @@ mod tests {
 
     #[test]
     fn exact_policy_revisions_are_idempotent_and_historical() {
-        let db = sled::Config::new().temporary(true).open().unwrap();
+        let root = tempfile::tempdir().unwrap();
+        let db = sled::open(root.path()).unwrap();
         let store = DocsClaimPolicyRegistryStore::new(db).unwrap();
         let (_, first) = store.install(policy(), 3).unwrap();
         let (same, replay) = store.install(policy(), 8).unwrap();
         let mut changed = policy();
-        changed.minimum_groundedness = 0.91;
+        changed.semantic_theory.as_mut().unwrap().readme_judgment =
+            "A successor installed entailment instruction.".into();
         let (_, second) = store.install(changed, 9).unwrap();
 
         assert!(!same);
         assert_eq!(replay.installed_at_seq, 3);
         assert_ne!(first.content_identity, second.content_identity);
-        assert_eq!(store.resolve(&first.revision_ref()).unwrap(), Some(first));
+        drop(store);
+        let reopened = DocsClaimPolicyRegistryStore::new(sled::open(root.path()).unwrap()).unwrap();
+        assert_eq!(
+            reopened.resolve(&second.revision_ref()).unwrap(),
+            Some(second)
+        );
+        assert_eq!(
+            reopened.resolve(&first.revision_ref()).unwrap(),
+            Some(first)
+        );
     }
 }

@@ -332,36 +332,22 @@ pub(crate) async fn extract_provider_claims<
     config: &DocsCapabilityConfig,
     request: &DocsSourceClaimRequest<'_>,
 ) -> Result<ProposedSourceClaims, ApiError> {
-    use crate::context::generation::contracts::GenerationOrchestrationRequest;
-    use crate::provider::{ChatMessage, MessageRole};
-    let input = serde_json::to_vec(&(
-        SOURCE_CLAIM_CONTRACT,
-        request.source,
-        request.policy.content_identity(),
-    ))
-    .map_err(|error| invalid(&error.to_string()))?;
-    let digest = blake3::hash(&input);
-    let mut request_bytes = [0; 8];
-    request_bytes.copy_from_slice(&digest.as_bytes()[..8]);
-    let generation = GenerationOrchestrationRequest {
-        request_id: u64::from_le_bytes(request_bytes),
-        node_id: *digest.as_bytes(),
-        agent_id: config.agent_id.clone(),
-        provider: config.provider.clone(),
-        frame_type: "docs-source-claims".into(),
-        retry_count: 0,
-        force: true,
-    };
-    let preparation = crate::provider::executor::prepare_provider_for_request(api, &generation)?;
-    let messages = vec![
-        ChatMessage { role: MessageRole::System, content: "Extract independently supported factual claims from the supplied source only. Cover its visible interfaces, behavior, configuration, data, and constraints. Do not consult or predict a README. Do not decide which claims a README must contain. Never infer behavior from a filename alone. Each claim must be a single specific assertion with one or more exact, uniquely occurring source quotations supporting it. Do not invent omitted context. Return JSON only.".into() },
-        ChatMessage { role: MessageRole::User, content: format!("Source path: {}\nCaptured source:\n{}\n\nReturn {{\"complete\":true,\"claims\":[{{\"statement\":\"...\",\"confidence\":0.95,\"quotes\":[\"exact source text\"]}}],\"no_claims_reason\":null}}. Include all independently supported claims under the stated extraction scope. If you cannot finish, set complete to false. If no source claims can be extracted, return an empty claims array and an explicit no_claims_reason. Quotes must occur uniquely so Docs can establish exact byte positions.", request.source.path, request.source.text.as_deref().ok_or_else(|| invalid("source text is absent"))?) },
-    ];
+    request.policy.validate()?;
+    let generation = request.policy.semantics()?.generation(
+        config,
+        &request.policy.content_identity(),
+        super::semantics::DocsJudgmentOperation::SourceExtraction,
+        serde_json::json!({"source": request.source}),
+        0,
+        0,
+    )?;
+    let preparation =
+        crate::provider::executor::prepare_provider_for_request(api, &generation.request)?;
     let result = crate::provider::executor::execute_completion(
         api,
-        &generation,
+        &generation.request,
         &preparation,
-        messages,
+        generation.messages,
         None,
     )
     .await?;

@@ -4,16 +4,13 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
 
-use crate::context::generation::contracts::GenerationOrchestrationRequest;
+use super::semantics::{DocsClaimGuard, DocsJudgmentOperation, DocsSemanticTheory};
 use crate::docs::capability::{
     DirectoryEvidence, DocsCapabilityConfig, DocsEvidenceBundle, DocsPatchSet, ReadmePatch,
 };
 use crate::error::ApiError;
-use crate::execution::{
-    ExecutionEventContext, ExecutionRuntimeContext, ProviderExecutionPort, ProviderValidationPort,
-};
+use crate::execution::{ExecutionEventContext, ProviderExecutionPort, ProviderValidationPort};
 use crate::provider::executor::{execute_completion, prepare_provider_for_request};
-use crate::provider::{ChatMessage, MessageRole};
 
 const CLAIM_BATCH_SIZE: usize = 6;
 const MAX_EVIDENCE_QUOTE_CHARS: usize = 160;
@@ -34,6 +31,8 @@ pub struct DocsClaimPolicy {
     /// Absent only in historical revisions, which cannot author new judgments.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acceptance_evaluator: Option<DocsAcceptanceEvaluator>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_theory: Option<DocsSemanticTheory>,
     pub minimum_claim_confidence: f64,
     pub minimum_groundedness: f64,
     pub maximum_unsupported_claim_mass: f64,
@@ -57,12 +56,19 @@ pub enum DocsAcceptanceEvaluator {
 impl DocsClaimPolicy {
     pub fn validate(&self) -> Result<(), ApiError> {
         self.validate_historical()?;
+        self.semantics()?.validate()?;
         if self.acceptance_evaluator.is_none() {
             return Err(ApiError::ConfigError(
                 "Docs policy requires an explicit acceptance evaluator".into(),
             ));
         }
         Ok(())
+    }
+
+    pub(crate) fn semantics(&self) -> Result<&DocsSemanticTheory, ApiError> {
+        self.semantic_theory.as_ref().ok_or_else(|| {
+            ApiError::ConfigError("Docs policy requires installed semantic theory".into())
+        })
     }
 
     fn validate_historical(&self) -> Result<(), ApiError> {
@@ -375,6 +381,7 @@ pub struct ProviderClaimAssessment {
 
 /// Read-only evidence supplied to a claim judge. Proposals are reconciled and guarded by Docs.
 pub struct DocsClaimJudgmentRequest<'a> {
+    pub policy: &'a DocsClaimPolicy,
     pub directory: &'a DirectoryEvidence,
     pub patch: &'a ReadmePatch,
     pub evidence: &'a EvidencePartitions,
@@ -441,6 +448,7 @@ impl<P: ProviderValidationPort + ProviderExecutionPort + ?Sized> DocsClaimJudge
         assess_claim_batch(
             self.api,
             self.config,
+            request.policy,
             request.directory,
             request.patch,
             request.evidence,
@@ -454,8 +462,8 @@ impl<P: ProviderValidationPort + ProviderExecutionPort + ?Sized> DocsClaimJudge
 }
 
 /// Validate and, when needed, revise every candidate README within policy bounds.
-pub async fn validate_patch_set(
-    api: &dyn ExecutionRuntimeContext,
+pub async fn validate_patch_set<P: ProviderValidationPort + ProviderExecutionPort + ?Sized>(
+    api: &P,
     config: &DocsCapabilityConfig,
     policy: &DocsClaimPolicy,
     bundle: &DocsEvidenceBundle,
@@ -533,6 +541,7 @@ pub async fn validate_patch_set(
             patch = revise_readme(
                 api,
                 config,
+                policy,
                 directory,
                 &patch,
                 &partitions,
@@ -629,6 +638,7 @@ async fn assess_readme(
     let mut batch_attempt = 0;
     while let Some(batch) = pending_batches.pop_front() {
         let request = DocsClaimJudgmentRequest {
+            policy: context.policy,
             directory: context.directory,
             patch,
             evidence: context.evidence,
@@ -655,7 +665,11 @@ async fn assess_readme(
     }
     assessments.sort_by(|left, right| left.claim.claim_id.cmp(&right.claim.claim_id));
     validate_assessment_integrity(context.policy, &assessments, Some(context.evidence))?;
-    apply_deterministic_guards(context.evidence, &mut assessments);
+    apply_deterministic_guards(
+        &context.policy.semantics()?.claim_guards,
+        context.evidence,
+        &mut assessments,
+    );
     let (groundedness, unsupported, contradiction) =
         aggregate_assessments(context.policy, &assessments);
     let accepted = context.policy.accepts(&assessments)?;
@@ -675,6 +689,7 @@ async fn assess_readme(
 async fn assess_claim_batch<P: ProviderValidationPort + ProviderExecutionPort + ?Sized>(
     api: &P,
     config: &DocsCapabilityConfig,
+    policy: &DocsClaimPolicy,
     directory: &DirectoryEvidence,
     patch: &ReadmePatch,
     evidence: &EvidencePartitions,
@@ -683,31 +698,32 @@ async fn assess_claim_batch<P: ProviderValidationPort + ProviderExecutionPort + 
     batch_index: usize,
     event_context: Option<&ExecutionEventContext>,
 ) -> Result<Vec<ProviderClaimAssessment>, ApiError> {
-    let request = validation_request(
+    policy.validate()?;
+    let generation = policy.semantics()?.generation(
         config,
-        directory,
-        &patch.content_hash,
+        &policy.content_identity(),
+        DocsJudgmentOperation::ReadmeJudgment,
+        serde_json::json!({
+            "directory": directory.path,
+            "readme_path": patch.path,
+            "readme_content_hash": patch.content_hash,
+            "claims": claims,
+            "inventory": evidence.inventory,
+            "direct_evidence": evidence.direct,
+            "descendant_evidence": evidence.descendant,
+        }),
         revision_attempt,
         batch_index,
-        "docs-claim-validation",
-    );
-    let preparation = prepare_provider_for_request(api, &request)?;
-    let claim_json = serde_json::to_string(claims)
-        .map_err(|error| ApiError::ConfigError(format!("cannot encode README claims: {error}")))?;
-    let messages = vec![
-        ChatMessage {
-            role: MessageRole::System,
-            content: "You are an evidence entailment verifier. Judge every supplied claim against only the partitioned evidence. A supported verdict requires the evidence to justify the entire claim. A contradicted verdict requires evidence that conflicts with the claim. Otherwise use unsupported. Return compact JSON only and preserve every claim id exactly. Keep each rationale under twelve words.".to_string(),
-        },
-        ChatMessage {
-            role: MessageRole::User,
-            content: format!(
-                "Assess every claim in this JSON array:\n{claim_json}\n\nEvidence inventory:\n{}\n\nDirect source evidence:\n{}\n\nDescendant README evidence:\n{}\n\nReturn one JSON object with an assessments array. Each assessment must contain claim_id, verdict, confidence from zero to one, citations, and rationale. Verdict must be supported, unsupported, or contradicted. Each citation must contain scope and quote. Scope must be inventory, direct, or descendant. A supported verdict requires one to three shortest exact quotes of at most 160 characters from the cited partitions. Cite every independent clause, including text after and, then, or except. Unsupported verdicts need no citation. Never use outside knowledge. Never infer ownership from a repository URL. A filename alone does not establish its purpose. A route without an authentication dependency is not authenticated merely because neighboring routes are authenticated. Include each supplied claim exactly once and no others. Keep every rationale under twelve words and emit no Markdown.",
-                evidence.inventory, evidence.direct, evidence.descendant
-            ),
-        },
-    ];
-    let response = execute_completion(api, &request, &preparation, messages, event_context).await?;
+    )?;
+    let preparation = prepare_provider_for_request(api, &generation.request)?;
+    let response = execute_completion(
+        api,
+        &generation.request,
+        &preparation,
+        generation.messages,
+        event_context,
+    )
+    .await?;
     decode_provider_assessments(&response.content)
 }
 
@@ -823,7 +839,11 @@ fn validate_assessment_integrity(
     Ok(())
 }
 
-fn apply_deterministic_guards(evidence: &EvidencePartitions, assessments: &mut [ClaimAssessment]) {
+fn apply_deterministic_guards(
+    guards: &[DocsClaimGuard],
+    evidence: &EvidencePartitions,
+    assessments: &mut [ClaimAssessment],
+) {
     for assessment in assessments {
         if assessment.verdict != ClaimVerdict::Supported {
             continue;
@@ -833,19 +853,25 @@ fn apply_deterministic_guards(evidence: &EvidencePartitions, assessments: &mut [
             "{}\n{}\n{}",
             evidence.inventory, evidence.direct, evidence.descendant
         );
-        for literal in &assessment.claim.literal_requirements {
+        for literal in assessment
+            .claim
+            .literal_requirements
+            .iter()
+            .filter(|_| guards.contains(&DocsClaimGuard::LiteralPresenceV1))
+        {
             if !literal_evidence.contains(literal) {
                 failures.push(format!(
                     "literal '{literal}' is absent from admitted evidence"
                 ));
             }
         }
-        if assessment.claim.kind == ClaimKind::CodeLine
+        if guards.contains(&DocsClaimGuard::CodeLineDirectPresenceV1)
+            && assessment.claim.kind == ClaimKind::CodeLine
             && !evidence.direct.contains(assessment.claim.statement.trim())
         {
             failures.push("code or command line is absent from direct source evidence".to_string());
         }
-        if assessment.verdict == ClaimVerdict::Supported
+        if guards.contains(&DocsClaimGuard::ClauseTermCoverageV1)
             && !citations_cover_each_clause(&assessment.claim.statement, &assessment.citations)
         {
             failures.push("citations do not cover every independent claim clause".to_string());
@@ -859,9 +885,10 @@ fn apply_deterministic_guards(evidence: &EvidencePartitions, assessments: &mut [
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn revise_readme(
-    api: &dyn ExecutionRuntimeContext,
+async fn revise_readme<P: ProviderValidationPort + ProviderExecutionPort + ?Sized>(
+    api: &P,
     config: &DocsCapabilityConfig,
+    policy: &DocsClaimPolicy,
     directory: &DirectoryEvidence,
     patch: &ReadmePatch,
     evidence: &EvidencePartitions,
@@ -869,15 +896,6 @@ async fn revise_readme(
     revision_attempt: usize,
     event_context: Option<&ExecutionEventContext>,
 ) -> Result<ReadmePatch, ApiError> {
-    let request = validation_request(
-        config,
-        directory,
-        &patch.content_hash,
-        revision_attempt,
-        0,
-        "docs-readme-revision",
-    );
-    let preparation = prepare_provider_for_request(api, &request)?;
     let rejected = report
         .assessments
         .iter()
@@ -890,25 +908,30 @@ async fn revise_readme(
         })
         .collect::<Vec<_>>()
         .join("\n");
-    let messages = vec![
-        ChatMessage {
-            role: MessageRole::System,
-            content: "Revise a Markdown README so every factual claim is supported by the supplied evidence. Remove unsupported claims instead of replacing them with guesses. Preserve exact identifiers and return the complete Markdown README only.".to_string(),
-        },
-        ChatMessage {
-            role: MessageRole::User,
-            content: format!(
-                "Current directory: {}\n\nRejected claim report:\n{}\n\nEvidence inventory:\n{}\n\nDirect source evidence:\n{}\n\nDescendant README evidence:\n{}\n\nCurrent README:\n{}\n\nRewrite the complete README. Do not add any fact, command, path, URL, filename purpose, ownership claim, authentication claim, license claim, or installation instruction unless the admitted evidence supports it.",
-                directory.path,
-                truncate_chars(&rejected, MAX_REVISION_REPORT_CHARS),
-                evidence.inventory,
-                evidence.direct,
-                evidence.descendant,
-                patch.content
-            ),
-        },
-    ];
-    let response = execute_completion(api, &request, &preparation, messages, event_context).await?;
+    let generation = policy.semantics()?.generation(
+        config,
+        &policy.content_identity(),
+        DocsJudgmentOperation::Revision,
+        serde_json::json!({
+            "directory": directory.path,
+            "rejected_claim_report": truncate_chars(&rejected, MAX_REVISION_REPORT_CHARS),
+            "inventory": evidence.inventory,
+            "direct_evidence": evidence.direct,
+            "descendant_evidence": evidence.descendant,
+            "current_readme": patch.content,
+        }),
+        revision_attempt,
+        0,
+    )?;
+    let preparation = prepare_provider_for_request(api, &generation.request)?;
+    let response = execute_completion(
+        api,
+        &generation.request,
+        &preparation,
+        generation.messages,
+        event_context,
+    )
+    .await?;
     let content = normalize_markdown(&response.content);
     if !content.starts_with('#') || content.len() < 32 {
         return Err(ApiError::ConfigError(format!(
@@ -1531,34 +1554,6 @@ fn rejection_summary(report: &ReadmeClaimReport) -> String {
         .join(" | ")
 }
 
-fn validation_request(
-    config: &DocsCapabilityConfig,
-    directory: &DirectoryEvidence,
-    content_hash: &str,
-    revision_attempt: usize,
-    batch_index: usize,
-    frame_type: &str,
-) -> GenerationOrchestrationRequest {
-    let digest = blake3::hash(
-        format!(
-            "{}::{content_hash}::{revision_attempt}::{batch_index}::{frame_type}",
-            directory.path
-        )
-        .as_bytes(),
-    );
-    let mut request_bytes = [0_u8; 8];
-    request_bytes.copy_from_slice(&digest.as_bytes()[..8]);
-    GenerationOrchestrationRequest {
-        request_id: u64::from_le_bytes(request_bytes),
-        node_id: *digest.as_bytes(),
-        agent_id: config.agent_id.clone(),
-        provider: config.provider.clone(),
-        frame_type: frame_type.to_string(),
-        retry_count: revision_attempt,
-        force: true,
-    }
-}
-
 fn readme_path(directory: &str) -> String {
     if directory == "." {
         "README.md".to_string()
@@ -1618,6 +1613,7 @@ mod tests {
     fn policy() -> DocsClaimPolicy {
         DocsClaimPolicy {
             acceptance_evaluator: Some(DocsAcceptanceEvaluator::WeightedClaimMassV1),
+            semantic_theory: crate::docs::claim_observation::test_support::policy().semantic_theory,
             policy_id: "test".to_string(),
             minimum_claim_confidence: 0.8,
             minimum_groundedness: 0.8,
@@ -1668,6 +1664,7 @@ mod tests {
             rationale: "supported".to_string(),
         }];
         apply_deterministic_guards(
+            &policy().semantics().unwrap().claim_guards,
             &EvidencePartitions {
                 inventory: String::new(),
                 direct: "config.example.yaml".to_string(),
@@ -1733,6 +1730,7 @@ mod tests {
             rationale: "supported".to_string(),
         }];
         apply_deterministic_guards(
+            &policy().semantics().unwrap().claim_guards,
             &EvidencePartitions {
                 inventory: String::new(),
                 direct: "Assumed that it is being run from the root\nset -e\nset +e\nwait"
