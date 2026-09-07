@@ -35,7 +35,7 @@ cargo run --bin meld -- runtime run
 
 Preparation remains inert. Activation opens the native owner lifecycle and admission path. The installed claim policy supplies the questions, acceptance rules and drafting instructions. The runtime observes current workspace evidence before deciding on work and returns published results through Docs observations, Curation, Belief and Agent judgment.
 
-The old bundled `docs_writer_thread_v1` Workflow and `docs_writer` task package are no longer installed by `meld init` or embedded as an Execution fallback. This package is their maintained-Docs successor. Existing user-supplied Workflow profiles and package documents remain explicit compatibility inputs; their turn completion and frame-head output do not establish native Docs satisfaction.
+The old bundled `docs_writer_thread_v1` Workflow and `docs_writer` task package are no longer installed by `meld init` or embedded as an Execution fallback. This package is their maintained-Docs successor. Legacy Workflow execution is retired. Existing profiles remain inspectable, but CLI, context, watch and control no longer execute their turns. Their stored output does not establish native Docs satisfaction. Arbitrary profiles are not automatically translated into this maintained intent.
 
 You can also request an independent reconciliation of the installed intent:
 

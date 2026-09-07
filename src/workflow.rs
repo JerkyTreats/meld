@@ -1,32 +1,19 @@
-//! Workflow domain modules.
+//! Legacy Workflow inspection and historical contracts; execution is retired.
 
-pub mod binding;
 pub mod commands;
 pub mod events;
-pub mod executor;
-pub mod facade;
 pub mod gates;
 pub mod normalization;
 pub mod profile;
 pub mod record_contracts;
 pub mod registry;
 pub mod resolver;
-pub mod state_store;
 pub mod summary;
-pub mod task_path;
 pub mod tooling;
 
 pub use commands::{
-    WorkflowCommandService, WorkflowExecuteRequest, WorkflowExecuteResult, WorkflowInspectResult,
-    WorkflowListItem, WorkflowListResult, WorkflowValidateResult,
-};
-pub use executor::{
-    execute_registered_workflow, WorkflowExecutionRequest, WorkflowExecutionSummary,
-};
-pub use facade::{
-    build_target_execution_request, execute_registered_workflow_target,
-    execute_registered_workflow_target_async, execute_workflow_target,
-    execute_workflow_target_async,
+    WorkflowCommandService, WorkflowInspectResult, WorkflowListItem, WorkflowListResult,
+    WorkflowValidateResult,
 };
 pub use meld_execution::workflow::profile::{
     PromptRefKind, WorkflowArtifactPolicy, WorkflowFailurePolicy, WorkflowGate, WorkflowProfile,
@@ -38,5 +25,10 @@ pub use meld_execution::workflow::{
     workflow_turn_started_envelope, ExecutionWorkflowTurnEventData,
 };
 pub use registry::WorkflowRegistry;
-pub use state_store::{WorkflowStateStore, WorkflowThreadStatus, WorkflowTurnStatus};
-pub use task_path::{build_workflow_task_path_runtime, WorkflowTaskPathRuntime};
+/// Reject old execution addresses while profiles remain readable for migration.
+/// Remove this rejection boundary when persisted callers no longer name Workflow.
+pub fn retired_execution_error() -> crate::error::ApiError {
+    crate::error::ApiError::ConfigError(
+        "Legacy Workflow execution is retired. Install a native reconciliation product and use meld runtime run or meld runtime request; Legacy commands can inspect profiles but cannot execute them.".into(),
+    )
+}

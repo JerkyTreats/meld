@@ -6,17 +6,13 @@ use crate::api::ContextApi;
 use crate::context::head::backfill_legacy_heads_into_ledger;
 use crate::context::queue::{FrameGenerationQueue, QueueEventContext};
 use crate::error::ApiError;
-use crate::execution::ExecutionEventContext;
 use crate::heads::HeadIndex;
 use crate::ignore;
-use crate::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
 use crate::store::{NodeRecord, NodeRecordStore};
 use crate::tree::builder::TreeBuilder;
 use crate::tree::path::canonicalize_path;
 use crate::tree::walker::WalkerConfig;
 use crate::types::NodeID;
-use crate::workflow::executor::{execute_registered_workflow, WorkflowExecutionRequest};
-use crate::workflow::task_path::build_workflow_task_path_runtime;
 use crate::workspace::commands::emit_workspace_snapshot_facts;
 use crate::workspace::scan::stored_workspace_root_hash;
 use notify::{Event, EventKind, RecursiveMode, Watcher};
@@ -395,169 +391,24 @@ impl WatchDaemon {
             agents.len()
         );
 
-        let workflow_provider_name = self.resolve_workflow_provider_name();
-        let workflow_event_context = match (&self.config.session_id, &self.config.progress) {
-            (Some(session_id), Some(progress)) => Some(QueueEventContext {
-                session_id: session_id.clone(),
-                progress: Arc::clone(progress),
-            }),
-            _ => None,
-        };
-        let workflow_execution_event_context = workflow_event_context
-            .as_ref()
-            .map(ExecutionEventContext::from);
         let batch_size = self.config.frame_batch_size;
         let mut created_count = 0;
         let mut skipped_count = 0;
-        let mut workflow_runs = 0;
-        let mut workflow_skipped = 0;
-        let mut workflow_failed = 0;
 
         for chunk in node_ids.chunks(batch_size) {
             for node_id in chunk {
                 for agent in &agents {
                     if let Some(workflow_id) = agent.workflow_binding() {
-                        let Some(provider_name) = workflow_provider_name.as_deref() else {
-                            workflow_failed += 1;
-                            warn!(
-                                node_id = %hex::encode(node_id),
-                                agent_id = %agent.agent_id,
-                                workflow_id = %workflow_id,
-                                "Skipping workflow execution in watch mode because no deterministic provider was resolved"
-                            );
-                            self.emit_event_best_effort(
-                                "workflow_watch_skipped",
-                                json!({
-                                    "node_id": hex::encode(node_id),
-                                    "agent_id": agent.agent_id.clone(),
-                                    "workflow_id": workflow_id,
-                                    "reason": "provider_unresolved"
-                                }),
-                            );
-                            continue;
-                        };
-
-                        let Some(registry_lock) = &self.config.workflow_registry else {
-                            workflow_failed += 1;
-                            warn!(
-                                node_id = %hex::encode(node_id),
-                                agent_id = %agent.agent_id,
-                                workflow_id = %workflow_id,
-                                "Skipping workflow execution in watch mode because workflow registry is unavailable"
-                            );
-                            self.emit_event_best_effort(
-                                "workflow_watch_skipped",
-                                json!({
-                                    "node_id": hex::encode(node_id),
-                                    "agent_id": agent.agent_id.clone(),
-                                    "workflow_id": workflow_id,
-                                    "reason": "registry_unavailable"
-                                }),
-                            );
-                            continue;
-                        };
-
-                        let registered_profile = {
-                            let registry = registry_lock.read();
-                            registry.get(workflow_id).cloned()
-                        };
-
-                        let Some(registered_profile) = registered_profile else {
-                            workflow_failed += 1;
-                            warn!(
-                                node_id = %hex::encode(node_id),
-                                agent_id = %agent.agent_id,
-                                workflow_id = %workflow_id,
-                                "Skipping workflow execution in watch mode because bound workflow was not found in registry"
-                            );
-                            self.emit_event_best_effort(
-                                "workflow_watch_skipped",
-                                json!({
-                                    "node_id": hex::encode(node_id),
-                                    "agent_id": agent.agent_id.clone(),
-                                    "workflow_id": workflow_id,
-                                    "reason": "workflow_not_found"
-                                }),
-                            );
-                            continue;
-                        };
-
-                        let request = WorkflowExecutionRequest {
-                            node_id: *node_id,
-                            agent_id: agent.agent_id.clone(),
-                            provider: ProviderExecutionBinding::new(
-                                provider_name.to_string(),
-                                ProviderRuntimeOverrides::default(),
-                            )?,
-                            frame_type: format!("context-{}", agent.agent_id),
-                            force: false,
-                            path: None,
-                            plan_id: None,
-                            level_index: None,
-                        };
-                        let task_path_runtime = build_workflow_task_path_runtime()?;
-
-                        match execute_registered_workflow(
-                            self.api.as_ref(),
-                            &self.config.workspace_root,
-                            &registered_profile,
-                            &request,
-                            &task_path_runtime,
-                            workflow_execution_event_context.as_ref(),
-                        ) {
-                            Ok(summary) => {
-                                if summary.turns_completed == 0 {
-                                    workflow_skipped += 1;
-                                    debug!(
-                                        node_id = %hex::encode(node_id),
-                                        agent_id = %agent.agent_id,
-                                        workflow_id = %summary.workflow_id,
-                                        thread_id = %summary.thread_id,
-                                        "Skipped workflow execution in watch mode due to existing head reuse"
-                                    );
-                                } else {
-                                    workflow_runs += 1;
-                                    debug!(
-                                        node_id = %hex::encode(node_id),
-                                        agent_id = %agent.agent_id,
-                                        workflow_id = %summary.workflow_id,
-                                        thread_id = %summary.thread_id,
-                                        turns_completed = summary.turns_completed,
-                                        "Executed workflow in watch mode"
-                                    );
-                                }
-                                self.emit_event_best_effort(
-                                    "workflow_watch_result",
-                                    json!({
-                                        "node_id": hex::encode(node_id),
-                                        "agent_id": agent.agent_id.clone(),
-                                        "workflow_id": summary.workflow_id,
-                                        "thread_id": summary.thread_id,
-                                        "turns_completed": summary.turns_completed,
-                                        "skipped": summary.turns_completed == 0
-                                    }),
-                                );
-                            }
-                            Err(err) => {
-                                workflow_failed += 1;
-                                warn!(
-                                    node_id = %hex::encode(node_id),
-                                    agent_id = %agent.agent_id,
-                                    workflow_id = %workflow_id,
-                                    error = %err,
-                                    "Failed to execute workflow in watch mode"
-                                );
-                                self.emit_event_best_effort(
-                                    "workflow_watch_failed",
-                                    json!({
-                                        "node_id": hex::encode(node_id),
-                                        "agent_id": agent.agent_id.clone(),
-                                        "workflow_id": workflow_id,
-                                        "error": err.to_string()
-                                    }),
-                                );
-                            }
-                        }
+                        self.emit_event_best_effort(
+                            "workflow_watch_rejected",
+                            json!({
+                                "node_id": hex::encode(node_id),
+                                "agent_id": agent.agent_id,
+                                "workflow_id": workflow_id,
+                                "error": crate::workflow::retired_execution_error().to_string()
+                            }),
+                        );
+                        warn!(agent_id = %agent.agent_id, workflow_id, "Legacy Workflow execution is retired; configure a native reconciliation product");
                         continue;
                     }
 
@@ -602,28 +453,10 @@ impl WatchDaemon {
             agent_count = agents.len(),
             created = created_count,
             skipped = skipped_count,
-            workflow_runs = workflow_runs,
-            workflow_skipped = workflow_skipped,
-            workflow_failed = workflow_failed,
             "Ensured agent contextframes"
         );
 
         Ok(())
-    }
-
-    fn resolve_workflow_provider_name(&self) -> Option<String> {
-        let registry = self.api.provider_registry().read();
-        let mut names: Vec<String> = registry
-            .list_all()
-            .into_iter()
-            .filter_map(|config| config.provider_name.clone())
-            .collect();
-        names.sort();
-        names.dedup();
-        if names.len() == 1 {
-            return Some(names[0].clone());
-        }
-        None
     }
 
     fn emit_event_best_effort(&self, event_type: &str, data: serde_json::Value) {
@@ -750,16 +583,6 @@ mod tests {
             .unwrap();
     }
 
-    fn write_default_workflows(workflow_dir: &Path) {
-        for (relative_path, content) in crate::workflow_assets::FILES {
-            let output_path = workflow_dir.join(relative_path);
-            if let Some(parent) = output_path.parent() {
-                std::fs::create_dir_all(parent).unwrap();
-            }
-            std::fs::write(output_path, content).unwrap();
-        }
-    }
-
     fn create_watch_test_runtime(
         temp: &TempDir,
         workspace_root: PathBuf,
@@ -842,7 +665,7 @@ mod tests {
     }
 
     #[test]
-    fn ensure_agent_frames_skips_bound_workflow_when_provider_unresolved() {
+    fn watch_rejects_retired_workflow_with_or_without_a_provider() {
         let temp = TempDir::new().unwrap();
         let workspace_root = temp.path().join("workspace");
         std::fs::create_dir_all(&workspace_root).unwrap();
@@ -857,16 +680,8 @@ mod tests {
             agents.register(bound);
         }
 
-        let workflow_dir = temp.path().join("workflows");
-        write_default_workflows(&workflow_dir);
-        let registry = WorkflowRegistry::load(&WorkflowConfig {
-            user_profile_dir: Some(workflow_dir),
-        })
-        .unwrap();
-
         let config = WatchConfig {
             workspace_root,
-            workflow_registry: Some(Arc::new(parking_lot::RwLock::new(registry))),
             ..WatchConfig::default()
         };
         let daemon = WatchDaemon::new(api.clone(), config).unwrap();
@@ -899,10 +714,11 @@ mod tests {
         }
 
         daemon.ensure_agent_frames_batched(&[node_id]).unwrap();
+        assert!(!api.has_agent_frame(&node_id, "writer-bound").unwrap());
     }
 
     #[test]
-    fn ensure_agent_frames_emits_watch_result_for_completed_workflow_thread() {
+    fn ensure_agent_frames_rejects_retired_workflow_despite_completed_thread() {
         let temp = TempDir::new().unwrap();
         let workspace_root = temp.path().join("workspace");
         std::fs::create_dir_all(&workspace_root).unwrap();
@@ -991,19 +807,16 @@ failure_policy:
             node_id,
             "context-writer-bound",
         );
-        crate::workflow::state_store::WorkflowStateStore::new(&workspace_root)
+        let legacy_root = crate::config::xdg::workspace_data_dir(&workspace_root)
             .unwrap()
-            .upsert_thread(&crate::workflow::state_store::WorkflowThreadRecord {
-                thread_id,
-                workflow_id: "watch_skip_workflow".to_string(),
-                node_id: hex::encode(node_id),
-                frame_type: "context-writer-bound".to_string(),
-                status: crate::workflow::state_store::WorkflowThreadStatus::Completed,
-                next_turn_seq: 2,
-                updated_at_ms: crate::telemetry::now_millis(),
-                final_frame_id: None,
-            })
-            .unwrap();
+            .join("workflow/threads");
+        std::fs::create_dir_all(&legacy_root).unwrap();
+        let legacy_record = legacy_root.join(format!("{thread_id}.json"));
+        let historical = serde_json::to_vec(&json!({
+            "thread_id": thread_id, "status": "Completed", "final_frame_id": null
+        }))
+        .unwrap();
+        std::fs::write(&legacy_record, &historical).unwrap();
 
         let progress_db = sled::open(temp.path().join("progress-watch-workflow")).unwrap();
         let (progress, event_store) = open_test_progress(progress_db);
@@ -1014,7 +827,6 @@ failure_policy:
             workspace_root,
             session_id: Some(session_id.clone()),
             progress: Some(Arc::clone(&progress)),
-            workflow_registry: Some(Arc::new(parking_lot::RwLock::new(registry))),
             ..WatchConfig::default()
         };
         let daemon = WatchDaemon::new(api, config).unwrap();
@@ -1025,11 +837,61 @@ failure_policy:
         let events = event_store.read_events_after(&session_id, 0).unwrap();
         let result = events
             .iter()
-            .find(|event| event.event_type == "workflow_watch_result")
-            .expect("watch workflow result should be emitted");
+            .find(|event| event.event_type == "workflow_watch_rejected")
+            .expect("retirement rejection should be emitted");
         assert_eq!(result.data["workflow_id"], "watch_skip_workflow");
-        assert_eq!(result.data["turns_completed"], 0);
-        assert_eq!(result.data["skipped"], true);
+        assert!(result.data["error"].as_str().unwrap().contains("retired"));
+        assert_eq!(std::fs::read(legacy_record).unwrap(), historical);
+    }
+
+    #[test]
+    fn retired_workflow_addresses_cannot_enter_an_unstarted_queue() {
+        use crate::context::generation::{TargetExecutionProgram, TargetExecutionProgramKind};
+        use crate::context::queue::{
+            FrameGenerationQueue, GenerationConfig, GenerationRequestOptions, Priority,
+        };
+        use crate::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
+        use std::sync::Arc;
+        let temp_dir = TempDir::new().unwrap();
+        {
+            let workspace_root = temp_dir.path().join("workspace");
+            std::fs::create_dir_all(&workspace_root).unwrap();
+            let api = Arc::new(create_test_api(&workspace_root));
+            let queue = FrameGenerationQueue::new(api, GenerationConfig::default());
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            runtime.block_on(async {
+                for program in [
+                    TargetExecutionProgram::workflow("retained-profile"),
+                    TargetExecutionProgram {
+                        kind: TargetExecutionProgramKind::SingleShot,
+                        workflow_id: Some("retained-profile".into()),
+                    },
+                ] {
+                    let error = queue
+                        .enqueue_and_wait_with_program(
+                            crate::types::Hash::from([7; 32]),
+                            "absent-agent".into(),
+                            ProviderExecutionBinding::new(
+                                "absent-provider",
+                                ProviderRuntimeOverrides::default(),
+                            )
+                            .unwrap(),
+                            None,
+                            program,
+                            Priority::Urgent,
+                            Some(std::time::Duration::from_millis(10)),
+                            GenerationRequestOptions::default(),
+                        )
+                        .await
+                        .unwrap_err();
+                    assert!(error.to_string().contains("retired"), "{error}");
+                }
+                queue
+                    .wait_for_completion(Some(std::time::Duration::ZERO))
+                    .await
+                    .unwrap();
+            });
+        }
     }
 
     #[test]

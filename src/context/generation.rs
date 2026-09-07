@@ -17,9 +17,6 @@ pub use plan::{
     FailurePolicy, GenerationErrorDetail, GenerationItem, GenerationNodeType, GenerationPlan,
     GenerationResult, GenerationTarget, LevelSummary, PlanPriority,
 };
-pub use program::{
-    TargetExecutionProgram, TargetExecutionProgramKind, TargetExecutionRequest,
-    TargetExecutionResult,
-};
+pub use program::{TargetExecutionProgram, TargetExecutionProgramKind};
 pub use run::{run_generate, GenerateRequest};
 pub use selection::resolve_target_execution_program;

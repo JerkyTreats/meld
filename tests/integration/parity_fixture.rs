@@ -713,12 +713,12 @@ pub fn try_run_workflow_route(
             .execute(&Commands::Scan { force: true })
             .unwrap();
 
-        let registered_profile = run_context
-            .workflow_registry()
-            .read()
-            .get(PARITY_WORKFLOW_ID)
-            .unwrap()
-            .clone();
+        let registered_profile =
+            meld::workflow::WorkflowRegistry::load(&meld::config::WorkflowConfig::default())
+                .unwrap()
+                .get(PARITY_WORKFLOW_ID)
+                .unwrap()
+                .clone();
         let mut catalog = CapabilityCatalog::new();
         let mut registry = CapabilityExecutorRegistry::new();
         register_docs_writer_capabilities(&mut catalog, &mut registry);
@@ -827,12 +827,12 @@ pub fn run_incremental_workflow_scenario(
             run_context
                 .execute(&Commands::Scan { force: true })
                 .unwrap();
-            let registered_profile = run_context
-                .workflow_registry()
-                .read()
-                .get(PARITY_WORKFLOW_ID)
-                .unwrap()
-                .clone();
+            let registered_profile =
+                meld::workflow::WorkflowRegistry::load(&meld::config::WorkflowConfig::default())
+                    .unwrap()
+                    .get(PARITY_WORKFLOW_ID)
+                    .unwrap()
+                    .clone();
             let result = prepare_registered_workflow_task_run(
                 run_context.api(),
                 &workspace_root,

@@ -680,8 +680,38 @@ authority_policy_id = "startup_nonce_local"
         .unwrap()
         .is_err());
         assert!(!product_root.exists());
+        create_test_agent("retired-profile-agent", Some("absent-retired-profile"));
+        let legacy_profiles = meld::config::WorkflowConfig::default()
+            .resolve_user_profile_dir()
+            .unwrap();
+        std::fs::create_dir_all(&legacy_profiles).unwrap();
+        let malformed_profile = legacy_profiles.join("malformed.yaml");
+        std::fs::write(&malformed_profile, "workflow_id: [unfinished").unwrap();
         let run = RunContext::new(absent_workspace.clone(), None).unwrap();
         assert!(run.api().workspace_root().is_none());
+        assert!(run
+            .execute(&Commands::Workflow {
+                command: meld::cli::WorkflowCommands::List {
+                    format: "json".into()
+                },
+            })
+            .is_err());
+        let retired = run
+            .execute(&Commands::Workflow {
+                command: meld::cli::WorkflowCommands::Execute {
+                    workflow_id: "malformed".into(),
+                    node: None,
+                    path: None,
+                    path_positional: None,
+                    agent: "retired-profile-agent".into(),
+                    provider: "absent-provider".into(),
+                    frame_type: None,
+                    force: true,
+                },
+            })
+            .unwrap_err();
+        assert!(retired.to_string().contains("retired"));
+
         run.execute(&Commands::World {
             command: WorldCommands::Init {
                 path: absent_workspace.clone(),
@@ -779,6 +809,7 @@ authority_policy_id = "startup_nonce_local"
             before_inspection
         );
         drop(run);
+        std::fs::remove_file(malformed_profile).unwrap();
         let run = RunContext::new(absent_workspace.clone(), None).unwrap();
         assert_eq!(
             run.product_runtime()

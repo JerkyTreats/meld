@@ -10,6 +10,6 @@ pub use ports::{
     ExecutionFrame, ExecutionNodeContext, ExecutionNodeKind, ExecutionNodeRecord,
     ExecutionProgressPort, ExecutionRuntimeContext, GeneratedMetadataPort, NodeResolutionPort,
     PromptArtifactReadPort, PromptLineagePort, ProviderExecutionPort, ProviderPreparationView,
-    ProviderValidationPort, SystemPromptPort, TaskRunArtifactAnchor, WorkflowProfileLoadPort,
-    WorkspaceScanPort, WorldModelQueryPort,
+    ProviderValidationPort, SystemPromptPort, TaskRunArtifactAnchor, WorkspaceScanPort,
+    WorldModelQueryPort,
 };

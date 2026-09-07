@@ -352,6 +352,7 @@ pub fn run_generate(
     } else {
         resolve_target_execution_program(&agent)
     };
+    execution_program.validate_execution()?;
     if agent.role != crate::agent::AgentRole::Writer {
         return Err(ApiError::Unauthorized(format!(
             "Agent '{}' has role {:?}, but only Writer agents can generate frames.",

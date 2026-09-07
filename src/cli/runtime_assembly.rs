@@ -20,13 +20,12 @@ use crate::runtime::storage::ProductStorageLayout;
 use crate::session::{SessionRuntime, SessionStore};
 use crate::store::persistence::SledNodeRecordStore;
 use crate::telemetry::ProgressRuntime;
-use crate::workflow::WorkflowRegistry;
 use crate::world_state::belief::BeliefStore;
 
 #[derive(Clone)]
 pub struct CliRuntimeAssembly {
     api: Arc<ContextApi>,
-    workflow_registry: Arc<parking_lot::RwLock<WorkflowRegistry>>,
+    workflow_config: crate::config::WorkflowConfig,
     progress: Arc<ProgressRuntime>,
     product_runtime: Arc<ProductRuntimeAssembly>,
     legacy_store_path: PathBuf,
@@ -118,10 +117,6 @@ impl CliRuntimeAssembly {
                 .map_err(|error| ApiError::ConfigError(error.to_string()))?,
         );
 
-        let workflow_registry = Arc::new(parking_lot::RwLock::new(WorkflowRegistry::load(
-            &config.workflows,
-        )?));
-
         // Existing CLI-owned node, frame, prompt, belief, and session state
         // stays on its characterized compatibility paths. Only canonical
         // events and the graph projection move to the product authority in E5.
@@ -188,13 +183,6 @@ impl CliRuntimeAssembly {
         provider_registry.load_from_config(config)?;
         provider_registry.load_from_xdg()?;
 
-        {
-            let registry = workflow_registry.read();
-            for agent in agent_registry.list_all() {
-                crate::workflow::binding::validate_agent_binding(agent, &registry)?;
-            }
-        }
-
         let api = ContextApi::new(
             node_store,
             frame_storage,
@@ -207,11 +195,10 @@ impl CliRuntimeAssembly {
         .with_optional_workspace(runtime_workspace);
         api.set_world_model_queries(world_model_queries);
         api.set_belief_store(belief_store);
-        api.set_workflow_registry(Arc::clone(&workflow_registry));
 
         Ok(Self {
             api: Arc::new(api),
-            workflow_registry,
+            workflow_config: config.workflows.clone(),
             progress,
             product_runtime,
             legacy_store_path,
@@ -224,8 +211,8 @@ impl CliRuntimeAssembly {
         &self.api
     }
 
-    pub fn workflow_registry(&self) -> &Arc<parking_lot::RwLock<WorkflowRegistry>> {
-        &self.workflow_registry
+    pub fn workflow_config(&self) -> &crate::config::WorkflowConfig {
+        &self.workflow_config
     }
 
     pub fn progress(&self) -> &Arc<ProgressRuntime> {

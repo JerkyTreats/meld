@@ -7,7 +7,7 @@ use meld_execution::{
     PreviousMetadataSnapshotView, PromptArtifactReadPort, PromptLineagePort, PromptLineageRequest,
     PromptLinkContractView, ProviderExecutionBinding, ProviderExecutionPort,
     ProviderPreparationView, ProviderRuntimeOverrides, ProviderValidationPort, SystemPromptPort,
-    TaskRunArtifactAnchor, WorkflowProfileLoadPort, WorldModelQueryPort,
+    TaskRunArtifactAnchor, WorldModelQueryPort,
 };
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -380,22 +380,9 @@ impl WorldModelQueryPort for FakeExecutionContext {
     }
 }
 
-impl WorkflowProfileLoadPort for FakeExecutionContext {
-    type Error = String;
-    type WorkflowProfile = String;
-
-    fn load_workflow_profile(
-        &self,
-        workflow_id: &str,
-    ) -> Result<Self::WorkflowProfile, Self::Error> {
-        Ok(format!("profile:{workflow_id}"))
-    }
-}
-
 fn assert_execution_context<T: ExecutionContext>(_context: &T) {}
 fn assert_execution_runtime_context<T: ExecutionRuntimeContext>(_context: &T) {}
 fn assert_world_model_query_port<T: WorldModelQueryPort>(_context: &T) {}
-fn assert_workflow_profile_load_port<T: WorkflowProfileLoadPort>(_context: &T) {}
 
 #[test]
 fn blanket_execution_context_impl_accepts_port_bundle() {
@@ -417,7 +404,6 @@ fn runtime_and_query_port_contracts_compile_against_port_bundle() {
 
     assert_execution_runtime_context(&context);
     assert_world_model_query_port(&context);
-    assert_workflow_profile_load_port(&context);
     context
         .publish_execution_envelope(&event_context, "envelope".to_string())
         .unwrap();
@@ -431,9 +417,5 @@ fn runtime_and_query_port_contracts_compile_against_port_bundle() {
             .unwrap()
             .target_object_kind,
         "summary"
-    );
-    assert_eq!(
-        context.load_workflow_profile("workflow-docs").unwrap(),
-        "profile:workflow-docs"
     );
 }

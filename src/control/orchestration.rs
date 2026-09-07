@@ -60,7 +60,6 @@ pub struct GenerationExecutor {
 
 impl GenerationExecutor {
     const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(300);
-    const DEFAULT_WORKFLOW_WAIT_TIMEOUT: Duration = Duration::from_secs(900);
 
     pub fn new(progress: Option<Arc<ProgressRuntime>>) -> Self {
         Self {
@@ -85,6 +84,9 @@ impl GenerationExecutor {
         plan: GenerationPlan,
     ) -> Result<GenerationResult, ApiError> {
         plan.validate()?;
+        for item in plan.levels.iter().flatten() {
+            item.program.validate_execution()?;
+        }
         let mut result = GenerationResult::new(plan.plan_id.clone());
         let session_id = plan.session_id.clone();
 
@@ -151,7 +153,7 @@ impl GenerationExecutor {
                 );
 
                 let submit_plan_id = plan.plan_id.clone();
-                let wait_timeout = self.wait_timeout_for_item(item);
+                let wait_timeout = self.wait_timeout;
                 futures.push(async move {
                     let res = queue
                         .enqueue_and_wait_item(item, queue_priority, &submit_plan_id, wait_timeout)
@@ -294,13 +296,6 @@ impl GenerationExecutor {
         );
 
         Ok(result)
-    }
-
-    fn wait_timeout_for_item(&self, item: &GenerationItem) -> Option<Duration> {
-        if self.wait_timeout.is_some() && item.program.workflow_id().is_some() {
-            return Some(Self::DEFAULT_WORKFLOW_WAIT_TIMEOUT);
-        }
-        self.wait_timeout
     }
 
     fn emit_envelope(&self, session_id: Option<&str>, envelope: EventEnvelope) {
@@ -467,7 +462,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn executor_extends_default_wait_timeout_for_workflow_items() {
+    async fn executor_rejects_retired_workflow_before_submitting_any_item() {
         let queue = MockQueue::new(HashMap::new());
         let executor = GenerationExecutor::new(None);
         let workflow_plan = GenerationPlan {
@@ -482,9 +477,8 @@ mod tests {
             total_levels: 1,
         };
 
-        let _ = executor.execute(&queue, workflow_plan).await.unwrap();
-
-        let timeouts = queue.received_timeouts.lock();
-        assert_eq!(*timeouts, vec![Some(Duration::from_secs(900))]);
+        let error = executor.execute(&queue, workflow_plan).await.unwrap_err();
+        assert!(error.to_string().contains("retired"));
+        assert!(queue.received_timeouts.lock().is_empty());
     }
 }

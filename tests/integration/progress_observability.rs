@@ -667,7 +667,7 @@ fn command_families_emit_typed_summaries_with_command_summary() {
 }
 
 #[test]
-fn workflow_execute_emits_lineage_and_provider_events() {
+fn retired_workflow_execute_emits_failure_without_provider_or_lineage_events() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
         let workspace_root = temp_dir.path().join("workspace");
@@ -694,7 +694,7 @@ fn workflow_execute_emits_lineage_and_provider_events() {
                 force: false,
             },
         });
-        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("retired"));
 
         let runtime = cli.progress_runtime();
         let sessions = runtime.list_sessions().unwrap();
@@ -704,28 +704,25 @@ fn workflow_execute_emits_lineage_and_provider_events() {
             .expect("workflow.execute session should exist");
         let events = replay_session_events(&cli, &session.session_id);
 
-        assert!(events
-            .iter()
-            .any(|e| e.event_type == "prompt_context_lineage_prepared"));
-        assert!(events
-            .iter()
-            .any(|e| e.event_type == "provider_request_sent"));
-        assert!(events
-            .iter()
-            .any(|e| e.event_type == "frame_metadata_validation_started"));
-        assert!(events
-            .iter()
-            .any(|e| e.event_type == "frame_metadata_validation_succeeded"));
-        assert!(events
-            .iter()
-            .any(|e| e.event_type == "provider_request_failed"));
+        for forbidden in [
+            "prompt_context_lineage_prepared",
+            "provider_request_sent",
+            "frame_metadata_validation_started",
+            "provider_request_failed",
+            "workflow_target_started",
+        ] {
+            assert!(
+                !events.iter().any(|event| event.event_type == forbidden),
+                "{forbidden}"
+            );
+        }
         assert!(events.iter().any(|e| e.event_type == "workflow_summary"));
         assert!(events.iter().any(|e| e.event_type == "command_summary"));
     });
 }
 
 #[test]
-fn context_generate_with_workflow_agent_uses_context_plan_levels() {
+fn context_generate_rejects_workflow_binding_before_constructing_a_plan() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
         let workspace_root = temp_dir.path().join("workspace");
@@ -759,7 +756,7 @@ fn context_generate_with_workflow_agent_uses_context_plan_levels() {
                 no_recursive: false,
             },
         });
-        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("retired"));
 
         let runtime = cli.progress_runtime();
         let sessions = runtime.list_sessions().unwrap();
@@ -769,41 +766,19 @@ fn context_generate_with_workflow_agent_uses_context_plan_levels() {
             .expect("context.generate session should exist");
         let events = replay_session_events(&cli, &session.session_id);
 
-        let plan = events
-            .iter()
-            .find(|e| e.event_type == "plan_constructed")
-            .expect("plan_constructed should be emitted");
-        assert_eq!(
-            plan.data.get("total_nodes").and_then(|v| v.as_u64()),
-            Some(5)
-        );
-        assert_eq!(
-            plan.data.get("total_levels").and_then(|v| v.as_u64()),
-            Some(3)
-        );
-        assert_eq!(
-            plan.data.get("program_kind").and_then(|v| v.as_str()),
-            Some("workflow")
-        );
-
-        let enqueued_count = events
-            .iter()
-            .filter(|e| e.event_type == "request_enqueued")
-            .count();
-        assert_eq!(enqueued_count, 2);
-
-        let level_started_count = events
-            .iter()
-            .filter(|e| e.event_type == "execution.control.level_started")
-            .count();
-        assert_eq!(level_started_count, 1);
-
-        assert!(events
-            .iter()
-            .any(|e| e.event_type == "execution.control.generation_started"));
-        assert!(events
-            .iter()
-            .any(|e| e.event_type == "workflow_target_started"));
+        for forbidden in [
+            "plan_constructed",
+            "request_enqueued",
+            "execution.control.level_started",
+            "execution.control.generation_started",
+            "workflow_target_started",
+            "provider_request_sent",
+        ] {
+            assert!(
+                !events.iter().any(|event| event.event_type == forbidden),
+                "{forbidden}"
+            );
+        }
         let typed_idx = events
             .iter()
             .position(|e| e.event_type == "context_generation_summary")
@@ -921,7 +896,7 @@ fn context_generate_recursive_completes_levels_bottom_up() {
 }
 
 #[test]
-fn workflow_force_generate_tombstones_stale_final_head_and_emits_reset_event() {
+fn retired_workflow_force_generate_preserves_historical_final_head() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
         let workspace_root = temp_dir.path().join("workspace");
@@ -986,8 +961,11 @@ fn workflow_force_generate_tombstones_stale_final_head_and_emits_reset_event() {
                 no_recursive: false,
             },
         });
-        assert!(result.is_err());
-        assert_eq!(cli.api().get_head(&node_id, &frame_type).unwrap(), None);
+        assert!(result.unwrap_err().to_string().contains("retired"));
+        assert_eq!(
+            cli.api().get_head(&node_id, &frame_type).unwrap(),
+            Some(stale_frame_id)
+        );
 
         let runtime = cli.progress_runtime();
         let sessions = runtime.list_sessions().unwrap();
@@ -997,17 +975,12 @@ fn workflow_force_generate_tombstones_stale_final_head_and_emits_reset_event() {
             .expect("context.generate session should exist");
         let events = replay_session_events(&cli, &session.session_id);
 
-        let reset_event = events
+        assert!(!events
             .iter()
-            .find(|e| e.event_type == "workflow_target_force_reset")
-            .expect("workflow_target_force_reset should be emitted");
-        assert_eq!(
-            reset_event
-                .data
-                .get("previous_frame_id")
-                .and_then(|value| value.as_str()),
-            Some(hex::encode(stale_frame_id).as_str())
-        );
+            .any(|event| event.event_type == "workflow_target_force_reset"));
+        assert!(!events
+            .iter()
+            .any(|event| event.event_type == "provider_request_sent"));
     });
 }
 

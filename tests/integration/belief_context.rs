@@ -233,12 +233,12 @@ fn run_docs_writer_with_seeded_belief(temp_dir: &TempDir, repo_id: &str) -> Docs
     );
 
     let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
-    let registered_profile = run_context
-        .workflow_registry()
-        .read()
-        .get("docs_writer_thread_v1")
-        .unwrap()
-        .clone();
+    let registered_profile =
+        meld::workflow::WorkflowRegistry::load(&meld::config::WorkflowConfig::default())
+            .unwrap()
+            .get("docs_writer_thread_v1")
+            .unwrap()
+            .clone();
     let mut catalog = CapabilityCatalog::new();
     let mut registry = CapabilityExecutorRegistry::new();
     register_docs_writer_capabilities(&mut catalog, &mut registry);

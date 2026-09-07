@@ -1,6 +1,3 @@
-use crate::context::generation::plan::GenerationNodeType;
-use crate::provider::ProviderExecutionBinding;
-use crate::types::{FrameID, NodeID};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -16,6 +13,14 @@ pub struct TargetExecutionProgram {
 }
 
 impl TargetExecutionProgram {
+    /// Old serialized Workflow addresses remain recognizable, but cannot enter a queue.
+    pub fn validate_execution(&self) -> Result<(), crate::error::ApiError> {
+        if self.kind == TargetExecutionProgramKind::Workflow || self.workflow_id.is_some() {
+            return Err(crate::workflow::retired_execution_error());
+        }
+        Ok(())
+    }
+
     pub fn single_shot() -> Self {
         Self {
             kind: TargetExecutionProgramKind::SingleShot,
@@ -46,31 +51,6 @@ impl TargetExecutionProgramKind {
             Self::Workflow => "workflow",
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct TargetExecutionRequest {
-    pub node_id: NodeID,
-    pub path: String,
-    pub node_type: GenerationNodeType,
-    pub agent_id: String,
-    pub provider: ProviderExecutionBinding,
-    pub frame_type: String,
-    pub force: bool,
-    pub program: TargetExecutionProgram,
-    pub plan_id: Option<String>,
-    pub session_id: Option<String>,
-    pub level_index: Option<usize>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct TargetExecutionResult {
-    pub final_frame_id: FrameID,
-    pub reused_existing_head: bool,
-    pub program: TargetExecutionProgram,
-    pub workflow_id: Option<String>,
-    pub thread_id: Option<String>,
-    pub turns_completed: usize,
 }
 
 #[cfg(test)]

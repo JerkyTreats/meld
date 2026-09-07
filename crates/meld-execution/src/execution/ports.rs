@@ -506,20 +506,6 @@ pub trait BeliefContextReadPort: Send + Sync {
     ) -> Result<Option<BeliefSubjectSignal>, Self::Error>;
 }
 
-/// Loads workflow profiles for execution.
-pub trait WorkflowProfileLoadPort: Send + Sync {
-    /// Adapter error type.
-    type Error;
-    /// Workflow profile type returned by the adapter.
-    type WorkflowProfile;
-
-    /// Loads one workflow profile by identifier.
-    fn load_workflow_profile(
-        &self,
-        workflow_id: &str,
-    ) -> Result<Self::WorkflowProfile, Self::Error>;
-}
-
 /// Composite context required for deterministic execution planning.
 pub trait ExecutionContext:
     ContextReadPort

@@ -96,12 +96,12 @@ fn docs_writer_task_compiles_bottom_up_dependencies() {
             .execute(&Commands::Scan { force: true })
             .unwrap();
 
-        let registered_profile = run_context
-            .workflow_registry()
-            .read()
-            .get("docs_writer_thread_v1")
-            .unwrap()
-            .clone();
+        let registered_profile =
+            meld::workflow::WorkflowRegistry::load(&meld::config::WorkflowConfig::default())
+                .unwrap()
+                .get("docs_writer_thread_v1")
+                .unwrap()
+                .clone();
         let mut catalog = CapabilityCatalog::new();
         let mut registry = CapabilityExecutorRegistry::new();
         register_docs_writer_capabilities(&mut catalog, &mut registry);
@@ -181,12 +181,12 @@ fn docs_writer_task_runs_to_completion() {
             .execute(&Commands::Scan { force: true })
             .unwrap();
 
-        let registered_profile = run_context
-            .workflow_registry()
-            .read()
-            .get("docs_writer_thread_v1")
-            .unwrap()
-            .clone();
+        let registered_profile =
+            meld::workflow::WorkflowRegistry::load(&meld::config::WorkflowConfig::default())
+                .unwrap()
+                .get("docs_writer_thread_v1")
+                .unwrap()
+                .clone();
         let mut catalog = CapabilityCatalog::new();
         let mut registry = CapabilityExecutorRegistry::new();
         register_docs_writer_capabilities(&mut catalog, &mut registry);
@@ -281,12 +281,12 @@ fn docs_writer_task_accepts_wrapped_structured_output() {
             .execute(&Commands::Scan { force: true })
             .unwrap();
 
-        let registered_profile = run_context
-            .workflow_registry()
-            .read()
-            .get("docs_writer_thread_v1")
-            .unwrap()
-            .clone();
+        let registered_profile =
+            meld::workflow::WorkflowRegistry::load(&meld::config::WorkflowConfig::default())
+                .unwrap()
+                .get("docs_writer_thread_v1")
+                .unwrap()
+                .clone();
         let mut catalog = CapabilityCatalog::new();
         let mut registry = CapabilityExecutorRegistry::new();
         register_docs_writer_capabilities(&mut catalog, &mut registry);
@@ -373,12 +373,12 @@ fn docs_writer_task_expansion_is_idempotent() {
             .execute(&Commands::Scan { force: true })
             .unwrap();
 
-        let registered_profile = run_context
-            .workflow_registry()
-            .read()
-            .get("docs_writer_thread_v1")
-            .unwrap()
-            .clone();
+        let registered_profile =
+            meld::workflow::WorkflowRegistry::load(&meld::config::WorkflowConfig::default())
+                .unwrap()
+                .get("docs_writer_thread_v1")
+                .unwrap()
+                .clone();
         let mut catalog = CapabilityCatalog::new();
         let mut registry = CapabilityExecutorRegistry::new();
         register_docs_writer_capabilities(&mut catalog, &mut registry);
@@ -543,12 +543,12 @@ fn docs_writer_task_reuses_existing_child_readme_outputs() {
             .put_frame(child_node_id, child_frame, "docs-writer".to_string())
             .unwrap();
 
-        let registered_profile = run_context
-            .workflow_registry()
-            .read()
-            .get("docs_writer_thread_v1")
-            .unwrap()
-            .clone();
+        let registered_profile =
+            meld::workflow::WorkflowRegistry::load(&meld::config::WorkflowConfig::default())
+                .unwrap()
+                .get("docs_writer_thread_v1")
+                .unwrap()
+                .clone();
         let mut catalog = CapabilityCatalog::new();
         let mut registry = CapabilityExecutorRegistry::new();
         register_docs_writer_capabilities(&mut catalog, &mut registry);

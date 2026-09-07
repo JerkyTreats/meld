@@ -1,25 +1,18 @@
-use crate::api::ContextApi;
 use crate::cli::WorkflowCommands;
 use crate::config::ConfigLoader;
-use crate::context::queue::QueueEventContext;
 use crate::error::ApiError;
-use crate::telemetry::ProgressRuntime;
-use crate::workflow::{WorkflowCommandService, WorkflowExecuteRequest, WorkflowRegistry};
+use crate::workflow::{WorkflowCommandService, WorkflowRegistry};
 use std::path::Path;
-use std::sync::Arc;
 
 pub fn handle_cli_command(
-    api: &ContextApi,
     workspace_root: &Path,
     config_path: Option<&Path>,
-    workflow_registry: &parking_lot::RwLock<WorkflowRegistry>,
-    progress: &Arc<ProgressRuntime>,
+    workflow_config: &crate::config::WorkflowConfig,
     command: &WorkflowCommands,
-    session_id: &str,
 ) -> Result<String, ApiError> {
     match command {
         WorkflowCommands::List { format } => {
-            let registry = workflow_registry.read();
+            let registry = WorkflowRegistry::load(workflow_config)?;
             let result = WorkflowCommandService::run_list(&registry);
             if format == "json" {
                 serde_json::to_string_pretty(&result).map_err(|err| {
@@ -64,7 +57,7 @@ pub fn handle_cli_command(
             workflow_id,
             format,
         } => {
-            let registry = workflow_registry.read();
+            let registry = WorkflowRegistry::load(workflow_config)?;
             let result = WorkflowCommandService::run_inspect(&registry, workflow_id)?;
             if format == "json" {
                 serde_json::to_string_pretty(&result).map_err(|err| {
@@ -93,47 +86,7 @@ pub fn handle_cli_command(
                 Ok(out.trim_end().to_string())
             }
         }
-        WorkflowCommands::Execute {
-            workflow_id,
-            node,
-            path,
-            path_positional,
-            agent,
-            provider,
-            frame_type,
-            force,
-        } => {
-            let path_merged = path.as_ref().or(path_positional.as_ref()).cloned();
-            let event_context = QueueEventContext {
-                session_id: session_id.to_string(),
-                progress: Arc::clone(progress),
-            };
-            let execute_request = WorkflowExecuteRequest {
-                workflow_id: workflow_id.clone(),
-                node: node.clone(),
-                path: path_merged,
-                agent_id: agent.clone(),
-                provider_name: provider.clone(),
-                frame_type: frame_type.clone(),
-                force: *force,
-            };
-            let registry = workflow_registry.read();
-            let result = WorkflowCommandService::run_execute(
-                api,
-                workspace_root,
-                &registry,
-                &execute_request,
-                Some(&event_context),
-            )?;
-            Ok(format!(
-                "Workflow execution completed: workflow_id={}, thread_id={}, turns_completed={}, final_frame_id={}, skipped={}",
-                result.workflow_id,
-                result.thread_id,
-                result.turns_completed,
-                result.final_frame_id.as_deref().unwrap_or("none"),
-                result.skipped
-            ))
-        }
+        WorkflowCommands::Execute { .. } => Err(crate::workflow::retired_execution_error()),
     }
 }
 

@@ -17,7 +17,6 @@ use meld::heads::HeadIndex;
 use meld::prompt_context::PromptContextArtifactStorage;
 use meld::store::SledNodeRecordStore;
 use meld::telemetry::ProgressRuntime;
-use meld::workflow::build_workflow_task_path_runtime;
 use meld::workspace::capability::WorkspaceScanCapability;
 use meld::workspace::scan::{
     execute_workspace_scan, WorkspaceScanPolicy, WorkspaceScanRequest, WorkspaceScanStatus,
@@ -155,13 +154,13 @@ fn session_binding(session_id: &str) -> BoundBindingValue {
 }
 
 #[test]
-fn workspace_scan_contract_registers_in_task_path_runtime() {
-    let runtime = build_workflow_task_path_runtime().unwrap();
+fn workspace_scan_contract_registers_with_its_native_invoker() {
+    let (catalog, registry) = scan_registry();
 
-    assert!(runtime.catalog.contains("workspace_scan", 1));
-    assert!(runtime.registry.get("workspace_scan", 1).is_some());
+    assert!(catalog.contains("workspace_scan", 1));
+    assert!(registry.get("workspace_scan", 1).is_some());
 
-    let contract = runtime.catalog.get("workspace_scan", 1).unwrap();
+    let contract = catalog.get("workspace_scan", 1).unwrap();
     assert_eq!(contract.owning_domain, "workspace");
     assert_eq!(contract.scope_contract.scope_kind, "workspace");
     assert_eq!(contract.scope_contract.scope_ref_kind, "workspace_root");

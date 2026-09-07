@@ -16,7 +16,7 @@ use std::sync::Arc;
 pub fn handle_cli_command(
     api: Arc<ContextApi>,
     workspace_root: &Path,
-    workflow_registry: &WorkflowRegistry,
+    workflow_config: &crate::config::WorkflowConfig,
     progress: &Arc<ProgressRuntime>,
     command: &ContextCommands,
     session_id: &str,
@@ -110,7 +110,7 @@ pub fn handle_cli_command(
         } => {
             let effective_frame_type = resolve_context_get_frame_type(
                 &api,
-                workflow_registry,
+                workflow_config,
                 agent.as_deref(),
                 frame_type.as_deref(),
             )?;
@@ -164,7 +164,7 @@ pub fn handle_cli_command(
 
 fn resolve_context_get_frame_type(
     api: &ContextApi,
-    workflow_registry: &WorkflowRegistry,
+    workflow_config: &crate::config::WorkflowConfig,
     agent_id: Option<&str>,
     frame_type: Option<&str>,
 ) -> Result<Option<String>, ApiError> {
@@ -181,6 +181,7 @@ fn resolve_context_get_frame_type(
         return Ok(None);
     };
 
+    let workflow_registry = WorkflowRegistry::load(workflow_config)?;
     let registered_workflow = workflow_registry.get(workflow_id).ok_or_else(|| {
         ApiError::ConfigError(format!(
             "Agent '{}' references unknown workflow_id '{}'",

@@ -1,4 +1,3 @@
-use crate::agent::registry::AgentRegistry;
 use crate::api::ContextApi;
 use crate::cli::{
     format_ignore_result, format_list_deleted_result, format_validate_result_text,
@@ -8,8 +7,6 @@ use crate::config::ConfigLoader;
 use crate::error::ApiError;
 use crate::ignore;
 use crate::telemetry::ProgressRuntime;
-use crate::workflow::binding::validate_agent_binding;
-use crate::workflow::WorkflowRegistry;
 use crate::workspace::events::scan_started_envelope;
 use crate::workspace::{
     format_unified_status_text, format_workspace_status_text, WatchConfig, WatchDaemon,
@@ -199,26 +196,18 @@ pub fn handle_watch_command(
     api: Arc<ContextApi>,
     workspace_root: &Path,
     config_path: Option<&Path>,
-    workflow_registry: &Arc<parking_lot::RwLock<WorkflowRegistry>>,
     progress: &Arc<ProgressRuntime>,
     debounce_ms: u64,
     batch_window_ms: u64,
     session_id: &str,
 ) -> Result<String, ApiError> {
     let config = load_runtime_config(workspace_root, config_path)?;
-    let loaded_workflow_registry = WorkflowRegistry::load(&config.workflows)?;
 
     {
         let mut registry = api.agent_registry().write();
         registry.load_from_config(&config).map_err(|e| {
             ApiError::ConfigError(format!("Failed to load agents from config: {}", e))
         })?;
-        validate_bindings(&registry, &loaded_workflow_registry)?;
-    }
-
-    {
-        let mut shared = workflow_registry.write();
-        *shared = loaded_workflow_registry;
     }
 
     let ignore_patterns = ignore::load_ignore_patterns(workspace_root)
@@ -231,7 +220,6 @@ pub fn handle_watch_command(
         ignore_patterns,
         session_id: Some(session_id.to_string()),
         progress: Some(Arc::clone(progress)),
-        workflow_registry: Some(Arc::clone(workflow_registry)),
         ..WatchConfig::default()
     };
 
@@ -239,16 +227,6 @@ pub fn handle_watch_command(
     tracing::info!("Starting watch mode daemon");
     daemon.start()?;
     Ok("Watch daemon stopped".to_string())
-}
-
-fn validate_bindings(
-    registry: &AgentRegistry,
-    workflow_registry: &WorkflowRegistry,
-) -> Result<(), ApiError> {
-    for agent in registry.list_all() {
-        validate_agent_binding(agent, workflow_registry)?;
-    }
-    Ok(())
 }
 
 fn load_runtime_config(

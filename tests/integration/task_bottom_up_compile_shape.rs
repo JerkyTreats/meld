@@ -161,12 +161,12 @@ fn compiled_shape_for_case(case: &BottomUpCompileCase) -> NormalizedCompileShape
             .execute(&Commands::Scan { force: true })
             .unwrap();
 
-        let registered_profile = run_context
-            .workflow_registry()
-            .read()
-            .get("docs_writer_thread_v1")
-            .unwrap()
-            .clone();
+        let registered_profile =
+            meld::workflow::WorkflowRegistry::load(&meld::config::WorkflowConfig::default())
+                .unwrap()
+                .get("docs_writer_thread_v1")
+                .unwrap()
+                .clone();
         let mut catalog = CapabilityCatalog::new();
         let mut registry = CapabilityExecutorRegistry::new();
         register_phase_four_capabilities(&mut catalog, &mut registry);

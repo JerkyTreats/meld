@@ -21,7 +21,7 @@ pub use frame::{Basis, Frame, FrameMerkleSet, FrameStorage};
 pub use generation::{
     FailurePolicy, GenerationExecutor, GenerationItem, GenerationNodeType, GenerationPlan,
     GenerationResult, GenerationTarget, PlanPriority, QueueSubmitter, TargetExecutionProgram,
-    TargetExecutionProgramKind, TargetExecutionRequest, TargetExecutionResult,
+    TargetExecutionProgramKind,
 };
 pub use head::{CurrentFrameHead, CurrentFrameHeadRead};
 pub use queue::{

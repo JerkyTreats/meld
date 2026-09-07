@@ -6,7 +6,7 @@
 use crate::api::ContextApi;
 use crate::context::generation::contracts::GeneratedMetadataBuilder;
 use crate::context::generation::plan::GenerationTarget;
-use crate::context::generation::{TargetExecutionProgram, TargetExecutionProgramKind};
+use crate::context::generation::TargetExecutionProgram;
 use crate::control::compatibility::execute_target_request;
 use crate::error::ApiError;
 use crate::metadata::frame_types::FrameMetadata;
@@ -48,65 +48,15 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[test]
-    fn required_section_gate_failures_are_retryable() {
-        let error = ApiError::GenerationFailed(
-            "Workflow 'docs_writer_thread_v1' turn 'style_refine' failed gate 'style_gate': missing required section 'readme_markdown'"
-                .to_string(),
-        );
-
-        assert!(FrameGenerationQueue::is_retryable_error(
-            &TargetExecutionProgram::workflow("docs_writer_thread_v1"),
-            &error,
-        ));
-    }
-
-    #[test]
-    fn evidence_map_gate_failures_are_retryable() {
-        let error = ApiError::GenerationFailed(
-            "Workflow 'docs_writer_thread_v1' turn 'readme_struct' failed gate 'struct_gate': forbidden section 'evidence_map' present"
-                .to_string(),
-        );
-
-        assert!(FrameGenerationQueue::is_retryable_error(
-            &TargetExecutionProgram::workflow("docs_writer_thread_v1"),
-            &error,
-        ));
-    }
-
-    #[test]
-    fn json_decode_failures_are_retryable() {
-        let error = ApiError::GenerationFailed(
-            "Failed to decode 'evidence_map' output as JSON: expected value at line 1 column 1"
-                .to_string(),
-        );
-
-        assert!(FrameGenerationQueue::is_retryable_error(
-            &TargetExecutionProgram::workflow("docs_writer_thread_v1"),
-            &error,
-        ));
-    }
-
-    #[test]
-    fn unknown_gate_type_failures_are_not_retryable() {
-        let error = ApiError::GenerationFailed(
-            "Workflow 'docs_writer_thread_v1' turn 'readme_struct' failed gate 'struct_gate': unknown gate_type 'imaginary_gate'"
-                .to_string(),
-        );
-
-        assert!(!FrameGenerationQueue::is_retryable_error(
-            &TargetExecutionProgram::workflow("docs_writer_thread_v1"),
-            &error,
-        ));
-    }
-
-    #[test]
-    fn workflow_requests_do_not_retry_provider_errors() {
-        let error = ApiError::ProviderRequestFailed("Request timeout".to_string());
-
-        assert!(!FrameGenerationQueue::is_retryable_error(
-            &TargetExecutionProgram::workflow("docs_writer_thread_v1"),
-            &error,
-        ));
+    fn retired_workflow_errors_never_retry() {
+        let program = TargetExecutionProgram::workflow("docs_writer_thread_v1");
+        for error in [
+            ApiError::ProviderRequestFailed("timeout".into()),
+            ApiError::GenerationFailed("failed gate: missing required section".into()),
+            crate::workflow::retired_execution_error(),
+        ] {
+            assert!(!FrameGenerationQueue::is_retryable_error(&program, &error));
+        }
     }
 
     #[test]
@@ -724,6 +674,7 @@ impl FrameGenerationQueue {
         timeout: Option<Duration>,
         options: GenerationRequestOptions,
     ) -> Result<FrameID, ApiError> {
+        target.program.validate_execution()?;
         let (started_tx, started_rx) = oneshot::channel();
         let (tx, rx) = oneshot::channel();
         let mut queue = self.queue.lock().await;
@@ -1352,26 +1303,10 @@ impl FrameGenerationQueue {
         execute_target_request(request, api, event_context.as_ref(), metadata_builder).await
     }
 
-    fn is_retryable_workflow_generation_failure(message: &str) -> bool {
-        if message.contains("failed gate") {
-            return !message.contains("unknown gate_type");
-        }
-
-        if message.contains("Failed to decode") && message.contains("output as JSON") {
-            return true;
-        }
-
-        false
-    }
-
     /// Check if an error is retryable
     fn is_retryable_error(program: &TargetExecutionProgram, error: &ApiError) -> bool {
-        if program.kind == TargetExecutionProgramKind::Workflow {
-            return matches!(
-                error,
-                ApiError::GenerationFailed(message)
-                    if Self::is_retryable_workflow_generation_failure(message)
-            );
+        if program.validate_execution().is_err() {
+            return false;
         }
 
         match error {

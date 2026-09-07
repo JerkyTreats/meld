@@ -124,7 +124,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: ContextCommands,
     },
-    /// Workflow operations
+    /// Inspect legacy Workflow profiles
     Workflow {
         #[command(subcommand)]
         command: WorkflowCommands,
@@ -804,7 +804,7 @@ pub enum ContextCommands {
         #[arg(long)]
         provider: Option<String>,
 
-        /// Override workflow id for this run (bypasses agent workflow binding)
+        /// Legacy Workflow execution is retired; retained to report migration errors
         #[arg(long)]
         workflow_id: Option<String>,
 
@@ -849,7 +849,7 @@ pub enum ContextCommands {
         #[arg(long)]
         provider: Option<String>,
 
-        /// Override workflow id for this run (bypasses agent workflow binding)
+        /// Legacy Workflow execution is retired; retained to report migration errors
         #[arg(long)]
         workflow_id: Option<String>,
 
@@ -967,7 +967,7 @@ pub enum WorkflowCommands {
         #[arg(long, default_value = "text")]
         format: String,
     },
-    /// Execute one workflow profile for a target node
+    /// Retired command; use a native reconciliation product through runtime run or request
     Execute {
         /// Workflow ID
         workflow_id: String,

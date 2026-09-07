@@ -21,7 +21,6 @@ use crate::provider::executor::ProviderPreparation;
 use crate::provider::{ChatMessage, CompletionResponse};
 use crate::store::{NodeRecord, NodeType};
 use crate::types::{FrameID, NodeID};
-use crate::workflow::registry::RegisteredWorkflowProfile;
 use crate::world_state::belief::{BeliefQuery, BeliefStatus, BranchScope};
 use crate::world_state::PerspectiveKey;
 use async_trait::async_trait;
@@ -238,22 +237,6 @@ impl<T> WorldModelQueryPort for T where T: meld_execution::WorldModelQueryPort<E
 pub trait BeliefContextReadPort: meld_execution::BeliefContextReadPort<Error = ApiError> {}
 
 impl<T> BeliefContextReadPort for T where T: meld_execution::BeliefContextReadPort<Error = ApiError> {}
-
-pub trait WorkflowProfileLoadPort:
-    meld_execution::WorkflowProfileLoadPort<
-    Error = ApiError,
-    WorkflowProfile = RegisteredWorkflowProfile,
->
-{
-}
-
-impl<T> WorkflowProfileLoadPort for T where
-    T: meld_execution::WorkflowProfileLoadPort<
-        Error = ApiError,
-        WorkflowProfile = RegisteredWorkflowProfile,
-    >
-{
-}
 
 pub trait ExecutionContext:
     ContextReadPort
@@ -757,18 +740,6 @@ fn belief_status_label(status: &BeliefStatus) -> BeliefStatusLabel {
         BeliefStatus::NeedsAssessment => BeliefStatusLabel::NeedsAssessment,
         BeliefStatus::AssessmentPending => BeliefStatusLabel::AssessmentPending,
         BeliefStatus::Invalid => BeliefStatusLabel::Invalid,
-    }
-}
-
-impl meld_execution::WorkflowProfileLoadPort for ContextApi {
-    type Error = ApiError;
-    type WorkflowProfile = RegisteredWorkflowProfile;
-
-    fn load_workflow_profile(
-        &self,
-        workflow_id: &str,
-    ) -> Result<RegisteredWorkflowProfile, ApiError> {
-        ContextApi::load_workflow_profile(self, workflow_id)
     }
 }
 

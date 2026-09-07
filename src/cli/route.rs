@@ -66,11 +66,6 @@ impl RunContext {
             .watermark_capability()
     }
 
-    /// Workflow profile registry.
-    pub fn workflow_registry(&self) -> Arc<parking_lot::RwLock<crate::workflow::WorkflowRegistry>> {
-        Arc::clone(self.assembly.workflow_registry())
-    }
-
     /// Product runtime assembly backing runtime commands.
     pub fn product_runtime(&self) -> &Arc<crate::runtime::assembly::ProductRuntimeAssembly> {
         self.assembly.product_runtime()
@@ -377,19 +372,16 @@ impl RunContext {
             Commands::Context { command } => crate::context::tooling::handle_cli_command(
                 Arc::clone(self.assembly.api()),
                 &self.workspace_root,
-                &self.assembly.workflow_registry().read(),
+                self.assembly.workflow_config(),
                 self.assembly.progress(),
                 command,
                 session_id,
             ),
             Commands::Workflow { command } => crate::workflow::tooling::handle_cli_command(
-                self.assembly.api().as_ref(),
                 &self.workspace_root,
                 self.config_path.as_deref(),
-                self.assembly.workflow_registry(),
-                self.assembly.progress(),
+                self.assembly.workflow_config(),
                 command,
-                session_id,
             ),
             Commands::Runtime { command } => {
                 // A foreground run over a stewardship composition resolves
@@ -456,7 +448,6 @@ impl RunContext {
                 Arc::clone(self.assembly.api()),
                 &self.workspace_root,
                 self.config_path.as_deref(),
-                self.assembly.workflow_registry(),
                 self.assembly.progress(),
                 *debounce_ms,
                 *batch_window_ms,
