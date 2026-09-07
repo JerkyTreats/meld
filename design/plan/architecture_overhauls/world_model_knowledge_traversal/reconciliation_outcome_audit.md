@@ -6,7 +6,7 @@ Latest verification: 2026-09-07
 
 Current source account: native Startup, Docs, Security and declared code-change reconciliation is implemented within the tested product paths. Continued adverse-path review exposed unconsumed native intake refusals and provider rejections replayed indefinitely as unresolved claims; the corrections and their executable evidence are recorded below. Original-outcome coverage does not establish every failure or interruption path.
 
-The [acceptance and remediation assessment](reconciliation_acceptance.md) records what remains before product or full architectural acceptance. It is directional and does not restore the old delivery program’s authority.
+The user clarified acceptance as the minimum working CVE, Docs freshness and nonce flywheel, with no domain theory embedded in Rust runtime code. The [corrected acceptance record](reconciliation_acceptance.md) governs this working scope. Causation and Regime implementation are outside this effort. Earlier broader-completion wording below is historical and must not expand the mission. The delivery program remains non-binding.
 
 ## Authority and evidence
 
