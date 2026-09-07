@@ -54,7 +54,33 @@ impl SharedActionDecision {
                 "shared work requires a pending exact-input artifact-only invocation".into(),
             );
         }
-        Self::compatible_contract(state, candidate, primary, contract)
+        let decision = Self::compatible_contract(state, candidate, primary, contract)?;
+        let primary_admission = primary
+            .lineage
+            .admission
+            .as_ref()
+            .ok_or("primary admission missing")?;
+        let candidate_admission = candidate
+            .lineage
+            .admission
+            .as_ref()
+            .ok_or("contributing admission missing")?;
+        if primary.lineage.authority_decision != candidate.lineage.authority_decision
+            || state.admissions[&primary_admission.admission_id]
+                .request
+                .task
+                .expected_outcome_contract_id
+                != state.admissions[&candidate_admission.admission_id]
+                    .request
+                    .task
+                    .expected_outcome_contract_id
+        {
+            return Err(
+                "historical admission sharing requires equal complete Task grants and endpoints"
+                    .into(),
+            );
+        }
+        Ok(decision)
     }
 
     fn compatible_contract(
@@ -85,12 +111,45 @@ impl SharedActionDecision {
             || left.authority_policy_content_hash != right.authority_policy_content_hash
             || left.activation_generation != right.activation_generation
             || left.admission_epoch != right.admission_epoch
-            || primary.lineage.authority_decision != candidate.lineage.authority_decision
-            || primary.lineage.authority_decision.is_none()
         {
             return Err(
                 "shared work requires independent admissions under compatible authority".into(),
             );
+        }
+        // Compatibility discharges this action, not the Tasks' different terminal
+        // obligations. Both intact grants remain attached to their admissions.
+        let primary_authority = primary
+            .lineage
+            .authority_decision
+            .as_ref()
+            .ok_or("shared work requires primary authority")?;
+        let candidate_authority = candidate
+            .lineage
+            .authority_decision
+            .as_ref()
+            .ok_or("shared work requires contributing authority")?;
+        primary_authority
+            .validate()
+            .map_err(|error| error.to_string())?;
+        candidate_authority
+            .validate()
+            .map_err(|error| error.to_string())?;
+        if primary_authority.policy_id != candidate_authority.policy_id
+            || primary_authority.policy_content_hash != candidate_authority.policy_content_hash
+            || primary_authority.principal_id != candidate_authority.principal_id
+            || primary_authority.subject != candidate_authority.subject
+            || [primary_authority, candidate_authority]
+                .iter()
+                .any(|authority| {
+                    !authority
+                        .requested_action_ids
+                        .contains(&contract.capability_type_id)
+                        || !authority
+                            .authorized_action_ids
+                            .contains(&contract.capability_type_id)
+                })
+        {
+            return Err("each contributor must independently authorize the shared action under the same principal, policy and subject".into());
         }
         super::state::validate_task_admission_attribution(state, primary)?;
         super::state::validate_task_admission_attribution_for_lowering(state, candidate)?;
@@ -100,7 +159,6 @@ impl SharedActionDecision {
         if !original.capability_contract_ids.contains(&identity)
             || !incoming.capability_contract_ids.contains(&identity)
             || original.execution_subject != incoming.execution_subject
-            || original.expected_outcome_contract_id != incoming.expected_outcome_contract_id
             || primary.compiled_task.task_version != candidate.compiled_task.task_version
             || primary.compiled_task.init_slots != candidate.compiled_task.init_slots
             || !primary.compiled_task.dependency_edges.is_empty()

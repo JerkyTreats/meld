@@ -1032,7 +1032,7 @@ fn independently_valid_authority_and_lifecycle_contexts_do_not_imply_compatibili
         "generation",
         "epoch",
         "subject",
-        "result",
+        "principal",
     ] {
         let (catalog, first) = shared_input_request("first", true);
         let (_, mut second) = shared_input_request("second", true);
@@ -1062,7 +1062,14 @@ fn independently_valid_authority_and_lifecycle_contexts_do_not_imply_compatibili
                 second.lineage.authority_decision.as_mut().unwrap().subject = subject.clone();
                 second.task.execution_subject = Some(subject);
             }
-            "result" => second.task.expected_outcome_contract_id = "another-result-contract".into(),
+            "principal" => {
+                second
+                    .lineage
+                    .authority_decision
+                    .as_mut()
+                    .unwrap()
+                    .principal_id = "another-principal".into()
+            }
             _ => unreachable!(),
         }
         let mut store = InMemoryTaskNetworkStore::new("network-docs");
@@ -1755,4 +1762,54 @@ fn legacy_admission_sharing_reopens_and_freezes_current_claim() {
             .state(),
         &expected
     );
+}
+
+#[test]
+fn ready_sharing_checks_each_contributors_requested_action() {
+    for requested in [true, false] {
+        let (catalog, first) = shared_input_request("first", true);
+        let (_, mut second) = shared_input_request("second", true);
+        let grant = second.lineage.authority_decision.as_mut().unwrap();
+        if requested {
+            grant
+                .requested_action_ids
+                .push("extra.requested-action".into());
+            grant.requested_action_ids.sort();
+        } else {
+            grant.requested_action_ids.clear();
+        }
+        let mut store = InMemoryTaskNetworkStore::new("network-docs");
+        for request in [first, second] {
+            let record = TaskAdmissionApi::new(
+                &mut store,
+                &catalog,
+                "generation-v1",
+                "policy-content-docs-v1",
+            )
+            .admit(request)
+            .unwrap();
+            assert_eq!(
+                record.decision,
+                TaskAdmissionDecision::Admitted,
+                "{record:?}"
+            );
+        }
+        let report = TaskAdmissionRuntimeActor::new(TaskAdmissionLowerer::new(
+            TaskCompiler::new(),
+            catalog.clone(),
+        ))
+        .run_once_in_memory(
+            &mut store,
+            TaskAdmissionRuntimeRequest {
+                network_id: "network-docs".into(),
+                max_items: 2,
+            },
+        )
+        .unwrap();
+        assert_eq!(report.committed, 2);
+        assert_eq!(
+            metadata_sharing_proposal(store.state(), &catalog).is_ok(),
+            requested
+        );
+    }
 }

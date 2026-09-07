@@ -7231,6 +7231,51 @@ mod tests {
             self.run_world_genesis_from(assembly, package.path());
         }
 
+        fn run_compound_docs_genesis(&self, assembly: &ProductRuntimeAssembly) {
+            let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/docs_freshness");
+            let package = tempfile::tempdir().unwrap();
+            for entry in std::fs::read_dir(&source).unwrap() {
+                let entry = entry.unwrap();
+                if entry.file_type().unwrap().is_file() {
+                    std::fs::copy(entry.path(), package.path().join(entry.file_name())).unwrap();
+                }
+            }
+            let path = package.path().join("strategy_theory.docs_freshness.json");
+            let mut strategy: meld_world_model::strategy::StrategyTheoryPackage =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            let drafting = meld_lang::Proposition::Exists {
+                scope: meld_lang::Term::Variable("?subject".into()),
+                artifact_type: meld_lang::Term::ArtifactType(
+                    crate::docs::capability::PATCH_SET.into(),
+                ),
+            };
+            strategy
+                .capabilities
+                .iter_mut()
+                .find(|capability| capability.operator.operator_id == "draft-docs-patch-set")
+                .unwrap()
+                .operator
+                .effects
+                .push(meld_lang::Effect::Assert(drafting.clone()));
+            let rule = &mut strategy.snapshot.settlement_rules[0];
+            rule.settlement_obligation =
+                meld_lang::Proposition::All(vec![rule.settlement_obligation.clone(), drafting]);
+            strategy.search_bounds.max_expansions = 128;
+            let bytes = serde_json::to_vec(&strategy).unwrap();
+            std::fs::write(path, &bytes).unwrap();
+            let manifest_path = package.path().join("pds-package.json");
+            let mut manifest: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&manifest_path).unwrap()).unwrap();
+            for component in manifest["components"].as_array_mut().unwrap() {
+                if component["content"]["path"] == "strategy_theory.docs_freshness.json" {
+                    component["content"]["content_hash"] =
+                        blake3::hash(&bytes).to_hex().to_string().into();
+                }
+            }
+            std::fs::write(manifest_path, serde_json::to_vec(&manifest).unwrap()).unwrap();
+            self.run_world_genesis_from(assembly, package.path());
+        }
+
         fn run_world_genesis_with_claim_policy(
             &self,
             assembly: &ProductRuntimeAssembly,
@@ -7587,6 +7632,15 @@ mod tests {
 
     #[test]
     fn native_docs_repair_returns_owner_evidence_and_satisfies_goal() {
+        assert_native_docs_repair(false);
+    }
+
+    #[test]
+    fn native_agent_constructs_shared_tasks_and_accepts_separate_returns_before_confirmation() {
+        assert_native_docs_repair(true);
+    }
+
+    fn assert_native_docs_repair(compound: bool) {
         let provider = super::docs_fixture::ProviderServer::new();
         let harness = StewardshipHarness::new();
         std::fs::write(
@@ -7596,7 +7650,11 @@ mod tests {
         .unwrap();
         {
             let assembly = harness.assembly();
-            harness.run_world_genesis(&assembly);
+            if compound {
+                harness.run_compound_docs_genesis(&assembly);
+            } else {
+                harness.run_world_genesis(&assembly);
+            }
         }
         let assembly = harness.assembly();
         let api = harness.bind_production_routes_with_loss(&assembly, None);
@@ -7615,6 +7673,56 @@ mod tests {
             .catalog
             .get("docs.assess_published_scope", 1)
             .is_none());
+        if compound {
+            // Admit both independently selected Tasks before their common work
+            // becomes claimable. Execution alone decides whether it can be shared.
+            for _ in 0..32 {
+                for owner in [
+                    "docs.observation",
+                    "world_model.evidence_ingestion",
+                    "world_model.graph_replay",
+                    "world_model.standing_curation",
+                    "world_model.belief_assessment",
+                    AGENT_RECONCILIATION_RUNTIME_ID,
+                    "execution.task_admission",
+                ] {
+                    let report = supervisor.step_owner_for_test(owner, WorkBudget { max_items: 8 });
+                    assert!(
+                        report.fatal_errors.is_empty() && report.retryable_errors.is_empty(),
+                        "{owner}: {report:?}"
+                    );
+                }
+            }
+            let RuntimeSemanticHandleFactory::TaskAdmission(execution) = &assembly
+                .handle_factories()
+                .get("execution.task_admission")
+                .unwrap()
+                .semantic
+            else {
+                unreachable!()
+            };
+            {
+                let network = execution.network.lock().unwrap();
+                assert_eq!(network.state().admissions.len(), 2);
+                assert_eq!(network.state().tasks.len(), 6);
+            }
+            let inspected = supervisor
+                .step_owner_for_test("execution.task_dispatch", WorkBudget { max_items: 2 });
+            assert!(inspected.fatal_errors.is_empty(), "{inspected:?}");
+            let shared = supervisor
+                .step_owner_for_test("execution.task_dispatch", WorkBudget { max_items: 1 });
+            assert!(
+                shared.fatal_errors.is_empty() && shared.retryable_errors.is_empty(),
+                "{shared:?}"
+            );
+            let network = execution.network.lock().unwrap();
+            assert_eq!(network.state().shared_steps.len(), 1, "{shared:?}");
+            assert_eq!(
+                network.state().claims.len(),
+                2,
+                "sharing precedes invocation"
+            );
+        }
         let mut reports = Vec::new();
         for pass in 0..60 {
             reports.push(supervisor.tick(1_000 + pass * 10).unwrap());
@@ -7664,6 +7772,121 @@ mod tests {
             entry.accepted_milestone,
             meld_world_model::strategy::PlanMilestoneRequirement::CurationTerminal { .. }
         )));
+        let mut retained_accounts = Vec::new();
+        if compound {
+            let authorizations = store
+                .product_authorizations_for_goal(&goals[0].goal.goal_id)
+                .unwrap();
+            let tasks: Vec<_> = authorizations
+                .iter()
+                .filter(|authorization| {
+                    matches!(
+                        authorization.product,
+                        meld_world_model::AgentAuthorizedProduct::Task(_)
+                    )
+                })
+                .collect();
+            assert_eq!(tasks.len(), 2);
+            assert_ne!(tasks[0].authorization_id, tasks[1].authorization_id);
+            assert_ne!(tasks[0].authority_decision, tasks[1].authority_decision);
+            let endpoints: BTreeSet<_> = tasks
+                .iter()
+                .map(|authorization| {
+                    let meld_world_model::AgentAuthorizedProduct::Task(task) =
+                        &authorization.product
+                    else {
+                        unreachable!()
+                    };
+                    task.expected_outcome_contract_id.as_str()
+                })
+                .collect();
+            assert_eq!(
+                endpoints,
+                BTreeSet::from(["docs.patch_set_drafted.v1", "docs.patch_set_published.v1"])
+            );
+            let task_ids: BTreeSet<_> = tasks
+                .iter()
+                .map(|authorization| authorization.product_id.clone())
+                .collect();
+            let confirmations: Vec<_> = authorizations
+                .iter()
+                .filter(|authorization| {
+                    matches!(
+                        authorization.product,
+                        meld_world_model::AgentAuthorizedProduct::Epistemic(_)
+                    )
+                })
+                .collect();
+            assert!(!confirmations.is_empty());
+            for authorization in confirmations {
+                let confirmation = store
+                    .reconciliation_plan(&authorization.plan_revision_id)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(
+                    confirmation.origin,
+                    meld_world_model::strategy::StrategyPlanOrigin::Confirmation
+                );
+                assert_eq!(
+                    confirmation
+                        .dependencies
+                        .iter()
+                        .map(|dependency| dependency.producer_product_id.clone())
+                        .collect::<BTreeSet<_>>(),
+                    task_ids
+                );
+            }
+            assert_eq!(history.iter().filter(|entry| matches!(entry.accepted_milestone,
+                meld_world_model::strategy::PlanMilestoneRequirement::ExecutionTerminal { .. })).count(), 2);
+            let RuntimeSemanticHandleFactory::TaskAdmission(execution) = &assembly
+                .handle_factories()
+                .get("execution.task_admission")
+                .unwrap()
+                .semantic
+            else {
+                unreachable!()
+            };
+            let network = execution.network.lock().unwrap();
+            assert_eq!(network.state().claims.len(), 5);
+            let accounts: Vec<_> = network
+                .state()
+                .admissions
+                .keys()
+                .map(|id| {
+                    meld_execution::task_network::sharing::admission_discharge_account(
+                        network.state(),
+                        id,
+                    )
+                    .unwrap()
+                })
+                .collect();
+            assert_eq!(accounts.len(), 2);
+            assert_ne!(accounts[0].account_id, accounts[1].account_id);
+            assert_ne!(accounts[0].outcome_id, accounts[1].outcome_id);
+            assert!(accounts
+                .iter()
+                .all(|account| account.shared_action_decision_ids.len() == 1));
+            for account in &accounts {
+                assert!(history
+                    .iter()
+                    .any(|entry| entry.product_id == account.admission.task_id
+                        && entry.owner_position_id == account.outcome_id));
+                assert!(network
+                    .state()
+                    .publications
+                    .values()
+                    .any(|publication| matches!(
+                        publication.state,
+                        meld_execution::task_network::outcome::PublicationState::Published {
+                            receipt: Some(_),
+                            ..
+                        }
+                    ) && publication
+                        .shared_discharge_accounts
+                        .contains(account)));
+            }
+            retained_accounts = accounts;
+        }
         let calls = provider.calls();
         assert_eq!(
             calls,
@@ -7709,6 +7932,26 @@ mod tests {
                 .len(),
             1
         );
+        if compound {
+            let RuntimeSemanticHandleFactory::TaskAdmission(execution) = &reopened
+                .handle_factories()
+                .get("execution.task_admission")
+                .unwrap()
+                .semantic
+            else {
+                unreachable!()
+            };
+            let network = execution.network.lock().unwrap();
+            for account in retained_accounts {
+                assert_eq!(
+                    meld_execution::task_network::sharing::admission_discharge_account(
+                        network.state(),
+                        &account.admission.admission_id
+                    ),
+                    Some(account)
+                );
+            }
+        }
         let after = reopened.stores().agent_store.condition_judgments().unwrap();
         assert_new_satisfied_judgments(&judgments_before_reopen, &after);
         assert_eq!(
