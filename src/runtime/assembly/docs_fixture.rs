@@ -1,6 +1,6 @@
 //! Scripted local provider for the native repair and owner-return proof.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -11,6 +11,7 @@ pub(super) struct ProviderServer {
     endpoint: String,
     stop: Arc<AtomicBool>,
     calls: Arc<Mutex<Vec<String>>>,
+    draft_status: Arc<AtomicU16>,
     worker: Option<JoinHandle<()>>,
 }
 
@@ -20,6 +21,8 @@ impl ProviderServer {
         let endpoint = format!("http://{}", server.server_addr());
         let stop = Arc::new(AtomicBool::new(false));
         let calls = Arc::new(Mutex::new(Vec::new()));
+        let draft_status = Arc::new(AtomicU16::new(200));
+        let worker_draft_status = draft_status.clone();
         let worker_stop = stop.clone();
         let worker_calls = calls.clone();
         let worker = std::thread::spawn(move || {
@@ -34,6 +37,16 @@ impl ProviderServer {
                     serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
                 let (operation, content) = response(&input);
                 worker_calls.lock().unwrap().push(operation.into());
+                let status = worker_draft_status.load(Ordering::Acquire);
+                if operation == "draft" && status != 200 {
+                    request
+                        .respond(
+                            tiny_http::Response::from_string("draft request rejected")
+                                .with_status_code(status),
+                        )
+                        .unwrap();
+                    continue;
+                }
                 let response = serde_json::json!({
                     "choices":[{"message":{"role":"assistant","content":content},"finish_reason":"stop"}],
                     "id":"scripted-local-completion","model":"test-model",
@@ -53,6 +66,7 @@ impl ProviderServer {
             endpoint,
             stop,
             calls,
+            draft_status,
             worker: Some(worker),
         }
     }
@@ -63,6 +77,10 @@ impl ProviderServer {
 
     pub(super) fn calls(&self) -> Vec<String> {
         self.calls.lock().unwrap().clone()
+    }
+
+    pub(super) fn draft_status(&self, status: u16) {
+        self.draft_status.store(status, Ordering::Release);
     }
 }
 

@@ -166,6 +166,7 @@ fn terminal_error_class(error: &ApiError) -> String {
         ApiError::ProviderError(_) => "ProviderError",
         ApiError::ProviderNotConfigured(_) => "ProviderNotConfigured",
         ApiError::ProviderRequestFailed(_) => "ProviderRequestFailed",
+        ApiError::ProviderRequestRejected { .. } => "ProviderRequestRejected",
         ApiError::ProviderAuthFailed(_) => "ProviderAuthFailed",
         ApiError::ProviderRateLimit(_) => "ProviderRateLimit",
         ApiError::ProviderModelNotFound(_) => "ProviderModelNotFound",

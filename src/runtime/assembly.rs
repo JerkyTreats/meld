@@ -5399,6 +5399,7 @@ fn validate_runtime_id(runtime_id: &str) -> Result<(), RuntimeRegistryError> {
 mod tests {
     #[cfg(unix)]
     mod code_change;
+    mod failed_work;
     mod intake;
     mod prerequisite;
     mod reconciliation_requests;

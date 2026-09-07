@@ -48,6 +48,22 @@ mod tests {
     use std::collections::BTreeMap;
 
     #[test]
+    fn manual_generation_does_not_retry_a_rejected_provider_request() {
+        let program = TargetExecutionProgram::single_shot();
+        assert!(!FrameGenerationQueue::is_retryable_error(
+            &program,
+            &ApiError::ProviderRequestRejected {
+                status: 400,
+                message: "invalid request".into()
+            }
+        ));
+        assert!(FrameGenerationQueue::is_retryable_error(
+            &program,
+            &ApiError::ProviderRequestFailed("connection lost".into())
+        ));
+    }
+
+    #[test]
     fn retired_workflow_errors_never_retry() {
         let program = TargetExecutionProgram::workflow("docs_writer_thread_v1");
         for error in [
@@ -1325,7 +1341,7 @@ impl FrameGenerationQueue {
             ApiError::PromptContextArtifactDigestMismatch { .. } => false,
             ApiError::PromptContextArtifactSizeMismatch { .. } => false,
             ApiError::PromptLinkContractInvalid { .. } => false,
-            ApiError::ProviderNotConfigured(_) => false,
+            ApiError::ProviderNotConfigured(_) | ApiError::ProviderRequestRejected { .. } => false,
             ApiError::ProviderRateLimit(_) => true,
             ApiError::ProviderRequestFailed(_) => true,
             ApiError::ProviderError(_) => true,

@@ -183,6 +183,10 @@ pub enum ApiError {
     #[error("Provider request failed: {0}")]
     ProviderRequestFailed(String),
 
+    /// The provider rejected the request before producing a completion.
+    #[error("Provider rejected request with HTTP {status}: {message}")]
+    ProviderRequestRejected { status: u16, message: String },
+
     #[error("Provider authentication failed: {0}")]
     ProviderAuthFailed(String),
 
@@ -315,6 +319,12 @@ impl Clone for ApiError {
             }
             ApiError::ProviderRequestFailed(message) => {
                 ApiError::ProviderRequestFailed(message.clone())
+            }
+            ApiError::ProviderRequestRejected { status, message } => {
+                ApiError::ProviderRequestRejected {
+                    status: *status,
+                    message: message.clone(),
+                }
             }
             ApiError::ProviderAuthFailed(message) => ApiError::ProviderAuthFailed(message.clone()),
             ApiError::ProviderRateLimit(message) => ApiError::ProviderRateLimit(message.clone()),

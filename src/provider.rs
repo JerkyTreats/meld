@@ -158,19 +158,28 @@ fn merge_additional_json(request_body: &mut Value, additional_json: &BTreeMap<St
     }
 }
 
+// Provider owns whether a received response is a rejection or a transient failure.
+fn response_error(status: reqwest::StatusCode, message: String) -> ApiError {
+    match status.as_u16() {
+        401 | 403 => ApiError::ProviderAuthFailed(message),
+        404 => ApiError::ProviderModelNotFound(message),
+        429 => ApiError::ProviderRateLimit(message),
+        // Timeout, contention and early-data responses may improve without changing the request.
+        408 | 409 | 423 | 425 => ApiError::ProviderRequestFailed(message),
+        code if status.is_client_error() => ApiError::ProviderRequestRejected {
+            status: code,
+            message,
+        },
+        _ => ApiError::ProviderRequestFailed(format!(
+            "Request failed with status {status}: {message}"
+        )),
+    }
+}
+
 // Helper function to map HTTP errors to ApiError
 fn map_http_error(error: reqwest::Error) -> ApiError {
     if error.is_status() {
-        let status = error.status().unwrap();
-        match status.as_u16() {
-            401 => ApiError::ProviderAuthFailed(format!("Authentication failed: {}", error)),
-            429 => ApiError::ProviderRateLimit(format!("Rate limit exceeded: {}", error)),
-            404 => ApiError::ProviderModelNotFound(format!("Model not found: {}", error)),
-            _ => ApiError::ProviderRequestFailed(format!(
-                "Request failed with status {}: {}",
-                status, error
-            )),
-        }
+        response_error(error.status().unwrap(), error.to_string())
     } else if error.is_timeout() {
         ApiError::ProviderRequestFailed(format!("Request timeout: {}", error))
     } else if error.is_connect() {
@@ -263,14 +272,7 @@ impl ModelProviderClient for OpenAIClient {
                 .text()
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(match status.as_u16() {
-                401 => {
-                    ApiError::ProviderAuthFailed(format!("Authentication failed: {}", error_text))
-                }
-                429 => ApiError::ProviderRateLimit(format!("Rate limit exceeded: {}", error_text)),
-                404 => ApiError::ProviderModelNotFound(format!("Model not found: {}", error_text)),
-                _ => ApiError::ProviderRequestFailed(format!("Request failed: {}", error_text)),
-            });
+            return Err(response_error(status, error_text));
         }
 
         let completion: ChatCompletionResponse = response
@@ -442,14 +444,7 @@ impl ModelProviderClient for AnthropicClient {
                 .text()
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(match status.as_u16() {
-                401 => {
-                    ApiError::ProviderAuthFailed(format!("Authentication failed: {}", error_text))
-                }
-                429 => ApiError::ProviderRateLimit(format!("Rate limit exceeded: {}", error_text)),
-                404 => ApiError::ProviderModelNotFound(format!("Model not found: {}", error_text)),
-                _ => ApiError::ProviderRequestFailed(format!("Request failed: {}", error_text)),
-            });
+            return Err(response_error(status, error_text));
         }
 
         #[derive(Deserialize)]
@@ -590,10 +585,7 @@ impl ModelProviderClient for OllamaClient {
                 .text()
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(ApiError::ProviderRequestFailed(format!(
-                "Request failed with status {}: {}",
-                status, error_text
-            )));
+            return Err(response_error(status, error_text));
         }
 
         let completion: ChatCompletionResponse = response
@@ -745,10 +737,7 @@ impl ModelProviderClient for CustomLocalClient {
                 .text()
                 .await
                 .unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(ApiError::ProviderRequestFailed(format!(
-                "Request failed with status {}: {}",
-                status, error_text
-            )));
+            return Err(response_error(status, error_text));
         }
 
         let completion: ChatCompletionResponse = response
@@ -1117,6 +1106,33 @@ mod tests {
         }
 
         result
+    }
+
+    #[test]
+    fn received_provider_rejections_remain_distinct_from_transient_failures() {
+        for code in [400, 402, 405, 413, 415, 422] {
+            let error = response_error(
+                reqwest::StatusCode::from_u16(code).unwrap(),
+                "rejected".into(),
+            );
+            assert!(
+                matches!(error, ApiError::ProviderRequestRejected { status, .. } if status == code)
+            );
+        }
+        for code in [408, 409, 423, 425, 500, 502, 503, 504] {
+            assert!(matches!(
+                response_error(reqwest::StatusCode::from_u16(code).unwrap(), "retry".into()),
+                ApiError::ProviderRequestFailed(_)
+            ));
+        }
+        assert!(matches!(
+            response_error(reqwest::StatusCode::TOO_MANY_REQUESTS, "later".into()),
+            ApiError::ProviderRateLimit(_)
+        ));
+        assert!(matches!(
+            response_error(reqwest::StatusCode::FORBIDDEN, "denied".into()),
+            ApiError::ProviderAuthFailed(_)
+        ));
     }
 
     #[test]
