@@ -9,6 +9,8 @@ pub mod api;
 pub mod branches;
 pub mod capability;
 pub mod cli;
+#[cfg(unix)]
+pub mod code_change;
 pub mod compat;
 pub mod concurrency;
 pub mod config;

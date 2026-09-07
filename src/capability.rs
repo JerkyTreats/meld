@@ -59,9 +59,14 @@ pub(crate) fn product_capability_inventory_with_security(
         crate::dependency_security::contribution::DependencySecurityCapabilityContributor,
     >,
 ) -> Result<ProductCapabilityInventory, CapabilityContributionDiagnostic> {
-    ProductCapabilityInventory::assemble(vec![
+    let mut contributors: Vec<std::sync::Arc<dyn ProductCapabilityContributor>> = vec![
         std::sync::Arc::new(crate::nonce::capability::NonceCapabilityContributor),
         std::sync::Arc::new(crate::docs::contribution::DocsCapabilityContributor),
         security,
-    ])
+    ];
+    #[cfg(unix)]
+    contributors.push(std::sync::Arc::new(
+        crate::code_change::capability::CodeChangeCapabilityContributor,
+    ));
+    ProductCapabilityInventory::assemble(contributors)
 }
