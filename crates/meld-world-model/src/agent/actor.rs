@@ -984,7 +984,10 @@ impl AgentReconciliationActor {
                         let Some(position) = self.execution.observe(&authorization)? else {
                             continue;
                         };
-                        if position.outcome_id.is_none() {
+                        if position.outcome_id.is_none()
+                            && position.admission_decision
+                                == AgentExecutionAdmissionDecision::Admitted
+                        {
                             continue;
                         }
                         reconciliation.persist_execution_position(&authorization, &position)?;
@@ -992,11 +995,10 @@ impl AgentReconciliationActor {
                             .project_execution_wait(&cut, &plan, task, &position, report)?;
                     }
                     AgentAuthorizedProduct::Epistemic(operation) => {
-                        if self
-                            .curation
-                            .result(&operation.operation.operation_id)?
-                            .is_none()
-                        {
+                        if !curation_has_return(
+                            self.curation.as_ref(),
+                            &operation.operation.operation_id,
+                        )? {
                             continue;
                         }
                         reconciliation.reconcile_curation(
@@ -1661,11 +1663,10 @@ impl GoalReconciliation<'_, '_> {
                             continue;
                         }
 
-                        if self
-                            .curation
-                            .result(&epistemic.operation.operation_id)?
-                            .is_some()
-                        {
+                        if curation_has_return(
+                            self.curation.as_ref(),
+                            &epistemic.operation.operation_id,
+                        )? {
                             self.reconcile_curation(
                                 cut,
                                 plan,
@@ -1723,7 +1724,8 @@ impl GoalReconciliation<'_, '_> {
             vec![self.curation.resolve_operation(operation)?]
         };
         // A transport-only successor cannot grant a second authorization for the
-        // same unsettled operation. Changed semantic input may produce new work.
+        // same operation without a successful return. Changed semantic input may
+        // produce new work.
         let history = self.store.completed_history_for_goal(&self.goal.goal_id)?;
         if !matches!(
             meld_lang::evaluate(&cut.world_model_view.world_state, &self.goal.target),
@@ -1744,7 +1746,7 @@ impl GoalReconciliation<'_, '_> {
         }) {
             report.waiting_on.push(waiting(
                 "planner_cut_changed", &self.goal.goal_id,
-                "the authorized prerequisite still owes successful visibility or changed semantic input",
+                "the authorized prerequisite has no successful visibility; new work requires changed semantic input",
             ));
             return Ok(None);
         }
@@ -2143,6 +2145,17 @@ impl GoalReconciliation<'_, '_> {
             ));
             return Ok(());
         };
+        let operation = &epistemic.operation;
+        if acceptance.decision == CurationAdmissionDecision::Rejected
+            && (acceptance.operation_id != operation.operation_id
+                || acceptance.authority != operation.authority
+                || acceptance.rule_revision != operation.rule_revision
+                || acceptance.source_cut_id != operation.source_cut.cut_id)
+        {
+            return Err(StorageError::InvalidPath(
+                "Curation rejection does not address the exact authorized operation".into(),
+            ));
+        }
         let authorization_id = stable_id(
             "agent-product-authorization-v1",
             &(
@@ -2178,11 +2191,21 @@ impl GoalReconciliation<'_, '_> {
             return Ok(());
         }
         if acceptance.decision != CurationAdmissionDecision::Admitted {
-            report.waiting_on.push(waiting(
-                "curation_rejected",
-                &acceptance.acceptance_id,
-                acceptance.reason,
-            ));
+            used += usize::from(self.record_curation_rejection(
+                cut,
+                plan,
+                epistemic,
+                &acceptance,
+                report,
+            )?);
+            report.budget_exhausted |= used == budget;
+            if advance_products {
+                report.waiting_on.push(waiting(
+                    "curation_rejected",
+                    &acceptance.acceptance_id,
+                    acceptance.reason,
+                ));
+            }
             return Ok(());
         }
         let result = self.curation.result(&epistemic.operation.operation_id)?;
@@ -2823,6 +2846,7 @@ impl GoalReconciliation<'_, '_> {
         position: &AgentExecutionPosition,
         report: &mut AgentReconciliationReport,
     ) -> Result<(), StorageError> {
+        let refused = position.admission_decision != AgentExecutionAdmissionDecision::Admitted;
         match &position.admission_decision {
             AgentExecutionAdmissionDecision::Rejected { grounds } => {
                 report.waiting_on.push(waiting(
@@ -2830,7 +2854,6 @@ impl GoalReconciliation<'_, '_> {
                     &position.admission_id,
                     grounds.join("; "),
                 ));
-                return Ok(());
             }
             AgentExecutionAdmissionDecision::StaleFence => {
                 report.waiting_on.push(waiting(
@@ -2838,11 +2861,14 @@ impl GoalReconciliation<'_, '_> {
                     &position.admission_id,
                     "wake requires a successor Task authorization under the live generation",
                 ));
-                return Ok(());
             }
             AgentExecutionAdmissionDecision::Admitted => {}
         }
-        let state = if let Some(outcome_id) = &position.outcome_id {
+        let state = if refused {
+            AgentProductState::Blocked {
+                reason: "Execution refused Task intake".into(),
+            }
+        } else if let Some(outcome_id) = &position.outcome_id {
             AgentProductState::ExecutionTerminal {
                 outcome_id: outcome_id.clone(),
             }
@@ -2862,7 +2888,14 @@ impl GoalReconciliation<'_, '_> {
             },
             state,
         )?;
-        let Some(requirement) = task.return_milestone.as_ref() else {
+        let required_return = if refused {
+            Some(PlanMilestoneRequirement::ExecutionNotAdmitted {
+                task_id: task.task_id.clone(),
+            })
+        } else {
+            task.return_milestone.clone()
+        };
+        let Some(requirement) = required_return.as_ref() else {
             report.waiting_on.push(waiting(
                 "task_return_milestone_missing",
                 progress_id,
@@ -2873,6 +2906,11 @@ impl GoalReconciliation<'_, '_> {
         let return_position = match requirement {
             PlanMilestoneRequirement::ExecutionTerminal { task_id } if task_id == &task.task_id => {
                 position.outcome_id.as_ref()
+            }
+            PlanMilestoneRequirement::ExecutionNotAdmitted { task_id }
+                if refused && task_id == &task.task_id =>
+            {
+                Some(&position.admission_id)
             }
             _ => None,
         };
@@ -2922,6 +2960,55 @@ impl GoalReconciliation<'_, '_> {
         Ok(())
     }
 
+    fn record_curation_rejection(
+        &self,
+        cut: &PlannerCut,
+        plan: &StrategyPlan,
+        epistemic: &crate::strategy::StrategyEpistemicOperation,
+        acceptance: &CurationAcceptanceRecord,
+        report: &mut AgentReconciliationReport,
+    ) -> Result<bool, StorageError> {
+        let operation = &epistemic.operation;
+        let milestone_id = stable_id(
+            "agent-curation-rejected-v1",
+            &(
+                &cut.context.agent_id,
+                &self.goal.goal_id,
+                &plan.plan_revision_id,
+                &epistemic.product_id,
+                &acceptance.acceptance_id,
+                &cut.context.context_id,
+                &cut.context.activation_generation,
+            ),
+        );
+        let inserted = self.store.put_milestone(&AgentMilestoneAcceptance {
+            milestone_id: milestone_id.clone(),
+            agent_id: cut.context.agent_id.clone(),
+            goal_id: self.goal.goal_id.clone(),
+            plan_revision_id: plan.plan_revision_id.clone(),
+            product_id: epistemic.product_id.clone(),
+            requirement: PlanMilestoneRequirement::CurationRejected {
+                operation_id: operation.operation_id.clone(),
+            },
+            owner_position_id: acceptance.acceptance_id.clone(),
+            context_id: cut.context.context_id.clone(),
+            activation_generation: cut.context.activation_generation.clone(),
+        })?;
+        let (progress_inserted, _) = self.put_progress(
+            cut,
+            plan,
+            &epistemic.product_id,
+            AgentCurrentnessCheck {
+                frozen_cut_id: plan.planner_cut_id.clone(),
+                observed_cut_id: (!self.historical_return).then(|| cut.cut_id.clone()),
+                refusal: None,
+            },
+            AgentProductState::MilestoneAccepted { milestone_id },
+        )?;
+        report.milestones_accepted += usize::from(inserted);
+        Ok(inserted || progress_inserted)
+    }
+
     fn put_progress(
         &self,
         cut: &PlannerCut,
@@ -2957,6 +3044,16 @@ impl GoalReconciliation<'_, '_> {
     }
 }
 
+fn curation_has_return(
+    curation: &dyn AgentCurationPort,
+    operation_id: &str,
+) -> Result<bool, StorageError> {
+    Ok(curation.result(operation_id)?.is_some()
+        || curation
+            .acceptance(operation_id)?
+            .is_some_and(|receipt| receipt.decision == CurationAdmissionDecision::Rejected))
+}
+
 fn authorization_completed(
     authorization: &AgentProductAuthorization,
     history: &[crate::strategy::StrategyCompletedHistoryEntry],
@@ -2966,7 +3063,7 @@ fn authorization_completed(
             && entry.product_id == authorization.product_id
             && match &authorization.product {
                 AgentAuthorizedProduct::Task(task) => {
-                    task.return_milestone.as_ref() == Some(&entry.accepted_milestone)
+                    task.accounts_for_return(&entry.accepted_milestone)
                 }
                 AgentAuthorizedProduct::Epistemic(operation) => {
                     operation.accounts_for_return(&entry.accepted_milestone)
@@ -2984,7 +3081,13 @@ fn product_completed(
         entry.product_id == product_id
             && (plan.tasks.iter().any(|task| {
                 task.task_id == product_id
-                    && task.return_milestone.as_ref() == Some(&entry.accepted_milestone)
+                    && task.accounts_for_return(&entry.accepted_milestone)
+                    // A refusal closes one authorization, not future work with
+                    // the same Task body under a successor Plan.
+                    && (!matches!(
+                        entry.accepted_milestone,
+                        PlanMilestoneRequirement::ExecutionNotAdmitted { .. }
+                    ) || entry.source_plan_revision_id == plan.plan_revision_id)
             }) || plan.epistemic_operations.iter().any(|operation| {
                 operation.product_id == product_id
                     && operation.accounts_for_return(&entry.accepted_milestone)
@@ -3616,6 +3719,32 @@ mod tests {
             .recommendation
             .unwrap()
         }
+    }
+
+    #[test]
+    fn refused_task_return_applies_only_to_its_source_plan() {
+        let fixture = Fixture::new();
+        let predecessor = fixture.expected_plan();
+        let task = &predecessor.tasks[0];
+        let mut successor = predecessor.clone();
+        successor.predecessor_plan_revision_id = Some(predecessor.plan_revision_id.clone());
+        successor.plan_revision_id = "fresh-authority-for-same-task".into();
+        let mut history = vec![crate::strategy::StrategyCompletedHistoryEntry {
+            source_plan_revision_id: predecessor.plan_revision_id.clone(),
+            product_id: task.task_id.clone(),
+            accepted_milestone: PlanMilestoneRequirement::ExecutionNotAdmitted {
+                task_id: task.task_id.clone(),
+            },
+            owner_position_id: "native-intake-refusal".into(),
+            product: Some(crate::strategy::StrategyProduct::Task(Box::new(
+                task.clone(),
+            ))),
+        }];
+        assert!(product_completed(&predecessor, &task.task_id, &history));
+        assert!(!product_completed(&successor, &task.task_id, &history));
+        history[0].accepted_milestone = task.return_milestone.clone().unwrap();
+        history[0].owner_position_id = "native-execution-outcome".into();
+        assert!(product_completed(&successor, &task.task_id, &history));
     }
 
     #[test]

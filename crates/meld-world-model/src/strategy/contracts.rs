@@ -185,7 +185,8 @@ pub struct StrategyPlanEvaluation {
     pub provider_calls: u32,
 }
 
-/// Owner milestone that discharges one exact Plan dependency.
+/// Owner return or visibility milestone retained by Agent.
+/// Negative returns account for a product without discharging positive dependencies.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlanMilestoneRequirement {
@@ -213,6 +214,14 @@ pub enum PlanMilestoneRequirement {
     /// The operation returned unsuccessfully; it discharges no positive dependency.
     CurationUnsuccessful {
         operation_id: String,
+    },
+    /// Curation rejected intake; no accepted-operation result or semantic effect exists.
+    CurationRejected {
+        operation_id: String,
+    },
+    /// Execution refused intake; the Task has no admitted operational realization.
+    ExecutionNotAdmitted {
+        task_id: String,
     },
 }
 
@@ -242,6 +251,12 @@ pub struct StrategyTask {
 }
 
 impl StrategyTask {
+    pub(crate) fn accounts_for_return(&self, milestone: &PlanMilestoneRequirement) -> bool {
+        self.return_milestone.as_ref() == Some(milestone)
+            || matches!(milestone, PlanMilestoneRequirement::ExecutionNotAdmitted { task_id }
+                if task_id == &self.task_id)
+    }
+
     pub fn confirmation_milestone(&self) -> PlanMilestoneRequirement {
         self.effect_visibility.as_ref().map_or_else(
             || PlanMilestoneRequirement::ExecutionTerminal {
@@ -307,10 +322,11 @@ impl StrategyEpistemicOperation {
             .collect()
     }
 
-    /// A returned failure ends the operation's debt without establishing its required evidence.
+    /// A negative return ends the product's debt without establishing its required evidence.
     pub(crate) fn accounts_for_return(&self, milestone: &PlanMilestoneRequirement) -> bool {
         self.accepts_return(milestone)
             || matches!(milestone, PlanMilestoneRequirement::CurationUnsuccessful { operation_id }
+                | PlanMilestoneRequirement::CurationRejected { operation_id }
                 if operation_id == &self.operation.operation_id)
     }
 
