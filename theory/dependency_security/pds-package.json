@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "package_id": "meld.dependency-security-fixture",
-  "package_version": "1.3.0",
+  "package_version": "1.4.0",
   "description": "Cargo inventory and declared advisory-source assessment with independent verification",
   "imports": [],
   "components": [
@@ -33,7 +33,7 @@
       "content": {
         "kind": "relative_file",
         "path": "belief_family.security_coverage.json",
-        "content_hash": "31de5754a67ed3671b6678174051ce9b68a12a6923f5521eb01a4f3a433eae1b"
+        "content_hash": "45c526c13b3c57db2b18bd72bf2ded418367eca3c6e819db2a41f6cfb53d9d6a"
       },
       "requires": []
     },
@@ -65,7 +65,7 @@
       "content": {
         "kind": "relative_file",
         "path": "outcome_mapping.security.json",
-        "content_hash": "68a457bd2c2eb8b562ab509cfc2dd7a6448bd042a62f713eac6029c6d37878fb"
+        "content_hash": "e61e5ff2a95e08cad756a07d5607911f513181c0c721a42ab141fee92b26a168"
       },
       "requires": []
     },

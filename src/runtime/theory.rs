@@ -207,6 +207,8 @@ pub struct ResolvedStewardshipTheory {
     pub prepared_closure: Option<PreparedActivationClosureV1>,
     /// Exact belief-family revision.
     pub belief_family: BeliefFamilyRevision,
+    /// Every exact belief family selected by the compiled product.
+    pub belief_families: Vec<BeliefFamilyRevision>,
     /// Exact curation-rule revision.
     pub curation_rule: AgentCurationRuleRevision,
     /// Exact standing maintained-condition revision.
@@ -437,12 +439,45 @@ impl ResolvedStewardshipTheory {
                     .ok_or_else(|| missing("docs claim policy"))
             })
             .transpose()?;
+        let mut families = std::collections::BTreeMap::from([(
+            belief_family.family_id.clone(),
+            belief_family.clone(),
+        )]);
+        for id in &package_receipt_ids {
+            let package = stores
+                .pds_packages
+                .resolve_receipt(id)
+                .map_err(owner_error)?
+                .ok_or_else(|| missing("compiled package families"))?;
+            for component in package.components.iter().filter(|component| {
+                component.route.owner_domain == "world-model"
+                    && component.route.component_kind == "belief-family"
+            }) {
+                let reference = &component.owner_revision;
+                let family = stores
+                    .belief_family_registry
+                    .resolve(&reference.id, &reference.content_hash)
+                    .map_err(owner_error)?
+                    .ok_or_else(|| missing("compiled belief family"))?;
+                if families
+                    .get(&family.family_id)
+                    .is_some_and(|prior| prior != &family)
+                {
+                    return Err(TheoryResolutionError::Inconsistent(
+                        "compiled families contain conflicting revisions".into(),
+                    ));
+                }
+                families.insert(family.family_id.clone(), family);
+            }
+        }
+        let belief_families = families.into_values().collect();
         let resolved = Self {
             product_compilation_receipt_id,
             package_receipt_ids,
             receipt,
             prepared_closure,
             belief_family,
+            belief_families,
             curation_rule,
             maintained_condition,
             outcome_mapping,
@@ -1150,6 +1185,17 @@ mod tests {
             2
         );
         // The primary observation selection cannot silently drift to the first family in the package.
+        assert_eq!(
+            resolved
+                .belief_families
+                .iter()
+                .map(|family| family.family_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "dependency_security_coverage",
+                "dependency_security_posture"
+            ]
+        );
         let mut foreign = selected;
         foreign.belief_family_id = "missing-observation-family".into();
         assert!(ResolvedStewardshipTheory::resolve_pds_receipt(

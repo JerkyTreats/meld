@@ -1,10 +1,11 @@
 //! Bounded evidence ingestion actor over the canonical event ledger.
 //!
 //! Owner: world model belief domain. One step reads the durable cursor for
-//! [`EVIDENCE_CONSUMER_ID`], replays a bounded batch of canonical records
+//! its exact installed family and mapping selection, replays canonical records
 //! after it through the domain-owned replay port, interprets each record
 //! through the frozen [`OutcomeEvidenceMapping`] contract, and ingests
-//! applicable evidence through the existing promoted-evidence path.
+//! applicable evidence through every matching installed family. Historical
+//! unpinned callers retain the [`EVIDENCE_CONSUMER_ID`] cursor.
 //!
 //! Durability ordering invariant: the durable cursor is advanced only after
 //! every absorbed record's domain state — evidence, assignments, committed
@@ -122,7 +123,7 @@ pub struct EvidenceIngestionActor {
     mapping_revision: Option<crate::belief::TheoryRevisionRef>,
     perspective: PerspectiveKey,
     branch_scope: BranchScope,
-    family_revision: Option<crate::belief::BeliefFamilyRevision>,
+    family_revisions: Option<Vec<crate::belief::BeliefFamilyRevision>>,
     lifecycle: crate::lifecycle::NativeLifecycle,
     work_lock: parking_lot::Mutex<()>,
 }
@@ -159,7 +160,7 @@ impl EvidenceIngestionActor {
             mapping_revision: None,
             perspective,
             branch_scope,
-            family_revision: None,
+            family_revisions: None,
         }
     }
 
@@ -170,9 +171,60 @@ impl EvidenceIngestionActor {
     }
 
     /// Freeze the exact belief-family revision for this actor lifetime.
-    pub fn with_family_revision(mut self, revision: crate::belief::BeliefFamilyRevision) -> Self {
-        self.family_revision = Some(revision);
+    pub fn with_family_revision(self, revision: crate::belief::BeliefFamilyRevision) -> Self {
+        self.with_pinned_families(vec![revision])
+    }
+
+    /// Freeze every family consumed before this actor advances its shared cursor.
+    pub fn with_pinned_families(
+        mut self,
+        mut revisions: Vec<crate::belief::BeliefFamilyRevision>,
+    ) -> Self {
+        revisions.sort_by(|left, right| left.family_id.cmp(&right.family_id));
+        self.family_revisions = Some(revisions);
         self
+    }
+
+    /// Exact installed semantics own their replay position. A changed selection
+    /// must revisit retained publications rather than inherit an unrelated cursor.
+    pub fn consumer_id(&self) -> String {
+        match &self.family_revisions {
+            Some(families) => format!(
+                "{EVIDENCE_CONSUMER_ID}::{}",
+                stable_hash_hex(
+                    &serde_json::to_vec(&(
+                        families
+                            .iter()
+                            .map(|family| family.revision_ref())
+                            .collect::<Vec<_>>(),
+                        &self.mapping_id,
+                        &self.mapping_revision,
+                        &self.perspective,
+                        &self.branch_scope
+                    ))
+                    .expect("installed evidence selection serializes")
+                )
+            ),
+            None => EVIDENCE_CONSUMER_ID.into(),
+        }
+    }
+
+    fn resolve_families(&self) -> Result<Vec<crate::belief::BeliefFamilyRevision>, String> {
+        if let Some(families) = &self.family_revisions {
+            if families.is_empty()
+                || families
+                    .windows(2)
+                    .any(|pair| pair[0].family_id == pair[1].family_id)
+            {
+                return Err("evidence requires distinct installed families".into());
+            }
+            return Ok(families.clone());
+        }
+        self.registry
+            .current(&self.family_id)
+            .map_err(|error| error.to_string())?
+            .map(|family| vec![family])
+            .ok_or_else(|| format!("Evidence family {} is not installed", self.family_id))
     }
 
     /// Stable actor identity carried in reports and ingestion ownership.
@@ -185,7 +237,7 @@ impl EvidenceIngestionActor {
         let ledger_id = self.replay.ledger_identity();
         match self
             .cursor
-            .consumer_cursor(EVIDENCE_CONSUMER_ID)
+            .consumer_cursor(&self.consumer_id())
             .map_err(|error| error.message)?
         {
             Some(cursor) if cursor.ledger_id == ledger_id => Ok(LedgerCursor {
@@ -221,14 +273,7 @@ impl EvidenceIngestionActor {
         &self,
     ) -> Result<crate::lifecycle::NativeLifecycleEvidence, String> {
         let cursor = self.lifecycle_cursor()?;
-        let family = match &self.family_revision {
-            Some(family) => family.clone(),
-            None => self
-                .registry
-                .current(&self.family_id)
-                .map_err(|error| error.to_string())?
-                .ok_or_else(|| format!("Evidence family {} is not installed", self.family_id))?,
-        };
+        let families = self.resolve_families()?;
         let mapping = self
             .mapping_revision
             .as_ref()
@@ -240,12 +285,22 @@ impl EvidenceIngestionActor {
         );
         Ok(crate::lifecycle::NativeLifecycleEvidence {
             checkpoint_ref: checkpoint_ref.clone(),
-            installed_revision_refs: vec![
-                crate::lifecycle::evidence_ref("belief-family", &family.revision_ref())?,
-                crate::lifecycle::evidence_ref("evidence-mapping", mapping)?,
-            ],
+            installed_revision_refs: families
+                .iter()
+                .map(|family| {
+                    crate::lifecycle::evidence_ref("belief-family", &family.revision_ref())
+                })
+                .chain(std::iter::once(crate::lifecycle::evidence_ref(
+                    "evidence-mapping",
+                    mapping,
+                )))
+                .collect::<Result<Vec<_>, _>>()?,
             binding_refs: vec![format!("evidence-ledger::{}", cursor.ledger_id)],
-            subscription_refs: vec![format!("evidence-consumer::{}", cursor.ledger_id)],
+            subscription_refs: vec![format!(
+                "evidence-consumer::{}::{}",
+                cursor.ledger_id,
+                self.consumer_id()
+            )],
             proof_position_ref: checkpoint_ref,
             unresolved_operation_summary_ref: format!(
                 "evidence-replay::{}::after::{}",
@@ -370,7 +425,7 @@ impl EvidenceIngestionActor {
         }
 
         let ledger_id = self.replay.ledger_identity();
-        let after_seq = match self.cursor.consumer_cursor(EVIDENCE_CONSUMER_ID) {
+        let after_seq = match self.cursor.consumer_cursor(&self.consumer_id()) {
             Ok(Some(state)) => {
                 if state.ledger_id != ledger_id {
                     report.fatal_errors.push(issue(
@@ -414,6 +469,14 @@ impl EvidenceIngestionActor {
                 return report;
             }
         };
+        if page.coverage.retained_from > after_seq.saturating_add(1) {
+            report.fatal_errors.push(issue(
+                None,
+                "replay_history_unavailable",
+                "retained Event history does not cover this evidence selection's cursor",
+            ));
+            return report;
+        }
         report.events_replayed = page.records.len();
         report.more_available = matches!(
             page.coverage.truncation,
@@ -435,46 +498,37 @@ impl EvidenceIngestionActor {
             return report;
         }
 
-        // Resolved per step, like the assessment actor, so ingestion always
-        // runs under the currently installed theory revision. Without an
-        // installed family the batch is left untouched: advancing the
-        // cursor here would permanently skip applicable evidence.
-        let revision = match self.family_revision.clone() {
-            Some(revision) => revision,
-            None => match self.registry.current(&self.family_id) {
-                Ok(Some(revision)) => revision,
-                Ok(None) => {
-                    report.retryable_errors.push(issue(
-                        Some(self.family_id.clone()),
-                        "family_not_installed",
-                        "no current registry revision for configured family",
-                    ));
-                    return report;
-                }
-                Err(error) => {
-                    report.fatal_errors.push(issue(
-                        Some(self.family_id.clone()),
-                        "registry_read_failed",
-                        &error.to_string(),
-                    ));
-                    return report;
-                }
-            },
+        // No record may pass the cursor before every selected family resolves.
+        let families = match self.resolve_families() {
+            Ok(families) => families,
+            Err(error) => {
+                report
+                    .retryable_errors
+                    .push(issue(None, "family_not_installed", &error));
+                return report;
+            }
         };
-        let snapshot = ConfigSnapshot {
-            config: revision.config.clone(),
-            hash: revision.content_hash.clone(),
-        };
-        let runtime = BeliefRuntime::from_family_revision(
-            Arc::clone(&self.store),
-            Arc::clone(&self.traversal),
-            &revision,
-            self.perspective.clone(),
-            self.branch_scope.clone(),
-        );
+        let runtimes: Vec<_> = families
+            .iter()
+            .map(|revision| {
+                (
+                    ConfigSnapshot {
+                        config: revision.config.clone(),
+                        hash: revision.content_hash.clone(),
+                    },
+                    BeliefRuntime::from_family_revision(
+                        Arc::clone(&self.store),
+                        Arc::clone(&self.traversal),
+                        revision,
+                        self.perspective.clone(),
+                        self.branch_scope.clone(),
+                    ),
+                )
+            })
+            .collect();
 
         let mut durable_through = after_seq;
-        for record in page.records {
+        'records: for record in page.records {
             let seq = record.seq;
             if seq <= durable_through {
                 // Replay pages are ascending; a stale or duplicate sequence
@@ -492,43 +546,64 @@ impl EvidenceIngestionActor {
                     record: promoted,
                 } => {
                     report.applicable_count += 1;
-                    // The ingest path dedupes on evidence identity derived
-                    // from the disposition's frozen evidence_id (carried as
-                    // the promoted source_id), so replaying an already
-                    // absorbed record inserts nothing new.
-                    match ingest_promoted_evidence(
-                        self.store.as_ref(),
-                        &runtime,
-                        PromotedEvidenceIngestionRequest {
-                            record: *promoted,
-                            config: snapshot.clone(),
-                            perspective: self.perspective.clone(),
-                            branch_scope: self.branch_scope.clone(),
-                            owner_id: &self.actor_id,
-                        },
-                    ) {
-                        Ok(result) => {
-                            report.new_assignment_count += result.new_assignment_count;
-                            report.revisions_committed += result.committed.len();
-                            if result.rejected {
-                                // Configuration rejected the promoted record;
-                                // the rejection is already durable, so the
-                                // cursor may pass this record.
-                                report.invalid_count += 1;
-                            }
-                            durable_through = seq;
-                        }
-                        Err(error) => {
-                            // Absorption is indeterminate, so the cursor must
-                            // stop before this record; replay is idempotent.
+                    let targets: Vec<_> = runtimes
+                        .iter()
+                        .filter(|(snapshot, _)| {
+                            snapshot
+                                .config
+                                .source_mappings
+                                .iter()
+                                .any(|mapping| mapping.source_kind == promoted.source_kind)
+                        })
+                        .collect();
+                    if targets.is_empty() {
+                        let rejection = invalid_outcome_rejection(
+                            &record,
+                            &self.mapping_id,
+                            self.mapping_revision.clone(),
+                            "missing promoted source mapping in installed families",
+                        );
+                        if let Err(error) = self.store.put_rejection(&rejection) {
                             report.retryable_errors.push(issue(
-                                Some(evidence_id),
-                                "ingestion_failed",
+                                Some(rejection.rejection_id),
+                                "rejection_persist_failed",
                                 &error.to_string(),
                             ));
                             break;
                         }
+                        report.invalid_count += 1;
+                        report.recorded_rejection_ids.push(rejection.rejection_id);
                     }
+                    let mut rejected = false;
+                    for (snapshot, runtime) in targets {
+                        match ingest_promoted_evidence(
+                            self.store.as_ref(),
+                            runtime,
+                            PromotedEvidenceIngestionRequest {
+                                record: (*promoted).clone(),
+                                config: snapshot.clone(),
+                                perspective: self.perspective.clone(),
+                                branch_scope: self.branch_scope.clone(),
+                                owner_id: &self.actor_id,
+                            },
+                        ) {
+                            Ok(result) => {
+                                report.new_assignment_count += result.new_assignment_count;
+                                report.revisions_committed += result.committed.len();
+                                rejected |= result.rejected;
+                            }
+                            Err(error) => {
+                                report.retryable_errors.push(issue(
+                                    Some(evidence_id.clone()),
+                                    "ingestion_failed",
+                                    &error.to_string(),
+                                ));
+                                break 'records;
+                            }
+                        }
+                    }
+                    report.invalid_count += usize::from(rejected);
+                    durable_through = seq;
                 }
                 OutcomeMappingDisposition::NotApplicable { .. } => {
                     report.not_applicable_count += 1;
@@ -572,7 +647,7 @@ impl EvidenceIngestionActor {
             }
             match self
                 .cursor
-                .advance_consumer_cursor(EVIDENCE_CONSUMER_ID, durable_through)
+                .advance_consumer_cursor(&self.consumer_id(), durable_through)
             {
                 Ok(state) => report.output_after_seq = state.after_seq,
                 Err(error) => {

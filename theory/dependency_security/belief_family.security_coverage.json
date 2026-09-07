@@ -15,7 +15,7 @@
   "source_mappings": [
     {
       "mapping_id": "security_coverage_to_subject",
-      "source_kind": "dependency_security_assessment",
+      "source_kind": "security_current_coverage",
       "evidence_schema_id": "dependency_security_coverage_v1",
       "subject_from": "record.subject",
       "value_field": "coverage_probability",
@@ -43,7 +43,7 @@
     "posterior_meaning": "adequate_current_coverage_probability",
     "confidence_projection": "Probability"
   },
-  "config_version": "2",
+  "config_version": "3",
   "observationality": "Observational",
   "anchor_requirement": "Unanchored"
 }

@@ -590,3 +590,123 @@ fn zero_budget_is_a_fatal_request_error() {
         .iter()
         .any(|issue| issue.code == "invalid_budget"));
 }
+
+#[test]
+fn changed_family_selection_replays_all_targets_without_duplicate_evidence() {
+    let mut fixture = Fixture::open();
+    let seq = fixture.append(success_envelope("two-family-publication", Some("node-a")));
+    let primary = fixture.registry.current(FAMILY_ID).unwrap().unwrap();
+    let mut first = fixture.actor().with_family_revision(primary.clone());
+    let initial = first.bounded_step(&EvidenceIngestionRequest { max_events: 16 });
+    assert_eq!(initial.output_after_seq, seq);
+    let primary_key = fixture.belief_key("node-a");
+    let primary_history = fixture.store.revision_history(&primary_key).unwrap();
+
+    let mut config = primary.config.clone();
+    config.family_id = "separate_coverage".into();
+    config.dimension_id = "separate_coverage".into();
+    fixture.registry.install(config, 2).unwrap();
+    let secondary = fixture
+        .registry
+        .current("separate_coverage")
+        .unwrap()
+        .unwrap();
+    let families = vec![primary.clone(), secondary.clone()];
+    let failing_cursor = Arc::new(AdvanceFailingCursor {
+        inner: fixture.authority.consumer_registry_capability(),
+        failed_advances: AtomicUsize::new(0),
+    });
+    let mut expanded = fixture
+        .actor_with_cursor(failing_cursor)
+        .with_pinned_families(families.clone());
+    assert_ne!(first.consumer_id(), expanded.consumer_id());
+    let report = expanded.bounded_step(&EvidenceIngestionRequest { max_events: 16 });
+    assert_eq!(
+        report.input_after_seq, 0,
+        "new family must not inherit the old selection's cursor"
+    );
+    assert_eq!(report.output_after_seq, 0);
+    assert!(report
+        .retryable_errors
+        .iter()
+        .any(|issue| issue.code == "cursor_advance_failed"));
+    assert_eq!(report.applicable_count, 1);
+    assert_eq!(report.new_assignment_count, 2);
+    assert_eq!(report.invalid_count, 0);
+    assert_eq!(
+        fixture.store.revision_history(&primary_key).unwrap(),
+        primary_history
+    );
+    let mut secondary_key = primary_key.clone();
+    secondary_key.dimension_id = "separate_coverage".into();
+    assert!(fixture
+        .store
+        .current_view(&secondary_key)
+        .unwrap()
+        .is_some());
+    let secondary_history = fixture.store.revision_history(&secondary_key).unwrap();
+
+    // Changing an unrelated registry head cannot retarget the exact pinned actor.
+    let mut replacement = secondary.config.clone();
+    replacement.config_version = "unselected".into();
+    fixture.registry.install(replacement, 3).unwrap();
+    let mut reopened = fixture
+        .actor()
+        .with_pinned_families(vec![secondary, primary]);
+    assert_eq!(expanded.consumer_id(), reopened.consumer_id());
+    let replayed = reopened.bounded_step(&EvidenceIngestionRequest { max_events: 16 });
+    assert_eq!(replayed.input_after_seq, 0);
+    assert_eq!(replayed.output_after_seq, seq);
+    assert_eq!(replayed.new_assignment_count, 0);
+    assert_eq!(replayed.revisions_committed, 0);
+    let quiet = reopened.bounded_step(&EvidenceIngestionRequest { max_events: 16 });
+    assert_eq!(quiet.input_after_seq, seq);
+    assert_eq!(quiet.events_replayed, 0);
+    assert_eq!(
+        fixture.store.revision_history(&secondary_key).unwrap(),
+        secondary_history
+    );
+}
+
+#[test]
+fn incomplete_retained_history_cannot_advance_a_new_evidence_selection() {
+    struct MissingPrefix(EventReplayCapability);
+    impl EvidenceEventReplaySource for MissingPrefix {
+        fn ledger_identity(&self) -> LedgerIdentity {
+            self.0.ledger_identity()
+        }
+        fn replay(&self, request: ReplayRequest) -> Result<EventPage, EventAuthorityError> {
+            let mut page = self.0.replay(request)?;
+            page.coverage.retained_from = 2;
+            Ok(page)
+        }
+    }
+    let fixture = Fixture::open();
+    fixture.append(success_envelope("retained-publication", Some("node-a")));
+    let family = fixture.registry.current(FAMILY_ID).unwrap().unwrap();
+    let mut actor = EvidenceIngestionActor::new(
+        "evidence-with-missing-prefix",
+        fixture.store.clone(),
+        fixture.traversal.clone(),
+        Arc::new(fixture.registry.clone()),
+        FAMILY_ID,
+        Arc::new(MissingPrefix(fixture.authority.replay_capability())),
+        Arc::new(fixture.authority.consumer_registry_capability()),
+        Arc::new(ConfiguredOutcomeMapping::new(mapping_config()).unwrap()),
+        MAPPING_ID,
+        PerspectiveKey::new("default", "default").unwrap(),
+        BranchScope::main(),
+    )
+    .with_family_revision(family);
+    let report = actor.bounded_step(&EvidenceIngestionRequest { max_events: 16 });
+    assert!(report
+        .fatal_errors
+        .iter()
+        .any(|issue| issue.code == "replay_history_unavailable"));
+    assert_eq!(actor.lifecycle_cursor().unwrap().after_seq, 0);
+    assert!(fixture
+        .store
+        .current_view(&fixture.belief_key("node-a"))
+        .unwrap()
+        .is_none());
+}

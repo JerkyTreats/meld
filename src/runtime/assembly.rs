@@ -840,7 +840,7 @@ struct BeliefAssessmentFactory {
     subject_binding: BeliefSubjectBinding,
     perspective: PerspectiveKey,
     branch_scope: BranchScope,
-    family_revision: Option<meld_world_model::belief::BeliefFamilyRevision>,
+    family_revisions: Option<Vec<meld_world_model::belief::BeliefFamilyRevision>>,
 }
 
 #[derive(Clone)]
@@ -855,7 +855,7 @@ struct EvidenceIngestionFactory {
     mapping_revision: Option<meld_world_model::belief::TheoryRevisionRef>,
     perspective: PerspectiveKey,
     branch_scope: BranchScope,
-    family_revision: Option<meld_world_model::belief::BeliefFamilyRevision>,
+    family_revisions: Option<Vec<meld_world_model::belief::BeliefFamilyRevision>>,
 }
 
 #[derive(Clone)]
@@ -2444,11 +2444,11 @@ impl RuntimeSemanticHandleFactory {
                     },
                     perspective: composed.bindings.perspective.clone(),
                     branch_scope: composed.bindings.branch_scope.clone(),
-                    family_revision: composed
+                    family_revisions: composed
                         .theory
                         .resolved
                         .as_ref()
-                        .map(|resolved| resolved.belief_family.clone()),
+                        .map(|resolved| resolved.belief_families.clone()),
                 })))
             }
             "world_model.evidence_ingestion" => {
@@ -2518,11 +2518,11 @@ impl RuntimeSemanticHandleFactory {
                             .map(|resolved| resolved.outcome_mapping.revision_ref()),
                         perspective: composed.bindings.perspective.clone(),
                         branch_scope: composed.bindings.branch_scope.clone(),
-                        family_revision: composed
+                        family_revisions: composed
                             .theory
                             .resolved
                             .as_ref()
-                            .map(|resolved| resolved.belief_family.clone()),
+                            .map(|resolved| resolved.belief_families.clone()),
                     },
                 )))
             }
@@ -3048,8 +3048,8 @@ impl RuntimeSemanticHandleFactory {
                             factory.perspective.clone(),
                             factory.branch_scope.clone(),
                         );
-                        match factory.family_revision.clone() {
-                            Some(revision) => actor.with_pinned_families(vec![revision]),
+                        match factory.family_revisions.clone() {
+                            Some(revisions) => actor.with_pinned_families(revisions),
                             None => actor,
                         }
                     },
@@ -3086,8 +3086,8 @@ impl RuntimeSemanticHandleFactory {
                             Some(revision) => actor.with_mapping_revision(revision),
                             None => actor,
                         };
-                        match factory.family_revision.clone() {
-                            Some(revision) => actor.with_family_revision(revision),
+                        match factory.family_revisions.clone() {
+                            Some(revisions) => actor.with_pinned_families(revisions),
                             None => actor,
                         }
                     },
@@ -7861,6 +7861,28 @@ mod tests {
             entry.accepted_milestone,
             meld_world_model::strategy::PlanMilestoneRequirement::BeliefRevision { .. }
         )));
+        let coverage_family = assembly
+            .stores()
+            .belief_family_registry
+            .current("dependency_security_coverage")
+            .unwrap()
+            .unwrap();
+        let coverage_key = configured_belief_key(
+            &coverage_family,
+            &harness.binding.subject,
+            &PerspectiveKey::new("default", "default").unwrap(),
+            &BranchScope::main(),
+        );
+        let coverage = assembly
+            .stores()
+            .belief_store
+            .current_view(&coverage_key)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            coverage.planner_projection.confidence,
+            if complete { 1.0 } else { 0.0 }
+        );
         let goal_id = goals[0].goal.goal_id.clone();
         supervisor.request_shutdown(2_000).unwrap();
         drop(supervisor);
@@ -7908,6 +7930,16 @@ mod tests {
                 .count(),
             4,
             "reopening preserves completed work without reacquisition"
+        );
+        let after = reopened
+            .stores()
+            .belief_store
+            .current_view(&coverage_key)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            after.planner_projection.confidence,
+            coverage.planner_projection.confidence
         );
         resumed.request_shutdown(4_000).unwrap();
     }
