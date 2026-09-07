@@ -1,13 +1,276 @@
 {
-  "snapshot": {"theory_id":"dependency_security_fixture","settlement_rules":[{"goal_pattern":{"Holds":{"subject":{"Variable":"?subject"},"dimension":{"Dimension":"dependency_security_posture"},"condition":{"Above":{"Variable":"?threshold"}}}},"settlement_obligation":{"Exists":{"scope":{"Variable":"?subject"},"artifact_type":{"ArtifactType":"dependency_security_product"}}},"evidence_route":{"route_id":"dependency-security-assessment-v1","dimension_id":"dependency_security_posture","outcome_contract_id":"dependency_security.assessment_completed.v1","evidence_schema_id":"dependency_security_posture_v1"}}]},
+  "snapshot": {
+    "theory_id": "dependency_security_fixture",
+    "settlement_rules": [
+      {
+        "goal_pattern": {
+          "Holds": {
+            "subject": {
+              "Variable": "?subject"
+            },
+            "dimension": {
+              "Dimension": "dependency_security_posture"
+            },
+            "condition": {
+              "Above": {
+                "Variable": "?threshold"
+              }
+            }
+          }
+        },
+        "settlement_obligation": {
+          "Exists": {
+            "scope": {
+              "Variable": "?subject"
+            },
+            "artifact_type": {
+              "ArtifactType": "dependency_security_verification"
+            }
+          }
+        },
+        "evidence_route": {
+          "route_id": "dependency-security-assessment-v1",
+          "dimension_id": "dependency_security_posture",
+          "outcome_contract_id": "dependency_security.assessment_verification_completed.v1",
+          "evidence_schema_id": "dependency_security_posture_v1"
+        },
+        "epistemic_placement": "confirmation"
+      }
+    ]
+  },
   "capabilities": [
-    {"contract_id":"capability-contract-a544fe8dfe658baa07c6ac77a09e22a0e187330560e4922dcaa04f671ec50486","operator":{"operator_id":"observe-cargo-inventory","preconditions":[],"effects":[],"cost":{"time_ms":10,"money_microdollars":0,"provider_calls":0},"resolution":{"requires_inputs":[],"requires_outputs":[{"artifact_type":{"ArtifactType":"dependency_security_product"},"required":true}],"scope_kind":"cargo_dependency_graph","tags":["security"],"specific":{"capability_type_id":"dependency_security.observe_inventory","capability_version":1}}},"outcome_contract_id":"dependency_security.inventory_observed.v1"},
-    {"contract_id":"capability-contract-f04cb1e932dd54d12b324d9812b5c4253ba933eb005b705dfdc0bc19516c307f","operator":{"operator_id":"acquire-fixture-advisories","preconditions":[],"effects":[],"cost":{"time_ms":10,"money_microdollars":0,"provider_calls":0},"resolution":{"requires_inputs":[],"requires_outputs":[{"artifact_type":{"ArtifactType":"dependency_security_product"},"required":true}],"scope_kind":"cargo_dependency_graph","tags":["security"],"specific":{"capability_type_id":"dependency_security.acquire_advisories","capability_version":1}}},"outcome_contract_id":"dependency_security.advisory_snapshot_observed.v1"},
-    {"contract_id":"capability-contract-9c847192793a2c0123f94829388b27699e4cde27d2851543f35f90ea7e721df3","operator":{"operator_id":"assess-dependency-security","preconditions":[],"effects":[],"cost":{"time_ms":10,"money_microdollars":0,"provider_calls":0},"resolution":{"requires_inputs":[],"requires_outputs":[{"artifact_type":{"ArtifactType":"dependency_security_product"},"required":true}],"scope_kind":"cargo_dependency_graph","tags":["security"],"specific":{"capability_type_id":"dependency_security.assess","capability_version":1}}},"outcome_contract_id":"dependency_security.assessment_completed.v1"},
-    {"contract_id":"capability-contract-eb129d9311368ee554aa1a6575330ef1b1df52a94cafdedad1b1588acadf28a4","operator":{"operator_id":"verify-dependency-security-calculation","preconditions":[],"effects":[],"cost":{"time_ms":10,"money_microdollars":0,"provider_calls":0},"resolution":{"requires_inputs":[],"requires_outputs":[{"artifact_type":{"ArtifactType":"dependency_security_product"},"required":true}],"scope_kind":"cargo_dependency_graph","tags":["security"],"specific":{"capability_type_id":"dependency_security.verify","capability_version":1}}},"outcome_contract_id":"dependency_security.assessment_verification_completed.v1"}
+    {
+      "contract_id": "capability-contract-2e90029efcdcf0f24eb1b27f58a413c4896437045e43cc1003789c38003c91d6",
+      "operator": {
+        "operator_id": "observe-cargo-inventory",
+        "preconditions": [],
+        "effects": [
+          {
+            "Assert": {
+              "Exists": {
+                "scope": {
+                  "Variable": "?subject"
+                },
+                "artifact_type": {
+                  "ArtifactType": "dependency_security_inventory"
+                }
+              }
+            }
+          }
+        ],
+        "cost": {
+          "time_ms": 10,
+          "money_microdollars": 0,
+          "provider_calls": 0
+        },
+        "resolution": {
+          "requires_inputs": [],
+          "requires_outputs": [
+            {
+              "artifact_type": {
+                "ArtifactType": "dependency_security_inventory"
+              },
+              "required": true
+            }
+          ],
+          "scope_kind": "cargo_dependency_graph",
+          "tags": [
+            "security"
+          ],
+          "specific": {
+            "capability_type_id": "dependency_security.observe_inventory",
+            "capability_version": 1
+          }
+        }
+      },
+      "outcome_contract_id": "dependency_security.inventory_observed.v1"
+    },
+    {
+      "contract_id": "capability-contract-979809a1f6b4ab8d8254b3714472afa39b315175425d9ed657159aad89fb0d43",
+      "operator": {
+        "operator_id": "acquire-fixture-advisories",
+        "preconditions": [],
+        "effects": [
+          {
+            "Assert": {
+              "Exists": {
+                "scope": {
+                  "Variable": "?subject"
+                },
+                "artifact_type": {
+                  "ArtifactType": "dependency_security_advisories"
+                }
+              }
+            }
+          }
+        ],
+        "cost": {
+          "time_ms": 10,
+          "money_microdollars": 0,
+          "provider_calls": 0
+        },
+        "resolution": {
+          "requires_inputs": [],
+          "requires_outputs": [
+            {
+              "artifact_type": {
+                "ArtifactType": "dependency_security_advisories"
+              },
+              "required": true
+            }
+          ],
+          "scope_kind": "cargo_dependency_graph",
+          "tags": [
+            "security"
+          ],
+          "specific": {
+            "capability_type_id": "dependency_security.acquire_advisories",
+            "capability_version": 1
+          }
+        }
+      },
+      "outcome_contract_id": "dependency_security.advisory_snapshot_observed.v1"
+    },
+    {
+      "contract_id": "capability-contract-334f551b82f12e219bc3d25e3e8fc4c5a1677e5a3f925579b410a87f1f1a20cd",
+      "operator": {
+        "operator_id": "assess-dependency-security",
+        "preconditions": [],
+        "effects": [
+          {
+            "Assert": {
+              "Exists": {
+                "scope": {
+                  "Variable": "?subject"
+                },
+                "artifact_type": {
+                  "ArtifactType": "dependency_security_assessment"
+                }
+              }
+            }
+          }
+        ],
+        "cost": {
+          "time_ms": 10,
+          "money_microdollars": 0,
+          "provider_calls": 0
+        },
+        "resolution": {
+          "requires_inputs": [
+            {
+              "artifact_type": {
+                "ArtifactType": "dependency_security_inventory"
+              },
+              "required": true
+            },
+            {
+              "artifact_type": {
+                "ArtifactType": "dependency_security_advisories"
+              },
+              "required": true
+            }
+          ],
+          "requires_outputs": [
+            {
+              "artifact_type": {
+                "ArtifactType": "dependency_security_assessment"
+              },
+              "required": true
+            }
+          ],
+          "scope_kind": "cargo_dependency_graph",
+          "tags": [
+            "security"
+          ],
+          "specific": {
+            "capability_type_id": "dependency_security.assess",
+            "capability_version": 1
+          }
+        }
+      },
+      "outcome_contract_id": "dependency_security.assessment_completed.v1"
+    },
+    {
+      "contract_id": "capability-contract-100cfb62b3c9cfa0320e4e3d956851be8995a40a9ee7ce1fd3d3bd3e684d25cb",
+      "operator": {
+        "operator_id": "verify-dependency-security-calculation",
+        "preconditions": [],
+        "effects": [
+          {
+            "Assert": {
+              "Exists": {
+                "scope": {
+                  "Variable": "?subject"
+                },
+                "artifact_type": {
+                  "ArtifactType": "dependency_security_verification"
+                }
+              }
+            }
+          }
+        ],
+        "cost": {
+          "time_ms": 10,
+          "money_microdollars": 0,
+          "provider_calls": 0
+        },
+        "resolution": {
+          "requires_inputs": [
+            {
+              "artifact_type": {
+                "ArtifactType": "dependency_security_inventory"
+              },
+              "required": true
+            },
+            {
+              "artifact_type": {
+                "ArtifactType": "dependency_security_advisories"
+              },
+              "required": true
+            },
+            {
+              "artifact_type": {
+                "ArtifactType": "dependency_security_assessment"
+              },
+              "required": true
+            }
+          ],
+          "requires_outputs": [
+            {
+              "artifact_type": {
+                "ArtifactType": "dependency_security_verification"
+              },
+              "required": true
+            }
+          ],
+          "scope_kind": "cargo_dependency_graph",
+          "tags": [
+            "security"
+          ],
+          "specific": {
+            "capability_type_id": "dependency_security.verify",
+            "capability_version": 1
+          }
+        }
+      },
+      "outcome_contract_id": "dependency_security.assessment_verification_completed.v1"
+    }
   ],
-  "evaluation_policy": {"policy_id":"read-only-truth-loop-v1","prefer_fewer_steps":true},
-  "search_bounds": {"max_expansions":16,"max_depth":6},
-  "requested_dimensions": ["dependency_security_posture"],
-  "requested_authority": ["dependency_security.acquire_advisories","dependency_security.assess","dependency_security.observe_inventory","dependency_security.verify"]
+  "evaluation_policy": {
+    "policy_id": "read-only-truth-loop-v1",
+    "prefer_fewer_steps": true
+  },
+  "search_bounds": {
+    "max_expansions": 64,
+    "max_depth": 6
+  },
+  "requested_dimensions": [
+    "dependency_security_posture"
+  ],
+  "requested_authority": [
+    "dependency_security.acquire_advisories",
+    "dependency_security.assess",
+    "dependency_security.observe_inventory",
+    "dependency_security.verify"
+  ]
 }

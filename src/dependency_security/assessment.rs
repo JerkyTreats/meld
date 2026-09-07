@@ -26,6 +26,12 @@ pub fn assess(
     reference_time: u64,
 ) -> Result<DependencySecurityAssessmentV1, String> {
     policy.validate()?;
+    if let Some(inventory) = inventory {
+        inventory.validate()?;
+    }
+    if let Some(advisory) = advisory {
+        advisory.validate()?;
+    }
     let policy_revision = policy.revision_ref()?;
     let mut reasons = Vec::new();
     let mut findings = Vec::new();
@@ -78,6 +84,12 @@ pub fn assess(
             } else if !advisory.conflicts.is_empty() {
                 reasons.extend(advisory.conflicts.clone());
                 DependencySecurityPosture::Conflicted
+            } else if inventory.observed_at > reference_time
+                || advisory.acquired_at > reference_time
+            {
+                reasons
+                    .push("required evidence is dated after the assessment reference time".into());
+                DependencySecurityPosture::Unknown
             } else if reference_time.saturating_sub(inventory.observed_at)
                 > policy.currency.maximum_inventory_age_seconds
                 || reference_time.saturating_sub(advisory.acquired_at)
@@ -291,6 +303,44 @@ mod tests {
             .unwrap()
             .posture,
             DependencySecurityPosture::CleanWithinCoverage
+        );
+    }
+
+    #[test]
+    fn tampered_or_future_inputs_cannot_establish_current_clean_posture() {
+        let inventory = inventory(true, 10);
+        let advisory = advisory(true, false, 10, false);
+        let mut altered_inventory = inventory.clone();
+        altered_inventory.components.clear();
+        assert!(assess(
+            &subject(),
+            Some(&altered_inventory),
+            Some(&advisory),
+            &policy(),
+            10
+        )
+        .is_err());
+        let mut altered_advisory = advisory.clone();
+        altered_advisory.source_revision = "foreign-revision".into();
+        assert!(assess(
+            &subject(),
+            Some(&inventory),
+            Some(&altered_advisory),
+            &policy(),
+            10
+        )
+        .is_err());
+        assert_eq!(
+            assess(&subject(), Some(&inventory), Some(&advisory), &policy(), 9)
+                .unwrap()
+                .posture,
+            DependencySecurityPosture::Unknown
+        );
+        assert_eq!(
+            assess(&subject(), Some(&inventory), Some(&advisory), &policy(), 21)
+                .unwrap()
+                .posture,
+            DependencySecurityPosture::Stale
         );
     }
 }

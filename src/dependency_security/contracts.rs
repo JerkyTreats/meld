@@ -83,6 +83,7 @@ pub struct NormalizedAdvisoryV1 {
     pub source_advisory_id: String,
     pub aliases: Vec<String>,
     pub package_name: String,
+    /// Exact normalized versions, never ranges or wildcard expressions.
     pub affected_versions: Vec<String>,
     pub severity: SeverityV1,
 }

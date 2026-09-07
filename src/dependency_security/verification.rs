@@ -20,19 +20,10 @@ pub fn verify(
         .iter()
         .map(|item| item.finding_id.clone())
         .collect::<Vec<_>>();
-    let expected_refs = assessment
-        .findings
-        .iter()
-        .map(|item| item.finding_id.clone())
-        .collect::<Vec<_>>();
     let exact_inputs = assessment.inventory_snapshot_ref == inventory.snapshot_id
         && assessment.advisory_snapshot_ref == advisory.snapshot_id
         && assessment.policy_revision == policy.revision_ref()?;
-    let verified = exact_inputs
-        && recomputed.posture == assessment.posture
-        && finding_refs == expected_refs
-        && recomputed.coverage == assessment.coverage
-        && recomputed.reasons == assessment.reasons;
+    let verified = exact_inputs && recomputed == *assessment;
     let checks = vec![
         if exact_inputs {
             "exact_inputs_match"

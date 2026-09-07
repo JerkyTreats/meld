@@ -324,6 +324,24 @@ pub(crate) fn compile_product_initialization<'a>(
         capability_bindings =
             crate::docs::contribution::bind_claim_policy(capability_bindings, &policy)?;
     }
+    capability_bindings = crate::dependency_security::contribution::bind_selected_policy(
+        capability_bindings,
+        &crate::dependency_security::theory::DependencySecurityPolicyRegistry::new(
+            stores
+                .theory_db
+                .opened()
+                .ok_or_else(|| world_init_error("theory database is not open"))?
+                .clone(),
+        )
+        .map_err(world_init_error)?,
+        &compilation
+            .installed_owner_revisions
+            .iter()
+            .map(|component| component.owner_revision.clone())
+            .collect::<Vec<_>>(),
+        &binding.subject,
+    )
+    .map_err(world_init_error)?;
     let activation = StewardshipActivationV1::new(
         assignment.assignment_id.clone(),
         binding.activation_bindings(),
@@ -490,6 +508,7 @@ mod tests {
         assert_eq!(replay.receipt.receipt_id, routed.receipt.receipt_id);
         assert!(!replay.changed);
         let binding = PhysicalBinding {
+            bindings: Default::default(),
             workspace_root: Some(workspace.path().into()),
             subject: meld_events::DomainObjectRef::new("workspace_fs", "node", "dependency-graph")
                 .unwrap(),

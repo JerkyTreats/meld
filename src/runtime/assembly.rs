@@ -651,6 +651,33 @@ fn activate_exact_capabilities(
     if let Some(policy) = claim_policy {
         owner_bindings = crate::docs::contribution::bind_claim_policy(owner_bindings, policy)?;
     }
+    let compilation = stores
+        .pds_products
+        .compilation(&closure.assignment.product_compilation_receipt_id)
+        .map_err(|error| crate::error::ApiError::ConfigError(error.to_string()))?
+        .ok_or_else(|| {
+            crate::error::ApiError::ConfigError("prepared product compilation is absent".into())
+        })?;
+    owner_bindings = crate::dependency_security::contribution::bind_selected_policy(
+        owner_bindings,
+        &crate::dependency_security::theory::DependencySecurityPolicyRegistry::new(
+            stores
+                .theory_db
+                .opened()
+                .ok_or_else(|| {
+                    crate::error::ApiError::ConfigError("theory database is not open".into())
+                })?
+                .clone(),
+        )
+        .map_err(crate::error::ApiError::ConfigError)?,
+        &compilation
+            .installed_owner_revisions
+            .iter()
+            .map(|component| component.owner_revision.clone())
+            .collect::<Vec<_>>(),
+        &binding.subject,
+    )
+    .map_err(crate::error::ApiError::ConfigError)?;
     let prepared = inventory
         .prepare(
             ExactCapabilityActivationRequest {

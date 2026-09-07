@@ -97,6 +97,7 @@ pub fn survey_binding(
     storage_root: std::path::PathBuf,
 ) -> PhysicalBinding {
     PhysicalBinding {
+        bindings: Default::default(),
         workspace_root: Some(workspace_root),
         subject: meld_events::DomainObjectRef::new("workspace_fs", "node", SUBJECT_ID).unwrap(),
         agent_id: AGENT_ID.to_string(),

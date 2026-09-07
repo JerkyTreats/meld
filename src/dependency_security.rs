@@ -1,11 +1,10 @@
-//! Bounded fixture-backed dependency-security truth domain.
+//! Native inventory and evidence-grounded dependency-security assessment.
 
-pub mod adapter;
-pub mod admission;
 pub mod advisory;
 pub mod assessment;
 pub mod capability;
 pub mod contracts;
+pub mod contribution;
 pub mod events;
 pub mod inventory;
 pub mod policy;

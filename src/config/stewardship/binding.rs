@@ -50,6 +50,8 @@ pub struct SelectedStewardshipPackage {
 /// remains outside it. Runtime subjects need neither a workspace nor a provider.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PhysicalBinding {
+    /// Exact resource references carried intact into owner preparation.
+    pub bindings: std::collections::BTreeMap<String, super::activation::PhysicalBindingRef>,
     /// Optional canonical workspace supplied to the selected owner implementations.
     pub workspace_root: Option<PathBuf>,
     /// Subject identity the expression is about.
@@ -180,6 +182,7 @@ impl PhysicalBinding {
         };
 
         Ok(Self {
+            bindings: selection.bindings.clone(),
             workspace_root,
             subject: selection.subject.clone(),
             agent_id: selection.agent_id.clone(),
@@ -204,7 +207,8 @@ impl PhysicalBinding {
         &self,
     ) -> std::collections::BTreeMap<String, super::activation::PhysicalBindingRef> {
         use super::activation::PhysicalBindingRef;
-        let mut bindings = std::collections::BTreeMap::from([
+        let mut bindings = self.bindings.clone();
+        bindings.extend([
             (
                 "subject".into(),
                 PhysicalBindingRef::ConfigRef(self.subject.object_id.clone()),
@@ -466,6 +470,7 @@ mod tests {
         config.stewardship.declarations.insert(
             "repository".to_string(),
             StewardshipDeclaration {
+                bindings: Default::default(),
                 expression: "repository_health".to_string(),
                 ..legacy.into()
             },

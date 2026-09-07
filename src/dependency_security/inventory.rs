@@ -1,3 +1,5 @@
+pub mod cargo;
+
 use std::collections::BTreeSet;
 
 use serde::Serialize;
@@ -16,6 +18,23 @@ struct Identity<'a> {
 }
 
 impl DependencyInventorySnapshotV1 {
+    /// Verify the intact owner product before it contributes assessment evidence.
+    pub fn validate(&self) -> Result<(), String> {
+        let expected = Self::canonical(
+            self.subject.clone(),
+            self.workspace_revision.clone(),
+            self.manifest_content_hash.clone(),
+            self.lockfile_content_hash.clone(),
+            self.components.clone(),
+            self.completeness.clone(),
+            self.observed_at,
+        )?;
+        if &expected != self {
+            return Err("inventory identity or canonical content differs".into());
+        }
+        Ok(())
+    }
+
     pub fn canonical(
         subject: DependencySecuritySubjectV1,
         workspace_revision: String,
@@ -25,6 +44,20 @@ impl DependencyInventorySnapshotV1 {
         completeness: InventoryCompleteness,
         observed_at: u64,
     ) -> Result<Self, String> {
+        subject
+            .subject
+            .validate()
+            .map_err(|error| error.to_string())?;
+        subject
+            .inventory_scope
+            .manifest_ref
+            .validate()
+            .map_err(|error| error.to_string())?;
+        subject
+            .inventory_scope
+            .lockfile_ref
+            .validate()
+            .map_err(|error| error.to_string())?;
         if !subject.inventory_scope.include_transitive
             || workspace_revision.trim().is_empty()
             || manifest_content_hash.trim().is_empty()

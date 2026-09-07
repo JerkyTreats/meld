@@ -26,6 +26,7 @@ serde_json = { version = "1.0", features = ["float_roundtrip"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 
 [dependencies]
+semver = "1.0"
 # Hashing
 blake3 = "1.5"
 meld-events = { path = "crates/meld-events", version = "2.7.0" }
@@ -94,7 +95,7 @@ notify = "6.0"
 hex = "0.4"
 
 # Async runtime
-tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "macros"] }
+tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "macros", "process", "io-util", "time"] }
 
 # Logging
 tracing = "0.1"

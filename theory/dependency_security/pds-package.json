@@ -1,21 +1,205 @@
 {
   "schema_version": 1,
   "package_id": "meld.dependency-security-fixture",
-  "package_version": "1.0.0",
-  "description": "Bounded Cargo dependency-security truth slice",
+  "package_version": "1.1.0",
+  "description": "Cargo inventory and declared advisory-source assessment with independent verification",
   "imports": [],
   "components": [
-    {"component_id":"security-policy","owner_component_id":"cargo_fixture_security","route":{"owner_domain":"dependency-security","component_kind":"policy","route_version":1},"component_schema_version":1,"content":{"kind":"relative_file","path":"policy.cargo_fixture.json","content_hash":"25bec03a49997ace536c20079c56bf01583c136ec76c370c7135360490ef6ef4"},"requires":[]},
-    {"component_id":"security-coverage-belief","owner_component_id":"dependency_security_coverage","route":{"owner_domain":"world-model","component_kind":"belief-family","route_version":1},"component_schema_version":1,"content":{"kind":"relative_file","path":"belief_family.security_coverage.json","content_hash":"2d4c1da2c3e652114537e8f9e9558b82b22b5372afa58c493ec049e977dc861e"},"requires":[]},
-    {"component_id":"security-posture-belief","owner_component_id":"dependency_security_posture","route":{"owner_domain":"world-model","component_kind":"belief-family","route_version":1},"component_schema_version":1,"content":{"kind":"relative_file","path":"belief_family.security_posture.json","content_hash":"3b3e4103d1592c3da09e1214aead248cd45810bbab3ee02ea5ad2e9adcde0189"},"requires":[]},
-    {"component_id":"security-outcome-mapping","owner_component_id":"dependency_security_outcome_mapping_v1","route":{"owner_domain":"world-model","component_kind":"outcome-mapping","route_version":1},"component_schema_version":1,"content":{"kind":"relative_file","path":"outcome_mapping.security.json","content_hash":"c55121d9418947503fdcba856fcd9467863d94df203562bfb050e65b83e4d3e9"},"requires":[]},
-    {"component_id":"security-curation-rule","owner_component_id":"dependency_security_posture","route":{"owner_domain":"world-model","component_kind":"agent-curation-rule","route_version":1},"component_schema_version":1,"content":{"kind":"relative_file","path":"curation_rule.security.json","content_hash":"dc81c0d546f04cd155e550802abc64415bb9303d2cf11345331e9bec9c9659fb"},"requires":[]},
-    {"component_id":"security-maintained-condition","owner_component_id":"dependency_security_posture","route":{"owner_domain":"world-model","component_kind":"agent-maintained-condition","route_version":1},"component_schema_version":1,"content":{"kind":"relative_file","path":"maintained_condition.security.json","content_hash":"b3fecaac09daa498017745fb142384d8b80ab8b58190e1fc65b120e4715eb63f"},"requires":[]},
-    {"component_id":"security-strategy","owner_component_id":"dependency_security_fixture","route":{"owner_domain":"world-model","component_kind":"strategy-theory","route_version":1},"component_schema_version":1,"content":{"kind":"relative_file","path":"strategy_theory.security.json","content_hash":"d50e4b0dc88b7a3c46788ab9de0ee28c3e1308291396a0f685b9983aa2130070"},"requires":[]},
-    {"component_id":"security-authority","owner_component_id":"dependency_security_fixture_read_only","route":{"owner_domain":"execution","component_kind":"authority-policy","route_version":1},"component_schema_version":1,"content":{"kind":"relative_file","path":"authority_policy.security_read_only.json","content_hash":"3f676706093e769348a2fac127c5fe2894d53e678e9de08a0fdcc10a59f67b55"},"requires":[]},
-    {"component_id":"security-capability-inventory","owner_component_id":"dependency_security.observe_inventory.v1","route":{"owner_domain":"execution","component_kind":"capability-contract","route_version":1},"component_schema_version":1,"content":{"kind":"published_exact","publisher":"execution.capability-contract.v1","id":"dependency_security.observe_inventory.v1","content_identity":"capability-contract-a544fe8dfe658baa07c6ac77a09e22a0e187330560e4922dcaa04f671ec50486"},"requires":[]},
-    {"component_id":"security-capability-advisories","owner_component_id":"dependency_security.acquire_advisories.v1","route":{"owner_domain":"execution","component_kind":"capability-contract","route_version":1},"component_schema_version":1,"content":{"kind":"published_exact","publisher":"execution.capability-contract.v1","id":"dependency_security.acquire_advisories.v1","content_identity":"capability-contract-f04cb1e932dd54d12b324d9812b5c4253ba933eb005b705dfdc0bc19516c307f"},"requires":[]},
-    {"component_id":"security-capability-assess","owner_component_id":"dependency_security.assess.v1","route":{"owner_domain":"execution","component_kind":"capability-contract","route_version":1},"component_schema_version":1,"content":{"kind":"published_exact","publisher":"execution.capability-contract.v1","id":"dependency_security.assess.v1","content_identity":"capability-contract-9c847192793a2c0123f94829388b27699e4cde27d2851543f35f90ea7e721df3"},"requires":[]},
-    {"component_id":"security-capability-verify","owner_component_id":"dependency_security.verify.v1","route":{"owner_domain":"execution","component_kind":"capability-contract","route_version":1},"component_schema_version":1,"content":{"kind":"published_exact","publisher":"execution.capability-contract.v1","id":"dependency_security.verify.v1","content_identity":"capability-contract-eb129d9311368ee554aa1a6575330ef1b1df52a94cafdedad1b1588acadf28a4"},"requires":[]}
+    {
+      "component_id": "security-policy",
+      "owner_component_id": "cargo_fixture_security",
+      "route": {
+        "owner_domain": "dependency-security",
+        "component_kind": "policy",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "policy.cargo_fixture.json",
+        "content_hash": "25bec03a49997ace536c20079c56bf01583c136ec76c370c7135360490ef6ef4"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-coverage-belief",
+      "owner_component_id": "dependency_security_coverage",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "belief-family",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "belief_family.security_coverage.json",
+        "content_hash": "2d4c1da2c3e652114537e8f9e9558b82b22b5372afa58c493ec049e977dc861e"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-posture-belief",
+      "owner_component_id": "dependency_security_posture",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "belief-family",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "belief_family.security_posture.json",
+        "content_hash": "3b3e4103d1592c3da09e1214aead248cd45810bbab3ee02ea5ad2e9adcde0189"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-outcome-mapping",
+      "owner_component_id": "dependency_security_outcome_mapping_v1",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "outcome-mapping",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "outcome_mapping.security.json",
+        "content_hash": "c55121d9418947503fdcba856fcd9467863d94df203562bfb050e65b83e4d3e9"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-curation-rule",
+      "owner_component_id": "dependency_security_posture",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "agent-curation-rule",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "curation_rule.security.json",
+        "content_hash": "dc81c0d546f04cd155e550802abc64415bb9303d2cf11345331e9bec9c9659fb"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-maintained-condition",
+      "owner_component_id": "dependency_security_posture",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "agent-maintained-condition",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "maintained_condition.security.json",
+        "content_hash": "b3fecaac09daa498017745fb142384d8b80ab8b58190e1fc65b120e4715eb63f"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-strategy",
+      "owner_component_id": "dependency_security_fixture",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "strategy-theory",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "strategy_theory.security.json",
+        "content_hash": "8c2b0fc27cd0b937845207d874f894feb5c6811371326279b4d793d2fe04192d"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-authority",
+      "owner_component_id": "dependency_security_fixture_read_only",
+      "route": {
+        "owner_domain": "execution",
+        "component_kind": "authority-policy",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "authority_policy.security_read_only.json",
+        "content_hash": "3f676706093e769348a2fac127c5fe2894d53e678e9de08a0fdcc10a59f67b55"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-capability-inventory",
+      "owner_component_id": "dependency_security.observe_inventory.v1",
+      "route": {
+        "owner_domain": "execution",
+        "component_kind": "capability-contract",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "published_exact",
+        "publisher": "execution.capability-contract.v1",
+        "id": "dependency_security.observe_inventory.v1",
+        "content_identity": "capability-contract-2e90029efcdcf0f24eb1b27f58a413c4896437045e43cc1003789c38003c91d6"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-capability-advisories",
+      "owner_component_id": "dependency_security.acquire_advisories.v1",
+      "route": {
+        "owner_domain": "execution",
+        "component_kind": "capability-contract",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "published_exact",
+        "publisher": "execution.capability-contract.v1",
+        "id": "dependency_security.acquire_advisories.v1",
+        "content_identity": "capability-contract-979809a1f6b4ab8d8254b3714472afa39b315175425d9ed657159aad89fb0d43"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-capability-assess",
+      "owner_component_id": "dependency_security.assess.v1",
+      "route": {
+        "owner_domain": "execution",
+        "component_kind": "capability-contract",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "published_exact",
+        "publisher": "execution.capability-contract.v1",
+        "id": "dependency_security.assess.v1",
+        "content_identity": "capability-contract-334f551b82f12e219bc3d25e3e8fc4c5a1677e5a3f925579b410a87f1f1a20cd"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-capability-verify",
+      "owner_component_id": "dependency_security.verify.v1",
+      "route": {
+        "owner_domain": "execution",
+        "component_kind": "capability-contract",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "published_exact",
+        "publisher": "execution.capability-contract.v1",
+        "id": "dependency_security.verify.v1",
+        "content_identity": "capability-contract-100cfb62b3c9cfa0320e4e3d956851be8995a40a9ee7ce1fd3d3bd3e684d25cb"
+      },
+      "requires": []
+    }
   ]
 }

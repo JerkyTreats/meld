@@ -127,6 +127,10 @@ pub struct NamedStewardshipDeclaration {
 /// embedding owner-controlled theory bodies.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StewardshipDeclaration {
+    /// Named non-secret resource references interpreted by their selected owners.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub bindings: BTreeMap<String, super::activation::PhysicalBindingRef>,
+
     /// Name of the stewardship expression this declaration instantiates.
     pub expression: String,
 
@@ -335,6 +339,7 @@ impl StewardshipDeclaration {
 impl From<DocsFreshnessSelection> for StewardshipDeclaration {
     fn from(selection: DocsFreshnessSelection) -> Self {
         Self {
+            bindings: BTreeMap::new(),
             expression: selection.expression,
             target_root: Some(selection.target_root),
             subject: meld_events::DomainObjectRef {
@@ -407,6 +412,29 @@ fn validate_declaration(
             );
         }
     }
+    for (id, binding) in &declaration.bindings {
+        use super::activation::PhysicalBindingRef;
+        let value = match binding {
+            PhysicalBindingRef::WorkspaceRef(value)
+            | PhysicalBindingRef::ProviderRef(value)
+            | PhysicalBindingRef::CredentialRef(value)
+            | PhysicalBindingRef::EndpointRef(value)
+            | PhysicalBindingRef::ExecutableRef(value)
+            | PhysicalBindingRef::ConfigRef(value) => value,
+        };
+        if id.trim().is_empty() || value.trim().is_empty() {
+            reject(
+                &format!("bindings.{id}"),
+                "binding identity and reference must not be empty".into(),
+            );
+        }
+        if ["workspace", "subject", "agent", "provider"].contains(&id.as_str()) {
+            reject(
+                &format!("bindings.{id}"),
+                "binding is supplied by the canonical declaration field".into(),
+            );
+        }
+    }
     if let Err(error) = declaration.subject.validate() {
         reject("subject", error.to_string());
     }
@@ -460,6 +488,41 @@ fn validate_declaration(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn named_owner_resources_round_trip_without_replacing_structural_bindings() {
+        let mut declaration: StewardshipDeclaration = valid_selection().into();
+        declaration.bindings.insert(
+            "dependency-security.advisories".into(),
+            super::super::activation::PhysicalBindingRef::EndpointRef(
+                "/sources/advisories.json".into(),
+            ),
+        );
+        assert!(declaration
+            .validate_sourced(
+                &SelectionOrigins::default(),
+                "stewardship.declarations.security"
+            )
+            .is_ok());
+        let bytes = serde_json::to_vec(&declaration).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<StewardshipDeclaration>(&bytes).unwrap(),
+            declaration
+        );
+        for id in ["workspace", "subject", "agent", "provider"] {
+            let mut invalid = declaration.clone();
+            invalid.bindings.insert(
+                id.into(),
+                super::super::activation::PhysicalBindingRef::ConfigRef("override".into()),
+            );
+            assert!(invalid
+                .validate_sourced(
+                    &SelectionOrigins::default(),
+                    "stewardship.declarations.security"
+                )
+                .is_err());
+        }
+    }
 
     fn valid_selection() -> DocsFreshnessSelection {
         DocsFreshnessSelection {
