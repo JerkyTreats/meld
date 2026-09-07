@@ -40,29 +40,21 @@ fn startup_account_names_graph_lag_and_keeps_uncertain_execution_separate() {
         reader.inspect(&request).unwrap().first_missing,
         Some(StartupPosition::NonceInstantiated)
     );
-    let mut admitted = false;
-    for _ in 0..24 {
-        for owner in [
-            "world_model.evidence_ingestion",
-            "world_model.graph_replay",
-            "world_model.standing_curation",
-            "world_model.belief_assessment",
-            AGENT_RECONCILIATION_RUNTIME_ID,
-            "execution.task_admission",
-        ] {
-            let report = supervisor.step_owner_for_test(owner, WorkBudget { max_items: 8 });
-            assert!(
-                report.fatal_errors.is_empty() && report.retryable_errors.is_empty(),
-                "{owner}: {report:?}"
-            );
-        }
-        if reader.inspect(&request).unwrap().first_missing == Some(StartupPosition::AttemptRecorded)
-        {
-            admitted = true;
-            break;
-        }
-    }
-    assert!(admitted, "{:?}", reader.inspect(&request).unwrap());
+    advance_to_dispatch(&mut supervisor, &reader, &request);
+    let (waiting_cursor, native_wake) = wait_for_graph_input(&assembly, &mut supervisor);
+    let graph = assembly.graph_runtime();
+    let waiting_generation = assembly
+        .lifecycle_store()
+        .unwrap()
+        .current_generation(
+            &assembly
+                .prepared_activation()
+                .unwrap()
+                .assignment
+                .assignment_id,
+        )
+        .unwrap()
+        .unwrap();
     let before = reader.inspect(&request).unwrap();
     assert_eq!(reader.inspect(&request).unwrap(), before);
     supervisor.step_owner_for_test("execution.task_dispatch", WorkBudget { max_items: 1 });
@@ -78,10 +70,62 @@ fn startup_account_names_graph_lag_and_keeps_uncertain_execution_separate() {
         .iter()
         .any(|p| p.position == StartupPosition::NonceEvent && p.state == EvidenceState::Available));
     assert_eq!(reader.inspect(&request).unwrap(), lagged);
+    // The producer commits while Graph is held at its prior cursor. Neither
+    // inspection nor wake resolution consumes the durable input on its behalf.
+    let pending = assembly
+        .ports()
+        .event_replay()
+        .read_after_limit(waiting_cursor.after_seq, 128)
+        .unwrap();
+    let nonce_events: Vec<_> = pending
+        .iter()
+        .filter(|record| record.envelope.event_type == crate::nonce::EVENT_TYPE)
+        .collect();
+    assert_eq!(nonce_events.len(), 1);
+    let nonce_seq = nonce_events[0].seq;
+    assert!(nonce_seq > waiting_cursor.after_seq);
+    assert!(graph.resolves_wake(&native_wake).unwrap());
+    assert_eq!(graph.durable_event_cursor().unwrap(), waiting_cursor);
+    assert_eq!(lagged.generation_id, before.generation_id);
+    assert_eq!(lagged.admission_epoch, before.admission_epoch);
+    let mut resumed_from_wait = false;
+    let mut consumed_nonce = false;
     for pass in 0..40 {
-        supervisor.tick(1_100 + pass * 10).unwrap();
+        let tick = supervisor.tick(1_100 + pass * 10).unwrap();
+        for action in tick
+            .actions
+            .iter()
+            .filter(|action| action.runtime_id == "world_model.graph_replay")
+        {
+            assert_eq!(action.generation_id, before.generation_id);
+            let incarnation = action.incarnation_id.as_ref().unwrap();
+            assert_eq!(
+                incarnation,
+                &waiting_generation.incarnations["world_model.graph_replay"].incarnation_id
+            );
+            for checkpoint in &action.checkpoints {
+                resumed_from_wait |= checkpoint.input_value == waiting_cursor.after_seq
+                    && checkpoint.output_value > waiting_cursor.after_seq;
+                consumed_nonce |= checkpoint.output_value >= nonce_seq;
+            }
+        }
     }
+    assert!(resumed_from_wait && consumed_nonce);
+    assert!(graph.durable_event_cursor().unwrap().after_seq >= nonce_seq);
+    assert_eq!(
+        assembly
+            .ports()
+            .event_replay()
+            .read_after_limit(waiting_cursor.after_seq, 1024)
+            .unwrap()
+            .iter()
+            .filter(|record| record.envelope.event_type == crate::nonce::EVENT_TYPE)
+            .count(),
+        1
+    );
     let complete = reader.inspect(&request).unwrap();
+    assert_eq!(complete.generation_id, before.generation_id);
+    assert_eq!(complete.admission_epoch, before.admission_epoch);
     assert_eq!(complete.read_state, EvidenceState::Available);
     assert_eq!(complete.first_missing, None, "{complete:?}");
     assert_eq!(complete.positions.len(), 19);
@@ -200,6 +244,7 @@ fn startup_account_names_graph_lag_and_keeps_uncertain_execution_separate() {
     supervisor.request_shutdown(3_000).unwrap();
     drop(reader);
     drop(supervisor);
+    drop(graph);
     drop(assembly);
     let assembly = harness.assembly();
     harness.bind_production_routes(&assembly);
@@ -226,4 +271,215 @@ fn startup_account_names_graph_lag_and_keeps_uncertain_execution_separate() {
     assert_ne!(successor.nonce_id, complete.nonce_id);
     assert_eq!(successor.first_missing, None, "{successor:?}");
     supervisor.request_shutdown(1_000_600).unwrap();
+}
+
+#[test]
+fn startup_reopens_committed_nonce_before_graph_consumption() {
+    let harness = startup_harness();
+    let request = StartupAccountRequest {
+        agent_id: "startup-agent".into(),
+        ..Default::default()
+    };
+    let (waiting_cursor, native_wake, nonce_record, prior, prior_generation);
+    {
+        let assembly = harness.assembly();
+        harness.run_world_genesis_from(
+            &assembly,
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/startup"),
+        );
+    }
+    {
+        let assembly = harness.assembly();
+        harness.bind_production_routes_with_loss(
+            &assembly,
+            Some((
+                Arc::new(std::sync::atomic::AtomicBool::new(true)),
+                false,
+                None,
+            )),
+        );
+        let reader = StartupAccountReader::over_assembly(&assembly);
+        let mut supervisor = harness.start_supervisor(&assembly);
+        advance_to_dispatch(&mut supervisor, &reader, &request);
+        (waiting_cursor, native_wake) = wait_for_graph_input(&assembly, &mut supervisor);
+        supervisor.step_owner_for_test("execution.task_dispatch", WorkBudget { max_items: 1 });
+        prior = reader.inspect(&request).unwrap();
+        assert_eq!(prior.first_missing, Some(StartupPosition::GraphVisibility));
+        assert_eq!(prior.parallel_obligations.len(), 1);
+        prior_generation = assembly
+            .lifecycle_store()
+            .unwrap()
+            .current_generation(
+                &assembly
+                    .prepared_activation()
+                    .unwrap()
+                    .assignment
+                    .assignment_id,
+            )
+            .unwrap()
+            .unwrap();
+        let pending = assembly
+            .ports()
+            .event_replay()
+            .read_after_limit(waiting_cursor.after_seq, 128)
+            .unwrap();
+        let nonces: Vec<_> = pending
+            .into_iter()
+            .filter(|record| record.envelope.event_type == crate::nonce::EVENT_TYPE)
+            .collect();
+        assert_eq!(nonces.len(), 1);
+        nonce_record = nonces.into_iter().next().unwrap();
+        assert_eq!(
+            assembly.graph_runtime().durable_event_cursor().unwrap(),
+            waiting_cursor
+        );
+        assembly.flush_product_boundary().unwrap();
+        assembly.flush_supervisor_store().unwrap();
+        // Drop the live supervisor without orderly shutdown. Recovery must
+        // replace expired incarnations while preserving the unconsumed Event.
+    }
+    let assembly = harness.assembly();
+    harness.bind_production_routes(&assembly);
+    let graph = assembly.graph_runtime();
+    assert_eq!(graph.durable_event_cursor().unwrap(), waiting_cursor);
+    assert!(graph.resolves_wake(&native_wake).unwrap());
+    let recovered_pending = assembly
+        .ports()
+        .event_replay()
+        .read_after_limit(waiting_cursor.after_seq, 128)
+        .unwrap();
+    assert!(recovered_pending.contains(&nonce_record));
+    let mut command = SupervisorStartCommand::new("startup-unconsumed-recovery", 1_000_000);
+    command.registration_set = assembly.registration_set().cloned();
+    let mut supervisor =
+        RuntimeSupervisor::start(assembly.supervisor_startup_package(), command).unwrap();
+    let reader = StartupAccountReader::over_assembly(&assembly);
+    let current = reader.inspect(&request).unwrap();
+    assert_eq!(current.generation_id, prior.generation_id);
+    assert_ne!(current.admission_epoch, prior.admission_epoch);
+    assert_eq!(
+        current.first_missing,
+        Some(StartupPosition::NonceInstantiated)
+    );
+    assert_eq!(graph.durable_event_cursor().unwrap(), waiting_cursor);
+    let recovered_generation = assembly
+        .lifecycle_store()
+        .unwrap()
+        .current_generation(
+            &assembly
+                .prepared_activation()
+                .unwrap()
+                .assignment
+                .assignment_id,
+        )
+        .unwrap()
+        .unwrap();
+    assert_ne!(
+        recovered_generation.incarnations["world_model.graph_replay"].incarnation_id,
+        prior_generation.incarnations["world_model.graph_replay"].incarnation_id
+    );
+    let mut consumed = false;
+    for pass in 0..40 {
+        let tick = supervisor.tick(1_000_100 + pass * 10).unwrap();
+        consumed |= tick.actions.iter().any(|action| {
+            action.runtime_id == "world_model.graph_replay"
+                && action.incarnation_id.as_ref()
+                    == Some(
+                        &recovered_generation.incarnations["world_model.graph_replay"]
+                            .incarnation_id,
+                    )
+                && action.checkpoints.iter().any(|checkpoint| {
+                    checkpoint.input_value == waiting_cursor.after_seq
+                        && checkpoint.output_value >= nonce_record.seq
+                })
+        });
+    }
+    assert!(consumed);
+    let complete = reader.inspect(&request).unwrap();
+    assert_eq!(complete.first_missing, None, "{complete:?}");
+    assert_ne!(complete.nonce_id, prior.nonce_id);
+    let events = assembly
+        .ports()
+        .event_replay()
+        .read_after_limit(waiting_cursor.after_seq, 1024)
+        .unwrap();
+    let nonces: Vec<_> = events
+        .iter()
+        .filter(|record| record.envelope.event_type == crate::nonce::EVENT_TYPE)
+        .collect();
+    assert_eq!(nonces.len(), 2);
+    assert_eq!(
+        nonces
+            .iter()
+            .filter(|record| ***record == nonce_record)
+            .count(),
+        1
+    );
+    supervisor.request_shutdown(1_000_600).unwrap();
+}
+
+fn advance_to_dispatch(
+    supervisor: &mut RuntimeSupervisor<'_>,
+    reader: &StartupAccountReader,
+    request: &StartupAccountRequest,
+) {
+    let mut admitted = false;
+    for _ in 0..24 {
+        for owner in [
+            "world_model.evidence_ingestion",
+            "world_model.graph_replay",
+            "world_model.standing_curation",
+            "world_model.belief_assessment",
+            AGENT_RECONCILIATION_RUNTIME_ID,
+            "execution.task_admission",
+        ] {
+            let report = supervisor.step_owner_for_test(owner, WorkBudget { max_items: 8 });
+            assert!(
+                report.fatal_errors.is_empty() && report.retryable_errors.is_empty(),
+                "{owner}: {report:?}"
+            );
+        }
+        if reader.inspect(request).unwrap().first_missing == Some(StartupPosition::AttemptRecorded)
+        {
+            admitted = true;
+            break;
+        }
+    }
+    assert!(admitted, "{:?}", reader.inspect(request).unwrap());
+}
+
+fn wait_for_graph_input(
+    assembly: &ProductRuntimeAssembly,
+    supervisor: &mut RuntimeSupervisor<'_>,
+) -> (
+    meld_events::LedgerCursor,
+    meld_world_model::waiting::StructuralWakeAddress,
+) {
+    let graph = assembly.graph_runtime();
+    let mut idle = None;
+    for _ in 0..8 {
+        let report = supervisor
+            .step_owner_for_test("world_model.graph_replay", WorkBudget { max_items: 128 });
+        assert!(report.fatal_errors.is_empty() && report.retryable_errors.is_empty());
+        if report.items_attempted == 0 && !report.budget_exhausted {
+            idle = Some(report);
+            break;
+        }
+    }
+    let idle = idle.expect("Graph must reach its durable waiting position before dispatch");
+    let waiting_cursor = graph.durable_event_cursor().unwrap();
+    let wake_address = format!(
+        "event-ledger::{}::after::{}",
+        waiting_cursor.ledger_id, waiting_cursor.after_seq
+    );
+    assert!(idle.waiting_on.iter().any(|wait| {
+        wait.condition == "ledger_quiet_past_graph_cursor"
+            && wait.wake_refs
+                == vec![crate::runtime::lifecycle::StructuralWakeRef::EventPosition(
+                    wake_address.clone(),
+                )]
+    }));
+    let native_wake = meld_world_model::waiting::StructuralWakeAddress::EventPosition(wake_address);
+    assert!(graph.resolves_wake(&native_wake).unwrap());
+    (waiting_cursor, native_wake)
 }
