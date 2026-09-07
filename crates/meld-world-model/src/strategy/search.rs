@@ -15,6 +15,13 @@ use super::contracts::*;
 /// construct within the supplied bounds. `Bounded` means traversal stopped
 /// early and must not be interpreted as proof that no candidate exists.
 pub fn search(request: &StrategySearchRequest) -> StrategySearchResult {
+    search_with_completed(request, &[])
+}
+
+fn search_with_completed(
+    request: &StrategySearchRequest,
+    completed: &[&StrategyTask],
+) -> StrategySearchResult {
     let mut state = SearchState::new(request);
     if !request.problem.goal.target.is_ground()
         || !matches!(request.problem.goal.lifecycle, GoalLifecycle::Proposed)
@@ -96,6 +103,17 @@ pub fn search(request: &StrategySearchRequest) -> StrategySearchResult {
             &mut state,
         ));
     }
+    candidates.retain(|candidate| {
+        let repeats = !candidate.tasks.is_empty()
+            && candidate
+                .tasks
+                .iter()
+                .all(|task| completed.iter().any(|prior| same_work(task, prior)));
+        if repeats {
+            state.reject(StrategyRejectionGround::UnchangedCompletedWork);
+        }
+        !repeats
+    });
     candidates.sort_by(|left, right| {
         if request.problem.evaluation_policy.prefer_fewer_steps {
             candidate_key(left).cmp(&candidate_key(right))
@@ -127,8 +145,34 @@ pub fn search_successor(request: &StrategySuccessorRequest) -> StrategySuccessor
         };
     }
 
-    let confirmation = confirmation_successor(request);
-    let result = confirmation.unwrap_or_else(|| search(&request.search));
+    let confirmed_current =
+        confirmation_is_current(&request.search.problem, &request.completed_history);
+    let source_changed_after_confirmation = predecessor.origin == StrategyPlanOrigin::Confirmation
+        && !epistemic_products(&request.search.problem)
+            .iter()
+            .all(|operation| {
+                predecessor
+                    .epistemic_operations
+                    .iter()
+                    .any(|prior| prior.same_source_as(operation))
+            });
+    let confirmation = if source_changed_after_confirmation {
+        None
+    } else {
+        confirmation_successor(request)
+    };
+    let completed: Vec<_> = if confirmed_current {
+        completed_task_history(&request.completed_history)
+            .into_iter()
+            .filter_map(|entry| match &entry.product {
+                Some(StrategyProduct::Task(task)) => Some(task.as_ref()),
+                _ => None,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let result = confirmation.unwrap_or_else(|| search_with_completed(&request.search, &completed));
     let recommendation = result.recommendation.map(|mut plan| {
         plan.plan_family_id = predecessor.plan_family_id.clone();
         plan.predecessor_plan_revision_id = Some(predecessor.plan_revision_id.clone());
@@ -145,6 +189,35 @@ pub fn search_successor(request: &StrategySuccessorRequest) -> StrategySuccessor
         rejections: result.rejections,
         statistics: result.statistics,
     }
+}
+
+pub(super) fn confirmation_is_current(
+    problem: &StrategyProblem,
+    history: &[StrategyCompletedHistoryEntry],
+) -> bool {
+    let operations = epistemic_products(problem);
+    !operations.is_empty()
+        && operations.iter().all(|operation| {
+            history.iter().any(|entry| {
+                matches!(&entry.product,
+            Some(StrategyProduct::Epistemic(prior))
+            if entry.product_id == prior.product_id
+                && !entry.owner_position_id.is_empty()
+                && prior.accepts_return(&entry.accepted_milestone)
+                && prior.same_request_as(operation))
+            })
+        })
+}
+
+pub(super) fn same_work(left: &StrategyTask, right: &StrategyTask) -> bool {
+    left.composition == right.composition
+        && left.bindings == right.bindings
+        && left.initial_inputs == right.initial_inputs
+        && left.execution_subject == right.execution_subject
+        && left.capability_contract_ids == right.capability_contract_ids
+        && left.expected_outcome_contract_id == right.expected_outcome_contract_id
+        && left.authority_requirements == right.authority_requirements
+        && left.effect_visibility == right.effect_visibility
 }
 
 fn confirmation_successor(request: &StrategySuccessorRequest) -> Option<StrategySearchResult> {

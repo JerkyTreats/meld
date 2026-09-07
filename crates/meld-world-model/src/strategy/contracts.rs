@@ -259,11 +259,30 @@ impl StrategyEpistemicOperation {
             (Some(left), Some(right)) => {
                 left == right
                     && self.operation.authority == other.operation.authority
-                    && self.operation.rule_revision == other.operation.rule_revision
-                    && self.operation.traversal_request == other.operation.traversal_request
+                    && self.same_source_as(other)
             }
             _ => self.operation.selection_id == other.operation.selection_id,
         }
+    }
+
+    pub(super) fn same_source_as(&self, other: &Self) -> bool {
+        self.return_evidence == other.return_evidence
+            && self.operation.rule_revision == other.operation.rule_revision
+            && self.operation.traversal_request == other.operation.traversal_request
+            && self.source_basis() == other.source_basis()
+    }
+
+    fn source_basis(&self) -> Vec<crate::world_state::graph::contracts::OwnerGraphRevisionReceipt> {
+        self.operation
+            .source_cut
+            .receipts
+            .iter()
+            .filter(|receipt| {
+                receipt.owner_id != crate::curation::CURATION_OWNER_ID
+                    || receipt.scope != self.operation.source_cut.scope
+            })
+            .map(|receipt| receipt.semantic_basis())
+            .collect()
     }
 
     pub fn accepts_return(&self, milestone: &PlanMilestoneRequirement) -> bool {
@@ -418,6 +437,8 @@ pub enum StrategyRejectionGround {
     IdentityMismatch,
     /// The supplied predecessor is corrupt or belongs to another Plan family.
     InvalidPredecessor,
+    /// Repeating the same completed work has no new confirmed source basis.
+    UnchangedCompletedWork,
     /// Explicit structural bounds stopped the attempt.
     BoundsExceeded,
 }

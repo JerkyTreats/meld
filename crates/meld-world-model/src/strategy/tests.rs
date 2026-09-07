@@ -687,6 +687,159 @@ fn prove_confirmation_successor(placement: StrategyEpistemicPlacement, compound:
 }
 
 #[test]
+fn unsuccessful_confirmation_stops_unchanged_work_but_allows_source_advance_and_alternatives() {
+    let mut problem = problem();
+    problem.theory.settlement_rules[0].epistemic_placement =
+        StrategyEpistemicPlacement::Confirmation;
+    problem.curation_operations[0] = problem.curation_operations[0]
+        .clone()
+        .for_request("confirm-current-source".into())
+        .unwrap();
+    let search_request = StrategySearchRequest {
+        problem,
+        bounds: StrategySearchBounds {
+            max_expansions: 64,
+            max_depth: 8,
+        },
+    };
+    let task_plan = search(&search_request).recommendation.unwrap();
+    let mut request = StrategySuccessorRequest {
+        search: search_request,
+        completed_history: task_plan
+            .tasks
+            .iter()
+            .map(|task| StrategyCompletedHistoryEntry {
+                source_plan_revision_id: task_plan.plan_revision_id.clone(),
+                product_id: task.task_id.clone(),
+                accepted_milestone: task.confirmation_milestone(),
+                owner_position_id: "execution-complete".into(),
+                product: Some(StrategyProduct::Task(Box::new(task.clone()))),
+            })
+            .collect(),
+        predecessor_plan: Box::new(task_plan),
+    };
+    let confirmation = search_successor(&request).recommendation.unwrap().plan;
+    assert_eq!(confirmation.origin, StrategyPlanOrigin::Confirmation);
+    request
+        .completed_history
+        .extend(confirmation.epistemic_operations.iter().map(|operation| {
+            StrategyCompletedHistoryEntry {
+                source_plan_revision_id: confirmation.plan_revision_id.clone(),
+                product_id: operation.product_id.clone(),
+                accepted_milestone: PlanMilestoneRequirement::BeliefRevision {
+                    belief_key: "docs-current".into(),
+                    revision_id: "not-satisfied".into(),
+                },
+                owner_position_id: "belief-negative".into(),
+                product: Some(StrategyProduct::Epistemic(Box::new(operation.clone()))),
+            }
+        }));
+    request.predecessor_plan = Box::new(confirmation);
+    assert!(super::search::confirmation_is_current(
+        &request.search.problem,
+        &request.completed_history
+    ));
+    let blocked = search_successor(&request);
+    assert!(blocked.recommendation.is_none(), "{blocked:?}");
+    // Rehashing a standalone search candidate cannot bypass successor verification.
+    let mut repeated = search(&request.search).recommendation.unwrap();
+    repeated.predecessor_plan_revision_id = Some(request.predecessor_plan.plan_revision_id.clone());
+    repeated.plan_revision_id = super::search::plan_revision_identity(&repeated);
+    assert!(
+        matches!(verify_successor_plan(&request, &StrategySuccessorPlan {
+        plan: repeated, completed_history: request.completed_history.clone(),
+    }), PlanVerification::Invalid { grounds } if grounds.contains(&StrategyRejectionGround::UnchangedCompletedWork))
+    );
+
+    let mut alternative = request.clone();
+    let mut capability = alternative.search.problem.capabilities[0].clone();
+    capability.contract_id = "alternative-assessment-contract".into();
+    capability.operator.operator_id = "alternative-assessment".into();
+    capability
+        .operator
+        .resolution
+        .specific
+        .as_mut()
+        .unwrap()
+        .capability_type_id = "docs.alternative".into();
+    alternative.search.problem.capabilities.push(capability);
+    let alternative_plan = search_successor(&alternative).recommendation.unwrap();
+    assert!(!alternative_plan.plan.tasks.is_empty());
+    assert!(matches!(
+        verify_successor_plan(&alternative, &alternative_plan),
+        PlanVerification::Valid { .. }
+    ));
+
+    let mut reactivated = request.clone();
+    let operation = &reactivated.search.problem.curation_operations[0];
+    let mut authority = operation.authority.clone();
+    authority.activation_generation = "successor-activation".into();
+    reactivated.search.problem.curation_operations[0] = CurationOperation::reconstruct(
+        authority,
+        operation.rule_revision.clone(),
+        operation.source_cut.clone(),
+        operation.traversal_request.clone(),
+    )
+    .unwrap()
+    .for_request(operation.request_id.clone().unwrap())
+    .unwrap();
+    let confirmation = search_successor(&reactivated).recommendation.unwrap();
+    assert_eq!(confirmation.plan.origin, StrategyPlanOrigin::Confirmation);
+    assert!(confirmation.plan.tasks.is_empty());
+    assert!(matches!(
+        verify_successor_plan(&reactivated, &confirmation),
+        PlanVerification::Valid { .. }
+    ));
+
+    let mut advanced = request;
+    let operation = &advanced.search.problem.curation_operations[0];
+    let mut cut = operation.source_cut.clone();
+    cut.receipts[0].revision_id = "new-owner-source".into();
+    cut.cut_id = traversal_cut_identity(&cut).unwrap();
+    advanced.search.problem.curation_operations[0] = CurationOperation::reconstruct(
+        operation.authority.clone(),
+        operation.rule_revision.clone(),
+        cut,
+        operation.traversal_request.clone(),
+    )
+    .unwrap()
+    .for_request(operation.request_id.clone().unwrap())
+    .unwrap();
+    let fresh = search_successor(&advanced).recommendation.unwrap();
+    assert!(
+        !fresh.plan.tasks.is_empty(),
+        "changed source permits fresh work"
+    );
+    assert!(matches!(
+        verify_successor_plan(&advanced, &fresh),
+        PlanVerification::Valid { .. }
+    ));
+}
+
+#[test]
+fn named_confirmation_tracks_owner_evidence_beyond_its_own_curation_return() {
+    let mut problem = problem();
+    problem.curation_operations[0] = problem.curation_operations[0]
+        .clone()
+        .for_request("confirmation".into())
+        .unwrap();
+    let original = super::search::epistemic_products(&problem).remove(0);
+    let mut advanced = original.clone();
+    let mut own = advanced.operation.source_cut.receipts[0].clone();
+    own.owner_id = crate::curation::CURATION_OWNER_ID.into();
+    advanced.operation.source_cut.receipts.push(own);
+    assert!(original.same_request_as(&advanced));
+    advanced.operation.source_cut.receipts[1].scope.scope_id = "foreign-curation-source".into();
+    assert!(!original.same_request_as(&advanced));
+    advanced.operation.source_cut.receipts.pop();
+    advanced.operation.source_cut.receipts[0].revision_id = "successor-source".into();
+    assert!(!original.same_request_as(&advanced));
+    advanced = original.clone();
+    advanced.operation.source_cut.receipts.clear();
+    assert!(!original.same_request_as(&advanced));
+}
+
+#[test]
 fn verifier_rejects_cycles_and_foreign_endpoints_even_with_valid_content_identity() {
     let problem = problem();
     let original = search(&StrategySearchRequest {

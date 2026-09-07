@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "package_id": "meld.dependency-security-fixture",
-  "package_version": "1.2.0",
+  "package_version": "1.3.0",
   "description": "Cargo inventory and declared advisory-source assessment with independent verification",
   "imports": [],
   "components": [
@@ -33,7 +33,7 @@
       "content": {
         "kind": "relative_file",
         "path": "belief_family.security_coverage.json",
-        "content_hash": "2d4c1da2c3e652114537e8f9e9558b82b22b5372afa58c493ec049e977dc861e"
+        "content_hash": "31de5754a67ed3671b6678174051ce9b68a12a6923f5521eb01a4f3a433eae1b"
       },
       "requires": []
     },
@@ -49,7 +49,7 @@
       "content": {
         "kind": "relative_file",
         "path": "belief_family.security_posture.json",
-        "content_hash": "3b3e4103d1592c3da09e1214aead248cd45810bbab3ee02ea5ad2e9adcde0189"
+        "content_hash": "48cdc271106524de669fe09f6f4d18b8e43053c68d92a1aa46047ad40ccc345f"
       },
       "requires": []
     },
@@ -65,7 +65,7 @@
       "content": {
         "kind": "relative_file",
         "path": "outcome_mapping.security.json",
-        "content_hash": "c55121d9418947503fdcba856fcd9467863d94df203562bfb050e65b83e4d3e9"
+        "content_hash": "68a457bd2c2eb8b562ab509cfc2dd7a6448bd042a62f713eac6029c6d37878fb"
       },
       "requires": []
     },
@@ -113,7 +113,7 @@
       "content": {
         "kind": "relative_file",
         "path": "strategy_theory.security.json",
-        "content_hash": "1554be70ee07e948d3d5173e2d13cadc2015a6e3c560643c548534a9dd355e1f"
+        "content_hash": "0ae918816d0b4bc8032f130f72627d993a7f0ec8f7625523c65b0dd9d5083294"
       },
       "requires": []
     },
@@ -146,7 +146,7 @@
         "kind": "published_exact",
         "publisher": "execution.capability-contract.v1",
         "id": "dependency_security.observe_inventory.v1",
-        "content_identity": "capability-contract-a4e8f541d894c1c12a0addd582656b8a211df48718ce1449f26cfb7a89b5f118"
+        "content_identity": "capability-contract-6ec4322cfe43bc6b3fa609b85bad7c8d860b53f61a459d1a43f16862dcd0ee46"
       },
       "requires": []
     },
@@ -163,7 +163,7 @@
         "kind": "published_exact",
         "publisher": "execution.capability-contract.v1",
         "id": "dependency_security.acquire_advisories.v1",
-        "content_identity": "capability-contract-32eb3938631ede8dc4b6f07bedf19599f829ba38695a2b0491f1602c399c2e00"
+        "content_identity": "capability-contract-8587e9b6cdeb14a1e6c722ad51312ee58383dc9b863808322a63dbb8c83a71f4"
       },
       "requires": []
     },
@@ -180,7 +180,7 @@
         "kind": "published_exact",
         "publisher": "execution.capability-contract.v1",
         "id": "dependency_security.assess.v1",
-        "content_identity": "capability-contract-2c8eb0e8fa7bf51090dcc50bc56d0f84f0b043045e0ba502d06f8e8f4b40d435"
+        "content_identity": "capability-contract-16b8e90fdc8019c24a8a3d9ce8f3193a7ab424f5e7713e8940e69c2fb2dc4c34"
       },
       "requires": []
     },
@@ -197,7 +197,7 @@
         "kind": "published_exact",
         "publisher": "execution.capability-contract.v1",
         "id": "dependency_security.verify.v1",
-        "content_identity": "capability-contract-fc1911fa3d65906841af97cd7a9ced2652b3702df008766714de96a13da5dc0a"
+        "content_identity": "capability-contract-3cc19889cf4004591749dcf8b4223185da44dd1cc127381e3c650c424d5dd3f5"
       },
       "requires": []
     },
@@ -214,6 +214,38 @@
         "kind": "relative_file",
         "path": "graph_owner_event_route.security.json",
         "content_hash": "09f3429579baf9bf564f367a8242daf05befe5d7fd8c4b87c43279e4d643fe3d"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-native-curation",
+      "owner_component_id": "security-current-verification",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "epistemic-curation-rule",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "epistemic_rule.security.json",
+        "content_hash": "5c924ebaf0c0a0b587a2af5792481f5b7ea16b01e39af8b2251f7fb82bab9143"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-condition-graph-route",
+      "owner_component_id": "dependency-security-current-condition",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "graph-owner-event-route",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "graph_owner_event_route.condition.json",
+        "content_hash": "c4eb5d4a3d0e04cb580bac4bb1b7f86700595cc1ad9438e0eed163bdedd6b65a"
       },
       "requires": []
     }

@@ -274,18 +274,6 @@ pub(crate) fn author_coverage(
             }
             .into(),
         ),
-        (
-            "judgment_subject_id".into(),
-            operation.authority.subject.object_id.clone(),
-        ),
-        (
-            "judgment_subject_domain".into(),
-            operation.authority.subject.domain_id.clone(),
-        ),
-        (
-            "judgment_subject_kind".into(),
-            operation.authority.subject.object_kind.clone(),
-        ),
         ("expected_count".into(), targets.len().to_string()),
         ("requirement_count".into(), requirement_count.to_string()),
     ]));

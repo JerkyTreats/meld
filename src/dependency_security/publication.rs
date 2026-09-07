@@ -21,7 +21,7 @@ use crate::{
 pub const OWNER: &str = "dependency-security";
 pub const EVENT: &str = "dependency_security.product_published.v1";
 pub const SCHEMA: &str = "dependency_security.product_publication.v1";
-const RECEIPT_EVENT: &str = "dependency_security.invocation_return.v1";
+pub(super) const RECEIPT_EVENT: &str = "dependency_security.invocation_return.v1";
 
 pub fn graph_route() -> GraphOwnerEventRoute {
     GraphOwnerEventRoute {
@@ -35,13 +35,13 @@ pub fn graph_route() -> GraphOwnerEventRoute {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Receipt {
-    binding: Value,
-    artifacts: Vec<crate::task::ArtifactRecord>,
+pub(super) struct Receipt {
+    pub(super) binding: Value,
+    pub(super) artifacts: Vec<crate::task::ArtifactRecord>,
 }
 
 impl Receipt {
-    fn result(&self) -> CapabilityInvocationResult {
+    pub(super) fn result(&self) -> CapabilityInvocationResult {
         CapabilityInvocationResult {
             emitted_artifacts: self.artifacts.clone(),
         }
@@ -170,6 +170,9 @@ impl<'a> Publication<'a> {
         {
             return Ok(None);
         }
+        if !super::condition::is_published(self.capability, events)? {
+            return Ok(None);
+        }
         Ok(Some(receipt.result()))
     }
 
@@ -182,12 +185,20 @@ impl<'a> Publication<'a> {
         let Some(receipt) = self.retained(&replay)? else {
             return Ok(None);
         };
+        let source = self.publication_envelope(&replay, &receipt)?;
+        let condition = super::condition::publication(self.capability, &replay)?;
         events
-            .append_durable_proven(
-                self.publication_envelope(&replay, &receipt)?,
+            .append_durable_batch(
+                vec![source.clone(), condition.clone()],
                 AppendMode::Idempotent,
             )
             .map_err(storage)?;
+        for envelope in [source, condition] {
+            replay
+                .prove_existing(&envelope)
+                .map_err(storage)?
+                .ok_or_else(|| invalid("Security publication batch is not durably proven"))?;
+        }
         Ok(Some(receipt.result()))
     }
 
@@ -406,6 +417,7 @@ mod tests {
         };
         let source_path = root.path().join("advisories.json");
         let capability = SecurityCapability {
+            publication_gate: Default::default(),
             id: ACQUIRE_ADVISORIES.into(),
             subject: subject.clone(),
             policy: serde_json::from_str(include_str!(

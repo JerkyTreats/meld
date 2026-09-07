@@ -878,6 +878,9 @@ pub(crate) fn assigned_curation_source(
         crate::docs::publication::OWNER_ID => {
             crate::docs::publication::curation_source(binding).map(Some)
         }
+        crate::dependency_security::publication::OWNER => {
+            crate::dependency_security::condition::curation_source(template, binding).map(Some)
+        }
         owner => Err(format!("no assigned Curation source adapter for '{owner}'")),
     }
 }

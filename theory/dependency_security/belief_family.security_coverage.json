@@ -3,12 +3,47 @@
   "dimension_id": "dependency_security_coverage",
   "predicate_id": "confidence",
   "evidence_policy_id": "default_policy",
-  "evidence_schemas": [{"schema_id":"dependency_security_coverage_v1","required":true,"role":"Support","reliability":1.0,"precision":1.0}],
-  "source_mappings": [{"mapping_id":"security_coverage_to_subject","source_kind":"dependency_security_assessment","evidence_schema_id":"dependency_security_coverage_v1","subject_from":"record.subject","value_field":"coverage_probability","factor_id":"security_coverage"}],
-  "comparator": {"engine_id":"weighted_bayesian","engine_version":"1","factors":[{"factor_id":"security_coverage","evidence_schema_id":"dependency_security_coverage_v1","weight":1.0,"polarity":"Supports"}],"missing_evidence_uncertainty":0.9},
+  "evidence_schemas": [
+    {
+      "schema_id": "dependency_security_coverage_v1",
+      "required": true,
+      "role": "Support",
+      "reliability": 1.0,
+      "precision": 1.0
+    }
+  ],
+  "source_mappings": [
+    {
+      "mapping_id": "security_coverage_to_subject",
+      "source_kind": "dependency_security_assessment",
+      "evidence_schema_id": "dependency_security_coverage_v1",
+      "subject_from": "record.subject",
+      "value_field": "coverage_probability",
+      "factor_id": "security_coverage"
+    }
+  ],
+  "comparator": {
+    "engine_id": "weighted_bayesian",
+    "engine_version": "1",
+    "factors": [
+      {
+        "factor_id": "security_coverage",
+        "evidence_schema_id": "dependency_security_coverage_v1",
+        "weight": 1.0,
+        "polarity": "Supports"
+      }
+    ],
+    "missing_evidence_uncertainty": 0.9,
+    "update_policy": "LatestObservation"
+  },
   "default_prior": 0.0,
-  "planner_projection": {"confidence_field":"confidence","threshold":0.9,"posterior_meaning":"adequate_current_coverage_probability"},
-  "config_version": "1",
+  "planner_projection": {
+    "confidence_field": "confidence",
+    "threshold": 0.9,
+    "posterior_meaning": "adequate_current_coverage_probability",
+    "confidence_projection": "Probability"
+  },
+  "config_version": "2",
   "observationality": "Observational",
   "anchor_requirement": "Unanchored"
 }

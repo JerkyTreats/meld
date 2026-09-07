@@ -2787,7 +2787,7 @@ impl RuntimeSemanticHandleFactory {
                                 owners: {
                                     let mut owners = vec![
                                         TraversalOwnerRequirement {
-                                            event_source: None,
+                                            event_source: rule.rule.source_event_route.clone(),
                                             owner_id: rule.rule.source_owner_id.clone(),
                                             scope: rule.rule.scope.clone(),
                                             required: true,
@@ -7655,6 +7655,261 @@ mod tests {
             binding.store.revision(&first.revision_id).unwrap(),
             Some(first)
         );
+    }
+
+    #[test]
+    fn native_security_acquires_confirms_and_judges_current_verified_coverage() {
+        assert_native_security_reconciliation(true, false);
+    }
+
+    #[test]
+    fn native_security_violated_assessment_cannot_satisfy_goal() {
+        assert_native_security_reconciliation(true, true);
+    }
+
+    #[test]
+    fn native_security_incomplete_coverage_cannot_satisfy_goal() {
+        assert_native_security_reconciliation(false, false);
+    }
+
+    fn assert_native_security_reconciliation(complete: bool, finding: bool) {
+        use crate::dependency_security::{
+            advisory::AdvisorySourceDocumentV1, contracts::*, inventory::cargo,
+        };
+        let mut harness = StewardshipHarness::new();
+        harness.binding.subject =
+            meld_events::DomainObjectRef::new("workspace_fs", "node", "dependency-graph").unwrap();
+        let root = harness._workspace.path();
+        std::fs::create_dir(root.join("src")).unwrap();
+        std::fs::write(root.join("src/lib.rs"), "pub fn run() {}\n").unwrap();
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"security-runtime-proof\"\nversion = \"1.0.0\"\nedition = \"2021\"\n").unwrap();
+        let lock = std::process::Command::new(env!("CARGO"))
+            .args(["generate-lockfile", "--offline"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(lock.status.success());
+        let source = harness._external.path().join("advisories.json");
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let inventory = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(cargo::observe(
+                root,
+                Path::new(env!("CARGO")),
+                DependencySecuritySubjectV1 {
+                    subject: harness.binding.subject.clone(),
+                    ecosystem: PackageEcosystem::Cargo,
+                    inventory_scope: InventoryScopeV1 {
+                        manifest_ref: meld_events::DomainObjectRef::new(
+                            "dependency-security",
+                            "manifest_source",
+                            "fixture-manifest",
+                        )
+                        .unwrap(),
+                        lockfile_ref: meld_events::DomainObjectRef::new(
+                            "dependency-security",
+                            "lockfile_source",
+                            "fixture-lockfile",
+                        )
+                        .unwrap(),
+                        include_transitive: true,
+                    },
+                },
+                now,
+                &Default::default(),
+            ))
+            .unwrap();
+        std::fs::write(
+            &source,
+            serde_json::to_vec(&AdvisorySourceDocumentV1 {
+                source_id: "fixture".into(),
+                source_revision: "complete-current".into(),
+                covered_ecosystem: PackageEcosystem::Cargo,
+                covered_components: inventory
+                    .components
+                    .iter()
+                    .filter(|_| complete)
+                    .map(|component| ComponentCoverageV1 {
+                        package_name: component.package_name.clone(),
+                        source_identity: component.source_identity.clone(),
+                    })
+                    .collect(),
+                advisories: if finding {
+                    vec![NormalizedAdvisoryV1 {
+                        source_advisory_id: "runtime-advisory".into(),
+                        aliases: vec![],
+                        package_name: "security-runtime-proof".into(),
+                        affected_versions: vec!["1.0.0".into()],
+                        severity: SeverityV1::High,
+                    }]
+                } else {
+                    vec![]
+                },
+                conflicts: vec![],
+                completeness: AdvisoryCompleteness::CompleteForDeclaredCoverage,
+                acquired_at: now,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        harness.binding.provider_id = None;
+        harness.binding.package = crate::config::SelectedStewardshipPackage {
+            expression: "dependency_security_fixture".into(),
+            principal_id: "workspace-owner".into(),
+            belief_family_id: "dependency_security_posture".into(),
+            evidence_mapping_id: "dependency_security_outcome_mapping_v1".into(),
+            curation_rule_id: "dependency_security_posture".into(),
+            maintained_condition_id: "dependency_security_posture".into(),
+            strategy_theory_id: "dependency_security_fixture".into(),
+            authority_policy_id: "dependency_security_fixture_read_only".into(),
+            claim_policy_id: String::new(),
+        };
+        harness.binding.bindings.insert(
+            crate::dependency_security::contribution::CARGO.into(),
+            crate::config::PhysicalBindingRef::ExecutableRef(env!("CARGO").into()),
+        );
+        harness.binding.bindings.insert(
+            crate::dependency_security::contribution::ADVISORY_SOURCE.into(),
+            crate::config::PhysicalBindingRef::EndpointRef(source.display().to_string()),
+        );
+        {
+            let assembly = harness.assembly();
+            harness.run_world_genesis_from(
+                &assembly,
+                &Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/dependency_security"),
+            );
+            let mut diagnostics = Vec::new();
+            let theory =
+                hydrate_stewardship_theory(assembly.stores(), &harness.binding, &mut diagnostics);
+            assert!(theory.resolved.is_some(), "{diagnostics:#?}");
+        }
+        let assembly = harness.assembly();
+        harness.bind_production_routes(&assembly);
+        let mut supervisor = harness.start_supervisor(&assembly);
+        let mut reports = Vec::new();
+        for pass in 0..60 {
+            reports.push(supervisor.tick(1_000 + pass * 10).unwrap());
+        }
+        let store = &assembly.stores().agent_store;
+        let goals = store
+            .reconciliation_goals_for_agent(&harness.binding.agent_id)
+            .unwrap();
+        assert_eq!(goals.len(), 1, "{reports:#?}");
+        let plan = store
+            .current_reconciliation_plan(&goals[0].goal.goal_id)
+            .unwrap()
+            .unwrap();
+        let disposition = store
+            .goal_disposition_for_plan(&plan.plan_revision_id)
+            .unwrap();
+        let clean = complete && !finding;
+        assert_eq!(
+            disposition.as_ref().is_some_and(|disposition| matches!(
+                disposition.lifecycle,
+                meld_lang::GoalLifecycle::Satisfied { .. }
+            )),
+            clean,
+            "{disposition:#?}; {plan:#?}; {reports:#?}"
+        );
+        let events = harness
+            .authority
+            .replay_capability()
+            .newest_page(1024)
+            .unwrap()
+            .records;
+        let products: Vec<_> = events
+            .iter()
+            .filter(|record| record.event_type == "dependency_security.invocation_return.v1")
+            .collect();
+        assert_eq!(
+            products.len(),
+            4,
+            "one independently complete Security Task acquires and verifies exactly once"
+        );
+        let condition_event = events
+            .iter()
+            .rev()
+            .find(|record| record.event_type == crate::dependency_security::condition::EVENT)
+            .unwrap();
+        let condition: crate::dependency_security::condition::CurrentSecurityCondition =
+            serde_json::from_str(
+                condition_event.data["batch"]["objects"][0]["qualifications"]["condition"]
+                    .as_str()
+                    .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(condition.verified_clean, clean);
+        assert_eq!(condition.coverage_current, complete);
+        assert_eq!(condition.products.len(), 4);
+        let history = store
+            .completed_history_for_goal(&goals[0].goal.goal_id)
+            .unwrap();
+        assert!(history.iter().any(|entry| matches!(
+            entry.accepted_milestone,
+            meld_world_model::strategy::PlanMilestoneRequirement::ExecutionTerminal { .. }
+        )));
+        assert!(history.iter().any(|entry| matches!(
+            entry.accepted_milestone,
+            meld_world_model::strategy::PlanMilestoneRequirement::CurationTerminal { .. }
+        )));
+        assert!(history.iter().any(|entry| matches!(
+            entry.accepted_milestone,
+            meld_world_model::strategy::PlanMilestoneRequirement::BeliefRevision { .. }
+        )));
+        let goal_id = goals[0].goal.goal_id.clone();
+        supervisor.request_shutdown(2_000).unwrap();
+        drop(supervisor);
+        drop(assembly);
+        let reopened = harness.assembly();
+        harness.bind_production_routes(&reopened);
+        let mut command = SupervisorStartCommand::new("security-reopened", 3_000);
+        command.registration_set = reopened.registration_set().cloned();
+        let mut resumed =
+            RuntimeSupervisor::start(reopened.supervisor_startup_package(), command).unwrap();
+        for pass in 0..30 {
+            resumed.tick(3_100 + pass * 10).unwrap();
+        }
+        let store = &reopened.stores().agent_store;
+        assert_eq!(
+            store
+                .reconciliation_goals_for_agent(&harness.binding.agent_id)
+                .unwrap()
+                .len(),
+            1
+        );
+        let current = store
+            .current_reconciliation_plan(&goal_id)
+            .unwrap()
+            .unwrap();
+        let disposition = store
+            .goal_disposition_for_plan(&current.plan_revision_id)
+            .unwrap();
+        assert_eq!(
+            disposition.is_some_and(|disposition| matches!(
+                disposition.lifecycle,
+                meld_lang::GoalLifecycle::Satisfied { .. }
+            )),
+            clean
+        );
+        assert_eq!(
+            harness
+                .authority
+                .replay_capability()
+                .newest_page(1024)
+                .unwrap()
+                .records
+                .iter()
+                .filter(|record| record.event_type == "dependency_security.invocation_return.v1")
+                .count(),
+            4,
+            "reopening preserves completed work without reacquisition"
+        );
+        resumed.request_shutdown(4_000).unwrap();
     }
 
     #[test]

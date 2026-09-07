@@ -74,6 +74,7 @@ impl ProductCapabilityContributor for DependencySecurityCapabilityContributor {
             .collect()
     }
     fn implementation_offers(&self) -> Vec<CapabilityImplementationOffer> {
+        let publication_gate = Arc::new(tokio::sync::Mutex::new(()));
         self.published_contracts()
             .into_iter()
             .map(|revision| {
@@ -90,7 +91,10 @@ impl ProductCapabilityContributor for DependencySecurityCapabilityContributor {
                     implementation_ref: format!("dependency-security.local-source.v1::{id}"),
                     required_binding_ids,
                     execution_class: ExecutionClass::Inline,
-                    factory: Arc::new(Factory { id }),
+                    factory: Arc::new(Factory {
+                        id,
+                        publication_gate: publication_gate.clone(),
+                    }),
                 }
             })
             .collect()
@@ -98,6 +102,7 @@ impl ProductCapabilityContributor for DependencySecurityCapabilityContributor {
 }
 
 struct Factory {
+    publication_gate: Arc<tokio::sync::Mutex<()>>,
     id: String,
 }
 impl CapabilityInvokerFactory for Factory {
@@ -165,6 +170,7 @@ impl CapabilityInvokerFactory for Factory {
             },
         };
         Ok(Arc::new(SecurityCapability {
+            publication_gate: self.publication_gate.clone(),
             id: self.id.clone(),
             subject,
             policy: policy.revision.policy,
@@ -294,6 +300,29 @@ mod tests {
         result.emitted_artifacts.into_iter().next().unwrap()
     }
 
+    fn current_condition(
+        api: &crate::api::ContextApi,
+    ) -> super::super::condition::CurrentSecurityCondition {
+        let page = api
+            .durable_event_append()
+            .unwrap()
+            .replay_capability()
+            .newest_page(128)
+            .unwrap();
+        let record = page
+            .records
+            .iter()
+            .rev()
+            .find(|record| record.event_type == super::super::condition::EVENT)
+            .unwrap();
+        serde_json::from_str(
+            record.data["batch"]["objects"][0]["qualifications"]["condition"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap()
+    }
+
     #[tokio::test]
     async fn prepared_actions_return_real_inventory_assessment_and_separate_verification() {
         let workspace = tempfile::tempdir().unwrap();
@@ -420,6 +449,12 @@ mod tests {
             ),
             (
                 "clean",
+                coverage.clone(),
+                Vec::new(),
+                DependencySecurityPosture::CleanWithinCoverage,
+            ),
+            (
+                "clean-successor",
                 coverage,
                 Vec::new(),
                 DependencySecurityPosture::CleanWithinCoverage,
@@ -446,17 +481,38 @@ mod tests {
             .unwrap();
             let artifact = invoke(&closure, &api, ACQUIRE_ADVISORIES, &artifacts).await;
             artifacts.insert(artifact.artifact_type_id.clone(), artifact);
+            assert!(
+                !current_condition(&api).verified_clean,
+                "new source knowledge cannot reuse the predecessor verification"
+            );
             let assessment = invoke(&closure, &api, ASSESS, &artifacts).await;
             let product: DependencySecurityAssessmentV1 =
                 serde_json::from_value(assessment.content.clone()).unwrap();
             assert_eq!(product.posture, expected);
             artifacts.insert(assessment.artifact_type_id.clone(), assessment);
+            assert!(
+                !current_condition(&api).verified_clean,
+                "assessment completion is not independent verification"
+            );
             let verification = invoke(&closure, &api, VERIFY, &artifacts).await;
             let verified: DependencySecurityVerificationV1 =
                 serde_json::from_value(verification.content).unwrap();
             assert!(verified.verified);
             assert_eq!(verified.independently_computed_posture, expected);
             assert_eq!(verified.assessment_ref, product.assessment_id);
+            let condition = current_condition(&api);
+            assert_eq!(
+                condition.verified_clean,
+                expected == DependencySecurityPosture::CleanWithinCoverage
+            );
+            assert_eq!(
+                condition.coverage_current,
+                matches!(
+                    expected,
+                    DependencySecurityPosture::CleanWithinCoverage
+                        | DependencySecurityPosture::Violated
+                )
+            );
             if !product.findings.is_empty() {
                 artifacts.get_mut(ASSESSMENT).unwrap().content["findings"][0]["severity"] =
                     "low".into();
@@ -469,6 +525,44 @@ mod tests {
                 );
             }
         }
+        let current = current_condition(&api);
+        assert!(current.verified_clean);
+        let replay = events.replay_capability();
+        let retained = replay.newest_page(128).unwrap();
+        let old = retained
+            .records
+            .iter()
+            .find(|record| {
+                record.event_type == super::super::publication::RECEIPT_EVENT
+                    && record.data["binding"]["runtime"]["capability_type_id"] == ACQUIRE_ADVISORIES
+            })
+            .unwrap();
+        let binding = &old.data["binding"];
+        let runtime = serde_json::from_value(binding["runtime"].clone()).unwrap();
+        let payload = serde_json::from_value(binding["payload"].clone()).unwrap();
+        let context = crate::execution::ExecutionEventContext {
+            session_id: binding["session"].as_str().unwrap().into(),
+            effect_authority: Some(meld_execution::ExecutionEffectAuthority {
+                issuer_ref: binding["issuer"].as_str().unwrap().into(),
+                principal_id: binding["principal"].as_str().unwrap().into(),
+                subject: serde_json::from_value(binding["subject"]["subject"].clone()).unwrap(),
+                fence_ref: binding["fence"].as_str().unwrap().into(),
+            }),
+        };
+        let before = retained.coverage.tip_seq;
+        closure
+            .invokers
+            .get(ACQUIRE_ADVISORIES, 1)
+            .unwrap()
+            .invoke(&api, &runtime, &payload, Some(&context))
+            .await
+            .unwrap();
+        assert_eq!(
+            current_condition(&api),
+            current,
+            "old return cannot roll back current evidence"
+        );
+        assert_eq!(replay.newest_page(1).unwrap().coverage.tip_seq, before);
         artifacts.get_mut(ASSESSMENT).unwrap().content["assessment_id"] =
             "forged-assessment".into();
         let verification = invoke(&closure, &api, VERIFY, &artifacts).await;
@@ -510,7 +604,7 @@ mod tests {
         let projected = store.owner_publications_through_seq(u64::MAX).unwrap();
         assert_eq!(
             projected.len(),
-            12,
+            15,
             "recovery cannot append duplicate source publications"
         );
         let query = meld_world_model::TraversalQuery::new(&store);

@@ -87,14 +87,17 @@ pub(crate) fn contract(id: &str) -> CapabilityTypeContract {
         effect_contract: effects,
         execution_contract: ExecutionContract {
             execution_class: ExecutionClass::Inline,
-            completion_semantics: "durable_owner_product_and_graph_publication_or_failure".into(),
+            completion_semantics:
+                "durable_owner_product_and_current_condition_publication_or_failure".into(),
             retry_class: "exact_invocation_receipt_or_source_acquisition".into(),
             cancellation_supported: false,
         },
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct SecurityCapability {
+    pub publication_gate: std::sync::Arc<tokio::sync::Mutex<()>>,
     pub id: String,
     pub subject: DependencySecuritySubjectV1,
     pub policy: DependencySecurityPolicyV1,
@@ -119,6 +122,7 @@ impl meld_execution::capability::CapabilityInvoker for SecurityCapability {
         payload: &CapabilityInvocationPayload,
         event_context: Option<&ExecutionEventContext>,
     ) -> Result<CapabilityInvocationResult, ApiError> {
+        let _owner = self.publication_gate.lock().await;
         let publication =
             super::publication::Publication::new(self, runtime_init, payload, event_context)?;
         let events = api

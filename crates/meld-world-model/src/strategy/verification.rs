@@ -123,6 +123,19 @@ fn verify_with_history(
     {
         grounds.push(StrategyRejectionGround::InvalidComposition);
     }
+    if super::search::confirmation_is_current(problem, history)
+        && !candidate.tasks.is_empty()
+        && candidate.tasks.iter().all(|task| {
+            super::search::completed_task_history(history)
+                .iter()
+                .any(|entry| {
+                    matches!(&entry.product, Some(super::StrategyProduct::Task(prior))
+                    if super::search::same_work(task, prior))
+                })
+        })
+    {
+        grounds.push(StrategyRejectionGround::UnchangedCompletedWork);
+    }
     let confirmation = candidate.tasks.is_empty();
     if confirmation {
         if !rule.epistemic_placement.is_confirmation()

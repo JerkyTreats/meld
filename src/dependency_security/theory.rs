@@ -96,6 +96,13 @@ mod tests {
     };
     #[test]
     fn shipped_source_hashes_are_visible_for_manifest_review() {
+        for contract in super::super::capability::published_contracts() {
+            println!(
+                "CONTRACT {} {}",
+                contract.capability_type_id,
+                contract.content_identity()
+            );
+        }
         for name in [
             "policy.cargo_fixture.json",
             "belief_family.security_coverage.json",
@@ -105,6 +112,9 @@ mod tests {
             "maintained_condition.security.json",
             "authority_policy.security_read_only.json",
             "strategy_theory.security.json",
+            "graph_owner_event_route.security.json",
+            "epistemic_rule.security.json",
+            "graph_owner_event_route.condition.json",
         ] {
             let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("theory/dependency_security")
@@ -125,7 +135,7 @@ mod tests {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/dependency_security");
         let receipt = super::install_package(&stores, &package_root, 1).unwrap();
         assert_eq!(receipt.package_id, super::PACKAGE_ID);
-        assert_eq!(receipt.components.len(), 13);
+        assert_eq!(receipt.components.len(), 15);
         let owners: std::collections::BTreeSet<_> = receipt
             .components
             .iter()

@@ -913,6 +913,18 @@ pub(crate) fn qualifications(
     let mut qualifications = BTreeMap::from([
         ("agent_id".to_string(), operation.authority.agent_id.clone()),
         (
+            "judgment_subject_id".into(),
+            operation.authority.subject.object_id.clone(),
+        ),
+        (
+            "judgment_subject_domain".into(),
+            operation.authority.subject.domain_id.clone(),
+        ),
+        (
+            "judgment_subject_kind".into(),
+            operation.authority.subject.object_kind.clone(),
+        ),
+        (
             "perspective".to_string(),
             operation.authority.perspective.index_key(),
         ),

@@ -95,7 +95,7 @@ notify = "6.0"
 hex = "0.4"
 
 # Async runtime
-tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "macros", "process", "io-util", "time"] }
+tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "macros", "process", "io-util", "time", "sync"] }
 
 # Logging
 tracing = "0.1"

@@ -3,6 +3,7 @@
 pub mod advisory;
 pub mod assessment;
 pub mod capability;
+pub mod condition;
 pub mod contracts;
 pub mod contribution;
 pub mod events;
