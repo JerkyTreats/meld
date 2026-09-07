@@ -5,11 +5,6 @@ use crate::task::expansion::contracts::{CompiledTaskDelta, TaskExpansionRequest}
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-/// Expansion kind handled by traversal prerequisite compilers.
-pub const TRAVERSAL_PREREQUISITE_EXPANSION_KIND: &str = "traversal_prerequisite_expansion";
-/// Expansion kind handled by frame head write compilers.
-pub const WORKSPACE_WRITE_FRAME_HEAD_EXPANSION_KIND: &str = "workspace_write_frame_head_expansion";
-
 /// Boundary trait for task expansion compiler adapters used by execution runtimes.
 pub trait TaskExpansionCompiler: Send + Sync {
     /// Error type returned by the expansion compiler adapter.

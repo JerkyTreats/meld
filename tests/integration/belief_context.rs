@@ -1,14 +1,10 @@
 //! Contract tests for the flag-gated generation read path:
 //! `belief_context_bundle` seeding and belief-endorsed frame selection.
 
-use crate::integration::{
-    create_test_agent, create_test_provider, register_docs_writer_capabilities,
-    spawn_docs_writer_server, with_xdg_env,
-};
+use crate::integration::{create_test_agent, with_xdg_env};
 use meld::agent::profile::prompt_contract::PromptContract;
-use meld::capability::{CapabilityCatalog, CapabilityExecutorRegistry};
 use meld::cli::{Commands, RunContext};
-use meld::context::belief_context::{hydrate_belief_context_bundle, BeliefContextBundle};
+use meld::context::belief_context::hydrate_belief_context_bundle;
 use meld::context::frame::{Basis, Frame};
 use meld::context::generation::contracts::{GenerationOrchestrationRequest, PromptAssemblyOutput};
 use meld::context::generation::prompt_collection::{
@@ -20,18 +16,12 @@ use meld::metadata::frame_write_contract::{
 };
 use meld::prompt_context::{prepare_generated_lineage, PromptContextLineageInput};
 use meld::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
-use meld::task::{
-    execute_task_to_completion, prepare_registered_workflow_task_run, TaskExecutor,
-    WorkflowPackageTriggerRequest,
-};
 use meld::types::NodeID;
 use meld::world_state::belief::{
     BeliefKey, BeliefProvenanceSummary, BeliefStatus, BeliefStore, BeliefView, BranchScope,
     ContradictionState, FreshnessState, HydrationRefs, PlannerProjectionSummary, PosteriorSummary,
 };
 use meld::world_state::PerspectiveKey;
-use meld_execution::workflow::profile::BELIEF_CONTEXT_ENV_VAR;
-use meld_execution::BeliefStatusLabel;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
@@ -173,253 +163,6 @@ fn prompt_contract() -> PromptContract {
         system_prompt: "You are a careful docs writer.".to_string(),
         user_prompt_file: "Summarize file context".to_string(),
         user_prompt_directory: "Summarize directory context".to_string(),
-    }
-}
-
-struct DocsWriterRunOutput {
-    prompts: Vec<String>,
-    lineage_summaries: Vec<serde_json::Value>,
-    bundle_artifacts: Vec<Vec<u8>>,
-    target_node_id: NodeID,
-}
-
-/// Runs the docs_writer task package to completion over `<workspace>/src`
-/// with one belief seeded on the target subject, then extracts rendered
-/// prompts and lineage summaries from the task artifact repo.
-fn run_docs_writer_with_seeded_belief(temp_dir: &TempDir, repo_id: &str) -> DocsWriterRunOutput {
-    crate::integration::install_legacy_workflow_fixture().unwrap();
-
-    let workspace_root = temp_dir.path().join("workspace");
-    fs::create_dir_all(workspace_root.join("src")).unwrap();
-    fs::write(
-        workspace_root.join("src").join("lib.rs"),
-        "pub fn greet(name: &str) -> String { format!(\"hello {}\", name) }",
-    )
-    .unwrap();
-
-    create_test_agent(AGENT_ID, Some(WORKFLOW_ID));
-    let (endpoint, server_handle) = spawn_docs_writer_server(4);
-    create_test_provider("test-provider", &endpoint);
-
-    // Scan first so the subject node exists, then release the runtime so
-    // the belief store can be opened directly for seeding.
-    let target_node_id = {
-        let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
-        run_context
-            .execute(&Commands::Scan { force: true })
-            .unwrap();
-        meld::workspace::resolve_workspace_node_id(
-            run_context.api(),
-            &workspace_root,
-            Some(PathBuf::from("src").as_path()),
-            None,
-            false,
-        )
-        .unwrap()
-    };
-    seed_belief_views(
-        &workspace_root,
-        vec![(
-            target_node_id,
-            SeededBelief {
-                status: BeliefStatus::Settled,
-                confidence: 0.93,
-                stale: false,
-                contradicted: false,
-                contradicted_evidence_ids: vec!["ev-contra".to_string()],
-                high_water_seq: 42,
-            },
-        )],
-    );
-
-    let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
-    let registered_profile =
-        meld::workflow::WorkflowRegistry::load(&meld::config::WorkflowConfig::default())
-            .unwrap()
-            .get("docs_writer_thread_v1")
-            .unwrap()
-            .clone();
-    let mut catalog = CapabilityCatalog::new();
-    let mut registry = CapabilityExecutorRegistry::new();
-    register_docs_writer_capabilities(&mut catalog, &mut registry);
-
-    let prepared = prepare_registered_workflow_task_run(
-        run_context.api(),
-        &workspace_root,
-        &registered_profile,
-        &WorkflowPackageTriggerRequest {
-            package_id: "docs_writer".to_string(),
-            workflow_id: "docs_writer_thread_v1".to_string(),
-            node_id: None,
-            path: Some(PathBuf::from("src")),
-            agent_id: AGENT_ID.to_string(),
-            provider: ProviderExecutionBinding::new(
-                "test-provider",
-                ProviderRuntimeOverrides::default(),
-            )
-            .unwrap(),
-            frame_type: FRAME_TYPE.to_string(),
-            belief_family_id: Some(BELIEF_CONTEXT_FAMILY_ID.to_string()),
-            force: true,
-            session_id: None,
-        },
-        &catalog,
-    )
-    .unwrap();
-
-    let mut executor = TaskExecutor::new(
-        prepared.compiled_task.clone(),
-        prepared.init_payload.clone(),
-        repo_id,
-    )
-    .unwrap();
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(execute_task_to_completion(
-        run_context.api(),
-        &mut executor,
-        &catalog,
-        &registry,
-        None,
-        None,
-    ))
-    .unwrap();
-    assert_eq!(server_handle.join().unwrap(), 4);
-
-    let workspace_display = workspace_root.display().to_string();
-    let mut prompts = Vec::new();
-    let mut lineage_summaries = Vec::new();
-    let mut bundle_digests = Vec::new();
-    for artifact in &executor.artifact_repo().record().artifacts {
-        match artifact.artifact_type_id.as_str() {
-            "provider_execute_request" => {
-                let content = artifact.content["messages"][1]["content"]
-                    .as_str()
-                    .expect("user message content")
-                    .replace(&workspace_display, "<workspace>");
-                prompts.push(content);
-            }
-            "prompt_context_lineage_summary" => {
-                lineage_summaries.push(artifact.content.clone());
-                if let Some(digest) = artifact.content.get("belief_bundle_digest") {
-                    bundle_digests.push(digest.as_str().unwrap().to_string());
-                }
-            }
-            _ => {}
-        }
-    }
-    prompts.sort();
-
-    let bundle_artifacts = bundle_digests
-        .iter()
-        .map(|digest| {
-            run_context
-                .api()
-                .prompt_context_storage()
-                .read_by_artifact_id_verified(digest)
-                .expect("belief bundle artifact readable by digest")
-        })
-        .collect();
-
-    DocsWriterRunOutput {
-        prompts,
-        lineage_summaries,
-        bundle_artifacts,
-        target_node_id,
-    }
-}
-
-/// Runs `f` with the belief_context environment override set, restoring the
-/// prior value afterwards. Restoration lives in a drop guard so a panic
-/// inside `f` cannot leak the override into later tests sharing this
-/// process. Callers already hold the XDG env mutex.
-fn with_belief_context_env<R>(value: &str, f: impl FnOnce() -> R) -> R {
-    struct RestoreBeliefContextEnv {
-        previous: Option<String>,
-    }
-    impl Drop for RestoreBeliefContextEnv {
-        fn drop(&mut self) {
-            match self.previous.take() {
-                Some(previous) => std::env::set_var(BELIEF_CONTEXT_ENV_VAR, previous),
-                None => std::env::remove_var(BELIEF_CONTEXT_ENV_VAR),
-            }
-        }
-    }
-    let _restore = RestoreBeliefContextEnv {
-        previous: std::env::var(BELIEF_CONTEXT_ENV_VAR).ok(),
-    };
-    std::env::set_var(BELIEF_CONTEXT_ENV_VAR, value);
-    f()
-}
-
-#[test]
-fn belief_context_ab_contract_flag_off_unchanged_flag_on_adds_brief_and_lineage() {
-    // Flag off: same fixture, same seeded belief; prompts and lineage must
-    // show no belief conditioning.
-    let off_dir = TempDir::new().unwrap();
-    let off = with_xdg_env(&off_dir, || {
-        run_docs_writer_with_seeded_belief(&off_dir, "repo_belief_ab_off")
-    });
-
-    // Flag on via environment override over the same authored profile.
-    let on_dir = TempDir::new().unwrap();
-    let on = with_xdg_env(&on_dir, || {
-        with_belief_context_env("1", || {
-            run_docs_writer_with_seeded_belief(&on_dir, "repo_belief_ab_on")
-        })
-    });
-
-    assert_eq!(off.prompts.len(), 4);
-    assert_eq!(on.prompts.len(), 4);
-
-    // Flag off ignores the seeded belief entirely.
-    for prompt in &off.prompts {
-        assert!(!prompt.contains("Belief Context"));
-        assert!(!prompt.contains("docs_freshness"));
-    }
-    for summary in &off.lineage_summaries {
-        assert!(summary.get("belief_bundle_digest").is_none());
-    }
-    assert!(off.bundle_artifacts.is_empty());
-
-    // Flag on renders the belief brief into every prepared prompt.
-    for prompt in &on.prompts {
-        assert!(prompt.contains("Belief Context (subject: src)"), "{prompt}");
-        // The brief carries both the bundle high-water sequence and the
-        // trigger assertion's own per-subject currency.
-        assert!(prompt.contains("docs_freshness (high-water sequence 42)"));
-        assert!(prompt.contains("status=Settled, confidence=0.93 (as of sequence 42)"));
-        assert!(prompt.contains("authoritative over model recall"));
-        assert!(prompt.contains("ev-contra (unresolved)"));
-    }
-    // Workspace-normalized prompts differ between the two variants.
-    assert_ne!(off.prompts, on.prompts);
-
-    // The on-variant lineage record links the bundle digest, and the digest
-    // resolves to the canonical bundle for the target subject.
-    assert_eq!(on.lineage_summaries.len(), 4);
-    for summary in &on.lineage_summaries {
-        assert!(summary.get("belief_bundle_digest").is_some());
-    }
-    assert_eq!(on.bundle_artifacts.len(), 4);
-    for bytes in &on.bundle_artifacts {
-        let bundle: BeliefContextBundle = serde_json::from_slice(bytes).unwrap();
-        assert_eq!(bundle.subject_node_id, hex::encode(on.target_node_id));
-        // The seeded subject path is workspace-relative, not absolute.
-        assert_eq!(bundle.subject_path, "src");
-        assert_eq!(bundle.family_id, BELIEF_CONTEXT_FAMILY_ID);
-        assert_eq!(bundle.as_of_seq, 42);
-        let assertion = bundle
-            .assertion_for_subject(&bundle.subject_node_id)
-            .expect("seeded belief hydrated");
-        assert_eq!(assertion.confidence, 0.93);
-        assert_eq!(assertion.status, BeliefStatusLabel::Settled);
-        assert_eq!(assertion.contradicted_claims, vec!["ev-contra".to_string()]);
-        // Only the target subject carries a belief in this fixture, so the
-        // subtree assertion map holds exactly that subject.
-        assert_eq!(bundle.subject_assertions.len(), 1);
-        assert!(bundle
-            .subject_assertions
-            .contains_key(&bundle.subject_node_id));
     }
 }
 

@@ -351,7 +351,6 @@ fn run_completion_path(task_run_id: &str) -> (TaskExecutor, Vec<String>) {
         invoke_scripted,
         compile_scripted,
         None,
-        None,
     ))
     .unwrap();
     (executor, log.into_inner().unwrap())

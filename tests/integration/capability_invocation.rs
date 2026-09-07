@@ -257,7 +257,7 @@ fn workspace_and_traversal_capabilities_follow_scanned_tree() {
         let traversal_instance = BoundCapabilityInstance {
             capability_instance_id: "capinst_merkle_traversal".to_string(),
             capability_type_id: "merkle_traversal".to_string(),
-            capability_version: 1,
+            capability_version: 2,
             scope_ref: resolved
                 .content
                 .get("node_id")
@@ -280,13 +280,36 @@ fn workspace_and_traversal_capabilities_follow_scanned_tree() {
             resolved.content.clone(),
         );
         let traversal_result = rt
-            .block_on(registry.get("merkle_traversal", 1).unwrap().invoke(
+            .block_on(registry.get("merkle_traversal", 2).unwrap().invoke(
                 run_context.api(),
                 &traversal_runtime,
                 &traversal_payload,
                 None,
             ))
             .unwrap();
+        let mut legacy_payload = traversal_payload.clone();
+        legacy_payload.supplied_inputs.push(SuppliedInputValue {
+            slot_id: "task_expansion_template".into(),
+            source: InputValueSource::InitPayload,
+            value: SuppliedValueRef::StructuredValue(json!({"turns": ["legacy"]})),
+        });
+        let rejected = rt
+            .block_on(registry.get("merkle_traversal", 2).unwrap().invoke(
+                run_context.api(),
+                &traversal_runtime,
+                &legacy_payload,
+                None,
+            ))
+            .unwrap_err();
+        assert!(rejected
+            .to_string()
+            .contains("unknown slot 'task_expansion_template'"));
+        assert!(registry.get("merkle_traversal", 1).is_none());
+        assert_eq!(traversal_result.emitted_artifacts.len(), 2);
+        assert!(traversal_result
+            .emitted_artifacts
+            .iter()
+            .all(|artifact| { artifact.artifact_type_id != "task_expansion_request" }));
         let ordered = traversal_result
             .emitted_artifacts
             .iter()

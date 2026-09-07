@@ -14,7 +14,7 @@ use serde_json::Value;
 use std::path::Path;
 use tempfile::TempDir;
 
-use super::parity_fixture::DeterministicDocsProvider;
+use super::docs_provider::DeterministicDocsProvider;
 use super::{create_test_agent, with_xdg_env};
 
 #[test]

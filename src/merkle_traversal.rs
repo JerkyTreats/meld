@@ -1,5 +1,4 @@
 pub mod capability;
-pub mod expansion;
 
 use crate::error::ApiError;
 use crate::execution::ContextReadPort;

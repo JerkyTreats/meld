@@ -501,7 +501,6 @@ fn task_artifact_repo_task_network_bridge_accepts_executor_with_durable_repo() {
         invoke_success,
         compile_no_expansion,
         None,
-        None,
     ))
     .unwrap();
     let outcome = succeeded_outcome_from_executor("outcome-alpha", &claim, &executor);

@@ -10,7 +10,7 @@ use crate::task::contracts::CompiledTaskRecord;
 use crate::task::expansion::{CompiledTaskDelta, TaskExpansionRequest};
 use futures::future::BoxFuture;
 
-pub use meld_execution::task::runtime::{TaskRunSummary, WorkflowTaskTelemetry};
+pub use meld_execution::task::runtime::TaskRunSummary;
 
 pub async fn execute_task_to_completion<A>(
     api: &A,
@@ -18,7 +18,6 @@ pub async fn execute_task_to_completion<A>(
     catalog: &CapabilityCatalog,
     registry: &CapabilityExecutorRegistry,
     event_context: Option<&ExecutionEventContext>,
-    workflow_telemetry: Option<&WorkflowTaskTelemetry>,
 ) -> Result<TaskRunSummary, ApiError>
 where
     A: ExecutionRuntimeContext + 'static,
@@ -35,7 +34,6 @@ where
             compile_expansion_via_root_registry(api, compiled_task, expansion_request, catalog)
         },
         event_context,
-        workflow_telemetry,
     )
     .await
 }
@@ -86,7 +84,6 @@ where
                 "Task expansion recovery is unavailable".into(),
             ))
         },
-        None,
         None,
     )
     .await

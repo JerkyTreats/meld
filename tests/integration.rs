@@ -15,11 +15,10 @@ mod context_cold_fallback;
 mod context_traversal;
 pub(crate) mod docs_freshness_fixture;
 mod docs_freshness_fixture_contract;
-mod docs_writer_task;
+pub(crate) mod docs_provider;
 mod event_ledger;
 mod execution_projection;
 mod frame_queue;
-mod gate_retry_contract;
 mod generation_parity;
 mod harness_run;
 mod harness_served_surface;
@@ -27,15 +26,12 @@ mod harness_stall_specimen;
 pub(crate) mod harness_survey_fixture;
 mod harness_three_altitudes;
 mod hasher_verification;
-mod incremental_staleness_contract;
 mod init_command;
 mod logging_default;
 mod model_providers;
 mod node_deletion;
 mod outcome_evidence;
 pub(crate) mod outcome_evidence_support;
-pub(crate) mod parity_fixture;
-mod parity_fixture_contract;
 mod pds_docs_gmail_operator_verification;
 mod product_event_authority_cutover;
 mod product_storage_assembly;
@@ -46,7 +42,6 @@ mod runtime_cli;
 mod runtime_status_live;
 mod store_integration;
 mod task_artifact_repo;
-mod task_bottom_up_compile_shape;
 mod task_compiler;
 mod task_executor;
 mod test_utils;
@@ -67,11 +62,7 @@ mod world_model_reconciliation;
 mod world_state_graph;
 mod xdg_config;
 
-pub use test_utils::{
-    create_test_agent, create_test_provider, register_docs_writer_capabilities,
-    spawn_docs_writer_server, spawn_wrapped_docs_writer_server, with_env_lock, with_xdg_data_home,
-    with_xdg_env,
-};
+pub use test_utils::{create_test_agent, with_env_lock, with_xdg_data_home, with_xdg_env};
 
 #[path = "fixtures/workflow_assets.rs"]
 mod workflow_assets;

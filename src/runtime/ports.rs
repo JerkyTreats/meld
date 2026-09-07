@@ -1340,7 +1340,7 @@ impl ProductionDispatchRouteContext {
 /// Production claimed-task invoker over the real task executor.
 ///
 /// One claimed task node executes its own compiled capability graph to
-/// completion through the workflow task-path capability set. The invoker
+/// completion through the installed native capability set. The invoker
 /// returns the emitted artifact records without persisting them: the
 /// dispatch actor owns artifact persistence order and outcome recording.
 struct CompiledTaskClaimInvoker {
@@ -1398,7 +1398,6 @@ impl ClaimedTaskInvoker for CompiledTaskClaimInvoker {
             &self.core.catalog,
             &self.core.registry,
             event_context.as_ref(),
-            None,
         )
         .await
         {
@@ -1407,11 +1406,8 @@ impl ClaimedTaskInvoker for CompiledTaskClaimInvoker {
             )),
             Err(error) => {
                 let message = error.to_string();
-                // A gate violation that survived its declared retry budget
-                // is deterministic over the recorded artifacts, and an
-                // all-fresh expansion has no work by construction: both are
-                // terminal, recorded through the command boundary so belief
-                // learns them, never refenced into unbounded retries.
+                // Only an owner-declared terminal failure closes the claim.
+                // Other failures preserve unresolved operational evidence.
                 if is_terminal_claimed_failure(&message) {
                     Ok(ClaimedInvocationOutcome::Failed { error: message })
                 } else {
@@ -1455,8 +1451,6 @@ impl CompiledTaskClaimInvoker {
 fn is_terminal_claimed_failure(message: &str) -> bool {
     message.contains(meld_execution::error::TERMINAL_CAPABILITY_FAILURE_MARKER)
         || message.contains(crate::context::capability::GATE_FAILURE_MARKER)
-        || message.contains(crate::merkle_traversal::expansion::NOTHING_TO_REGENERATE_MARKER)
-        || message.contains(crate::workspace::capability::MISSING_HEAD_MARKER)
 }
 
 /// Shared handle adapter for an injected claimed-task invoker.

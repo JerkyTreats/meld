@@ -12,7 +12,7 @@ use meld_execution::task_network::store::TaskNetworkStoreFactory;
 use serde::Serialize;
 use tempfile::TempDir;
 
-use super::parity_fixture::DeterministicDocsProvider;
+use super::docs_provider::DeterministicDocsProvider;
 use super::{create_test_agent, with_xdg_env};
 
 const GMAIL_ROOT_ENV: &str = "MELD_GMAIL_OPERATOR_ROOT";

@@ -54,12 +54,10 @@ pub mod task;
 pub mod task_admission;
 /// Task network command, mutation, state, dispatch, and publication contracts.
 pub mod task_network;
-/// Traversal expansion DTOs for workflow-backed task packages.
-pub mod traversal;
 pub mod waiting;
 
 pub use waiting::{StructuralWakeAddress, WaitingOnDeclaration};
-/// Workflow profiles, state, gates, events, and execution runtimes.
+/// Legacy Workflow profile and historical Event contracts.
 pub mod workflow;
 
 pub use execution::*;

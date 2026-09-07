@@ -12,13 +12,8 @@ use crate::task::{
     parse_task_expansion_request_artifact, ArtifactRecord, CompiledTaskDelta, CompiledTaskRecord,
     TaskExpansionRequest,
 };
-use crate::workflow::{
-    workflow_turn_completed_envelope, workflow_turn_failed_envelope,
-    workflow_turn_started_envelope, ExecutionWorkflowTurnEventData,
-};
 use futures::stream::{FuturesUnordered, StreamExt};
 use meld_events::EventEnvelope;
-use std::collections::HashMap;
 use std::fmt::Display;
 use std::future::Future;
 use std::pin::Pin;
@@ -38,28 +33,7 @@ pub struct TaskRunSummary {
     pub artifact_count: usize,
 }
 
-/// Workflow compatibility telemetry carried into task execution.
-#[derive(Debug, Clone)]
-pub struct WorkflowTaskTelemetry {
-    /// Workflow profile identifier that owns this execution record.
-    pub workflow_id: String,
-    /// Workflow thread identifier within workflow runtime state.
-    pub thread_id: String,
-    /// Agent identifier responsible for this execution request.
-    pub agent_id: String,
-    /// Configured provider name reported through progress telemetry.
-    pub provider_name: String,
-    /// Context frame type produced or consumed by this execution path.
-    pub frame_type: String,
-    /// Planning run identifier associated with this execution record.
-    pub plan_id: Option<String>,
-    /// Traversal level index associated with this execution record.
-    pub level_index: Option<usize>,
-    /// Turn sequence by identifier carried across the execution boundary.
-    pub turn_seq_by_id: HashMap<String, u32>,
-}
-
-/// Executes one task to completion using the registered capability invokers.
+/// Execute a complete Task through explicitly supplied invocation and expansion owners.
 #[allow(clippy::too_many_arguments)]
 pub async fn execute_task_to_completion<A, E, InvokeState, InvokeCapability, CompileExpansion>(
     api: &A,
@@ -69,7 +43,6 @@ pub async fn execute_task_to_completion<A, E, InvokeState, InvokeCapability, Com
     invoke_capability: InvokeCapability,
     compile_expansion: CompileExpansion,
     event_context: Option<&ExecutionEventContext>,
-    workflow_telemetry: Option<&WorkflowTaskTelemetry>,
 ) -> Result<TaskRunSummary, E>
 where
     A: EventPublicationPort<Error = E, EventEnvelope = EventEnvelope> + ?Sized,
@@ -140,35 +113,18 @@ where
                 .map_err(E::from)?
                 .clone();
             let invocation_id = payload.invocation_id.clone();
-            if let (Some(ctx), Some(telemetry), Some((turn_id, stage))) = (
-                event_context,
-                workflow_telemetry,
-                parse_turn_stage(&payload.capability_instance_id),
-            ) {
-                if stage == "prepare" {
-                    emit_workflow_turn_event(
-                        api,
-                        ctx,
-                        "execution.workflow.turn_started",
-                        workflow_turn_event_data(telemetry, &payload, &turn_id, None, None),
-                    );
-                }
-            }
             futures.push(async move {
                 let outcome =
                     invoke_capability(api, invoke_state, &instance, &payload, event_context).await;
                 (
                     invocation_id,
                     payload.capability_instance_id.clone(),
-                    payload.clone(),
                     outcome,
                 )
             });
         }
 
-        while let Some((invocation_id, capability_instance_id, payload, outcome)) =
-            futures.next().await
-        {
+        while let Some((invocation_id, capability_instance_id, outcome)) = futures.next().await {
             match outcome {
                 Ok(result) => {
                     let mut expansion_requests = Vec::new();
@@ -192,20 +148,6 @@ where
                             delta,
                         )?;
                     }
-                    if let (Some(ctx), Some(telemetry), Some((turn_id, stage))) = (
-                        event_context,
-                        workflow_telemetry,
-                        parse_turn_stage(&capability_instance_id),
-                    ) {
-                        if stage == "finalize" {
-                            emit_workflow_turn_event(
-                                api,
-                                ctx,
-                                "execution.workflow.turn_completed",
-                                workflow_turn_event_data(telemetry, &payload, &turn_id, None, None),
-                            );
-                        }
-                    }
                     emit_new_task_events(
                         api,
                         event_context,
@@ -214,24 +156,6 @@ where
                     );
                 }
                 Err(err) => {
-                    if let (Some(ctx), Some(telemetry), Some((turn_id, _stage))) = (
-                        event_context,
-                        workflow_telemetry,
-                        parse_turn_stage(&capability_instance_id),
-                    ) {
-                        emit_workflow_turn_event(
-                            api,
-                            ctx,
-                            "execution.workflow.turn_failed",
-                            workflow_turn_event_data(
-                                telemetry,
-                                &payload,
-                                &turn_id,
-                                None,
-                                Some(err.to_string()),
-                            ),
-                        );
-                    }
                     executor.record_failure(
                         &invocation_id,
                         failure_artifact(
@@ -273,99 +197,6 @@ fn emit_new_task_events(
     }
 
     *emitted_task_event_count = executor.events().len();
-}
-
-fn emit_workflow_turn_event(
-    api: &(impl EventPublicationPort<EventEnvelope = EventEnvelope> + ?Sized),
-    event_context: &ExecutionEventContext,
-    event_type: &str,
-    payload: ExecutionWorkflowTurnEventData,
-) {
-    let envelope = match event_type {
-        "execution.workflow.turn_started" => {
-            workflow_turn_started_envelope(&event_context.session_id, payload)
-        }
-        "execution.workflow.turn_completed" => {
-            workflow_turn_completed_envelope(&event_context.session_id, payload)
-        }
-        "execution.workflow.turn_failed" => {
-            workflow_turn_failed_envelope(&event_context.session_id, payload)
-        }
-        _ => return,
-    };
-
-    let _ = api.publish_execution_envelope(event_context, envelope);
-}
-
-fn workflow_turn_event_data(
-    telemetry: &WorkflowTaskTelemetry,
-    payload: &CapabilityInvocationPayload,
-    turn_id: &str,
-    final_frame_id: Option<String>,
-    error: Option<String>,
-) -> ExecutionWorkflowTurnEventData {
-    ExecutionWorkflowTurnEventData {
-        workflow_id: telemetry.workflow_id.clone(),
-        thread_id: telemetry.thread_id.clone(),
-        turn_id: turn_id.to_string(),
-        turn_seq: telemetry
-            .turn_seq_by_id
-            .get(turn_id)
-            .copied()
-            .unwrap_or_default(),
-        node_id: payload_node_id(payload).unwrap_or_default(),
-        path: payload_path(payload).unwrap_or_default(),
-        agent_id: telemetry.agent_id.clone(),
-        provider_name: telemetry.provider_name.clone(),
-        frame_type: telemetry.frame_type.clone(),
-        attempt: payload.execution_context.attempt as usize,
-        plan_id: telemetry.plan_id.clone(),
-        level_index: telemetry.level_index,
-        final_frame_id,
-        error,
-    }
-}
-
-fn parse_turn_stage(capability_instance_id: &str) -> Option<(String, String)> {
-    let parts = capability_instance_id.split("::").collect::<Vec<_>>();
-    if parts.len() < 5 || parts[2] != "turn" {
-        return None;
-    }
-    Some((parts[3].to_string(), parts[4].to_string()))
-}
-
-fn payload_node_id(payload: &crate::capability::CapabilityInvocationPayload) -> Option<String> {
-    payload
-        .supplied_inputs
-        .iter()
-        .find(|input| input.slot_id == "resolved_node_ref")
-        .and_then(|input| match &input.value {
-            crate::capability::SuppliedValueRef::Artifact(artifact) => artifact
-                .content
-                .get("node_id")
-                .and_then(|value| value.as_str()),
-            crate::capability::SuppliedValueRef::StructuredValue(value) => {
-                value.get("node_id").and_then(|value| value.as_str())
-            }
-        })
-        .map(ToString::to_string)
-}
-
-fn payload_path(payload: &crate::capability::CapabilityInvocationPayload) -> Option<String> {
-    payload
-        .supplied_inputs
-        .iter()
-        .find(|input| input.slot_id == "resolved_node_ref")
-        .and_then(|input| match &input.value {
-            crate::capability::SuppliedValueRef::Artifact(artifact) => artifact
-                .content
-                .get("path")
-                .and_then(|value| value.as_str()),
-            crate::capability::SuppliedValueRef::StructuredValue(value) => {
-                value.get("path").and_then(|value| value.as_str())
-            }
-        })
-        .map(ToString::to_string)
 }
 
 // Shared with the bounded package stepper so failure artifacts keep one
@@ -599,7 +430,6 @@ mod tests {
             invoke_success,
             compile_no_expansion,
             Some(&context),
-            None,
         ))
         .unwrap();
 
@@ -639,7 +469,6 @@ mod tests {
             invoke_failure,
             compile_no_expansion,
             Some(&context),
-            None,
         ))
         .unwrap_err();
 
@@ -647,46 +476,6 @@ mod tests {
         assert!(event_types(&api)
             .iter()
             .any(|event_type| event_type == "execution.task.failed"));
-    }
-
-    #[test]
-    fn runtime_publishes_workflow_failed_event_for_task_stage_failure() {
-        let api = RecordingApi::default();
-        let mut task = compiled_task();
-        task.capability_instances[0].capability_instance_id =
-            "task::pkg::turn::turn-1::finalize".to_string();
-        let mut executor = TaskExecutor::new(task, init_payload(), "repo_docs_writer").unwrap();
-        let context = ExecutionEventContext {
-            effect_authority: None,
-            session_id: "session_1".to_string(),
-        };
-        let telemetry = WorkflowTaskTelemetry {
-            workflow_id: "workflow_docs".to_string(),
-            thread_id: "thread-1".to_string(),
-            agent_id: "agent_docs".to_string(),
-            provider_name: "provider".to_string(),
-            frame_type: "summary".to_string(),
-            plan_id: Some("plan-1".to_string()),
-            level_index: Some(0),
-            turn_seq_by_id: HashMap::from([("turn-1".to_string(), 1)]),
-        };
-
-        let error = block_on(execute_task_to_completion(
-            &api,
-            &mut executor,
-            &CapabilityCatalog::new(),
-            &(),
-            invoke_failure,
-            compile_no_expansion,
-            Some(&context),
-            Some(&telemetry),
-        ))
-        .unwrap_err();
-
-        assert!(error.to_string().contains("capability failed"));
-        assert!(event_types(&api)
-            .iter()
-            .any(|event_type| event_type == "execution.workflow.turn_failed"));
     }
 
     #[test]
@@ -716,7 +505,6 @@ mod tests {
             invoke_success,
             compile_no_expansion,
             Some(&context),
-            None,
         ))
         .unwrap_err();
 
@@ -740,142 +528,10 @@ mod tests {
             invoke_expansion,
             compile_expansion_failure,
             None,
-            None,
         ))
         .unwrap_err();
 
         assert!(error.to_string().contains("expansion compile failed"));
-    }
-
-    #[test]
-    fn workflow_turn_telemetry_emits_turn_envelopes_for_task_stage_ids() {
-        let api = RecordingApi::default();
-        let mut task = compiled_task();
-        task.capability_instances[0].capability_instance_id =
-            "task::pkg::turn::turn-1::prepare".to_string();
-        let mut executor = TaskExecutor::new(task, init_payload(), "repo_docs_writer").unwrap();
-        let context = ExecutionEventContext {
-            effect_authority: None,
-            session_id: "session_1".to_string(),
-        };
-        let telemetry = WorkflowTaskTelemetry {
-            workflow_id: "workflow_docs".to_string(),
-            thread_id: "thread-1".to_string(),
-            agent_id: "agent_docs".to_string(),
-            provider_name: "provider".to_string(),
-            frame_type: "summary".to_string(),
-            plan_id: Some("plan-1".to_string()),
-            level_index: Some(0),
-            turn_seq_by_id: HashMap::from([("turn-1".to_string(), 1)]),
-        };
-
-        block_on(execute_task_to_completion(
-            &api,
-            &mut executor,
-            &CapabilityCatalog::new(),
-            &(),
-            invoke_success,
-            compile_no_expansion,
-            Some(&context),
-            Some(&telemetry),
-        ))
-        .unwrap();
-
-        assert!(event_types(&api)
-            .iter()
-            .any(|event_type| event_type == "execution.workflow.turn_started"));
-    }
-
-    #[test]
-    fn workflow_turn_telemetry_emits_completed_envelope_for_finalize_stage() {
-        let api = RecordingApi::default();
-        let mut task = compiled_task();
-        task.capability_instances[0].capability_instance_id =
-            "task::pkg::turn::turn-1::finalize".to_string();
-        let mut executor = TaskExecutor::new(task, init_payload(), "repo_docs_writer").unwrap();
-        let context = ExecutionEventContext {
-            effect_authority: None,
-            session_id: "session_1".to_string(),
-        };
-        let telemetry = WorkflowTaskTelemetry {
-            workflow_id: "workflow_docs".to_string(),
-            thread_id: "thread-1".to_string(),
-            agent_id: "agent_docs".to_string(),
-            provider_name: "provider".to_string(),
-            frame_type: "summary".to_string(),
-            plan_id: Some("plan-1".to_string()),
-            level_index: Some(0),
-            turn_seq_by_id: HashMap::from([("turn-1".to_string(), 1)]),
-        };
-
-        block_on(execute_task_to_completion(
-            &api,
-            &mut executor,
-            &CapabilityCatalog::new(),
-            &(),
-            invoke_success,
-            compile_no_expansion,
-            Some(&context),
-            Some(&telemetry),
-        ))
-        .unwrap();
-
-        assert!(event_types(&api)
-            .iter()
-            .any(|event_type| event_type == "execution.workflow.turn_completed"));
-    }
-
-    #[test]
-    fn workflow_turn_payload_extracts_node_and_path_from_resolved_node_ref() {
-        let artifact_payload = CapabilityInvocationPayload {
-            invocation_id: "invk_1".to_string(),
-            capability_instance_id: "capinst_1".to_string(),
-            supplied_inputs: vec![crate::capability::SuppliedInputValue {
-                slot_id: "resolved_node_ref".to_string(),
-                source: crate::capability::InputValueSource::ArtifactHandoff,
-                value: crate::capability::SuppliedValueRef::Artifact(
-                    crate::capability::ArtifactValueRef {
-                        artifact_id: "artifact_node".to_string(),
-                        artifact_type_id: "resolved_node_ref".to_string(),
-                        schema_version: 1,
-                        content: json!({
-                            "node_id": "node-artifact",
-                            "path": "artifact.md",
-                        }),
-                    },
-                ),
-            }],
-            upstream_lineage: None,
-            execution_context: CapabilityExecutionContext::default(),
-        };
-        let structured_payload = CapabilityInvocationPayload {
-            supplied_inputs: vec![crate::capability::SuppliedInputValue {
-                slot_id: "resolved_node_ref".to_string(),
-                source: crate::capability::InputValueSource::InitPayload,
-                value: crate::capability::SuppliedValueRef::StructuredValue(json!({
-                    "node_id": "node-structured",
-                    "path": "structured.md",
-                })),
-            }],
-            ..artifact_payload.clone()
-        };
-
-        assert_eq!(
-            payload_node_id(&artifact_payload),
-            Some("node-artifact".to_string())
-        );
-        assert_eq!(
-            payload_path(&artifact_payload),
-            Some("artifact.md".to_string())
-        );
-        assert_eq!(
-            payload_node_id(&structured_payload),
-            Some("node-structured".to_string())
-        );
-        assert_eq!(
-            payload_path(&structured_payload),
-            Some("structured.md".to_string())
-        );
     }
 
     #[test]

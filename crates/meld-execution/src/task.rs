@@ -53,8 +53,6 @@ pub mod expansion;
 pub mod init;
 /// Capability payload assembly from task-owned state.
 pub mod invocation;
-/// Authored task package contracts and lowering helpers.
-pub mod package;
 /// Durable task executor progress storage.
 pub mod progress;
 /// Readiness evaluation over compiled task graphs.
@@ -63,8 +61,6 @@ pub mod readiness;
 pub mod runtime;
 /// Bounded durable stepping over compiled task packages.
 pub mod step;
-/// Workflow task template materialization helpers.
-pub mod templates;
 
 pub use artifact_repo::{TaskArtifactRepo, TaskArtifactRepoError, TaskArtifactRepoFactory};
 pub use compiler::{compile_task_definition, TaskCompiler, TaskDefinitionCompiler};
@@ -88,9 +84,5 @@ pub use init::{
 pub use invocation::assemble_invocation_payload;
 pub use progress::{TaskProgressStore, TaskProgressStoreError};
 pub use readiness::compute_ready_capability_instances;
-pub use runtime::{execute_task_to_completion, TaskRunSummary, WorkflowTaskTelemetry};
+pub use runtime::{execute_task_to_completion, TaskRunSummary};
 pub use step::{package_step_repo_id, DurablePackageExecution, PackageStepInvoker};
-pub use templates::{
-    prepare_registered_workflow_task_run, traversal_package_run_resolvers,
-    workflow_task_run_id_for_target, workflow_uses_task_package_path,
-};

@@ -12,7 +12,6 @@ pub mod executor;
 pub mod expansion;
 pub mod init;
 pub mod invocation;
-pub mod package;
 pub mod readiness;
 pub(crate) mod reducer;
 pub mod runtime;
@@ -33,22 +32,10 @@ pub use expansion::{
     TaskExpansionCompiler, TaskExpansionCompilerRegistry, TaskExpansionRecord,
     TaskExpansionRequest, TaskExpansionTemplate, TASK_EXPANSION_REQUEST_ARTIFACT_TYPE_ID,
     TASK_EXPANSION_SCHEMA_VERSION, TASK_EXPANSION_TEMPLATE_ARTIFACT_TYPE_ID,
-    TRAVERSAL_PREREQUISITE_EXPANSION_KIND, WORKSPACE_WRITE_FRAME_HEAD_EXPANSION_KIND,
 };
 pub use init::{
     validate_task_initialization, InitArtifactValue, TaskInitializationPayload, TaskRunContext,
 };
 pub use invocation::assemble_invocation_payload;
-pub use package::{
-    build_initial_task_definition, build_task_initialization_payload,
-    find_traversal_prerequisite_expansion, gate_map, load_task_package_spec_for_workflow,
-    lower_traversal_prerequisite_expansion_template, lower_workflow_region_template,
-    prepare_registered_workflow_task_run, prepare_workflow_package_context, prompt_map,
-    resolve_package_target_node_id, validate_workflow_package_trigger,
-    workflow_task_run_id_for_target, workflow_uses_task_package_path, InitialSeedSpec,
-    PackageExpansionSpec, PackageRunResolvers, PreparedTaskRun, PreparedWorkflowPackageContext,
-    SeedArtifactSpec, SeedSourceSpec, TargetSelectorKind, TaskPackageSpec, TaskTriggerSpec,
-    WorkflowPackageTriggerRequest,
-};
 pub use readiness::compute_ready_capability_instances;
-pub use runtime::{execute_task_to_completion, TaskRunSummary, WorkflowTaskTelemetry};
+pub use runtime::{execute_task_to_completion, TaskRunSummary};

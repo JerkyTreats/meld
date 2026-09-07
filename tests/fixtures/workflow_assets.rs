@@ -6,10 +6,6 @@ pub const FILES: &[(&str, &str)] = &[
         include_str!("legacy_workflow/docs_writer_thread_v1.yaml"),
     ),
     (
-        "packages/docs_writer_v2.yaml",
-        include_str!("legacy_workflow/packages/docs_writer_v2.yaml"),
-    ),
-    (
         "prompts/docs_writer/evidence_gather.md",
         include_str!("legacy_workflow/prompts/docs_writer/evidence_gather.md"),
     ),

@@ -174,7 +174,6 @@ fn claim_execute_and_record(
         invoke_success,
         compile_no_expansion,
         None,
-        None,
     ))
     .unwrap();
     let outcome =
@@ -311,7 +310,6 @@ fn task_runtime_failure_converts_to_failed_network_outcome() {
         &(),
         invoke_failure,
         compile_no_expansion,
-        None,
         None,
     ))
     .unwrap_err();
