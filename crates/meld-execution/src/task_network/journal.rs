@@ -28,6 +28,8 @@ pub enum JournalRecord {
     Commit(CommitRecord),
     /// Accepted dispatch claim.
     Claim(dispatch::Claim),
+    /// Ready work consolidated before claiming, with exact input provenance.
+    SharedWork(Box<super::sharing::ReadyWorkSharing>),
     /// Accepted task outcome and pending publication handoff.
     Outcome {
         /// Pending publication created for the outcome.

@@ -144,6 +144,27 @@ impl InMemoryTaskNetworkStore {
                     allow_admitted_region,
                 )
             }
+            command::Command::ShareReadyWork(sharing) => {
+                let mut proposed = self.state.clone();
+                if let Err(error) = sharing.apply(&mut proposed) {
+                    return self.record_response(
+                        request.command_id,
+                        request_hash,
+                        command::Response::Rejected(Rejection::InvalidGraph(error)),
+                    );
+                }
+                proposed.set_revision_and_hash(self.state.revision + 1);
+                self.state = proposed;
+                self.journal.push(JournalRecord::SharedWork(sharing));
+                self.record_response(
+                    request.command_id,
+                    request_hash,
+                    command::Response::Accepted {
+                        revision: self.state.revision,
+                        state_hash: self.state.state_hash.clone(),
+                    },
+                )
+            }
             command::Command::ClaimReadyTask(claim_request) => {
                 self.claim_ready_task(request.command_id, request_hash, claim_request)
             }
@@ -289,6 +310,19 @@ impl InMemoryTaskNetworkStore {
                     "mutation set targeted network '{}' but store owns '{}'",
                     set.network_id, self.state.network_id
                 ))),
+            );
+        }
+
+        if set.mutations.iter().any(|mutation| {
+            let mutation::Mutation::Inject(inject) = mutation;
+            inject.sharing.is_some()
+        }) {
+            return self.record_response(
+                command_id,
+                request_hash,
+                command::Response::Rejected(Rejection::InvalidGraph(
+                    "admission-time sharing is retired; use the ready-work command".into(),
+                )),
             );
         }
 
@@ -870,6 +904,9 @@ impl InMemoryTaskNetworkStore {
                 }
                 seal_admitted_region_node_hashes(&mut self.state, &record.mutation_set);
                 dedupe_edges(&mut self.state.edges);
+            }
+            JournalRecord::SharedWork(sharing) => {
+                sharing.apply(&mut self.state).map_err(decode_error)?;
             }
             JournalRecord::Claim(claim) => {
                 if claim.network_id != self.state.network_id || claim.claim_revision != revision {

@@ -208,7 +208,7 @@ pub struct DispatchTickRequest {
     /// Dispatch identities derive from durable plan and claim identity, not
     /// from this sequence, so replayed ticks converge on the same records.
     pub sequence: u64,
-    /// Maximum bounded claim invocations one tick may release.
+    /// Maximum dispatch transitions, including sharing decisions and invocations.
     pub max_items: usize,
 }
 
@@ -252,7 +252,7 @@ pub struct DispatchTickReport {
     pub input_revision: u64,
     /// Task network revision after actor work completed.
     pub output_revision: u64,
-    /// Bounded claim invocations released by this tick.
+    /// Bounded dispatch transitions, including sharing and claim invocations.
     pub items_attempted: usize,
     /// Bounded invocations resolved to durable committed progress. Failed
     /// bounded work is recorded but never counted here.
@@ -347,6 +347,7 @@ pub struct DispatchRuntimeActor<CI> {
     db: sled::Db,
     claim_invoker: CI,
     authority_policy: Option<AuthorityPolicyBinding>,
+    capability_catalog: Option<crate::capability::CapabilityCatalog>,
     admission_generation: Option<String>,
     admission_generation_observer: Option<Arc<dyn AdmissionGenerationObserver>>,
     lifecycle: crate::lifecycle::NativeLifecycle,
@@ -377,10 +378,20 @@ where
             db,
             claim_invoker,
             authority_policy: None,
+            capability_catalog: None,
             admission_generation: None,
             admission_generation_observer: None,
             lifecycle: crate::lifecycle::NativeLifecycle::new(DISPATCH_ACTOR_ID),
         })
+    }
+
+    /// Bind exact installed owner contracts for ready-work compatibility decisions.
+    pub fn with_capability_catalog(
+        mut self,
+        catalog: crate::capability::CapabilityCatalog,
+    ) -> Self {
+        self.capability_catalog = Some(catalog);
+        self
     }
 
     /// Resolve readiness and artifacts against the exact network and contained Task.
@@ -417,6 +428,13 @@ where
             installed_revision_refs: vec![
                 format!("task-network-state::{}", state.state_hash),
                 crate::lifecycle::evidence_ref("dispatch-authority", &self.authority_policy)?,
+                crate::lifecycle::evidence_ref(
+                    "dispatch-capability-catalog",
+                    &self
+                        .capability_catalog
+                        .as_ref()
+                        .map(|catalog| catalog.iter().collect::<Vec<_>>()),
+                )?,
             ],
             binding_refs: vec![
                 format!("dispatch-worker::{}", self.worker_id),
@@ -635,6 +653,10 @@ where
                 .await;
         }
 
+        if !self.coalesce_ready_work(network, remaining, report) {
+            return;
+        }
+
         // One ready-set snapshot per tick: dependents readied by this tick's
         // outcomes wait for a later tick, and a task failed this tick can
         // never re-enter the snapshot.
@@ -692,6 +714,98 @@ where
             self.execute_claimed_task(network, &claim, false, report)
                 .await;
         }
+    }
+
+    fn coalesce_ready_work<N: TaskNetworkCommandPort>(
+        &self,
+        network: &mut N,
+        remaining: &mut usize,
+        report: &mut DispatchTickReport,
+    ) -> bool {
+        let Some(catalog) = &self.capability_catalog else {
+            return true;
+        };
+        while *remaining > 0 {
+            let state = network.network_state();
+            let mut ready = compute_ready_set(state);
+            ready.task_instance_ids.sort_by_key(|id| {
+                (
+                    super::sharing::decision_ids_for_node(state, id).is_empty(),
+                    id.clone(),
+                )
+            });
+            let mut proposal = None;
+            'pairs: for (index, primary_id) in ready.task_instance_ids.iter().enumerate() {
+                let primary = &state.tasks[primary_id];
+                let Some(contract) = catalog.get(
+                    &primary.lineage.capability_type_id,
+                    primary.lineage.capability_version,
+                ) else {
+                    continue;
+                };
+                if contract.execution_contract.completion_semantics
+                    != super::sharing::EXACT_INPUT_SHARING_V1
+                    || self.validate_task_authority(state, primary).is_err()
+                {
+                    continue;
+                }
+                for candidate_id in &ready.task_instance_ids[index + 1..] {
+                    let candidate = &state.tasks[candidate_id];
+                    if self.validate_task_authority(state, candidate).is_err() {
+                        continue;
+                    }
+                    if let Ok(sharing) = super::sharing::ReadyWorkSharing::decide(
+                        state, candidate, primary, contract,
+                    ) {
+                        proposal = Some(sharing);
+                        break 'pairs;
+                    }
+                }
+            }
+            let Some(sharing) = proposal else {
+                return true;
+            };
+            let id = sharing.decision.decision_id.clone();
+            let contributor_id = sharing.contributor_node_id.clone();
+            let command = command_request(
+                state,
+                format!("{id}::rev{}", state.revision),
+                Command::ShareReadyWork(Box::new(sharing)),
+            );
+            *remaining -= 1;
+            report.items_attempted += 1;
+            match network.submit_command(command) {
+                Ok(Response::Accepted { .. } | Response::Duplicate { .. }) => {
+                    if network
+                        .network_state()
+                        .shared_steps
+                        .get(&contributor_id)
+                        .and_then(|step| step.sharing.as_ref())
+                        .is_none_or(|decision| decision.decision_id != id)
+                    {
+                        report.fatal(
+                            Some(id),
+                            "shared_work_record_missing",
+                            "accepted sharing has no retained contributor",
+                        );
+                        return false;
+                    }
+                }
+                Ok(Response::Rejected(rejection)) => {
+                    report.issue(
+                        Some(id),
+                        "ready_work_sharing_rejected",
+                        rejection_error(&rejection),
+                    );
+                    return false;
+                }
+                Err(error) => {
+                    report.issue(Some(id), "ready_work_sharing_submit_failed", error);
+                    return false;
+                }
+            }
+        }
+        true
     }
 
     /// Claims one ready task through the command boundary.

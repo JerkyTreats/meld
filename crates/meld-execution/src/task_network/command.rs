@@ -57,6 +57,8 @@ pub enum Command {
     ApplyMutationSet(mutation::Set),
     /// Claims one ready task before task runtime execution.
     ClaimReadyTask(dispatch::Request),
+    /// Attach ready work after proving exact materialized input compatibility.
+    ShareReadyWork(Box<super::sharing::ReadyWorkSharing>),
     /// Records a fenced task runtime outcome.
     RecordTaskOutcome(dispatch::Outcome),
     /// Marks one publication outbox record.

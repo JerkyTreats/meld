@@ -869,6 +869,7 @@ struct TaskAdmissionFactory {
 
 #[derive(Clone)]
 struct DispatchFactory {
+    capability_catalog: Option<CapabilityCatalog>,
     /// Late-binding route slot: an unbound slot builds a body-less handle.
     routes: DispatchRouteSlot,
     execution_db: sled::Db,
@@ -2948,6 +2949,11 @@ impl RuntimeSemanticHandleFactory {
                 }
                 let admission_generation_observer = stores.agent_store.opened().filter(|_| composed.lifecycle.is_some()).map(|store| composed.admission_observer(Arc::clone(store)).map(|observer| Arc::new(observer) as Arc<dyn meld_execution::task_network::dispatch_actor::AdmissionGenerationObserver>)).transpose()?;
                 Ok(Self::Dispatch(Box::new(DispatchFactory {
+                    capability_catalog: composed
+                        .theory
+                        .capability_runtime
+                        .as_ref()
+                        .map(|runtime| runtime.catalog.clone()),
                     routes: composed.dispatch_slot.clone(),
                     execution_db: execution_db.clone(),
                     network: Arc::clone(network),
@@ -3118,6 +3124,10 @@ impl RuntimeSemanticHandleFactory {
                     routes.claim_invoker,
                 )
                 .map(|actor| {
+                    let actor = match &factory.capability_catalog {
+                        Some(catalog) => actor.with_capability_catalog(catalog.clone()),
+                        None => actor,
+                    };
                     let actor = match &factory.authority_policy {
                         Some(policy) => actor.with_authority_policy(policy.clone()),
                         None => actor,
@@ -7733,6 +7743,20 @@ mod tests {
 
     #[test]
     fn native_docs_drafting_shares_one_provider_invocation_for_two_admitted_tasks() {
+        assert_native_docs_shared_work(false, false);
+    }
+
+    #[test]
+    fn native_docs_repair_tasks_share_produced_inputs_and_keep_separate_publication() {
+        assert_native_docs_shared_work(true, false);
+    }
+
+    #[test]
+    fn native_docs_ready_sharing_retries_after_intervening_revision() {
+        assert_native_docs_shared_work(true, true);
+    }
+
+    fn assert_native_docs_shared_work(complete_repair: bool, inject_stale_revision: bool) {
         use meld_execution::task_admission::TaskAdmissionDecision;
         use meld_execution::task_network::sharing::admission_discharge_account;
         use meld_world_model::{AgentAuthorizedProduct, AgentProductAuthorization};
@@ -7783,14 +7807,95 @@ mod tests {
             .iter()
             .find(|capability| capability.operator.operator_id == "draft-docs-patch-set")
             .unwrap();
-        let composition = meld_lang::Composition {
-            steps: vec![meld_lang::Step {
-                step_id: "draft".into(),
-                kind: meld_lang::StepKind::Op(capability.operator.clone()),
-            }],
-            edges: Vec::new(),
+        let selected: Vec<_> = if complete_repair {
+            [
+                "inspect-docs-scope",
+                "draft-docs-patch-set",
+                "validate-docs-patch-set",
+                "publish-docs-patch-set",
+            ]
+            .into_iter()
+            .map(|id| {
+                agent
+                    .strategy
+                    .package
+                    .capabilities
+                    .iter()
+                    .find(|capability| capability.operator.operator_id == id)
+                    .unwrap()
+            })
+            .collect()
+        } else {
+            vec![capability]
         };
-        let actions = vec![crate::docs::capability::DRAFT_PATCH_SET.to_string()];
+        let step_ids = if complete_repair {
+            vec!["inspect", "draft", "validate", "publish"]
+        } else {
+            vec!["draft"]
+        };
+        let composition = meld_lang::Composition {
+            steps: selected
+                .iter()
+                .zip(&step_ids)
+                .map(|(capability, step)| meld_lang::Step {
+                    step_id: (*step).into(),
+                    kind: meld_lang::StepKind::Op(capability.operator.clone()),
+                })
+                .collect(),
+            edges: if complete_repair {
+                [
+                    ("inspect", "draft", crate::docs::capability::EVIDENCE_BUNDLE),
+                    (
+                        "inspect",
+                        "validate",
+                        crate::docs::capability::EVIDENCE_BUNDLE,
+                    ),
+                    ("draft", "validate", crate::docs::capability::PATCH_SET),
+                    (
+                        "validate",
+                        "publish",
+                        crate::docs::capability::VALIDATED_PATCH_SET,
+                    ),
+                ]
+                .into_iter()
+                .map(|(from, to, artifact)| meld_lang::Edge {
+                    from: from.into(),
+                    to: to.into(),
+                    kind: meld_lang::EdgeKind::DataFlow {
+                        artifact_type: meld_lang::Term::ArtifactType(artifact.into()),
+                    },
+                })
+                .collect()
+            } else {
+                Vec::new()
+            },
+        };
+        let bindings = meld_lang::Bindings::empty()
+            .bind(
+                "?subject".into(),
+                meld_lang::Term::Object(agent.strategy.subject.clone()),
+            )
+            .unwrap();
+        let composition = meld_lang::substitute(&composition, &bindings).unwrap();
+        let mut actions: Vec<_> = selected
+            .iter()
+            .map(|capability| {
+                capability
+                    .operator
+                    .resolution
+                    .specific
+                    .as_ref()
+                    .unwrap()
+                    .capability_type_id
+                    .clone()
+            })
+            .collect();
+        actions.sort();
+        let mut contracts: Vec<_> = selected
+            .iter()
+            .map(|capability| capability.contract_id.clone())
+            .collect();
+        contracts.sort();
         let authority =
             meld_lang::evaluate_authority(policy, &actions, &composition, &agent.strategy.subject)
                 .unwrap();
@@ -7818,17 +7923,25 @@ mod tests {
                         return_milestone: None,
                         task_id: task_id.clone(),
                         execution_subject: Some(agent.strategy.subject.clone()),
-                        initial_inputs: vec![meld_lang::TaskInput {
-                            step_id: "draft".into(),
-                            slot_id: crate::docs::capability::EVIDENCE_BUNDLE.into(),
-                            artifact_type_id: crate::docs::capability::EVIDENCE_BUNDLE.into(),
-                            schema_version: 1,
-                            content: serde_json::to_value(&evidence).unwrap(),
-                        }],
+                        initial_inputs: if complete_repair {
+                            Vec::new()
+                        } else {
+                            vec![meld_lang::TaskInput {
+                                step_id: "draft".into(),
+                                slot_id: crate::docs::capability::EVIDENCE_BUNDLE.into(),
+                                artifact_type_id: crate::docs::capability::EVIDENCE_BUNDLE.into(),
+                                schema_version: 1,
+                                content: serde_json::to_value(&evidence).unwrap(),
+                            }]
+                        },
                         composition: composition.clone(),
-                        bindings: meld_lang::Bindings::empty(),
-                        capability_contract_ids: vec![capability.contract_id.clone()],
-                        expected_outcome_contract_id: capability.outcome_contract_id.clone(),
+                        bindings: bindings.clone(),
+                        capability_contract_ids: contracts.clone(),
+                        expected_outcome_contract_id: selected
+                            .last()
+                            .unwrap()
+                            .outcome_contract_id
+                            .clone(),
                         authority_requirements: actions.clone(),
                         idempotency_key: task_id.clone(),
                     },
@@ -7852,10 +7965,160 @@ mod tests {
         assert!(lowered.fatal_errors.is_empty(), "{lowered:?}");
         {
             let network = execution.network.lock().unwrap();
-            assert_eq!(network.state().tasks.len(), 1, "{lowered:?}");
-            assert_eq!(network.state().shared_steps.len(), 1);
+            assert_eq!(
+                network.state().tasks.len(),
+                if complete_repair { 8 } else { 2 },
+                "{lowered:?}"
+            );
+            assert!(network.state().shared_steps.is_empty());
         }
-        for _ in 0..4 {
+        if complete_repair {
+            let inspected = supervisor
+                .step_owner_for_test("execution.task_dispatch", WorkBudget { max_items: 2 });
+            assert!(inspected.fatal_errors.is_empty(), "{inspected:?}");
+            {
+                let network = execution.network.lock().unwrap();
+                assert_eq!(network.state().claims.len(), 2);
+                assert_eq!(network.state().outcomes.len(), 2);
+                assert!(network.state().shared_steps.is_empty());
+            }
+            if inject_stale_revision {
+                struct InterveningCommit<'a> {
+                    network: &'a mut SledTaskNetworkStore,
+                    sharing_commands: Vec<String>,
+                }
+                impl meld_execution::task_network::dispatch_actor::TaskNetworkCommandPort
+                    for InterveningCommit<'_>
+                {
+                    fn network_state(&self) -> &meld_execution::task_network::NetworkState {
+                        self.network.state()
+                    }
+                    fn submit_command(
+                        &mut self,
+                        request: meld_execution::task_network::command::Request,
+                    ) -> Result<
+                        meld_execution::task_network::command::Response,
+                        meld_execution::task_network::dispatch_actor::DispatchPortError,
+                    > {
+                        use meld_execution::task_network::command::{Command, Request, Response};
+                        if matches!(&request.command, Command::ShareReadyWork(_)) {
+                            self.sharing_commands.push(request.command_id.clone());
+                            if self.sharing_commands.len() == 1 {
+                                let state = self.network.state();
+                                let intervening = Request {
+                                    command_id: "intervening-network-revision".into(),
+                                    network_id: state.network_id.clone(),
+                                    base_revision: state.revision,
+                                    base_state_hash: state.state_hash.clone(),
+                                    read_preconditions: Vec::new(),
+                                    command: Command::ApplyMutationSet(
+                                        meld_execution::task_network::mutation::Set::empty(
+                                            &state.network_id,
+                                            "concurrent-owner-work",
+                                            "intervening-once",
+                                        ),
+                                    ),
+                                };
+                                assert!(matches!(
+                                    self.network.submit(intervening).unwrap(),
+                                    Response::Accepted { .. }
+                                ));
+                            }
+                        }
+                        self.network.submit(request).map_err(|error| {
+                        meld_execution::task_network::dispatch_actor::DispatchPortError::retryable(
+                            error.to_string(),
+                        )
+                    })
+                    }
+                }
+                let RuntimeSemanticHandleFactory::Dispatch(dispatch) = &assembly
+                    .handle_factories()
+                    .get("execution.task_dispatch")
+                    .unwrap()
+                    .semantic
+                else {
+                    unreachable!()
+                };
+                let retry_actor = DispatchRuntimeActor::new(
+                    dispatch.worker_id.clone(),
+                    dispatch.execution_db.clone(),
+                    dispatch.routes.current().unwrap().claim_invoker,
+                )
+                .unwrap()
+                .with_capability_catalog(execution.catalog.clone())
+                .with_authority_policy(policy.clone())
+                .with_admission_generation_observer(Arc::clone(
+                    dispatch.admission_generation_observer.as_ref().unwrap(),
+                ));
+                let runtime = tokio::runtime::Runtime::new().unwrap();
+                {
+                    let mut network = execution.network.lock().unwrap();
+                    let mut port = InterveningCommit {
+                        network: &mut network,
+                        sharing_commands: Vec::new(),
+                    };
+                    let first = runtime
+                        .block_on(retry_actor.tick(
+                            &mut port,
+                            meld_execution::task_network::dispatch_actor::DispatchTickRequest {
+                                sequence: 1,
+                                max_items: 1,
+                            },
+                        ))
+                        .unwrap();
+                    assert!(first.fatal_errors.is_empty(), "{first:?}");
+                    assert_eq!(first.retryable_errors.len(), 1, "{first:?}");
+                    assert_eq!(port.network.state().claims.len(), 2);
+                    assert!(port.network.state().shared_steps.is_empty());
+                    let second = runtime
+                        .block_on(retry_actor.tick(
+                            &mut port,
+                            meld_execution::task_network::dispatch_actor::DispatchTickRequest {
+                                sequence: 2,
+                                max_items: 1,
+                            },
+                        ))
+                        .unwrap();
+                    assert!(second.fatal_errors.is_empty(), "{second:?}");
+                    assert!(second.retryable_errors.is_empty(), "{second:?}");
+                    assert_eq!(port.sharing_commands.len(), 2);
+                    assert_ne!(port.sharing_commands[0], port.sharing_commands[1]);
+                }
+            } else {
+                let shared = supervisor
+                    .step_owner_for_test("execution.task_dispatch", WorkBudget { max_items: 1 });
+                assert!(shared.fatal_errors.is_empty(), "{shared:?}");
+                assert!(shared.retryable_errors.is_empty(), "{shared:?}");
+            }
+            let network = execution.network.lock().unwrap();
+            assert_eq!(
+                network.state().claims.len(),
+                2,
+                "sharing consumes its bounded transition before invocation"
+            );
+            assert_eq!(network.state().shared_steps.len(), 1);
+            let decisions: Vec<_> = network
+                .journal()
+                .iter()
+                .filter_map(|record| match record {
+                    meld_execution::task_network::JournalRecord::SharedWork(decision) => {
+                        Some(decision)
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(decisions.len(), 1);
+            assert_eq!(
+                decisions[0].primary_inputs.payload.init_artifacts,
+                decisions[0].contributor_inputs.payload.init_artifacts
+            );
+            assert_ne!(
+                decisions[0].primary_inputs.provenance,
+                decisions[0].contributor_inputs.provenance
+            );
+        }
+        for _ in 0..12 {
             let dispatched = supervisor
                 .step_owner_for_test("execution.task_dispatch", WorkBudget { max_items: 4 });
             assert!(dispatched.fatal_errors.is_empty(), "{dispatched:?}");
@@ -7863,9 +8126,32 @@ mod tests {
         }
         let accounts = {
             let network = execution.network.lock().unwrap();
-            assert_eq!(network.state().claims.len(), 1);
-            assert_eq!(network.state().outcomes.len(), 1);
-            let outcome = network.state().outcomes.values().next().unwrap();
+            assert_eq!(
+                network.state().claims.len(),
+                if complete_repair { 7 } else { 1 }
+            );
+            assert_eq!(
+                network.state().outcomes.len(),
+                if complete_repair { 7 } else { 1 }
+            );
+            assert_eq!(network.state().shared_steps.len(), 1);
+            for outcome in network.state().outcomes.values() {
+                assert_eq!(
+                    outcome.status,
+                    meld_execution::task_network::dispatch::OutcomeStatus::Succeeded,
+                    "{outcome:?}"
+                );
+            }
+            let outcome = network
+                .state()
+                .outcomes
+                .values()
+                .find(|outcome| {
+                    outcome.artifact_records.iter().any(|artifact| {
+                        artifact.artifact_type_id == crate::docs::capability::PATCH_SET
+                    })
+                })
+                .unwrap();
             assert_eq!(
                 outcome.status,
                 meld_execution::task_network::dispatch::OutcomeStatus::Succeeded,
@@ -7888,28 +8174,32 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         let published =
-            supervisor.step_owner_for_test("execution.publication", WorkBudget { max_items: 4 });
+            supervisor.step_owner_for_test("execution.publication", WorkBudget { max_items: 16 });
         assert!(published.fatal_errors.is_empty(), "{published:?}");
         assert!(published.retryable_errors.is_empty(), "{published:?}");
         {
             let network = execution.network.lock().unwrap();
-            let publication = network.state().publications.values().next().unwrap();
-            assert_eq!(publication.shared_discharge_accounts.len(), 2);
-            let event = harness
-                .authority
-                .replay_capability()
-                .committed_record(
-                    &meld_execution::task_network::publication::build_publication_envelope(
-                        "shared-draft-proof",
-                        publication,
+            for account in &accounts {
+                let publication = network
+                    .state()
+                    .publications
+                    .values()
+                    .find(|publication| publication.shared_discharge_accounts.contains(account))
+                    .unwrap();
+                let event = harness
+                    .authority
+                    .replay_capability()
+                    .committed_record(
+                        &meld_execution::task_network::publication::build_publication_envelope(
+                            "shared-draft-proof",
+                            publication,
+                        )
+                        .unwrap()
+                        .record_id
+                        .unwrap(),
                     )
                     .unwrap()
-                    .record_id
-                    .unwrap(),
-                )
-                .unwrap()
-                .unwrap();
-            for account in &accounts {
+                    .unwrap();
                 assert!(event
                     .objects
                     .iter()
@@ -7918,11 +8208,11 @@ mod tests {
                     .objects
                     .iter()
                     .any(|object| object.object_id == account.admission.goal_id));
+                assert_eq!(
+                    event.data,
+                    serde_json::to_value(&publication.outcome).unwrap()
+                );
             }
-            assert_eq!(
-                event.data,
-                serde_json::to_value(&publication.outcome).unwrap()
-            );
         }
         for (authorization, account) in authorizations.iter().zip(&accounts) {
             let position = agent.execution.observe(authorization).unwrap().unwrap();
@@ -7940,9 +8230,21 @@ mod tests {
             accounts[0].admission.authorization_id,
             accounts[1].admission.authorization_id
         );
-        assert_eq!(accounts[0].outcome_id, accounts[1].outcome_id);
-        assert_eq!(provider.calls(), vec!["draft"]);
-        assert!(!harness._workspace.path().join("README.md").exists());
+        if complete_repair {
+            assert_ne!(accounts[0].outcome_id, accounts[1].outcome_id);
+            assert_eq!(
+                std::fs::read_to_string(harness._workspace.path().join("README.md")).unwrap(),
+                super::docs_fixture::README
+            );
+        } else {
+            assert_eq!(accounts[0].outcome_id, accounts[1].outcome_id);
+            assert!(!harness._workspace.path().join("README.md").exists());
+        }
+        let calls = provider.calls();
+        assert_eq!(
+            calls.iter().filter(|call| call.as_str() == "draft").count(),
+            1
+        );
         supervisor.request_shutdown(2_000).unwrap();
         drop(supervisor);
         drop(assembly);
@@ -7964,7 +8266,7 @@ mod tests {
                 Some(account)
             );
         }
-        assert_eq!(provider.calls(), vec!["draft"]);
+        assert_eq!(provider.calls(), calls);
     }
 
     #[test]

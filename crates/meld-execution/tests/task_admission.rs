@@ -798,6 +798,40 @@ fn shared_input_request(
     (catalog, request)
 }
 
+fn metadata_sharing_proposal(
+    state: &meld_execution::task_network::NetworkState,
+    catalog: &meld_execution::capability::CapabilityCatalog,
+) -> Result<meld_execution::task_network::sharing::ReadyWorkSharing, String> {
+    let nodes: Vec<_> = state
+        .tasks
+        .values()
+        .filter(|node| node.lineage.step_id == "write_metadata")
+        .collect();
+    assert_eq!(nodes.len(), 2);
+    meld_execution::task_network::sharing::ReadyWorkSharing::decide(
+        state,
+        nodes[1],
+        nodes[0],
+        catalog.get("docs.write_metadata", 1).unwrap(),
+    )
+}
+
+fn share_metadata_roots(
+    store: &mut SledTaskNetworkStore,
+    catalog: &meld_execution::capability::CapabilityCatalog,
+) {
+    let proposal = metadata_sharing_proposal(store.state(), catalog).unwrap();
+    let request = task_network_support::apply_sled_command(
+        store,
+        "share-ready-metadata",
+        Command::ShareReadyWork(Box::new(proposal)),
+    );
+    assert!(matches!(
+        store.submit(request).unwrap(),
+        meld_execution::task_network::command::Response::Accepted { .. }
+    ));
+}
+
 #[test]
 fn shared_operational_attempt_preserves_two_admission_accounts_across_reopen() {
     use meld_execution::task_network::{dispatch, sharing::admission_discharge_account};
@@ -836,6 +870,8 @@ fn shared_operational_attempt_preserves_two_admission_accounts_across_reopen() {
         )
         .unwrap();
     assert_eq!(report.committed, 2, "{report:?}");
+    assert_eq!(store.state().tasks.len(), 2);
+    share_metadata_roots(&mut store, &catalog);
     assert_eq!(store.state().tasks.len(), 1);
     assert_eq!(store.state().shared_steps.len(), 1);
     let before = store.state().clone();
@@ -968,8 +1004,10 @@ fn work_without_owner_permission_or_with_different_input_stays_distinct() {
                 "{record:?}"
             );
         }
-        let actor =
-            TaskAdmissionRuntimeActor::new(TaskAdmissionLowerer::new(TaskCompiler::new(), catalog));
+        let actor = TaskAdmissionRuntimeActor::new(TaskAdmissionLowerer::new(
+            TaskCompiler::new(),
+            catalog.clone(),
+        ));
         let report = actor
             .run_once_in_memory(
                 &mut store,
@@ -979,6 +1017,7 @@ fn work_without_owner_permission_or_with_different_input_stays_distinct() {
                 },
             )
             .unwrap();
+        assert!(metadata_sharing_proposal(store.state(), &catalog).is_err());
         assert_eq!(report.committed, 2, "{report:?}");
         assert_eq!(store.state().tasks.len(), 2);
         assert!(store.state().shared_steps.is_empty());
@@ -1041,8 +1080,10 @@ fn independently_valid_authority_and_lifecycle_contexts_do_not_imply_compatibili
                 "{difference}: {record:?}"
             );
         }
-        let actor =
-            TaskAdmissionRuntimeActor::new(TaskAdmissionLowerer::new(TaskCompiler::new(), catalog));
+        let actor = TaskAdmissionRuntimeActor::new(TaskAdmissionLowerer::new(
+            TaskCompiler::new(),
+            catalog.clone(),
+        ));
         let report = actor
             .run_once_in_memory(
                 &mut store,
@@ -1052,6 +1093,7 @@ fn independently_valid_authority_and_lifecycle_contexts_do_not_imply_compatibili
                 },
             )
             .unwrap();
+        assert!(metadata_sharing_proposal(store.state(), &catalog).is_err());
         assert_eq!(report.committed, 2, "{difference}: {report:?}");
         assert_eq!(store.state().tasks.len(), 2, "{difference}");
         assert!(store.state().shared_steps.is_empty(), "{difference}");
@@ -1163,8 +1205,10 @@ fn shared_root_feeds_separate_admitted_descendants_and_waits_for_each_return() {
             );
             admissions.push(record);
         }
-        let actor =
-            TaskAdmissionRuntimeActor::new(TaskAdmissionLowerer::new(TaskCompiler::new(), catalog));
+        let actor = TaskAdmissionRuntimeActor::new(TaskAdmissionLowerer::new(
+            TaskCompiler::new(),
+            catalog.clone(),
+        ));
         let report = actor
             .run_once(
                 &mut store,
@@ -1175,6 +1219,7 @@ fn shared_root_feeds_separate_admitted_descendants_and_waits_for_each_return() {
             )
             .unwrap();
         assert_eq!(report.committed, 2, "{report:?}");
+        share_metadata_roots(&mut store, &catalog);
         assert_eq!(
             store.state().tasks.len(),
             if delayed_failure { 5 } else { 3 }
@@ -1305,4 +1350,409 @@ fn shared_root_feeds_separate_admitted_descendants_and_waits_for_each_return() {
         assert_eq!(accounts.len(), 2);
         assert_ne!(accounts[0].account_id, accounts[1].account_id);
     }
+}
+
+fn produced_input_sharing_fixture(
+    different_inputs: bool,
+) -> (
+    sled::Db,
+    SledTaskNetworkStore,
+    meld_execution::capability::CapabilityTypeContract,
+    Vec<String>,
+) {
+    let original_catalog = task_network_support::single_input_dataflow_catalog();
+    let mut contract = original_catalog
+        .get("docs.write_metadata", 1)
+        .unwrap()
+        .clone();
+    contract.execution_contract.completion_semantics =
+        meld_execution::capability::EXACT_INPUT_SHARING_V1.into();
+    let mut catalog = meld_execution::capability::CapabilityCatalog::new();
+    catalog
+        .register(
+            original_catalog
+                .get("docs.prepare_metadata", 1)
+                .unwrap()
+                .clone(),
+        )
+        .unwrap();
+    catalog.register(contract.clone()).unwrap();
+    let db = sled::Config::new().temporary(true).open().unwrap();
+    let mut store = SledTaskNetworkStore::open(db.clone(), "network-docs").unwrap();
+    for name in ["first", "second"] {
+        let mut request = dataflow_request(true);
+        request.lineage.authorization_id = format!("authorization-{name}");
+        request.lineage.goal_id = format!("goal-{name}");
+        request.lineage.plan_revision_id = format!("plan-{name}");
+        request.lineage.product_id = format!("task-{name}");
+        request.task.task_id = request.lineage.product_id.clone();
+        request.task.idempotency_key = request.task.task_id.clone();
+        request.idempotency_key = request.task.task_id.clone();
+        request.task.capability_contract_ids = catalog
+            .iter()
+            .map(|contract| contract.content_identity())
+            .collect();
+        request.task.capability_contract_ids.sort();
+        let record = TaskAdmissionApi::new(
+            &mut store,
+            &catalog,
+            "generation-v1",
+            "policy-content-docs-v1",
+        )
+        .admit(request)
+        .unwrap();
+        assert_eq!(
+            record.decision,
+            TaskAdmissionDecision::Admitted,
+            "{record:?}"
+        );
+    }
+    let report =
+        TaskAdmissionRuntimeActor::new(TaskAdmissionLowerer::new(TaskCompiler::new(), catalog))
+            .run_once(
+                &mut store,
+                TaskAdmissionRuntimeRequest {
+                    network_id: "network-docs".into(),
+                    max_items: 2,
+                },
+            )
+            .unwrap();
+    assert_eq!(report.committed, 2);
+    assert!(store.state().shared_steps.is_empty());
+    let consumers: Vec<_> = store
+        .state()
+        .tasks
+        .values()
+        .filter(|node| node.lineage.step_id == "write_metadata")
+        .map(|node| node.task_instance_id.clone())
+        .collect();
+    assert!(
+        meld_execution::task_network::sharing::ReadyWorkSharing::decide(
+            store.state(),
+            &store.state().tasks[&consumers[1]],
+            &store.state().tasks[&consumers[0]],
+            &contract
+        )
+        .is_err()
+    );
+    let producers: Vec<_> = store
+        .state()
+        .tasks
+        .values()
+        .filter(|node| node.lineage.step_id == "prepare_metadata")
+        .map(|node| node.task_instance_id.clone())
+        .collect();
+    for (index, node_id) in producers.iter().enumerate() {
+        let claim_id = format!("producer-claim-{index}");
+        let request = task_network_support::apply_sled_command(
+            &store,
+            &claim_id,
+            Command::ClaimReadyTask(meld_execution::task_network::dispatch::Request {
+                claim_id: claim_id.clone(),
+                task_instance_id: node_id.clone(),
+                worker_id: "worker".into(),
+                idempotency_key: claim_id.clone(),
+            }),
+        );
+        assert!(matches!(
+            store.submit(request).unwrap(),
+            meld_execution::task_network::command::Response::Accepted { .. }
+        ));
+        let claim = &store.state().claims[&claim_id];
+        let mut outcome = task_network_support::outcome_for_claim(
+            &format!("producer-outcome-{index}"),
+            node_id,
+            claim,
+        );
+        let artifact = &mut outcome.artifact_records[0];
+        artifact.artifact_type_id = "metadata_doc".into();
+        artifact.content =
+            serde_json::json!({"source_revision": if different_inputs { index } else { 0 }});
+        artifact.producer.task_id = node_id.clone();
+        artifact.producer.capability_instance_id = "prepare_metadata".into();
+        artifact.producer.output_slot_id = Some("metadata_doc".into());
+        let request = task_network_support::apply_sled_command(
+            &store,
+            &format!("producer-return-{index}"),
+            Command::RecordTaskOutcome(outcome),
+        );
+        assert!(matches!(
+            store.submit(request).unwrap(),
+            meld_execution::task_network::command::Response::Accepted { .. }
+        ));
+    }
+    (db, store, contract, consumers)
+}
+
+#[test]
+fn ready_sharing_revalidates_exact_provenance_and_replays_before_claim() {
+    use meld_execution::task_network::{command::Response, sharing::ReadyWorkSharing};
+    let (db, mut store, contract, consumers) = produced_input_sharing_fixture(false);
+    let decision = ReadyWorkSharing::decide(
+        store.state(),
+        &store.state().tasks[&consumers[1]],
+        &store.state().tasks[&consumers[0]],
+        &contract,
+    )
+    .unwrap();
+    assert_eq!(
+        decision.primary_inputs.payload.init_artifacts,
+        decision.contributor_inputs.payload.init_artifacts
+    );
+    assert_ne!(
+        decision.primary_inputs.provenance,
+        decision.contributor_inputs.provenance
+    );
+    for variant in 0..4 {
+        let mut forged = decision.clone();
+        match variant {
+            0 => forged.decision.decision_id = "forged-decision".into(),
+            1 => {
+                forged.contributor_inputs.payload.init_artifacts[0].content =
+                    serde_json::json!({"forged": true})
+            }
+            2 => forged.contributor_inputs.provenance = forged.primary_inputs.provenance.clone(),
+            3 => {
+                forged
+                    .decision
+                    .capability_contract
+                    .execution_contract
+                    .completion_semantics = "result_or_failure".into()
+            }
+            _ => unreachable!(),
+        }
+        let before = store.state().clone();
+        let request = task_network_support::apply_sled_command(
+            &store,
+            &format!("forged-sharing-{variant}"),
+            Command::ShareReadyWork(Box::new(forged)),
+        );
+        assert!(matches!(
+            store.submit(request).unwrap(),
+            Response::Rejected(_)
+        ));
+        assert_eq!(store.state(), &before);
+    }
+    let request = task_network_support::apply_sled_command(
+        &store,
+        "valid-sharing",
+        Command::ShareReadyWork(Box::new(decision.clone())),
+    );
+    assert!(matches!(
+        store.submit(request.clone()).unwrap(),
+        Response::Accepted { .. }
+    ));
+    assert!(matches!(
+        store.submit(request).unwrap(),
+        Response::Duplicate { .. }
+    ));
+    assert_eq!(store.state().tasks.len(), 3);
+    assert_eq!(store.state().shared_steps.len(), 1);
+    let before = store.state().clone();
+    store.flush().unwrap();
+    drop(store);
+    let mut store = SledTaskNetworkStore::open(db, "network-docs").unwrap();
+    assert_eq!(store.state(), &before);
+    let request = task_network_support::apply_sled_command(
+        &store,
+        "shared-claim",
+        Command::ClaimReadyTask(meld_execution::task_network::dispatch::Request {
+            claim_id: "shared-claim".into(),
+            task_instance_id: decision.decision.shared_node_id.clone(),
+            worker_id: "worker".into(),
+            idempotency_key: "shared-once".into(),
+        }),
+    );
+    assert!(matches!(
+        store.submit(request).unwrap(),
+        Response::Accepted { .. }
+    ));
+    assert_eq!(
+        store.state().claims["shared-claim"].shared_action_decision_ids,
+        vec![decision.decision.decision_id]
+    );
+}
+
+#[test]
+fn ready_sharing_refuses_different_produced_values_and_claimed_contributors() {
+    use meld_execution::task_network::{command::Response, sharing::ReadyWorkSharing};
+    let (_, store, contract, consumers) = produced_input_sharing_fixture(true);
+    assert!(ReadyWorkSharing::decide(
+        store.state(),
+        &store.state().tasks[&consumers[1]],
+        &store.state().tasks[&consumers[0]],
+        &contract
+    )
+    .is_err());
+    let (_, mut store, contract, consumers) = produced_input_sharing_fixture(false);
+    let proposal = ReadyWorkSharing::decide(
+        store.state(),
+        &store.state().tasks[&consumers[1]],
+        &store.state().tasks[&consumers[0]],
+        &contract,
+    )
+    .unwrap();
+    let request = task_network_support::apply_sled_command(
+        &store,
+        "claim-before-sharing",
+        Command::ClaimReadyTask(meld_execution::task_network::dispatch::Request {
+            claim_id: "prior-claim".into(),
+            task_instance_id: consumers[1].clone(),
+            worker_id: "worker".into(),
+            idempotency_key: "prior-once".into(),
+        }),
+    );
+    assert!(matches!(
+        store.submit(request).unwrap(),
+        Response::Accepted { .. }
+    ));
+    let before = store.state().clone();
+    let request = task_network_support::apply_sled_command(
+        &store,
+        "stale-sharing",
+        Command::ShareReadyWork(Box::new(proposal)),
+    );
+    assert!(matches!(
+        store.submit(request).unwrap(),
+        Response::Rejected(_)
+    ));
+    assert_eq!(store.state(), &before);
+}
+
+#[test]
+fn legacy_admission_sharing_reopens_and_freezes_current_claim() {
+    use meld_execution::task_network::{
+        command::Response,
+        contracts::{stable_hash, stable_id},
+        mutation,
+        sharing::SharedActionDecision,
+        JournalRecord,
+    };
+    let (catalog, first) = shared_input_request("first", true);
+    let (_, second) = shared_input_request("second", true);
+    let mut memory = InMemoryTaskNetworkStore::new("network-docs");
+    for request in [first, second] {
+        TaskAdmissionApi::new(
+            &mut memory,
+            &catalog,
+            "generation-v1",
+            "policy-content-docs-v1",
+        )
+        .admit(request)
+        .unwrap();
+    }
+    TaskAdmissionRuntimeActor::new(TaskAdmissionLowerer::new(
+        TaskCompiler::new(),
+        catalog.clone(),
+    ))
+    .run_once_in_memory(
+        &mut memory,
+        TaskAdmissionRuntimeRequest {
+            network_id: "network-docs".into(),
+            max_items: 2,
+        },
+    )
+    .unwrap();
+    let mut records = memory.journal().to_vec();
+    let JournalRecord::Commit(commit) = records.last_mut().unwrap() else {
+        unreachable!()
+    };
+    let mutation::Mutation::Inject(inject) = &mut commit.mutation_set.mutations[0];
+    let primary = memory
+        .state()
+        .tasks
+        .values()
+        .find(|node| node.task_instance_id != inject.task_node.task_instance_id)
+        .unwrap();
+    let contract = catalog.get("docs.write_metadata", 1).unwrap().clone();
+    // Exact persisted identity and Inject form authored by bf38e701. This fixture
+    // deliberately bypasses today's writer to characterize the historical reader.
+    let decision = SharedActionDecision {
+        decision_id: stable_id(
+            "execution-work-compatibility-v1",
+            &(
+                memory.state().network_id.as_str(),
+                stable_hash(primary),
+                stable_hash(&inject.task_node),
+                &contract.content_identity(),
+            ),
+        ),
+        shared_node_id: primary.task_instance_id.clone(),
+        capability_contract: contract,
+    };
+    inject.mutation_id = stable_id(
+        "shared-admitted-step",
+        &(&inject.mutation_id, &decision.decision_id),
+    );
+    inject.sharing = Some(decision.clone());
+    let mut expected = memory.state().clone();
+    expected.tasks.remove(&inject.task_node.task_instance_id);
+    expected.statuses.remove(&inject.task_node.task_instance_id);
+    expected
+        .shared_steps
+        .insert(inject.task_node.task_instance_id.clone(), inject.clone());
+    expected.state_hash = expected.recompute_state_hash();
+    let set = mutation::Set::new(
+        &commit.mutation_set.network_id,
+        &commit.mutation_set.source_task_id,
+        &commit.mutation_set.idempotency_key,
+        commit.mutation_set.mutations.clone(),
+    );
+    *commit = mutation::CommitRecord::new(
+        &commit.command_id,
+        &commit.network_id,
+        commit.revision,
+        &commit.previous_state_hash,
+        &expected.state_hash,
+        set.clone(),
+    );
+    let db = sled::Config::new().temporary(true).open().unwrap();
+    let journal = db.open_tree("task_network_journal_by_revision").unwrap();
+    for (index, record) in records.iter().enumerate() {
+        journal
+            .insert(
+                ((index + 1) as u64).to_be_bytes(),
+                serde_json::to_vec(&serde_json::json!({"record": record})).unwrap(),
+            )
+            .unwrap();
+    }
+    db.flush().unwrap();
+    let mut reopened = SledTaskNetworkStore::open(db.clone(), "network-docs").unwrap();
+    assert_eq!(reopened.state(), &expected);
+    let request = task_network_support::apply_sled_command(
+        &reopened,
+        "retired-admission-sharing",
+        Command::ApplyMutationSet(set),
+    );
+    assert!(matches!(
+        reopened.submit(request).unwrap(),
+        Response::Rejected(_)
+    ));
+    let request = task_network_support::apply_sled_command(
+        &reopened,
+        "current-claim",
+        Command::ClaimReadyTask(meld_execution::task_network::dispatch::Request {
+            claim_id: "current-claim".into(),
+            task_instance_id: decision.shared_node_id,
+            worker_id: "worker".into(),
+            idempotency_key: "current-once".into(),
+        }),
+    );
+    assert!(matches!(
+        reopened.submit(request).unwrap(),
+        Response::Accepted { .. }
+    ));
+    assert_eq!(
+        reopened.state().claims["current-claim"].shared_action_decision_ids,
+        vec![decision.decision_id]
+    );
+    let expected = reopened.state().clone();
+    reopened.flush().unwrap();
+    drop(reopened);
+    assert_eq!(
+        SledTaskNetworkStore::open(db, "network-docs")
+            .unwrap()
+            .state(),
+        &expected
+    );
 }
