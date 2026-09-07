@@ -4,8 +4,226 @@ use super::*;
 use crate::code_change::{acquisition, capability::APPLY, contracts::*};
 
 #[test]
-fn native_agent_selects_mitigation_and_then_independent_security_verification() {
+fn native_agent_reconciles_repeated_mitigations_with_independent_verification() {
     assert_native_security_reconciliation(true, false, SecuritySourceAdvance::NativeMitigation);
+}
+
+pub(super) fn repeat_for_new_advisory(
+    harness: &StewardshipHarness,
+    assembly: &ProductRuntimeAssembly,
+    supervisor: &mut RuntimeSupervisor<'_>,
+) {
+    use meld_world_model::{strategy::PlanMilestoneRequirement, AgentAuthorizedProduct};
+    let store = &assembly.stores().agent_store;
+    let prior_goals = store
+        .reconciliation_goals_for_agent(&harness.binding.agent_id)
+        .unwrap();
+    let prior_authorizations: Vec<_> = prior_goals
+        .iter()
+        .flat_map(|goal| {
+            store
+                .product_authorizations_for_goal(&goal.goal.goal_id)
+                .unwrap()
+        })
+        .collect();
+    let prior_dispositions: Vec<_> = prior_goals
+        .iter()
+        .map(|goal| {
+            let plan = store
+                .current_reconciliation_plan(&goal.goal.goal_id)
+                .unwrap()
+                .unwrap();
+            store
+                .goal_disposition_for_plan(&plan.plan_revision_id)
+                .unwrap()
+                .unwrap()
+        })
+        .collect();
+    let root = harness._workspace.path();
+    let change = CodeChangeSet::new(
+        harness.binding.subject.clone(),
+        vec![meld_events::DomainObjectRef::new(
+            "dependency-security",
+            "advisory",
+            "replacement-advisory",
+        )
+        .unwrap()],
+        ["Cargo.toml", "Cargo.lock"]
+            .into_iter()
+            .map(|path| {
+                let bytes = std::fs::read(root.join(path)).unwrap();
+                FileReplacement {
+                    relative_path: path.into(),
+                    expected_content_hash: blake3::hash(&bytes).to_hex().to_string(),
+                    replacement: String::from_utf8(bytes)
+                        .unwrap()
+                        .replace("version = \"1.0.0\"", "version = \"2.0.0\""),
+                }
+            })
+            .collect(),
+    )
+    .unwrap();
+    std::fs::write(
+        harness._external.path().join("code-proposal.json"),
+        serde_json::to_vec(&change).unwrap(),
+    )
+    .unwrap();
+    let source_path = harness._external.path().join("advisories.json");
+    let mut source: crate::dependency_security::advisory::AdvisorySourceDocumentV1 =
+        serde_json::from_slice(&std::fs::read(&source_path).unwrap()).unwrap();
+    source.source_revision = "new-exposure-after-successful-mitigation".into();
+    source.advisories[0].source_advisory_id = "replacement-advisory".into();
+    source.advisories[0].affected_versions = vec!["1.0.0".into()];
+    std::fs::write(source_path, serde_json::to_vec(&source).unwrap()).unwrap();
+    for pass in 0..60 {
+        supervisor.tick(5_700 + pass * 4).unwrap();
+    }
+    let goals = store
+        .reconciliation_goals_for_agent(&harness.binding.agent_id)
+        .unwrap();
+    assert_eq!(
+        goals, prior_goals,
+        "the same admitted maintenance Goal retains its inception"
+    );
+    let authorizations: Vec<_> = goals
+        .iter()
+        .flat_map(|goal| {
+            store
+                .product_authorizations_for_goal(&goal.goal.goal_id)
+                .unwrap()
+        })
+        .filter(|authorization| !prior_authorizations.contains(authorization))
+        .collect();
+    let mutations: Vec<_> = authorizations
+        .iter()
+        .filter(|authorization| {
+            matches!(&authorization.product, AgentAuthorizedProduct::Task(task)
+            if task.authority_requirements.contains(&APPLY.into()))
+        })
+        .collect();
+    assert_eq!(
+        mutations.len(),
+        1,
+        "changed exposure must authorize one new native mutation"
+    );
+    let mutation = mutations[0];
+    let current = goals
+        .iter()
+        .find(|goal| goal.goal.goal_id == mutation.goal_id)
+        .unwrap();
+    assert!(!prior_authorizations
+        .iter()
+        .any(|prior| prior.product_id == mutation.product_id));
+    let verifications: Vec<_> = authorizations
+        .iter()
+        .filter(|authorization| {
+            matches!(&authorization.product,
+            AgentAuthorizedProduct::Task(task)
+                if task.authority_requirements.contains(&"dependency_security.verify".into())
+                    && !task.authority_requirements.contains(&APPLY.into()))
+        })
+        .filter(|authorization| {
+            store
+                .reconciliation_plan(&authorization.plan_revision_id)
+                .unwrap()
+                .unwrap()
+                .dependencies
+                .iter()
+                .any(|dependency| {
+                    dependency.producer_product_id == mutation.product_id
+                        && dependency.consumer_product_id == authorization.product_id
+                        && dependency.required_milestone
+                            == (PlanMilestoneRequirement::ExecutionTerminal {
+                                task_id: mutation.product_id.clone(),
+                            })
+                })
+        })
+        .collect();
+    assert_eq!(
+        verifications.len(),
+        1,
+        "new mutation requires its own successor verification Task"
+    );
+    for goal in &goals {
+        let plan = store
+            .current_reconciliation_plan(&goal.goal.goal_id)
+            .unwrap()
+            .unwrap();
+        let disposition = store
+            .goal_disposition_for_plan(&plan.plan_revision_id)
+            .unwrap()
+            .expect("each native Goal must reach its own satisfaction decision");
+        assert!(matches!(
+            disposition.lifecycle,
+            meld_lang::GoalLifecycle::Satisfied { .. }
+        ));
+        if goal == current {
+            let milestones: Vec<_> = disposition
+                .accepted_milestone_ids
+                .iter()
+                .map(|id| store.milestone(id).unwrap().unwrap())
+                .collect();
+            for task in [mutation, verifications[0]] {
+                assert!(milestones
+                    .iter()
+                    .any(|milestone| milestone.product_id == task.product_id
+                        && milestone.goal_id == current.goal.goal_id
+                        && milestone.requirement
+                            == (PlanMilestoneRequirement::ExecutionTerminal {
+                                task_id: task.product_id.clone(),
+                            })));
+            }
+        }
+    }
+    for prior in prior_authorizations {
+        assert_eq!(
+            store
+                .product_authorization(&prior.authorization_id)
+                .unwrap(),
+            Some(prior)
+        );
+    }
+    for prior in prior_dispositions {
+        assert_eq!(
+            store
+                .goal_disposition_for_plan(&prior.plan_revision_id)
+                .unwrap(),
+            Some(prior)
+        );
+    }
+    for file in &change.files {
+        assert_eq!(
+            std::fs::read_to_string(root.join(&file.relative_path)).unwrap(),
+            file.replacement
+        );
+    }
+    let records = harness
+        .authority
+        .replay_capability()
+        .newest_page(1024)
+        .unwrap()
+        .records;
+    for kind in [
+        acquisition::EVENT,
+        "code_change.intent.v1",
+        "code_change.materialized.v1",
+    ] {
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record.event_type == kind)
+                .count(),
+            2,
+            "{kind}"
+        );
+    }
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| record.event_type == "dependency_security.invocation_return.v1")
+            .count(),
+        20
+    );
 }
 
 pub(super) fn declare(harness: &StewardshipHarness, original: &[u8]) {

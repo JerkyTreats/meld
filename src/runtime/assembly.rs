@@ -8353,6 +8353,11 @@ mod tests {
                     resumed.tick(5_100 + pass * 10).unwrap();
                 }
                 security_native_mitigation::verify(&harness, &reopened, &manifest);
+                security_native_mitigation::repeat_for_new_advisory(
+                    &harness,
+                    &reopened,
+                    &mut resumed,
+                );
                 resumed.request_shutdown(6_000).unwrap();
                 drop(resumed);
                 drop(reopened);
