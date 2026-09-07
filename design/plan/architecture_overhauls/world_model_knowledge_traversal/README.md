@@ -1,16 +1,16 @@
 # World Model Reconciliation
 
-This folder is the active evidence and requirements basis for the approved World Model Reconciliation architecture. Canonical intent lives in [Cognitive Architecture](../../../cognitive_architecture/README.md).
+This folder preserves requirements, design history and implementation evidence for World Model Reconciliation. Canonical intent lives in [Cognitive Architecture](../../../cognitive_architecture/README.md).
+
+The user withdrew the delivery program's binding authority and authorized audit and implementation against the original outcomes. Start with the [current reconciliation audit](reconciliation_outcome_audit.md), which maps those outcomes to native source and executable evidence. The old ledgers, slice restrictions and acceptance receipts are historical and directional; they do not govern current implementation or prove overall completion.
 
 ## Primary Evidence
 
-Read the [current code ground map](current_code_groundmap.md) for implemented behavior and gaps. Read the [Strategy Plan redesign](strategy_plan_redesign.md), [Curation assessment](curation_assessment.md), and [bounded Epistemic Operations](bounded_epistemic_operations.md) for the architecture thesis that was approved.
+The [original code ground map](current_code_groundmap.md) records the pre-reconciliation baseline. Read the [Strategy Plan redesign](strategy_plan_redesign.md), [Curation assessment](curation_assessment.md), and [bounded Epistemic Operations](bounded_epistemic_operations.md) for the architecture thesis that was approved.
 
 The [cognitive architecture alignment assessment](cognitive_architecture_alignment_assessment.md) records the canonicalization boundary and complete domain sweep.
 
-The canonical [source delivery program ledger](world_model_reconciliation_source_delivery_program_ledger.md) records four accepted runtime verticals. The [VC-04-R retirement record](wmr_vc_04_r_execution_retirement.md) preserves the exact Task route while retiring superseded Execution authority. `WMR-VC-04-R1` revision 4 is closed, committed, and pushed for exact candidate `5308f0ba6ce873bd1e00b4ba283d60eefc9df996f9ba261461fc44929c86c430`. No later slice is active.
-
-The [post-VC-04 retirement assessment](post_vc_04_retirement_assessment.md) maps the replacement and move obligations for product initialization, lifecycle, Startup, Docs Freshness, Dependency Security, and legacy Workflow. Every later candidate remains assessment-only until its disposition table is complete.
+The historical [source delivery program ledger](world_model_reconciliation_source_delivery_program_ledger.md), [VC-04-R retirement record](wmr_vc_04_r_execution_retirement.md) and [post-VC-04 assessment](post_vc_04_retirement_assessment.md) preserve the earlier decomposition and its accepted evidence. The current audit records the subsequent native implementation and retirement corrections.
 
 The delivery-control RCA is recorded in [WMR VC-04 retirement policy dilution](../../incidents/2026-09-02-wmr-vc-04-retirement-policy-dilution.md).
 
@@ -20,9 +20,9 @@ The [impact assessment](impact_assessment/README.md) maps crate, domain, and ent
 
 The [detailed design workstream framing](detailed_design_workstream_framing.md) maps the major specification verticals, confirms code-evidence readiness, and records their dependency order without authorizing implementation.
 
-The [detailed design delivery program ledger](world_model_reconciliation_delivery_program_ledger.md) defines the maturity envelope, active slice, authorization boundaries, phase inventory, and Delivery Gates. The [handoff and lifecycle ledger](world_model_reconciliation_handoff_ledger.md) preserves producer-consumer relationships across phases.
+The historical [detailed design delivery program ledger](world_model_reconciliation_delivery_program_ledger.md) records the former maturity envelope, slice boundaries, phase inventory and Delivery Gates. The [handoff and lifecycle ledger](world_model_reconciliation_handoff_ledger.md) preserves producer-consumer relationships across phases.
 
-The user-approved [Startup PDS design requirements](startup_pds_design_requirements/README.md) define `meld_startup` as the first bounded runtime proof of the complete reconciliation path. The reusable `nonce.emit.v1` Capability emits one owner-issued Event kind `nonce`, while Startup-specific Goal, Agent, epoch, Curation, and satisfaction meaning remains in product theory. The core canary is non-gating and carries no source implementation authority.
+The user-approved [Startup PDS design requirements](startup_pds_design_requirements/README.md) define `meld_startup` as the first bounded runtime proof of the complete reconciliation path. The reusable `nonce.emit.v1` Capability emits one owner-issued Event kind `nonce`, while Startup-specific Goal, Agent, epoch, Curation, and satisfaction meaning remains in product theory. The core canary remains non-gating; its native implementation and ordinary CLI proof are recorded in the current audit.
 
 The committed first slice consists of the [semantic transition ledger](detailed_design/semantic_transition_ledger.md) and [owner publication to TraversalCut design](detailed_design/owner_publication_to_traversal_cut.md). A later [independent retrospective review](reviews/wmr_dd_01_retrospective_assurance_recommendation.md) corrected five frozen findings from the historical review. The separate [retrospective WMR-DG-01 assurance receipt](delivery_gates/wmr_dg_01_retrospective_assurance_receipt.md) now provides the current accepted evidence while preserving the [historical receipt](delivery_gates/wmr_dg_01_acceptance_receipt.md).
 

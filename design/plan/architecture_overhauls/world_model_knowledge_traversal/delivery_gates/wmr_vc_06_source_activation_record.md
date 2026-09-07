@@ -1,5 +1,9 @@
 # WMR-VC-06 Source Activation Record
 
+Current status: historical candidate record. The user withdrew the delivery program's binding authority and authorized the original-outcome audit and implementation beyond these slice boundaries. This record preserves the former VC-06 candidate and review context; it does not describe current source or impose a new acceptance gate. Read the [current reconciliation audit](../reconciliation_outcome_audit.md) for native lifecycle ownership, exact wake resolution, recovery, retirement and executed evidence.
+
+## Historical activation snapshot
+
 Date: 2026-09-05
 
 Slice identifier: `WMR-VC-06`

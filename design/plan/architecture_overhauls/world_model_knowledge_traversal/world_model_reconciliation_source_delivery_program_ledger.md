@@ -1,6 +1,10 @@
 # World Model Reconciliation Source Delivery Program Ledger
 
-> Authority withdrawn by the program owner on 2026-09-06. This program, its slice boundaries, gates, advancement restrictions, and completion claims are directional historical evidence. They do not bind the outcome audit or implementation now authorized to complete world model reconciliation. Repository runtime ownership and contribution policies still apply. The current [outcome audit and implementation account](reconciliation_outcome_audit.md) compares original intent with actual source and records work against observable behavior. No percentage of architectural completion follows from prior slice acceptance.
+Current authority: historical and directional only. On 2026-09-06 the user withdrew the binding status of this program and authorized the original-outcome audit followed by end-to-end implementation, with commits and branch pushes at natural checkpoints. The old slice exclusions, pickup rules and authorization statements below record the earlier program; they do not restrict that mission or define architectural completion.
+
+Read the [current reconciliation audit](reconciliation_outcome_audit.md) for source behavior, original-outcome evidence, retirement dispositions and validation limits. The original architecture and observable outcomes remain the destination. This ledger has not been re-established as a binding go-forward program.
+
+## Historical program snapshot
 
 Date: 2026-09-05
 

@@ -985,13 +985,14 @@ struct GraphReplayRuntimeHandle {
 /// `event.append` a passive service, so this body is never leased or
 /// ticked there; ledger health lives on the passive capability and the
 /// self-observation watcher. The body remains only for explicit legacy
-/// compositions without a registration set.
+/// compositions without a registration set. It cannot author generation
+/// readiness, waiting, safe-point, stop or release evidence, and it cannot
+/// resolve generation wakes. Those accounts belong to native participants.
 struct EventAppendRuntimeHandle {
     port: ProductEventAppendPort,
     // Baseline sampled on the first tick so a restart or an existing ledger
     // never misreports history as fresh work or fresh drops.
     last: Option<(u64, u64)>,
-    lifecycle: NativeOwnerLifecycleState,
 }
 
 struct BeliefAssessmentHandle {
@@ -1108,75 +1109,6 @@ impl From<meld_execution::lifecycle::NativeLifecycleEvidence> for NativeOwnerLif
             proof_position_ref: evidence.proof_position_ref,
             unresolved_operation_summary_ref: evidence.unresolved_operation_summary_ref,
         }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NativeOwnerLifecyclePhase {
-    Constructed,
-    Running,
-    SafePoint,
-    Stopped,
-    Released,
-}
-
-#[derive(Debug, Clone)]
-struct NativeOwnerLifecycleState {
-    phase: NativeOwnerLifecyclePhase,
-    incarnation_id: Option<String>,
-    last_transition_proof_ref: Option<String>,
-}
-
-impl Default for NativeOwnerLifecycleState {
-    fn default() -> Self {
-        Self {
-            phase: NativeOwnerLifecyclePhase::Constructed,
-            incarnation_id: None,
-            last_transition_proof_ref: None,
-        }
-    }
-}
-
-impl NativeOwnerLifecycleState {
-    fn transition(
-        &mut self,
-        context: &ParticipantLifecycleContextV1,
-        checkpoint_ref: &str,
-        expected: NativeOwnerLifecyclePhase,
-        next: NativeOwnerLifecyclePhase,
-    ) -> Result<String, RuntimeAssemblyError> {
-        if self.phase == next
-            && self.incarnation_id.as_deref() == Some(context.incarnation_id.as_str())
-        {
-            return self.last_transition_proof_ref.clone().ok_or_else(|| {
-                RuntimeAssemblyError::SupervisorHandoff(
-                    "native owner repeated a transition without retained proof".to_string(),
-                )
-            });
-        }
-        if self.phase != expected {
-            return Err(RuntimeAssemblyError::SupervisorHandoff(format!(
-                "native owner '{}' cannot transition from {:?} to {:?}",
-                context.participant_id, self.phase, next
-            )));
-        }
-        if self
-            .incarnation_id
-            .as_ref()
-            .is_some_and(|incarnation_id| incarnation_id != &context.incarnation_id)
-        {
-            return Err(RuntimeAssemblyError::SupervisorHandoff(
-                "native owner transition changed activation incarnation".to_string(),
-            ));
-        }
-        let proof_ref = format!(
-            "native-owner-transition::{}::{}::{}::{:?}-to-{:?}::{checkpoint_ref}",
-            context.owner_domain, context.participant_id, context.incarnation_id, self.phase, next
-        );
-        self.phase = next;
-        self.incarnation_id = Some(context.incarnation_id.clone());
-        self.last_transition_proof_ref = Some(proof_ref.clone());
-        Ok(proof_ref)
     }
 }
 
@@ -3285,7 +3217,6 @@ impl RuntimeSemanticHandleFactory {
                 RuntimeSemanticHandle::EventAppend(EventAppendRuntimeHandle {
                     port: port.clone(),
                     last: None,
-                    lifecycle: NativeOwnerLifecycleState::default(),
                 })
             }
             Self::BeliefAssessment(factory) => {
@@ -3481,11 +3412,10 @@ impl RuntimeSemanticHandle {
         context: &ParticipantLifecycleContextV1,
     ) -> Result<OwnerReadinessReceiptV1, RuntimeAssemblyError> {
         match self {
-            Self::None => Err(missing_native_lifecycle_owner()),
+            Self::None | Self::EventAppend(_) => Err(missing_native_lifecycle_owner()),
             Self::DocsObservation(handle) => handle.native_readiness(context),
             Self::SecurityObservation(handle) => handle.native_readiness(context),
             Self::GraphReplay(handle) => handle.native_readiness(context),
-            Self::EventAppend(handle) => handle.native_readiness(context),
             Self::BeliefAssessment(handle) => handle.native_readiness(context),
             Self::EvidenceIngestion(handle) => handle.native_readiness(context),
             Self::StandingCuration(handle) => handle.native_readiness(context),
@@ -3518,11 +3448,10 @@ impl RuntimeSemanticHandle {
         context: &ParticipantLifecycleContextV1,
     ) -> Result<OwnerStopReceiptV1, RuntimeAssemblyError> {
         match self {
-            Self::None => Err(missing_native_lifecycle_owner()),
+            Self::None | Self::EventAppend(_) => Err(missing_native_lifecycle_owner()),
             Self::DocsObservation(handle) => handle.native_stop(context),
             Self::SecurityObservation(handle) => handle.native_stop(context),
             Self::GraphReplay(handle) => handle.native_stop(context),
-            Self::EventAppend(handle) => handle.native_stop(context),
             Self::BeliefAssessment(handle) => handle.native_stop(context),
             Self::EvidenceIngestion(handle) => handle.native_stop(context),
             Self::StandingCuration(handle) => handle.native_stop(context),
@@ -3538,11 +3467,10 @@ impl RuntimeSemanticHandle {
         context: &ParticipantLifecycleContextV1,
     ) -> Result<OwnerSafePointReceiptV1, RuntimeAssemblyError> {
         match self {
-            Self::None => Err(missing_native_lifecycle_owner()),
+            Self::None | Self::EventAppend(_) => Err(missing_native_lifecycle_owner()),
             Self::DocsObservation(handle) => handle.native_safe_point(context),
             Self::SecurityObservation(handle) => handle.native_safe_point(context),
             Self::GraphReplay(handle) => handle.native_safe_point(context),
-            Self::EventAppend(handle) => handle.native_safe_point(context),
             Self::BeliefAssessment(handle) => handle.native_safe_point(context),
             Self::EvidenceIngestion(handle) => handle.native_safe_point(context),
             Self::StandingCuration(handle) => handle.native_safe_point(context),
@@ -3558,11 +3486,10 @@ impl RuntimeSemanticHandle {
         context: &ParticipantLifecycleContextV1,
     ) -> Result<OwnerReleaseReceiptV1, RuntimeAssemblyError> {
         match self {
-            Self::None => Err(missing_native_lifecycle_owner()),
+            Self::None | Self::EventAppend(_) => Err(missing_native_lifecycle_owner()),
             Self::DocsObservation(handle) => handle.native_release(context),
             Self::SecurityObservation(handle) => handle.native_release(context),
             Self::GraphReplay(handle) => handle.native_release(context),
-            Self::EventAppend(handle) => handle.native_release(context),
             Self::BeliefAssessment(handle) => handle.native_release(context),
             Self::EvidenceIngestion(handle) => handle.native_release(context),
             Self::StandingCuration(handle) => handle.native_release(context),
@@ -3579,11 +3506,10 @@ impl RuntimeSemanticHandle {
         report: &WorkerTickReport,
     ) -> Result<OwnerWaitReceiptV1, RuntimeAssemblyError> {
         match self {
-            Self::None => Err(missing_native_lifecycle_owner()),
+            Self::None | Self::EventAppend(_) => Err(missing_native_lifecycle_owner()),
             Self::DocsObservation(handle) => handle.native_wait(context, report),
             Self::SecurityObservation(handle) => handle.native_wait(context, report),
             Self::GraphReplay(handle) => handle.native_wait(context, report),
-            Self::EventAppend(handle) => handle.native_wait(context, report),
             Self::BeliefAssessment(handle) => handle.native_wait(context, report),
             Self::EvidenceIngestion(handle) => handle.native_wait(context, report),
             Self::StandingCuration(handle) => handle.native_wait(context, report),
@@ -3596,11 +3522,10 @@ impl RuntimeSemanticHandle {
 
     fn resolves_wake(&self, wake_ref: &StructuralWakeRef) -> Result<bool, RuntimeAssemblyError> {
         match self {
-            Self::None => Ok(false),
+            Self::None | Self::EventAppend(_) => Ok(false),
             Self::DocsObservation(handle) => handle.native_resolves_wake(wake_ref),
             Self::SecurityObservation(handle) => handle.native_resolves_wake(wake_ref),
             Self::GraphReplay(handle) => handle.native_resolves_wake(wake_ref),
-            Self::EventAppend(handle) => handle.native_resolves_wake(wake_ref),
             Self::BeliefAssessment(handle) => handle.native_resolves_wake(wake_ref),
             Self::EvidenceIngestion(handle) => handle.native_resolves_wake(wake_ref),
             Self::StandingCuration(handle) => handle.native_resolves_wake(wake_ref),
@@ -3985,131 +3910,6 @@ impl NativeOwnerLifecycle for GraphReplayRuntimeHandle {
                 .map_err(RuntimeAssemblyError::SupervisorHandoff),
             None => Ok(false),
         }
-    }
-}
-
-impl NativeOwnerLifecycle for EventAppendRuntimeHandle {
-    fn native_snapshot(&self) -> Result<NativeOwnerLifecycleSnapshot, RuntimeAssemblyError> {
-        let health = self
-            .port
-            .health()
-            .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))?;
-        let checkpoint_ref = format!(
-            "event-authority::{}::{}",
-            health.ledger_id, health.committed_watermark
-        );
-        Ok(NativeOwnerLifecycleSnapshot {
-            checkpoint_ref: checkpoint_ref.clone(),
-            installed_revision_refs: vec!["event-authority-schema::v1".to_string()],
-            binding_refs: vec![format!("event-writer::{}", health.ledger_id)],
-            subscription_refs: vec![format!("event-commit-watermark::{}", health.ledger_id)],
-            proof_position_ref: checkpoint_ref.clone(),
-            unresolved_operation_summary_ref: format!(
-                "event-authority::committed-tip::{}",
-                health.committed_watermark
-            ),
-        })
-    }
-
-    fn native_readiness(
-        &mut self,
-        context: &ParticipantLifecycleContextV1,
-    ) -> Result<OwnerReadinessReceiptV1, RuntimeAssemblyError> {
-        let snapshot = self.native_snapshot()?;
-        let proof_ref = self.lifecycle.transition(
-            context,
-            &snapshot.proof_position_ref,
-            NativeOwnerLifecyclePhase::Constructed,
-            NativeOwnerLifecyclePhase::Running,
-        )?;
-        owner_readiness_receipt(context, snapshot, proof_ref)
-    }
-
-    fn native_wait(
-        &self,
-        context: &ParticipantLifecycleContextV1,
-        report: &WorkerTickReport,
-    ) -> Result<OwnerWaitReceiptV1, RuntimeAssemblyError> {
-        let snapshot = self.native_snapshot()?;
-        if report.made_progress()
-            || !report.retryable_errors.is_empty()
-            || !report.fatal_errors.is_empty()
-            || report.budget_exhausted
-        {
-            return Err(RuntimeAssemblyError::SupervisorHandoff(
-                "legacy Event observer cannot wait after an active or failed step".to_string(),
-            ));
-        }
-        let subscription = snapshot.subscription_refs.first().ok_or_else(|| {
-            RuntimeAssemblyError::SupervisorHandoff(
-                "legacy Event observer subscription is absent".to_string(),
-            )
-        })?;
-        OwnerWaitReceiptV1::new(
-            context.generation_id.clone(),
-            context.incarnation_id.clone(),
-            snapshot.checkpoint_ref,
-            "event-authority-awaiting-commit".to_string(),
-            vec![StructuralWakeRef::EventPosition(format!(
-                "{subscription}::after::{}",
-                report.output_checkpoint.value
-            ))],
-        )
-        .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))
-    }
-
-    fn native_safe_point(
-        &mut self,
-        context: &ParticipantLifecycleContextV1,
-    ) -> Result<OwnerSafePointReceiptV1, RuntimeAssemblyError> {
-        let snapshot = self.native_snapshot()?;
-        let proof_ref = self.lifecycle.transition(
-            context,
-            &snapshot.proof_position_ref,
-            NativeOwnerLifecyclePhase::Running,
-            NativeOwnerLifecyclePhase::SafePoint,
-        )?;
-        owner_safe_point_receipt(context, snapshot, proof_ref)
-    }
-
-    fn native_stop(
-        &mut self,
-        context: &ParticipantLifecycleContextV1,
-    ) -> Result<OwnerStopReceiptV1, RuntimeAssemblyError> {
-        let snapshot = self.native_snapshot()?;
-        let proof_ref = self.lifecycle.transition(
-            context,
-            &snapshot.proof_position_ref,
-            NativeOwnerLifecyclePhase::SafePoint,
-            NativeOwnerLifecyclePhase::Stopped,
-        )?;
-        owner_stop_receipt(context, snapshot, proof_ref)
-    }
-
-    fn native_release(
-        &mut self,
-        context: &ParticipantLifecycleContextV1,
-    ) -> Result<OwnerReleaseReceiptV1, RuntimeAssemblyError> {
-        let snapshot = self.native_snapshot()?;
-        let proof_ref = self.lifecycle.transition(
-            context,
-            &snapshot.proof_position_ref,
-            NativeOwnerLifecyclePhase::Stopped,
-            NativeOwnerLifecyclePhase::Released,
-        )?;
-        owner_release_receipt(context, snapshot, proof_ref)
-    }
-
-    fn native_resolves_wake(
-        &self,
-        wake_ref: &StructuralWakeRef,
-    ) -> Result<bool, RuntimeAssemblyError> {
-        Ok(matches!(
-            wake_ref,
-            StructuralWakeRef::EventPosition(value)
-                if value.strip_prefix(&format!("event-commit-watermark::{}::after::", self.port.watermark().map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))?.ledger_id))
-                    .is_some_and(|position| !position.is_empty() && position.bytes().all(|byte| byte.is_ascii_digit()) && position.parse::<u64>().is_ok())
-        ))
     }
 }
 
@@ -6869,6 +6669,54 @@ mod tests {
         let safe_point = handle.wait_for_safe_point();
         assert_eq!(safe_point.runtime_id, "event.append");
         assert!(safe_point.safe_for_flush);
+    }
+
+    #[test]
+    fn event_health_observer_cannot_author_generation_lifecycle_evidence() {
+        let temp = tempfile::tempdir().unwrap();
+        let assembly = ProductRuntimeAssembly::load_for_product_root(temp.path()).unwrap();
+        let mut handle = assembly
+            .handle_factories()
+            .get("event.append")
+            .unwrap()
+            .build_handle();
+        let context = ParticipantLifecycleContextV1 {
+            generation_id: "generation-a".into(),
+            incarnation_id: "incarnation-a".into(),
+            realization_id: "realization-a".into(),
+            participant_id: "event.append".into(),
+            owner_domain: "events".into(),
+            kind: crate::theory::ParticipantKind::BoundedActor,
+            readiness_contract_ref: "readiness-a".into(),
+            wake_contract_ref: "wake-a".into(),
+            safe_point_contract_ref: "safe-a".into(),
+            stop_contract_ref: "stop-a".into(),
+            lease_ref: "lease-a".into(),
+        };
+        let lease = RuntimeLeaseContext {
+            runtime_id: context.participant_id.clone(),
+            lease_id: context.lease_ref.clone(),
+        };
+        assert!(handle
+            .start_after_lifecycle_lease(lease.clone(), &context)
+            .is_err());
+        assert!(!handle.is_started());
+        assert!(handle.semantic.safe_point(&context).is_err());
+        assert!(handle.semantic.request_stop(&context).is_err());
+        assert!(handle.semantic.release(&context).is_err());
+        let watermark = assembly.ports().event_append().watermark().unwrap();
+        let wake = StructuralWakeRef::EventPosition(format!(
+            "event-commit-watermark::{}::after::{}",
+            watermark.ledger_id, watermark.committed_seq
+        ));
+        assert!(!handle.semantic.resolves_wake(&wake).unwrap());
+        let start = handle.start_after_lease(lease).unwrap();
+        assert!(start.owner_readiness.is_none());
+        let report = handle.semantic.tick(WorkBudget { max_items: 1 }).unwrap();
+        assert_eq!(report.items_committed, 0);
+        assert!(handle.semantic.wait(&context, &report).is_err());
+        assert!(handle.request_stop().owner_stop.is_none());
+        assert!(handle.wait_for_safe_point().owner_safe_point.is_none());
     }
 
     #[test]

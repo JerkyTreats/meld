@@ -1,36 +1,25 @@
-//! Execution authority contracts for Meld capability, task, workflow,
-//! generation, Task admission, traversal, and publish flows.
+//! Execution authority for Agent-authorized Tasks and shared operational work.
 //!
-//! This crate owns execution-facing contracts, orchestration records, runtime
-//! ports, task artifacts, workflow state, capability invocation shapes, and the
-//! DTOs passed between those execution boundaries.
-//!
-//! This crate does not own CLI parsing, workspace storage internals, provider
-//! transport implementations, world model storage, or language semantics. Those
-//! domains adapt into this crate through explicit ports and shared contracts.
+//! This crate owns complete Task admission, capability invocation, Task Network
+//! realization, independent discharge accounts and native Execution lifecycle.
+//! Provider and workspace adapters enter through explicit execution ports.
+//! Agent and Strategy retain Goal judgment and Plan construction.
 //!
 //! # Module Map
 //!
-//! - [`capability`] publishes capability contracts, catalogs, invocation
-//!   payloads, and bound runtime records.
-//! - [`authority`] owns exact policy revisions and execution revalidation.
-//! - [`execution`] defines the adapter ports used by workflow, task, and
-//!   workspace runtimes.
-//! - [`generation`] carries prompt assembly, provider completion, prompt
-//!   lineage, and generated metadata DTOs.
-//! - [`task_admission`] validates and directly lowers Agent-authorized Tasks.
-//! - [`publish`] carries frame head publish templates.
-//! - [`task`] compiles and runs task-local capability graphs.
-//! - [`task_network`] accepts task network commands and reduces graph state.
-//! - [`traversal`] carries traversal expansion templates for workflow-backed
-//!   task packages.
-//! - [`workflow`] defines workflow profiles, runtime state, gates, events, and
-//!   execution entry points.
+//! - [`capability`] publishes contracts, invocation payloads and runtime bindings.
+//! - [`authority`] owns policy revisions and execution revalidation.
+//! - [`execution`] defines provider and workspace adapter contracts.
+//! - [`generation`] carries prompt, provider completion and lineage data.
+//! - [`task_admission`] validates and lowers independently authorized Tasks.
+//! - [`task`] compiles and executes task-local capability graphs.
+//! - [`task_network`] shares compatible work and retains each admission's returns.
+//! - [`lifecycle`] supplies native Execution transition evidence.
+//! - [`workflow`] retains historical profile and Event contracts and reusable
+//!   output validators. It provides no Workflow coordinator or state writer.
 //!
-//! Start with [`execution`] when implementing an adapter boundary, [`workflow`]
-//! when running profile-driven orchestration, [`task`] when working with
-//! compiled capability graphs, and [`capability`] when publishing or binding
-//! executable capability contracts.
+//! Start with [`task_admission`] for the Agent boundary, [`task_network`] for
+//! operational coherence, and [`capability`] for executable owner contracts.
 
 #![deny(missing_docs)]
 
@@ -46,8 +35,6 @@ pub mod execution;
 pub mod generation;
 /// Native lifecycle transitions owned by Execution runtime actors.
 pub mod lifecycle;
-/// Frame head publish templates used by expansion paths.
-pub mod publish;
 /// Task definition, compilation, artifact, invocation, and runtime contracts.
 pub mod task;
 /// Durable admission and direct lowering of Agent-authorized Tasks.

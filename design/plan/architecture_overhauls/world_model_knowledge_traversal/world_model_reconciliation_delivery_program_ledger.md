@@ -1,5 +1,11 @@
 # World Model Reconciliation Detailed Design Delivery Program Ledger
 
+Current authority: historical and directional only. The user withdrew the binding status of this program and authorized the original-outcome audit followed by end-to-end implementation, with commits and branch pushes at natural checkpoints. The old slice exclusions, pickup rules and authorization statements below record the earlier program; they do not restrict that mission or define architectural completion.
+
+Read the [current reconciliation audit](reconciliation_outcome_audit.md) for source behavior, original-outcome evidence, retirement dispositions and validation limits. The original architecture and observable outcomes remain the destination. This ledger has not been re-established as a binding go-forward program.
+
+## Historical program snapshot
+
 Date: 2026-08-22
 
 Amended: 2026-08-23 for approved Startup PDS integration
