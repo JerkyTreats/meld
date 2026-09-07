@@ -6,7 +6,7 @@ use crate::error::StorageError;
 
 /// Read-only facade over durable standing Curation state.
 pub struct CurationQuery<'a> {
-    store: &'a CurationStore,
+    pub(super) store: &'a CurationStore,
 }
 
 impl<'a> CurationQuery<'a> {

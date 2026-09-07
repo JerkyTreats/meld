@@ -182,6 +182,12 @@ impl StandingCurationRule {
         )
     }
 
+    /// Realization and coverage judge selected source state; consumers must
+    /// establish that their derived evidence still names that source revision.
+    pub fn publishes_source_judgments(&self) -> bool {
+        self.realization.is_some() || self.coverage.is_some()
+    }
+
     /// Consumers must wait for the same source evidence Curation requires for coverage.
     pub fn source_readiness_requirements(
         &self,

@@ -2745,6 +2745,13 @@ impl RuntimeSemanticHandleFactory {
                 ) = match rule {
                     crate::runtime::theory::PreparedCurationSelection::Installed(rule) => {
                         let planner_request = PlannerCurrentAssemblyRequest {
+                            required_derived_evidence: rule.rule.publishes_source_judgments().then(
+                                || meld_world_model::planner::PlannerDerivedEvidenceRequirement {
+                                    curation_rule: rule.revision_ref(),
+                                    belief_family: resolved.belief_family.revision_ref(),
+                                    outcome_mappings: vec![resolved.outcome_mapping.revision_ref()],
+                                },
+                            ),
                             required_graph_evidence: rule.rule.source_readiness_requirements(),
                             context: context.clone(),
                             policy: planner_policy,
@@ -2785,6 +2792,7 @@ impl RuntimeSemanticHandleFactory {
                             Arc::new(ProductAgentPlannerPort::new(
                                 Arc::clone(belief),
                                 Arc::clone(traversal),
+                                Arc::clone(curation_store),
                                 ports.event_append().clone(),
                                 planner_request,
                             )),
@@ -2824,8 +2832,11 @@ impl RuntimeSemanticHandleFactory {
                         let planner = crate::runtime::ports::ProductEpochAgentPlannerPort::new(
                             Arc::clone(belief),
                             Arc::clone(traversal),
+                            Arc::clone(curation_store),
                             ports.event_append().clone(),
                             crate::runtime::ports::ProductEpochPlannerBinding {
+                                belief_family: resolved.belief_family.revision_ref(),
+                                outcome_mappings: vec![resolved.outcome_mapping.revision_ref()],
                                 context: context.clone(),
                                 policy: planner_policy,
                                 belief_key,
@@ -7688,6 +7699,237 @@ mod tests {
             readme_metadata.modified().unwrap()
         );
         resumed.request_shutdown(3_500).unwrap();
+    }
+
+    #[test]
+    fn native_docs_changed_source_cannot_use_prior_coverage_before_curation_catches_up() {
+        use meld_world_model::PlannerAssemblyOutcome;
+        let harness = StewardshipHarness::new();
+        std::fs::write(
+            harness._workspace.path().join("lib.rs"),
+            "pub fn run() {}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            harness._workspace.path().join("README.md"),
+            "`run` exists.\n",
+        )
+        .unwrap();
+        {
+            let assembly = harness.assembly();
+            harness.run_world_genesis(&assembly);
+        }
+        let assembly = harness.assembly();
+        harness.bind_production_routes(&assembly);
+        assert!(assembly.bind_docs_claim_judge(Arc::new(
+            crate::docs::claim_observation::test_support::FixtureJudge::default()
+        )));
+        let mut supervisor = harness.start_supervisor(&assembly);
+        for pass in 0..16 {
+            supervisor.tick(1_000 + pass * 10).unwrap();
+        }
+        let RuntimeSemanticHandleFactory::AgentActor(agent) = &assembly
+            .handle_factories()
+            .get(AGENT_RECONCILIATION_RUNTIME_ID)
+            .unwrap()
+            .semantic
+        else {
+            unreachable!()
+        };
+        let PlannerAssemblyOutcome::Complete(initial_cut) = agent.planner.assemble() else {
+            panic!("initial admitted coverage missing")
+        };
+        let meld_world_model::agent::AgentPreparation::InstalledRule { rule, .. } =
+            &agent.preparation
+        else {
+            unreachable!()
+        };
+        let curation =
+            meld_world_model::CurationQuery::new(assembly.stores().curation_store.as_ref());
+        let basis = curation
+            .current_evidence_basis(&rule.revision_ref(), &initial_cut.traversal_cut)
+            .unwrap()
+            .unwrap();
+        let genesis = assembly
+            .stores()
+            .agent_store
+            .genesis_intent_for_agent(STEWARD_AGENT_ID)
+            .unwrap()
+            .unwrap();
+        let family = genesis.required_subscriptions[0]
+            .source_contract_revision
+            .clone();
+        let mappings: Vec<_> = genesis
+            .installed_owner_revisions
+            .iter()
+            .filter(|revision| revision.registry == "outcome_mapping")
+            .cloned()
+            .collect();
+        let belief =
+            meld_world_model::belief::BeliefQuery::new(assembly.stores().belief_store.as_ref());
+        let revision_id = &initial_cut.world_model_view.hydration_refs.revision_ids[0];
+        assert!(belief
+            .supports_current_curation(revision_id, &basis, &family, &mappings)
+            .unwrap());
+        let mut foreign_family = family.clone();
+        foreign_family.content_hash = "foreign-family".into();
+        assert!(!belief
+            .supports_current_curation(revision_id, &basis, &foreign_family, &mappings)
+            .unwrap());
+        let mut foreign_mappings = mappings.clone();
+        for mapping in &mut foreign_mappings {
+            mapping.content_hash = "foreign-mapping".into();
+        }
+        assert!(!belief
+            .supports_current_curation(revision_id, &basis, &family, &foreign_mappings)
+            .unwrap());
+        let mut foreign_rule = rule.revision_ref();
+        foreign_rule.content_hash = "foreign-rule".into();
+        assert!(curation
+            .current_evidence_basis(&foreign_rule, &initial_cut.traversal_cut)
+            .is_err());
+        let meld_world_model::agent::AgentReconciliationIntent::MaintainedCondition(condition) =
+            &agent.intent
+        else {
+            unreachable!()
+        };
+        let target = condition
+            .condition
+            .target_for(agent.authority.subject.clone())
+            .unwrap();
+        let judgments_before = assembly
+            .stores()
+            .agent_store
+            .condition_judgments()
+            .unwrap()
+            .len();
+        for (path, content, satisfied) in [
+            ("lib.rs", Some("pub fn run() {}\npub fn stop() {}\n"), false),
+            ("lib.rs", Some("pub fn run() {}\n"), true),
+            ("README.md", None, false),
+            ("README.md", Some("`run` exists.\n"), true),
+        ] {
+            if let Some(content) = content {
+                std::fs::write(harness._workspace.path().join(path), content).unwrap();
+            } else {
+                std::fs::remove_file(harness._workspace.path().join(path)).unwrap();
+            }
+            // Hold Curation and Belief while the native observation incarnation
+            // and Graph publish the changed source, in both truth directions.
+            for _ in 0..8 {
+                let report =
+                    supervisor.step_owner_for_test("docs.observation", WorkBudget { max_items: 8 });
+                assert!(report.fatal_errors.is_empty(), "{report:?}");
+            }
+            assembly
+                .graph_runtime()
+                .catch_up_bounded(GraphCatchUpBudget { max_items: 1024 })
+                .unwrap();
+            let RuntimeSemanticHandleFactory::DocsObservation(binding) = &assembly
+                .handle_factories()
+                .get("docs.observation")
+                .unwrap()
+                .semantic
+            else {
+                unreachable!()
+            };
+            let revision =
+                crate::docs::runtime::DocsObservationActor::new(binding.as_ref().clone())
+                    .current_revision()
+                    .unwrap()
+                    .unwrap();
+            assert!(revision.correspondence.as_ref().unwrap().complete);
+            let outcome = agent.planner.assemble();
+            assert!(
+                matches!(outcome, PlannerAssemblyOutcome::Refused(_)),
+                "new source reused old coverage: {outcome:#?}"
+            );
+            supervisor
+                .step_owner_for_test(AGENT_RECONCILIATION_RUNTIME_ID, WorkBudget { max_items: 8 });
+            assert_eq!(
+                assembly
+                    .stores()
+                    .agent_store
+                    .condition_judgments()
+                    .unwrap()
+                    .len(),
+                judgments_before
+            );
+            // Curation catches up, but its new result cannot borrow the old Belief.
+            for _ in 0..3 {
+                supervisor.step_owner_for_test(
+                    "world_model.standing_curation",
+                    WorkBudget { max_items: 8 },
+                );
+                assembly
+                    .graph_runtime()
+                    .catch_up_bounded(GraphCatchUpBudget { max_items: 1024 })
+                    .unwrap();
+            }
+            let outcome = agent.planner.assemble();
+            assert!(
+                matches!(outcome, PlannerAssemblyOutcome::Refused(_)),
+                "new coverage reused an old Belief: {outcome:#?}"
+            );
+            supervisor
+                .step_owner_for_test(AGENT_RECONCILIATION_RUNTIME_ID, WorkBudget { max_items: 8 });
+            assert_eq!(
+                assembly
+                    .stores()
+                    .agent_store
+                    .condition_judgments()
+                    .unwrap()
+                    .len(),
+                judgments_before
+            );
+            for _ in 0..4 {
+                supervisor.step_owner_for_test(
+                    "world_model.evidence_ingestion",
+                    WorkBudget { max_items: 64 },
+                );
+                supervisor.step_owner_for_test(
+                    "world_model.belief_assessment",
+                    WorkBudget { max_items: 64 },
+                );
+                assembly
+                    .graph_runtime()
+                    .catch_up_bounded(GraphCatchUpBudget { max_items: 1024 })
+                    .unwrap();
+            }
+            let outcome = agent.planner.assemble();
+            let PlannerAssemblyOutcome::Complete(cut) = outcome else {
+                panic!("current native evidence did not unblock Planner: {outcome:#?}")
+            };
+            let evaluation = meld_lang::evaluate(&cut.world_model_view.world_state, &target);
+            if satisfied {
+                assert_eq!(evaluation, meld_lang::EvalResult::Satisfied);
+            } else {
+                assert!(
+                    matches!(evaluation, meld_lang::EvalResult::Unsatisfied { .. }),
+                    "{evaluation:?}"
+                );
+            }
+            assert!(assembly
+                .stores()
+                .agent_store
+                .reconciliation_goals_for_agent(STEWARD_AGENT_ID)
+                .unwrap()
+                .is_empty());
+        }
+        supervisor
+            .step_owner_for_test(AGENT_RECONCILIATION_RUNTIME_ID, WorkBudget { max_items: 8 });
+        assert_eq!(
+            assembly
+                .stores()
+                .agent_store
+                .condition_judgments()
+                .unwrap()
+                .last()
+                .unwrap()
+                .evaluation,
+            meld_lang::EvalResult::Satisfied
+        );
+        supervisor.request_shutdown(1_500).unwrap();
     }
 
     #[test]

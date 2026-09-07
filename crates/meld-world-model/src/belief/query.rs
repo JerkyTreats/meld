@@ -78,6 +78,44 @@ impl<'a> BeliefQuery<'a> {
         Ok(Some((revision, view)))
     }
 
+    /// Verify that the selected revision actually consumed the current native
+    /// Curation judgment through the exact installed interpretation resources.
+    pub fn supports_current_curation(
+        &self,
+        revision_id: &str,
+        basis: &crate::curation::CurationEvidenceBasisProof,
+        family: &crate::belief::TheoryRevisionRef,
+        mappings: &[crate::belief::TheoryRevisionRef],
+    ) -> Result<bool, StorageError> {
+        let Some(revision) = self.store.get_revision(revision_id)? else {
+            return Ok(false);
+        };
+        if family.registry != "belief_family"
+            || mappings.is_empty()
+            || mappings
+                .iter()
+                .any(|mapping| mapping.registry != "outcome_mapping")
+            || revision.theory_revision.as_ref() != Some(family)
+        {
+            return Ok(false);
+        }
+        Ok(self
+            .store
+            .evidence_by_revision(&revision.revision_id)?
+            .iter()
+            .any(|evidence| {
+                evidence.candidate_key == revision.belief_key
+                    && evidence.publication_record_id.as_ref() == Some(&basis.publication_record_id)
+                    && evidence
+                        .outcome_mapping_revision
+                        .as_ref()
+                        .is_some_and(|mapping| mappings.contains(mapping))
+                    && revision
+                        .supporting_evidence_ids
+                        .contains(&evidence.evidence_id)
+            }))
+    }
+
     /// Read current views for one subject and perspective.
     pub fn current_views_for_subject(
         &self,

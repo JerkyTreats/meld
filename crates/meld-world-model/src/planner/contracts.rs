@@ -95,6 +95,8 @@ pub struct PlannerAssemblyRequest {
 /// Store-backed request that resolves the exact Graph and Belief positions.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlannerCurrentAssemblyRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required_derived_evidence: Option<PlannerDerivedEvidenceRequirement>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_graph_evidence:
         Vec<crate::world_state::graph::contracts::OwnerObjectQualificationRequirement>,
@@ -105,6 +107,14 @@ pub struct PlannerCurrentAssemblyRequest {
     pub belief_key: crate::belief::BeliefKey,
     pub unanchored_belief: bool,
     pub source_positions: Vec<PlannerSourcePosition>,
+}
+
+/// Exact installed lineage required for a Curation-derived desired condition.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlannerDerivedEvidenceRequirement {
+    pub curation_rule: crate::belief::TheoryRevisionRef,
+    pub belief_family: crate::belief::TheoryRevisionRef,
+    pub outcome_mappings: Vec<crate::belief::TheoryRevisionRef>,
 }
 
 /// Typed reason that Planner refused an incomplete or inconsistent request.

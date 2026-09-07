@@ -553,6 +553,17 @@ impl CurationStore {
         Ok(result.clone())
     }
 
+    pub(crate) fn result(&self, result_id: &str) -> Result<Option<CurationResult>, StorageError> {
+        let result: Option<CurationResult> = get_optional(&self.results, result_id)?;
+        if let Some(result) = &result {
+            let operation = self.operation(&result.operation_id)?.ok_or_else(|| {
+                StorageError::InvalidPath("Curation result has no retained operation".into())
+            })?;
+            result.validate(&operation)?;
+        }
+        Ok(result)
+    }
+
     pub fn result_for_operation(
         &self,
         operation_id: &str,

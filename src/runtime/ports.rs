@@ -125,6 +125,7 @@ pub struct ProductGraphCursorPort {
 /// Exact current Planner assembly boundary used by Agent reconciliation.
 #[derive(Clone)]
 pub struct ProductAgentPlannerPort {
+    curation_store: Arc<CurationStore>,
     belief_store: Arc<BeliefStore>,
     traversal_store: Arc<TraversalStore>,
     event_append: ProductEventAppendPort,
@@ -134,6 +135,8 @@ pub struct ProductAgentPlannerPort {
 /// Structural Planner inputs known before native Agent selects an epoch observation.
 #[derive(Clone)]
 pub struct ProductEpochPlannerBinding {
+    pub belief_family: meld_world_model::belief::TheoryRevisionRef,
+    pub outcome_mappings: Vec<meld_world_model::belief::TheoryRevisionRef>,
     pub context: meld_world_model::planner::PlannerDecisionContext,
     pub policy: meld_world_model::planner::PlannerAssemblyPolicy,
     pub belief_key: meld_world_model::belief::BeliefKey,
@@ -142,6 +145,7 @@ pub struct ProductEpochPlannerBinding {
 }
 
 pub struct ProductEpochAgentPlannerPort {
+    curation_store: Arc<CurationStore>,
     belief_store: Arc<BeliefStore>,
     traversal_store: Arc<TraversalStore>,
     event_append: ProductEventAppendPort,
@@ -152,10 +156,12 @@ impl ProductEpochAgentPlannerPort {
     pub fn new(
         belief_store: Arc<BeliefStore>,
         traversal_store: Arc<TraversalStore>,
+        curation_store: Arc<CurationStore>,
         event_append: ProductEventAppendPort,
         binding: ProductEpochPlannerBinding,
     ) -> Self {
         Self {
+            curation_store,
             belief_store,
             traversal_store,
             event_append,
@@ -202,6 +208,11 @@ impl AgentPlannerPort for ProductEpochAgentPlannerPort {
             }
         };
         let request = PlannerCurrentAssemblyRequest {
+            required_derived_evidence: products.curation_rule.rule.publishes_source_judgments().then(|| meld_world_model::planner::PlannerDerivedEvidenceRequirement {
+                curation_rule: products.curation_rule.revision_ref(),
+                belief_family: self.binding.belief_family.clone(),
+                outcome_mappings: self.binding.outcome_mappings.clone(),
+            }),
             required_graph_evidence: products.curation_rule.rule.source_readiness_requirements(),
             context: self.binding.context.clone(), policy: self.binding.policy.clone(),
             belief_key: self.binding.belief_key.clone(), unanchored_belief: self.binding.unanchored_belief,
@@ -216,6 +227,7 @@ impl AgentPlannerPort for ProductEpochAgentPlannerPort {
         ProductAgentPlannerPort::new(
             self.belief_store.clone(),
             self.traversal_store.clone(),
+            self.curation_store.clone(),
             self.event_append.clone(),
             request,
         )
@@ -638,10 +650,12 @@ impl ProductAgentPlannerPort {
     pub fn new(
         belief_store: Arc<BeliefStore>,
         traversal_store: Arc<TraversalStore>,
+        curation_store: Arc<CurationStore>,
         event_append: ProductEventAppendPort,
         request: PlannerCurrentAssemblyRequest,
     ) -> Self {
         Self {
+            curation_store,
             belief_store,
             traversal_store,
             event_append,
@@ -779,7 +793,11 @@ impl ProductAgentPlannerPort {
             BeliefQuery::new(self.belief_store.as_ref()),
             TraversalQuery::new(self.traversal_store.as_ref()),
         );
-        query.assemble_current(request)
+        query
+            .with_curation(meld_world_model::CurationQuery::new(
+                self.curation_store.as_ref(),
+            ))
+            .assemble_current(request)
     }
 }
 

@@ -673,6 +673,22 @@ impl<'a> RuntimeSupervisor<'a> {
     /// a failed step becomes a truthful fatal report. The full report is
     /// persisted as an action record before the lifecycle summary derives
     /// from it.
+    #[cfg(test)]
+    pub(crate) fn step_owner_for_test(
+        &mut self,
+        runtime_id: &str,
+        budget: WorkBudget,
+    ) -> WorkerTickReport {
+        // Schedule an already-started native incarnation while deliberately
+        // holding other participants at their current durable positions.
+        self.handles
+            .get_mut(runtime_id)
+            .unwrap()
+            .actor
+            .bounded_step(self.started_at_ms, &budget)
+            .unwrap()
+    }
+
     pub fn tick(&mut self, now_ms: u64) -> Result<SupervisorTickReport, SupervisorRuntimeError> {
         if let (Some(store), Some(prepared), Some(generation_id)) = (
             self.lifecycle_store,

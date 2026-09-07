@@ -323,11 +323,13 @@ fn native_epoch_specification_drives_curation_and_preserves_distinct_observation
         ProductAgentPlannerPort::new(
             belief_store.clone(),
             traversal.clone(),
+            curation.clone(),
             ProductEventAppendPort::new(&events),
             request,
         )
     };
     let mut planner_request = PlannerCurrentAssemblyRequest {
+        required_derived_evidence: None,
         required_graph_evidence: Vec::new(),
         context: PlannerDecisionContext {
             context_id: "prepared".into(),

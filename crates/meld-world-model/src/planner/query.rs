@@ -19,6 +19,7 @@ use crate::world_state::graph::{PerspectiveKey, TraversalQuery};
 
 /// Planner-safe read facade over graph and belief query surfaces.
 pub struct PlannerQuery<'a> {
+    curation_query: Option<crate::curation::CurationQuery<'a>>,
     belief_query: BeliefQuery<'a>,
     traversal_query: TraversalQuery<'a>,
 }
@@ -27,9 +28,15 @@ impl<'a> PlannerQuery<'a> {
     /// Create a planner query facade from lower-layer read facades.
     pub fn new(belief_query: BeliefQuery<'a>, traversal_query: TraversalQuery<'a>) -> Self {
         Self {
+            curation_query: None,
             belief_query,
             traversal_query,
         }
+    }
+
+    pub fn with_curation(mut self, query: crate::curation::CurationQuery<'a>) -> Self {
+        self.curation_query = Some(query);
+        self
     }
 
     /// Assemble one complete current cut or return typed refusal grounds.
@@ -87,6 +94,28 @@ impl<'a> PlannerQuery<'a> {
             Ok(current) => current,
             Err(error) => return refuse(error.to_string()),
         };
+        if let Some(required) = &request.required_derived_evidence {
+            let Some(curation) = &self.curation_query else {
+                return refuse("derived evidence requires its native Curation source".into());
+            };
+            let basis =
+                match curation.current_evidence_basis(&required.curation_rule, &cut) {
+                    Ok(Some(basis)) => basis,
+                    Ok(None) => return refuse(
+                        "Curation evidence does not match the selected source revision and rule"
+                            .into(),
+                    ),
+                    Err(error) => return refuse(error.to_string()),
+                };
+            let Some((revision, _)) = &current else {
+                return refuse("current source judgment has no returned Belief revision".into());
+            };
+            match self.belief_query.supports_current_curation(&revision.revision_id, &basis, &required.belief_family, &required.outcome_mappings) {
+                Ok(true) => {},
+                Ok(false) => return refuse("Belief has not consumed the selected current Curation evidence under the installed interpretation".into()),
+                Err(error) => return refuse(error.to_string()),
+            }
+        }
         let belief_view = current.as_ref().map(|(_, view)| view.clone());
         let field_config = belief_view
             .as_ref()

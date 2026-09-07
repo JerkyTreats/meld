@@ -7,6 +7,7 @@
 mod actor;
 mod contracts;
 mod coverage;
+mod currentness;
 mod query;
 mod selection;
 mod store;
@@ -17,6 +18,7 @@ mod theory;
 pub use actor::*;
 pub use contracts::*;
 pub use coverage::CurationCoverageRule;
+pub use currentness::*;
 pub use query::*;
 pub use selection::*;
 pub use store::*;
