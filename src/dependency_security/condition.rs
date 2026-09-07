@@ -117,6 +117,32 @@ pub(crate) fn current_state(
         }
         let frozen = *tip.get_or_insert(page.coverage.tip_seq);
         for record in page.records.iter().filter(|record| record.seq <= frozen) {
+            if record.domain_id == OWNER && record.event_type == super::currency::EVENT {
+                let observed = super::currency::CurrencyObservation::from_record(
+                    record,
+                    events.ledger_identity(),
+                )
+                .map_err(invalid)?;
+                if observed.subject != capability.subject || observed.policy != capability.policy {
+                    continue;
+                }
+                observed
+                    .validate_basis(&products, &bodies, reference_time)
+                    .map_err(invalid)?;
+                reference_time = observed.reference_time;
+                let receipt_id = observed
+                    .record_id(events.ledger_identity())
+                    .map_err(invalid)?;
+                products.insert(
+                    super::currency::PRODUCT.into(),
+                    ProductPosition {
+                        product_id: receipt_id.clone(),
+                        receipt_id,
+                        receipt_seq: record.seq,
+                    },
+                );
+                continue;
+            }
             if record.domain_id == OWNER
                 && matches!(
                     record.event_type.as_str(),

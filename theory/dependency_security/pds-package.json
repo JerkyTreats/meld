@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "package_id": "meld.dependency-security-fixture",
-  "package_version": "1.6.0",
+  "package_version": "1.7.0",
   "description": "Cargo inventory and declared advisory-source assessment with independent verification",
   "imports": [],
   "components": [

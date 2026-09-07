@@ -222,10 +222,11 @@ pub(crate) fn resume_pending(
     capability: &SecurityCapability,
     events: &EventAppendCapability,
 ) -> Result<bool, String> {
+    let currency_resumed = super::currency::resume_pending(capability, events)?;
     let replay = events.replay_capability();
     let observations = latest(capability, &replay)?;
     if observations.is_empty() {
-        return Ok(false);
+        return Ok(currency_resumed);
     }
     let mut envelopes = Vec::new();
     for (record, observed) in observations {
@@ -277,7 +278,7 @@ pub(crate) fn resume_pending(
             return Err("Security observation publication is not durably proven".into());
         }
     }
-    Ok(missing)
+    Ok(missing || currency_resumed)
 }
 
 pub(crate) fn poll(
@@ -374,7 +375,7 @@ enum CapturedSource {
     Inventory(Box<DependencyInventorySnapshotV1>),
 }
 
-fn now() -> Result<u64, String> {
+pub(crate) fn now() -> Result<u64, String> {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|time| time.as_secs())

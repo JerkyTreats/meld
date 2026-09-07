@@ -2257,6 +2257,7 @@ impl RuntimeSemanticHandleFactory {
                         sources,
                         authority,
                         events: ports.event_append().append_capability(),
+                        clock: Arc::new(crate::dependency_security::observation::now),
                         route,
                     },
                 )))
@@ -7745,11 +7746,17 @@ mod tests {
         assert_native_security_reconciliation(true, false, SecuritySourceAdvance::Inventory);
     }
 
+    #[test]
+    fn native_security_expiry_reopens_goal_without_source_change() {
+        assert_native_security_reconciliation(true, false, SecuritySourceAdvance::Expiry);
+    }
+
     #[derive(Clone, Copy, PartialEq)]
     enum SecuritySourceAdvance {
         None,
         Advisory,
         Inventory,
+        Expiry,
     }
 
     fn assert_native_security_reconciliation(
@@ -7971,7 +7978,21 @@ mod tests {
         supervisor.request_shutdown(2_000).unwrap();
         drop(supervisor);
         drop(assembly);
-        let reopened = harness.assembly();
+        let mut reopened = harness.assembly();
+        let currency_clock = Arc::new(std::sync::atomic::AtomicU64::new(now));
+        if advance == SecuritySourceAdvance::Expiry {
+            let RuntimeSemanticHandleFactory::SecurityObservation(binding) = &mut reopened
+                .handle_factories
+                .factories
+                .get_mut("dependency_security.observation")
+                .unwrap()
+                .semantic
+            else {
+                panic!("native Security source owner absent")
+            };
+            let clock = currency_clock.clone();
+            binding.clock = Arc::new(move || Ok(clock.load(std::sync::atomic::Ordering::SeqCst)));
+        }
         harness.bind_production_routes(&reopened);
         let mut command = SupervisorStartCommand::new("security-reopened", 3_000);
         command.registration_set = reopened.registration_set().cloned();
@@ -8025,6 +8046,60 @@ mod tests {
             after.planner_projection.confidence,
             coverage.planner_projection.confidence
         );
+        if advance == SecuritySourceAdvance::Expiry {
+            let advisory_bytes = std::fs::read(&source).unwrap();
+            let manifest = std::fs::read(root.join("Cargo.toml")).unwrap();
+            currency_clock.store(now + 7200, std::sync::atomic::Ordering::SeqCst);
+            for pass in 0..60 {
+                resumed.tick(4_100 + pass * 10).unwrap();
+            }
+            let goals = store
+                .reconciliation_goals_for_agent(&harness.binding.agent_id)
+                .unwrap();
+            assert_eq!(
+                goals.len(),
+                2,
+                "expired source evidence must reopen the maintained Goal"
+            );
+            let successor = goals
+                .iter()
+                .find(|goal| goal.goal.goal_id != goal_id)
+                .unwrap();
+            let plan = store
+                .current_reconciliation_plan(&successor.goal.goal_id)
+                .unwrap()
+                .unwrap();
+            assert!(!store
+                .goal_disposition_for_plan(&plan.plan_revision_id)
+                .unwrap()
+                .is_some_and(|disposition| matches!(
+                    disposition.lifecycle,
+                    meld_lang::GoalLifecycle::Satisfied { .. }
+                )));
+            let records = harness
+                .authority
+                .replay_capability()
+                .newest_page(1024)
+                .unwrap()
+                .records;
+            assert_eq!(records.iter().filter(|record| record.event_type == "dependency_security.currency_observed.v1").count(), 1);
+            assert_eq!(records.iter().filter(|record| record.event_type == "dependency_security.invocation_return.v1").count(), 8);
+            assert_eq!(std::fs::read(&source).unwrap(), advisory_bytes);
+            assert_eq!(std::fs::read(root.join("Cargo.toml")).unwrap(), manifest);
+            assert_eq!(
+                reopened
+                    .stores()
+                    .belief_store
+                    .current_view(&coverage_key)
+                    .unwrap()
+                    .unwrap()
+                    .planner_projection
+                    .confidence,
+                0.0
+            );
+            resumed.request_shutdown(6_000).unwrap();
+            return;
+        }
         if advance != SecuritySourceAdvance::None {
             let advisory_bytes = std::fs::read(&source).unwrap();
             let manifest = std::fs::read(harness._workspace.path().join("Cargo.toml")).unwrap();

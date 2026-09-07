@@ -18,6 +18,7 @@ pub(crate) struct SecurityObservationBinding {
     pub sources: Vec<SecurityCapability>,
     pub authority: AuthorityPolicyBinding,
     pub events: EventAppendCapability,
+    pub clock: std::sync::Arc<dyn Fn() -> Result<u64, String> + Send + Sync>,
     pub route: meld_world_model::world_state::graph::admission::GraphOwnerEventRoute,
 }
 
@@ -167,9 +168,27 @@ impl SecurityObservationActor {
                     &self.binding.events,
                 )
             };
+            let currency = (self.binding.clock)().and_then(|at| {
+                super::currency::observe(
+                    source,
+                    &self.binding.events,
+                    &self.binding_id,
+                    generation,
+                    incarnation,
+                    at,
+                )
+            });
+            match currency {
+                Ok(committed) => report.items_committed = usize::from(committed),
+                Err(message) => report.retryable_errors.push(WorkerTickIssue {
+                    item_id: None,
+                    code: "security_currency_unresolved".into(),
+                    message,
+                }),
+            }
             match result {
                 Ok((committed, error)) => {
-                    report.items_committed = usize::from(committed);
+                    report.items_committed = report.items_committed.max(usize::from(committed));
                     if let Some(message) = error {
                         report.retryable_errors.push(WorkerTickIssue {
                             item_id: None,
@@ -278,6 +297,7 @@ impl SecurityObservationActor {
                     )
                 },
                 observation::INVENTORY_EVENT.into(),
+                super::currency::EVENT.into(),
                 self.binding.authority.content_hash.clone(),
                 self.binding
                     .route
@@ -459,6 +479,7 @@ mod tests {
             sources: vec![source, inventory],
             authority,
             events: events.append_capability(),
+            clock: std::sync::Arc::new(observation::now),
             route: super::super::condition::graph_route(),
         };
         let mut owner = SecurityObservationActor::new(binding.clone());
