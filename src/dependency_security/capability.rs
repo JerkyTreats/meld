@@ -128,6 +128,7 @@ impl meld_execution::capability::CapabilityInvoker for SecurityCapability {
         let events = api
             .durable_event_append()
             .ok_or_else(|| invalid("Security invocation has no durable Event authority"))?;
+        super::observation::resume_pending(self, &events).map_err(invalid)?;
         if let Some(result) = publication.resume(&events)? {
             return Ok(result);
         }
@@ -152,26 +153,10 @@ impl meld_execution::capability::CapabilityInvoker for SecurityCapability {
                 .map_err(invalid)?;
                 (INVENTORY, encode(inventory)?)
             }
-            ACQUIRE_ADVISORIES => {
-                let bytes = super::inventory::cargo::read_bounded(
-                    self.advisories
-                        .as_deref()
-                        .ok_or_else(|| invalid("advisory resource is absent"))?,
-                    self.limits.maximum_bytes,
-                )
-                .map_err(invalid)?;
-                let source: super::advisory::AdvisorySourceDocumentV1 =
-                    serde_json::from_slice(&bytes).map_err(|error| invalid(error.to_string()))?;
-                let advisory = source.admit().map_err(invalid)?;
-                if advisory.source_id != self.policy.required_advisory_source_id
-                    || advisory.covered_ecosystem != self.policy.ecosystem
-                {
-                    return Err(invalid(
-                        "advisory source does not match the exact installed policy",
-                    ));
-                }
-                (ADVISORIES, encode(advisory)?)
-            }
+            ACQUIRE_ADVISORIES => (
+                ADVISORIES,
+                encode(super::observation::acquire(self).map_err(invalid)?)?,
+            ),
             ASSESS => {
                 let inventory = decode(payload, INVENTORY)?;
                 let advisories = decode(payload, ADVISORIES)?;

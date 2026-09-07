@@ -147,7 +147,7 @@ impl<'a> Publication<'a> {
         let operation = product_publication(
             &self.capability.subject,
             &self.record_id(events)?,
-            &receipt.result(),
+            &receipt.artifacts,
         )?;
         let mut envelope =
             owner_publication_envelope(&self.context.session_id, &operation).map_err(invalid)?;
@@ -225,18 +225,46 @@ impl<'a> Publication<'a> {
     }
 }
 
-fn product_publication(
+pub(super) fn product_publication(
     subject: &DependencySecuritySubjectV1,
     receipt_id: &str,
-    result: &CapabilityInvocationResult,
+    artifacts: &[crate::task::ArtifactRecord],
 ) -> Result<OwnerPublicationOperation, ApiError> {
-    let [artifact] = result.emitted_artifacts.as_slice() else {
+    let [artifact] = artifacts else {
         return Err(invalid(
             "Security publication requires one complete owner product",
         ));
     };
-    let kind = artifact.artifact_type_id.as_str();
-    let product = &artifact.content;
+    publish_product(
+        subject,
+        receipt_id,
+        &artifact.artifact_type_id,
+        &artifact.content,
+        content_hash(&(receipt_id, artifacts)).map_err(invalid)?,
+    )
+}
+
+pub(super) fn observed_advisory_publication(
+    subject: &DependencySecuritySubjectV1,
+    receipt_id: &str,
+    advisory: &AdvisoryKnowledgeSnapshotV1,
+) -> Result<OwnerPublicationOperation, ApiError> {
+    publish_product(
+        subject,
+        receipt_id,
+        ADVISORIES,
+        &serde_json::to_value(advisory).map_err(invalid)?,
+        content_hash(&(receipt_id, advisory)).map_err(invalid)?,
+    )
+}
+
+fn publish_product(
+    subject: &DependencySecuritySubjectV1,
+    receipt_id: &str,
+    kind: &str,
+    product: &Value,
+    revision_id: String,
+) -> Result<OwnerPublicationOperation, ApiError> {
     let product_id = match kind {
         INVENTORY | ADVISORIES => product["snapshot_id"].as_str(),
         ASSESSMENT => product["assessment_id"].as_str(),
@@ -253,7 +281,6 @@ fn product_publication(
         perspective_id: None,
         valid_at: None,
     };
-    let revision_id = content_hash(&(receipt_id, &result.emitted_artifacts)).map_err(invalid)?;
     let hydration = HydrationReference {
         owner_id: OWNER.into(),
         product_kind: kind.into(),

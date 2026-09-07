@@ -8,8 +8,10 @@ pub mod contracts;
 pub mod contribution;
 pub mod events;
 pub mod inventory;
+pub mod observation;
 pub mod policy;
 pub mod publication;
+pub mod runtime;
 pub mod theory;
 pub mod verification;
 

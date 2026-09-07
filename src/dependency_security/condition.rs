@@ -80,7 +80,7 @@ fn scope(subject: &DomainObjectRef, policy_hash: &str) -> Result<OwnerPublicatio
     })
 }
 
-fn current(
+pub(crate) fn current(
     capability: &SecurityCapability,
     events: &EventReplayCapability,
 ) -> Result<Option<CurrentSecurityCondition>, ApiError> {
@@ -108,6 +108,48 @@ fn current(
         }
         let frozen = *tip.get_or_insert(page.coverage.tip_seq);
         for record in page.records.iter().filter(|record| record.seq <= frozen) {
+            if record.domain_id == OWNER && record.event_type == super::observation::EVENT {
+                let observed = super::observation::AdvisoryObservation::from_record(
+                    record,
+                    events.ledger_identity(),
+                )
+                .map_err(invalid)?;
+                if observed.subject != capability.subject || observed.policy != capability.policy {
+                    continue;
+                }
+                reference_time = reference_time.max(observed.observed_at);
+                products.remove(ADVISORIES);
+                products.remove(super::observation::UNAVAILABLE);
+                bodies.remove(ADVISORIES);
+                let receipt_id = observed
+                    .record_id(events.ledger_identity())
+                    .map_err(invalid)?;
+                if let Some(product) = observed.advisory {
+                    products.insert(
+                        ADVISORIES.into(),
+                        ProductPosition {
+                            receipt_id,
+                            receipt_seq: record.seq,
+                            product_id: product.snapshot_id.clone(),
+                        },
+                    );
+                    bodies.insert(
+                        ADVISORIES.into(),
+                        serde_json::to_value(product).map_err(invalid)?,
+                    );
+                } else {
+                    products.insert(
+                        super::observation::UNAVAILABLE.into(),
+                        ProductPosition {
+                            receipt_id,
+                            receipt_seq: record.seq,
+                            product_id: content_hash(&observed.failure.unwrap())
+                                .map_err(invalid)?,
+                        },
+                    );
+                }
+                continue;
+            }
             if record.domain_id != OWNER || record.event_type != RECEIPT_EVENT {
                 continue;
             }
@@ -148,6 +190,9 @@ fn current(
                 .map_err(invalid)?
                 .timestamp();
             reference_time = reference_time.max(u64::try_from(at).map_err(invalid)?);
+            if artifact.artifact_type_id == ADVISORIES {
+                products.remove(super::observation::UNAVAILABLE);
+            }
             products.insert(
                 artifact.artifact_type_id.clone(),
                 ProductPosition {

@@ -48,11 +48,20 @@ pub fn published_product_contracts() -> Vec<CapabilityTypeContract> {
 /// Build the deterministic compiled product capability inventory.
 pub fn product_capability_inventory(
 ) -> Result<ProductCapabilityInventory, CapabilityContributionDiagnostic> {
+    product_capability_inventory_with_security(std::sync::Arc::new(
+        crate::dependency_security::contribution::DependencySecurityCapabilityContributor::default(
+        ),
+    ))
+}
+
+pub(crate) fn product_capability_inventory_with_security(
+    security: std::sync::Arc<
+        crate::dependency_security::contribution::DependencySecurityCapabilityContributor,
+    >,
+) -> Result<ProductCapabilityInventory, CapabilityContributionDiagnostic> {
     ProductCapabilityInventory::assemble(vec![
         std::sync::Arc::new(crate::nonce::capability::NonceCapabilityContributor),
         std::sync::Arc::new(crate::docs::contribution::DocsCapabilityContributor),
-        std::sync::Arc::new(
-            crate::dependency_security::capability::DependencySecurityCapabilityContributor,
-        ),
+        security,
     ])
 }

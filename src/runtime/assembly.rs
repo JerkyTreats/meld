@@ -414,6 +414,7 @@ pub struct ProductCapabilityRuntime {
     pub catalog: CapabilityCatalog,
     /// Matching executable invokers visible to dispatch.
     pub registry: crate::capability::CapabilityExecutorRegistry,
+    security_observation: Option<crate::dependency_security::capability::SecurityCapability>,
 }
 
 /// Execution route ports injected for the dispatch actor.
@@ -638,8 +639,12 @@ fn activate_exact_capabilities(
                     .to_string(),
             )
         })?;
+    let security_owner = Arc::new(
+        crate::dependency_security::contribution::DependencySecurityCapabilityContributor::default(
+        ),
+    );
     let inventory: ProductCapabilityInventory =
-        crate::capability::product_capability_inventory()
+        crate::capability::product_capability_inventory_with_security(security_owner.clone())
             .map_err(|error| crate::error::ApiError::ConfigError(error.to_string()))?;
     let selected_contracts = closure
         .activation
@@ -708,6 +713,9 @@ fn activate_exact_capabilities(
         }
     }
     Ok(ProductCapabilityRuntime {
+        security_observation: security_owner
+            .observation_source(&owner_bindings, contracts)
+            .map_err(|error| crate::error::ApiError::ConfigError(error.to_string()))?,
         catalog: prepared.contracts,
         registry: prepared.invokers,
     })
@@ -918,6 +926,7 @@ struct PublicationFactory {
 #[derive(Clone)]
 enum RuntimeSemanticHandleFactory {
     DocsObservation(Box<crate::docs::runtime::DocsObservationBinding>),
+    SecurityObservation(Box<crate::dependency_security::runtime::SecurityObservationBinding>),
     None,
     GraphReplay { graph_runtime: Arc<GraphRuntime> },
     EventAppend { port: ProductEventAppendPort },
@@ -932,6 +941,7 @@ enum RuntimeSemanticHandleFactory {
 
 enum RuntimeSemanticHandle {
     DocsObservation(Box<crate::docs::runtime::DocsObservationActor>),
+    SecurityObservation(Box<crate::dependency_security::runtime::SecurityObservationActor>),
     None,
     GraphReplay(GraphReplayRuntimeHandle),
     EventAppend(EventAppendRuntimeHandle),
@@ -1826,6 +1836,10 @@ impl RuntimeFactoryRegistry {
             RuntimeFactoryDescriptor::new("event.replay", vec![EventReplay])?,
             RuntimeFactoryDescriptor::new("workspace.source", vec![EventAppend, Workspace])?,
             RuntimeFactoryDescriptor::new(
+                "dependency_security.observation",
+                vec![EventAppend, Theory, WorldModel],
+            )?,
+            RuntimeFactoryDescriptor::new(
                 "docs.observation",
                 vec![EventAppend, Workspace, Theory, WorldModel],
             )?,
@@ -2212,6 +2226,40 @@ impl RuntimeSemanticHandleFactory {
             Ok(RuntimeSemanticHandleFactory::None)
         }
         match runtime_id {
+            "dependency_security.observation" => {
+                let Some(composed) = stewardship else {
+                    return Ok(Self::None);
+                };
+                let Some(source) = composed
+                    .theory
+                    .capability_runtime
+                    .as_ref()
+                    .and_then(|runtime| runtime.security_observation.clone())
+                else {
+                    return Ok(Self::None);
+                };
+                let Some(authority) = composed.theory.authority_policy.clone() else {
+                    return Ok(Self::None);
+                };
+                let Some(route) = stores
+                    .traversal_store
+                    .owner_event_route(
+                        "dependency-security",
+                        crate::dependency_security::condition::EVENT,
+                    )
+                    .map_err(|e| RuntimeAssemblyError::RuntimeHandleConstruction(e.to_string()))?
+                else {
+                    return Ok(Self::None);
+                };
+                Ok(Self::SecurityObservation(Box::new(
+                    crate::dependency_security::runtime::SecurityObservationBinding {
+                        source,
+                        authority,
+                        events: ports.event_append().append_capability(),
+                        route,
+                    },
+                )))
+            }
             "docs.observation" => {
                 let Some(composed) = stewardship else {
                     return Ok(Self::None);
@@ -3018,6 +3066,13 @@ impl RuntimeSemanticHandleFactory {
 
     fn build_handle(&self) -> RuntimeSemanticHandle {
         match self {
+            Self::SecurityObservation(binding) => {
+                RuntimeSemanticHandle::SecurityObservation(Box::new(
+                    crate::dependency_security::runtime::SecurityObservationActor::new(
+                        binding.as_ref().clone(),
+                    ),
+                ))
+            }
             Self::DocsObservation(binding) => RuntimeSemanticHandle::DocsObservation(Box::new(
                 crate::docs::runtime::DocsObservationActor::new(binding.as_ref().clone()),
             )),
@@ -3229,6 +3284,7 @@ impl RuntimeSemanticHandle {
         match self {
             Self::None => Err(missing_native_lifecycle_owner()),
             Self::DocsObservation(handle) => handle.native_readiness(context),
+            Self::SecurityObservation(handle) => handle.native_readiness(context),
             Self::GraphReplay(handle) => handle.native_readiness(context),
             Self::EventAppend(handle) => handle.native_readiness(context),
             Self::BeliefAssessment(handle) => handle.native_readiness(context),
@@ -3245,6 +3301,7 @@ impl RuntimeSemanticHandle {
         match self {
             Self::None => None,
             Self::DocsObservation(handle) => Some(handle.tick(budget)),
+            Self::SecurityObservation(handle) => Some(handle.tick(budget)),
             Self::GraphReplay(handle) => Some(handle.tick(budget)),
             Self::EventAppend(handle) => Some(handle.tick()),
             Self::BeliefAssessment(handle) => Some(handle.tick(budget)),
@@ -3264,6 +3321,7 @@ impl RuntimeSemanticHandle {
         match self {
             Self::None => Err(missing_native_lifecycle_owner()),
             Self::DocsObservation(handle) => handle.native_stop(context),
+            Self::SecurityObservation(handle) => handle.native_stop(context),
             Self::GraphReplay(handle) => handle.native_stop(context),
             Self::EventAppend(handle) => handle.native_stop(context),
             Self::BeliefAssessment(handle) => handle.native_stop(context),
@@ -3283,6 +3341,7 @@ impl RuntimeSemanticHandle {
         match self {
             Self::None => Err(missing_native_lifecycle_owner()),
             Self::DocsObservation(handle) => handle.native_safe_point(context),
+            Self::SecurityObservation(handle) => handle.native_safe_point(context),
             Self::GraphReplay(handle) => handle.native_safe_point(context),
             Self::EventAppend(handle) => handle.native_safe_point(context),
             Self::BeliefAssessment(handle) => handle.native_safe_point(context),
@@ -3302,6 +3361,7 @@ impl RuntimeSemanticHandle {
         match self {
             Self::None => Err(missing_native_lifecycle_owner()),
             Self::DocsObservation(handle) => handle.native_release(context),
+            Self::SecurityObservation(handle) => handle.native_release(context),
             Self::GraphReplay(handle) => handle.native_release(context),
             Self::EventAppend(handle) => handle.native_release(context),
             Self::BeliefAssessment(handle) => handle.native_release(context),
@@ -3322,6 +3382,7 @@ impl RuntimeSemanticHandle {
         match self {
             Self::None => Err(missing_native_lifecycle_owner()),
             Self::DocsObservation(handle) => handle.native_wait(context, report),
+            Self::SecurityObservation(handle) => handle.native_wait(context, report),
             Self::GraphReplay(handle) => handle.native_wait(context, report),
             Self::EventAppend(handle) => handle.native_wait(context, report),
             Self::BeliefAssessment(handle) => handle.native_wait(context, report),
@@ -3338,6 +3399,7 @@ impl RuntimeSemanticHandle {
         match self {
             Self::None => Ok(false),
             Self::DocsObservation(handle) => handle.native_resolves_wake(wake_ref),
+            Self::SecurityObservation(handle) => handle.native_resolves_wake(wake_ref),
             Self::GraphReplay(handle) => handle.native_resolves_wake(wake_ref),
             Self::EventAppend(handle) => handle.native_resolves_wake(wake_ref),
             Self::BeliefAssessment(handle) => handle.native_resolves_wake(wake_ref),
@@ -5360,7 +5422,7 @@ mod tests {
             assembly.supervisor_store().path(),
             temp.path().join("supervisor.sled")
         );
-        assert_eq!(assembly.registry().len(), 13);
+        assert_eq!(assembly.registry().len(), 14);
         assert!(assembly
             .registry()
             .contains(AGENT_RECONCILIATION_RUNTIME_ID));
@@ -5394,7 +5456,7 @@ mod tests {
             description.supervisor_store_path,
             expected_root.join("supervisor.sled")
         );
-        assert_eq!(description.desired_runtime_state.len(), 13);
+        assert_eq!(description.desired_runtime_state.len(), 14);
         assert!(!description.product_root.exists());
         assert!(!description.supervisor_store_path.exists());
     }
@@ -5411,7 +5473,7 @@ mod tests {
 
         assert_eq!(second.product_root(), temp.path());
         assert!(second.registry().contains("execution.publication"));
-        assert_eq!(second.desired_runtime_state().len(), 13);
+        assert_eq!(second.desired_runtime_state().len(), 14);
     }
 
     #[test]
@@ -5436,7 +5498,7 @@ mod tests {
                 .iter()
                 .filter(|state| state.enabled)
                 .count(),
-            11
+            12
         );
     }
 
@@ -6567,7 +6629,7 @@ mod tests {
         let package = assembly.supervisor_startup_package();
 
         assert_eq!(package.product_root, temp.path());
-        assert_eq!(package.handle_factories.len(), 13);
+        assert_eq!(package.handle_factories.len(), 14);
         assert_eq!(package.default_work_budget.max_items, 64);
         assert_eq!(package.lifecycle_config.heartbeat_interval_ms, 1_000);
         assert_eq!(package.lifecycle_config.lease_duration_ms, 15 * 60 * 1_000);
@@ -7659,20 +7721,25 @@ mod tests {
 
     #[test]
     fn native_security_acquires_confirms_and_judges_current_verified_coverage() {
-        assert_native_security_reconciliation(true, false);
+        assert_native_security_reconciliation(true, false, false);
     }
 
     #[test]
     fn native_security_violated_assessment_cannot_satisfy_goal() {
-        assert_native_security_reconciliation(true, true);
+        assert_native_security_reconciliation(true, true, false);
     }
 
     #[test]
     fn native_security_incomplete_coverage_cannot_satisfy_goal() {
-        assert_native_security_reconciliation(false, false);
+        assert_native_security_reconciliation(false, false, false);
     }
 
-    fn assert_native_security_reconciliation(complete: bool, finding: bool) {
+    #[test]
+    fn native_security_advisory_advance_reopens_goal_without_workspace_change() {
+        assert_native_security_reconciliation(true, false, true);
+    }
+
+    fn assert_native_security_reconciliation(complete: bool, finding: bool, advance: bool) {
         use crate::dependency_security::{
             advisory::AdvisorySourceDocumentV1, contracts::*, inventory::cargo,
         };
@@ -7941,7 +8008,107 @@ mod tests {
             after.planner_projection.confidence,
             coverage.planner_projection.confidence
         );
-        resumed.request_shutdown(4_000).unwrap();
+        if advance {
+            let manifest = std::fs::read(harness._workspace.path().join("Cargo.toml")).unwrap();
+            let mut changed: AdvisorySourceDocumentV1 =
+                serde_json::from_slice(&std::fs::read(&source).unwrap()).unwrap();
+            changed.source_revision = "advisory-only-advance".into();
+            changed.advisories.push(NormalizedAdvisoryV1 {
+                source_advisory_id: "new-advisory".into(),
+                aliases: vec![],
+                package_name: "security-runtime-proof".into(),
+                affected_versions: vec!["1.0.0".into()],
+                severity: SeverityV1::High,
+            });
+            std::fs::write(&source, serde_json::to_vec(&changed).unwrap()).unwrap();
+            for pass in 0..60 {
+                resumed.tick(4_100 + pass * 10).unwrap();
+            }
+            let goals = store
+                .reconciliation_goals_for_agent(&harness.binding.agent_id)
+                .unwrap();
+            assert_eq!(
+                goals.len(),
+                2,
+                "advisory knowledge must reopen the standing condition without a workspace change"
+            );
+            let successor = goals
+                .iter()
+                .find(|goal| goal.goal.goal_id != goal_id)
+                .unwrap();
+            let plan = store
+                .current_reconciliation_plan(&successor.goal.goal_id)
+                .unwrap()
+                .unwrap();
+            assert!(!store
+                .goal_disposition_for_plan(&plan.plan_revision_id)
+                .unwrap()
+                .is_some_and(|disposition| matches!(
+                    disposition.lifecycle,
+                    meld_lang::GoalLifecycle::Satisfied { .. }
+                )));
+            assert_eq!(
+                std::fs::read(harness._workspace.path().join("Cargo.toml")).unwrap(),
+                manifest
+            );
+            let successor_id = successor.goal.goal_id.clone();
+            let completed = store.completed_history_for_goal(&successor_id).unwrap();
+            assert!(completed.iter().any(|entry| matches!(
+                entry.accepted_milestone,
+                meld_world_model::strategy::PlanMilestoneRequirement::ExecutionTerminal { .. }
+            )));
+            assert!(completed.iter().any(|entry| matches!(
+                entry.accepted_milestone,
+                meld_world_model::strategy::PlanMilestoneRequirement::BeliefRevision { .. }
+            )));
+            let returned = harness
+                .authority
+                .replay_capability()
+                .newest_page(1024)
+                .unwrap()
+                .records;
+            assert_eq!(returned.iter().filter(|record| record.event_type == "dependency_security.invocation_return.v1").count(), 8);
+            changed.source_revision = "restored-current-coverage".into();
+            changed.advisories.clear();
+            std::fs::write(&source, serde_json::to_vec(&changed).unwrap()).unwrap();
+            for pass in 0..60 {
+                resumed.tick(5_100 + pass * 10).unwrap();
+            }
+            assert_eq!(
+                store
+                    .reconciliation_goals_for_agent(&harness.binding.agent_id)
+                    .unwrap()
+                    .len(),
+                2,
+                "new source knowledge must reconcile the existing unfinished Goal"
+            );
+            let restored = store
+                .current_reconciliation_plan(&successor_id)
+                .unwrap()
+                .unwrap();
+            assert!(
+                store
+                    .goal_disposition_for_plan(&restored.plan_revision_id)
+                    .unwrap()
+                    .is_some_and(|disposition| matches!(
+                        disposition.lifecycle,
+                        meld_lang::GoalLifecycle::Satisfied { .. }
+                    )),
+                "{restored:#?}"
+            );
+            let returned = harness
+                .authority
+                .replay_capability()
+                .newest_page(1024)
+                .unwrap()
+                .records;
+            assert_eq!(returned.iter().filter(|record| record.event_type == "dependency_security.invocation_return.v1").count(), 12);
+            assert_eq!(
+                std::fs::read(harness._workspace.path().join("Cargo.toml")).unwrap(),
+                manifest
+            );
+        }
+        resumed.request_shutdown(6_000).unwrap();
     }
 
     #[test]

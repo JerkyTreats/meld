@@ -56,7 +56,31 @@ pub fn bind_selected_policy(
     Ok(bindings.with_value(POLICY, body))
 }
 
-pub struct DependencySecurityCapabilityContributor;
+#[derive(Default)]
+pub struct DependencySecurityCapabilityContributor {
+    publication_gate: Arc<tokio::sync::Mutex<()>>,
+}
+
+impl DependencySecurityCapabilityContributor {
+    pub(crate) fn observation_source(
+        &self,
+        bindings: &OwnerBindingView,
+        contracts: &[CapabilityTypeContract],
+    ) -> Result<Option<SecurityCapability>, CapabilityContributionDiagnostic> {
+        if !contracts
+            .iter()
+            .any(|contract| contract.capability_type_id == ACQUIRE_ADVISORIES)
+        {
+            return Ok(None);
+        }
+        Factory {
+            id: ACQUIRE_ADVISORIES.into(),
+            publication_gate: self.publication_gate.clone(),
+        }
+        .prepare_value(bindings)
+        .map(Some)
+    }
+}
 impl ProductCapabilityContributor for DependencySecurityCapabilityContributor {
     fn owner_domain(&self) -> &str {
         "dependency-security"
@@ -74,7 +98,7 @@ impl ProductCapabilityContributor for DependencySecurityCapabilityContributor {
             .collect()
     }
     fn implementation_offers(&self) -> Vec<CapabilityImplementationOffer> {
-        let publication_gate = Arc::new(tokio::sync::Mutex::new(()));
+        let publication_gate = self.publication_gate.clone();
         self.published_contracts()
             .into_iter()
             .map(|revision| {
@@ -111,6 +135,16 @@ impl CapabilityInvokerFactory for Factory {
         _request: &CapabilityFactoryRequest<'_>,
         bindings: &OwnerBindingView,
     ) -> Result<PreparedCapabilityInvoker, CapabilityContributionDiagnostic> {
+        self.prepare_value(bindings)
+            .map(|value| Arc::new(value) as PreparedCapabilityInvoker)
+    }
+}
+
+impl Factory {
+    fn prepare_value(
+        &self,
+        bindings: &OwnerBindingView,
+    ) -> Result<SecurityCapability, CapabilityContributionDiagnostic> {
         let policy: PolicyBinding = serde_json::from_str(
             bindings
                 .get(POLICY)
@@ -169,7 +203,7 @@ impl CapabilityInvokerFactory for Factory {
                 include_transitive: true,
             },
         };
-        Ok(Arc::new(SecurityCapability {
+        Ok(SecurityCapability {
             publication_gate: self.publication_gate.clone(),
             id: self.id.clone(),
             subject,
@@ -178,7 +212,7 @@ impl CapabilityInvokerFactory for Factory {
             cargo,
             advisories,
             limits,
-        }))
+        })
     }
 }
 
@@ -356,7 +390,7 @@ mod tests {
             (ADVISORY_SOURCE.into(), advisory_path.display().to_string()),
         ]));
         let inventory = ProductCapabilityInventory::assemble(vec![Arc::new(
-            DependencySecurityCapabilityContributor,
+            DependencySecurityCapabilityContributor::default(),
         )])
         .unwrap();
         let contracts: Vec<_> = inventory
