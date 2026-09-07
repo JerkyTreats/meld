@@ -84,6 +84,15 @@ pub(crate) fn current(
     capability: &SecurityCapability,
     events: &EventReplayCapability,
 ) -> Result<Option<CurrentSecurityCondition>, ApiError> {
+    current_state(capability, events).map(|(current, _)| current)
+}
+
+type SourceBodies = BTreeMap<String, serde_json::Value>;
+
+pub(crate) fn current_state(
+    capability: &SecurityCapability,
+    events: &EventReplayCapability,
+) -> Result<(Option<CurrentSecurityCondition>, SourceBodies), ApiError> {
     let mut cursor = LedgerCursor {
         ledger_id: events.ledger_identity(),
         after_seq: 0,
@@ -108,8 +117,13 @@ pub(crate) fn current(
         }
         let frozen = *tip.get_or_insert(page.coverage.tip_seq);
         for record in page.records.iter().filter(|record| record.seq <= frozen) {
-            if record.domain_id == OWNER && record.event_type == super::observation::EVENT {
-                let observed = super::observation::AdvisoryObservation::from_record(
+            if record.domain_id == OWNER
+                && matches!(
+                    record.event_type.as_str(),
+                    super::observation::EVENT | super::observation::INVENTORY_EVENT
+                )
+            {
+                let observed = super::observation::SourceObservation::from_record(
                     record,
                     events.ledger_identity(),
                 )
@@ -118,28 +132,27 @@ pub(crate) fn current(
                     continue;
                 }
                 reference_time = reference_time.max(observed.observed_at);
-                products.remove(ADVISORIES);
-                products.remove(super::observation::UNAVAILABLE);
-                bodies.remove(ADVISORIES);
+                let kind = observed.kind().to_owned();
+                let unavailable = observed.unavailable_kind().to_owned();
+                products.remove(&kind);
+                products.remove(&unavailable);
+                bodies.remove(&kind);
                 let receipt_id = observed
                     .record_id(events.ledger_identity())
                     .map_err(invalid)?;
-                if let Some(product) = observed.advisory {
+                if let Some((product_id, body)) = observed.product().map_err(invalid)? {
                     products.insert(
-                        ADVISORIES.into(),
+                        kind.clone(),
                         ProductPosition {
                             receipt_id,
                             receipt_seq: record.seq,
-                            product_id: product.snapshot_id.clone(),
+                            product_id,
                         },
                     );
-                    bodies.insert(
-                        ADVISORIES.into(),
-                        serde_json::to_value(product).map_err(invalid)?,
-                    );
+                    bodies.insert(kind, body);
                 } else {
                     products.insert(
-                        super::observation::UNAVAILABLE.into(),
+                        unavailable,
                         ProductPosition {
                             receipt_id,
                             receipt_seq: record.seq,
@@ -190,8 +203,14 @@ pub(crate) fn current(
                 .map_err(invalid)?
                 .timestamp();
             reference_time = reference_time.max(u64::try_from(at).map_err(invalid)?);
-            if artifact.artifact_type_id == ADVISORIES {
-                products.remove(super::observation::UNAVAILABLE);
+            match artifact.artifact_type_id.as_str() {
+                ADVISORIES => {
+                    products.remove(super::observation::UNAVAILABLE);
+                }
+                INVENTORY => {
+                    products.remove(super::observation::INVENTORY_UNAVAILABLE);
+                }
+                _ => {}
             }
             products.insert(
                 artifact.artifact_type_id.clone(),
@@ -214,7 +233,7 @@ pub(crate) fn current(
         cursor = page.next_cursor;
     }
     if products.is_empty() {
-        return Ok(None);
+        return Ok((None, bodies));
     }
     let inventory: Option<DependencyInventorySnapshotV1> = bodies
         .get(INVENTORY)
@@ -259,18 +278,22 @@ pub(crate) fn current(
         }
         _ => false,
     };
-    Ok(Some(CurrentSecurityCondition {
-        subject: capability.subject.subject.clone(),
-        policy_revision: capability.policy.revision_ref().map_err(invalid)?,
-        reference_time,
-        products,
-        coverage_current: matches!(
-            current.posture,
-            DependencySecurityPosture::CleanWithinCoverage | DependencySecurityPosture::Violated
-        ),
-        current_posture: current.posture,
-        verified_clean,
-    }))
+    Ok((
+        Some(CurrentSecurityCondition {
+            subject: capability.subject.subject.clone(),
+            policy_revision: capability.policy.revision_ref().map_err(invalid)?,
+            reference_time,
+            products,
+            coverage_current: matches!(
+                current.posture,
+                DependencySecurityPosture::CleanWithinCoverage
+                    | DependencySecurityPosture::Violated
+            ),
+            current_posture: current.posture,
+            verified_clean,
+        }),
+        bodies,
+    ))
 }
 
 impl CurrentSecurityCondition {

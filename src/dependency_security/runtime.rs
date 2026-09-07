@@ -1,4 +1,4 @@
-//! Native advisory source observation and lifecycle evidence owned by Security.
+//! Native Security source observation and lifecycle evidence owned by Security.
 
 use super::{capability::SecurityCapability, observation};
 use crate::runtime::assembly::{
@@ -15,7 +15,7 @@ pub const RUNTIME_ID: &str = "dependency_security.observation";
 
 #[derive(Clone)]
 pub(crate) struct SecurityObservationBinding {
-    pub source: SecurityCapability,
+    pub sources: Vec<SecurityCapability>,
     pub authority: AuthorityPolicyBinding,
     pub events: EventAppendCapability,
     pub route: meld_world_model::world_state::graph::admission::GraphOwnerEventRoute,
@@ -27,31 +27,54 @@ pub(crate) struct SecurityObservationActor {
     lifecycle: NativeLifecycle,
     running: bool,
     fence: Option<(String, String)>,
+    next_source: usize,
+    executor: Option<tokio::runtime::Runtime>,
 }
 
 impl SecurityObservationActor {
     pub(crate) fn new(binding: SecurityObservationBinding) -> Self {
+        let source_refs: Vec<_> = binding
+            .sources
+            .iter()
+            .map(|source| {
+                (
+                    &source.id,
+                    &source.subject,
+                    &source.policy,
+                    &source.workspace,
+                    &source.cargo,
+                    &source.advisories,
+                    &source.limits,
+                )
+            })
+            .collect();
         let binding_id = super::contracts::content_hash(&(
-            &binding.source.subject,
-            &binding.source.policy,
-            &binding.source.advisories,
-            &binding.source.limits,
+            source_refs,
             &binding.authority,
             binding.events.ledger_identity(),
         ))
         .expect("Security source binding serializes");
+        let executor = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .ok();
         Self {
             binding,
             binding_id,
             lifecycle: NativeLifecycle::new(RUNTIME_ID),
             running: false,
             fence: None,
+            next_source: 0,
+            executor,
         }
     }
 
     fn current(&self) -> Result<Option<super::condition::CurrentSecurityCondition>, String> {
         super::condition::current(
-            &self.binding.source,
+            self.binding
+                .sources
+                .first()
+                .ok_or("Security observer has no selected sources")?,
             &self.binding.events.replay_capability(),
         )
         .map_err(|e| e.to_string())
@@ -68,10 +91,7 @@ impl SecurityObservationActor {
     }
 
     fn wake(&self) -> StructuralWakeRef {
-        StructuralWakeRef::PassiveSubscription(format!(
-            "security-advisory-poll::{}",
-            self.binding_id
-        ))
+        StructuralWakeRef::PassiveSubscription(format!("security-source-poll::{}", self.binding_id))
     }
 
     pub(crate) fn tick(&mut self, budget: WorkBudget) -> WorkerTickReport {
@@ -85,7 +105,11 @@ impl SecurityObservationActor {
                 agent_id: None,
                 perspective_key: None,
                 branch_id: None,
-                subject_key: Some(self.binding.source.subject.subject.index_key()),
+                subject_key: self
+                    .binding
+                    .sources
+                    .first()
+                    .map(|source| source.subject.subject.index_key()),
             },
             input_checkpoint: WorkerCheckpoint {
                 name: "security_source_position".into(),
@@ -113,20 +137,37 @@ impl SecurityObservationActor {
         if budget.max_items == 0 {
             return report;
         }
-        if let Ok(_owner) = self.binding.source.publication_gate.try_lock() {
+        let source = &self.binding.sources[self.next_source];
+        self.next_source = (self.next_source + 1) % self.binding.sources.len();
+        if let Ok(_owner) = source.publication_gate.try_lock() {
             report.items_attempted = 1;
             let (generation, incarnation) = self
                 .fence
                 .as_ref()
                 .expect("running native source has a fence");
-            match observation::poll(
-                &self.binding.source,
-                &self.binding.authority,
-                &self.binding_id,
-                generation,
-                incarnation,
-                &self.binding.events,
-            ) {
+            let result = if source.id == super::capability::OBSERVE_INVENTORY {
+                self.executor
+                    .as_ref()
+                    .expect("ready source has an executor")
+                    .block_on(observation::poll_inventory(
+                        source,
+                        &self.binding.authority,
+                        &self.binding_id,
+                        generation,
+                        incarnation,
+                        &self.binding.events,
+                    ))
+            } else {
+                observation::poll(
+                    source,
+                    &self.binding.authority,
+                    &self.binding_id,
+                    generation,
+                    incarnation,
+                    &self.binding.events,
+                )
+            };
+            match result {
                 Ok((committed, error)) => {
                     report.items_committed = usize::from(committed);
                     if let Some(message) = error {
@@ -155,7 +196,11 @@ impl SecurityObservationActor {
         if !report.made_progress() {
             report.waiting_on.push(WaitingOnDeclaration {
                 condition: "security_source_poll".into(),
-                subject_key: Some(self.binding.source.subject.subject.index_key()),
+                subject_key: self
+                    .binding
+                    .sources
+                    .first()
+                    .map(|source| source.subject.subject.index_key()),
                 detail: "Awaiting the bound Security source poll".into(),
                 wake_refs: vec![self.wake()],
             });
@@ -164,28 +209,47 @@ impl SecurityObservationActor {
     }
 
     fn evidence(&self) -> Result<NativeLifecycleEvidence, String> {
-        let _owner = self
+        let primary = self
             .binding
-            .source
+            .sources
+            .first()
+            .ok_or("Security observer has no selected sources")?;
+        let _owner = primary
             .publication_gate
             .try_lock()
             .map_err(|_| "Security source publication is still in flight")?;
-        observation::validate_permission(
-            &self.binding.authority,
-            &self.binding.source.subject.subject,
-        )?;
-        self.binding.source.limits.validate()?;
-        if self.binding.source.id != super::capability::ACQUIRE_ADVISORIES {
-            return Err("Security observer is not bound to its selected read capability".into());
+        if self.executor.is_none() {
+            return Err("Security source executor is unavailable".into());
         }
-        if self
-            .binding
-            .source
-            .advisories
-            .as_ref()
-            .is_none_or(|path| !path.is_absolute())
-        {
-            return Err("Security observation has no exact absolute source binding".into());
+        for source in &self.binding.sources {
+            observation::validate_permission(
+                &self.binding.authority,
+                &source.subject.subject,
+                &source.id,
+            )?;
+            source.limits.validate()?;
+            if source.subject != primary.subject
+                || source.policy != primary.policy
+                || !std::sync::Arc::ptr_eq(&source.publication_gate, &primary.publication_gate)
+            {
+                return Err(
+                    "Security sources must share their exact subject, policy and publication owner"
+                        .into(),
+                );
+            }
+            let paths = match source.id.as_str() {
+                super::capability::ACQUIRE_ADVISORIES => vec![source.advisories.as_ref()],
+                super::capability::OBSERVE_INVENTORY => {
+                    vec![source.workspace.as_ref(), source.cargo.as_ref()]
+                }
+                _ => return Err("Security observer has a non-source Capability".into()),
+            };
+            if paths
+                .into_iter()
+                .any(|path| path.is_none_or(|path| !path.is_absolute()))
+            {
+                return Err("Security observation has no exact absolute source binding".into());
+            }
         }
         if self.binding.route != super::condition::graph_route() {
             return Err("Security current-condition Graph route is not installed".into());
@@ -198,7 +262,7 @@ impl SecurityObservationActor {
         );
         let pending = current.is_some()
             && !super::condition::is_published(
-                &self.binding.source,
+                &self.binding.sources[0],
                 &self.binding.events.replay_capability(),
             )
             .map_err(|e| e.to_string())?;
@@ -207,23 +271,30 @@ impl SecurityObservationActor {
             installed_revision_refs: vec![
                 observation::EVENT.into(),
                 {
-                    let policy = self.binding.source.policy.revision_ref()?;
+                    let policy = primary.policy.revision_ref()?;
                     format!(
                         "{}::{}::{}",
                         policy.registry, policy.id, policy.content_hash
                     )
                 },
-                super::capability::contract(super::capability::ACQUIRE_ADVISORIES)
-                    .content_identity(),
+                observation::INVENTORY_EVENT.into(),
                 self.binding.authority.content_hash.clone(),
                 self.binding
                     .route
                     .revision_ref()
                     .map_err(|e| e.to_string())?
                     .content_hash,
-            ],
+            ]
+            .into_iter()
+            .chain(
+                self.binding
+                    .sources
+                    .iter()
+                    .map(|source| super::capability::contract(&source.id).content_identity()),
+            )
+            .collect(),
             binding_refs: vec![self.binding_id.clone()],
-            subscription_refs: vec![format!("security-advisory-poll::{}", self.binding_id)],
+            subscription_refs: vec![format!("security-source-poll::{}", self.binding_id)],
             proof_position_ref: checkpoint,
             unresolved_operation_summary_ref: super::contracts::content_hash(&(current, pending))?,
         })
@@ -372,8 +443,20 @@ mod tests {
         .unwrap();
         let (source, authority, _) =
             observation::tests::fixture(&root.path().join("missing-source.json"));
+        let mut inventory = source.clone();
+        inventory.id = super::super::capability::OBSERVE_INVENTORY.into();
+        inventory.workspace = Some(root.path().join("workspace"));
+        inventory.cargo = Some(env!("CARGO").into());
+        inventory.advisories = None;
+        let mut policy = authority.policy;
+        policy
+            .principal_granted_action_ids
+            .push(inventory.id.clone());
+        policy.runtime_allowed_action_ids.push(inventory.id.clone());
+        let authority =
+            AuthorityPolicyBinding::new(policy.clone(), policy.content_hash().unwrap()).unwrap();
         let binding = SecurityObservationBinding {
-            source,
+            sources: vec![source, inventory],
             authority,
             events: events.append_capability(),
             route: super::super::condition::graph_route(),
@@ -397,10 +480,16 @@ mod tests {
             owner.native_resolves_wake(&owner.wake()).unwrap(),
             "missing files remain observable through the bound poll"
         );
-        let mut foreign = binding;
-        foreign.source.advisories = Some(root.path().join("foreign-source.json"));
-        let other = SecurityObservationActor::new(foreign);
-        assert!(!owner.native_resolves_wake(&other.wake()).unwrap());
+        for variant in 0..3 {
+            let mut foreign = binding.clone();
+            match variant {
+                0 => foreign.sources[0].advisories = Some(root.path().join("foreign-source.json")),
+                1 => foreign.sources[1].workspace = Some(root.path().join("foreign-workspace")),
+                _ => foreign.sources[1].cargo = Some(root.path().join("foreign-cargo")),
+            }
+            let other = SecurityObservationActor::new(foreign);
+            assert!(!owner.native_resolves_wake(&other.wake()).unwrap());
+        }
         let before = owner.evidence().unwrap();
         let tick = owner.tick(WorkBudget { max_items: 1 });
         assert_eq!(tick.items_committed, 1, "{tick:?}");
@@ -408,6 +497,11 @@ mod tests {
             .retryable_errors
             .iter()
             .any(|issue| issue.code == "security_source_unavailable"));
+        let inventory_failure = owner.tick(WorkBudget { max_items: 1 });
+        assert_eq!(
+            inventory_failure.items_committed, 1,
+            "{inventory_failure:?}"
+        );
         let unchanged_failure = owner.tick(WorkBudget { max_items: 1 });
         assert_eq!(unchanged_failure.items_committed, 0);
         assert!(unchanged_failure
@@ -418,6 +512,10 @@ mod tests {
         assert_ne!(before.proof_position_ref, after.proof_position_ref);
         assert!(after.installed_revision_refs.contains(
             &super::super::capability::contract(super::super::capability::ACQUIRE_ADVISORIES)
+                .content_identity()
+        ));
+        assert!(after.installed_revision_refs.contains(
+            &super::super::capability::contract(super::super::capability::OBSERVE_INVENTORY)
                 .content_identity()
         ));
         let mut predecessor = context.clone();

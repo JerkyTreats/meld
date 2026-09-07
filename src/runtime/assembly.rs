@@ -414,7 +414,7 @@ pub struct ProductCapabilityRuntime {
     pub catalog: CapabilityCatalog,
     /// Matching executable invokers visible to dispatch.
     pub registry: crate::capability::CapabilityExecutorRegistry,
-    security_observation: Option<crate::dependency_security::capability::SecurityCapability>,
+    security_observation: Vec<crate::dependency_security::capability::SecurityCapability>,
 }
 
 /// Execution route ports injected for the dispatch actor.
@@ -714,7 +714,7 @@ fn activate_exact_capabilities(
     }
     Ok(ProductCapabilityRuntime {
         security_observation: security_owner
-            .observation_source(&owner_bindings, contracts)
+            .observation_sources(&owner_bindings, contracts)
             .map_err(|error| crate::error::ApiError::ConfigError(error.to_string()))?,
         catalog: prepared.contracts,
         registry: prepared.invokers,
@@ -2230,11 +2230,12 @@ impl RuntimeSemanticHandleFactory {
                 let Some(composed) = stewardship else {
                     return Ok(Self::None);
                 };
-                let Some(source) = composed
+                let Some(sources) = composed
                     .theory
                     .capability_runtime
                     .as_ref()
-                    .and_then(|runtime| runtime.security_observation.clone())
+                    .map(|runtime| runtime.security_observation.clone())
+                    .filter(|sources| !sources.is_empty())
                 else {
                     return Ok(Self::None);
                 };
@@ -2253,7 +2254,7 @@ impl RuntimeSemanticHandleFactory {
                 };
                 Ok(Self::SecurityObservation(Box::new(
                     crate::dependency_security::runtime::SecurityObservationBinding {
-                        source,
+                        sources,
                         authority,
                         events: ports.event_append().append_capability(),
                         route,
@@ -7721,25 +7722,41 @@ mod tests {
 
     #[test]
     fn native_security_acquires_confirms_and_judges_current_verified_coverage() {
-        assert_native_security_reconciliation(true, false, false);
+        assert_native_security_reconciliation(true, false, SecuritySourceAdvance::None);
     }
 
     #[test]
     fn native_security_violated_assessment_cannot_satisfy_goal() {
-        assert_native_security_reconciliation(true, true, false);
+        assert_native_security_reconciliation(true, true, SecuritySourceAdvance::None);
     }
 
     #[test]
     fn native_security_incomplete_coverage_cannot_satisfy_goal() {
-        assert_native_security_reconciliation(false, false, false);
+        assert_native_security_reconciliation(false, false, SecuritySourceAdvance::None);
     }
 
     #[test]
     fn native_security_advisory_advance_reopens_goal_without_workspace_change() {
-        assert_native_security_reconciliation(true, false, true);
+        assert_native_security_reconciliation(true, false, SecuritySourceAdvance::Advisory);
     }
 
-    fn assert_native_security_reconciliation(complete: bool, finding: bool, advance: bool) {
+    #[test]
+    fn native_security_inventory_advance_reopens_goal_without_advisory_change() {
+        assert_native_security_reconciliation(true, false, SecuritySourceAdvance::Inventory);
+    }
+
+    #[derive(Clone, Copy, PartialEq)]
+    enum SecuritySourceAdvance {
+        None,
+        Advisory,
+        Inventory,
+    }
+
+    fn assert_native_security_reconciliation(
+        complete: bool,
+        finding: bool,
+        advance: SecuritySourceAdvance,
+    ) {
         use crate::dependency_security::{
             advisory::AdvisorySourceDocumentV1, contracts::*, inventory::cargo,
         };
@@ -7806,12 +7823,12 @@ mod tests {
                         source_identity: component.source_identity.clone(),
                     })
                     .collect(),
-                advisories: if finding {
+                advisories: if finding || advance == SecuritySourceAdvance::Inventory {
                     vec![NormalizedAdvisoryV1 {
                         source_advisory_id: "runtime-advisory".into(),
                         aliases: vec![],
                         package_name: "security-runtime-proof".into(),
-                        affected_versions: vec!["1.0.0".into()],
+                        affected_versions: vec![if finding { "1.0.0" } else { "2.0.0" }.into()],
                         severity: SeverityV1::High,
                     }]
                 } else {
@@ -8008,7 +8025,8 @@ mod tests {
             after.planner_projection.confidence,
             coverage.planner_projection.confidence
         );
-        if advance {
+        if advance != SecuritySourceAdvance::None {
+            let advisory_bytes = std::fs::read(&source).unwrap();
             let manifest = std::fs::read(harness._workspace.path().join("Cargo.toml")).unwrap();
             let mut changed: AdvisorySourceDocumentV1 =
                 serde_json::from_slice(&std::fs::read(&source).unwrap()).unwrap();
@@ -8020,7 +8038,23 @@ mod tests {
                 affected_versions: vec!["1.0.0".into()],
                 severity: SeverityV1::High,
             });
-            std::fs::write(&source, serde_json::to_vec(&changed).unwrap()).unwrap();
+            let replace_inventory = |version: &str| {
+                let text = String::from_utf8(manifest.clone())
+                    .unwrap()
+                    .replace("1.0.0", version);
+                std::fs::write(harness._workspace.path().join("Cargo.toml"), text).unwrap();
+                let output = std::process::Command::new(env!("CARGO"))
+                    .args(["generate-lockfile", "--offline"])
+                    .current_dir(harness._workspace.path())
+                    .output()
+                    .unwrap();
+                assert!(output.status.success());
+            };
+            if advance == SecuritySourceAdvance::Inventory {
+                replace_inventory("2.0.0");
+            } else {
+                std::fs::write(&source, serde_json::to_vec(&changed).unwrap()).unwrap();
+            }
             for pass in 0..60 {
                 resumed.tick(4_100 + pass * 10).unwrap();
             }
@@ -8030,7 +8064,7 @@ mod tests {
             assert_eq!(
                 goals.len(),
                 2,
-                "advisory knowledge must reopen the standing condition without a workspace change"
+                "changed Security source knowledge must reopen the standing condition"
             );
             let successor = goals
                 .iter()
@@ -8047,10 +8081,15 @@ mod tests {
                     disposition.lifecycle,
                     meld_lang::GoalLifecycle::Satisfied { .. }
                 )));
-            assert_eq!(
-                std::fs::read(harness._workspace.path().join("Cargo.toml")).unwrap(),
-                manifest
-            );
+            if advance == SecuritySourceAdvance::Inventory {
+                assert_eq!(std::fs::read(&source).unwrap(), advisory_bytes);
+            } else {
+                assert_eq!(
+                    std::fs::read(harness._workspace.path().join("Cargo.toml")).unwrap(),
+                    manifest
+                );
+            }
+
             let successor_id = successor.goal.goal_id.clone();
             let completed = store.completed_history_for_goal(&successor_id).unwrap();
             assert!(completed.iter().any(|entry| matches!(
@@ -8070,7 +8109,11 @@ mod tests {
             assert_eq!(returned.iter().filter(|record| record.event_type == "dependency_security.invocation_return.v1").count(), 8);
             changed.source_revision = "restored-current-coverage".into();
             changed.advisories.clear();
-            std::fs::write(&source, serde_json::to_vec(&changed).unwrap()).unwrap();
+            if advance == SecuritySourceAdvance::Inventory {
+                replace_inventory("1.0.0");
+            } else {
+                std::fs::write(&source, serde_json::to_vec(&changed).unwrap()).unwrap();
+            }
             for pass in 0..60 {
                 resumed.tick(5_100 + pass * 10).unwrap();
             }

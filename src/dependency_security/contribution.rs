@@ -62,23 +62,26 @@ pub struct DependencySecurityCapabilityContributor {
 }
 
 impl DependencySecurityCapabilityContributor {
-    pub(crate) fn observation_source(
+    pub(crate) fn observation_sources(
         &self,
         bindings: &OwnerBindingView,
         contracts: &[CapabilityTypeContract],
-    ) -> Result<Option<SecurityCapability>, CapabilityContributionDiagnostic> {
-        if !contracts
-            .iter()
-            .any(|contract| contract.capability_type_id == ACQUIRE_ADVISORIES)
-        {
-            return Ok(None);
-        }
-        Factory {
-            id: ACQUIRE_ADVISORIES.into(),
-            publication_gate: self.publication_gate.clone(),
-        }
-        .prepare_value(bindings)
-        .map(Some)
+    ) -> Result<Vec<SecurityCapability>, CapabilityContributionDiagnostic> {
+        [ACQUIRE_ADVISORIES, OBSERVE_INVENTORY]
+            .into_iter()
+            .filter(|id| {
+                contracts
+                    .iter()
+                    .any(|contract| contract.capability_type_id == *id)
+            })
+            .map(|id| {
+                Factory {
+                    id: id.into(),
+                    publication_gate: self.publication_gate.clone(),
+                }
+                .prepare_value(bindings)
+            })
+            .collect()
     }
 }
 impl ProductCapabilityContributor for DependencySecurityCapabilityContributor {

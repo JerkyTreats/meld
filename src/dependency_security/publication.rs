@@ -244,18 +244,28 @@ pub(super) fn product_publication(
     )
 }
 
-pub(super) fn observed_advisory_publication(
+pub(super) fn observed_source_publication(
     subject: &DependencySecuritySubjectV1,
     receipt_id: &str,
-    advisory: &AdvisoryKnowledgeSnapshotV1,
+    kind: &str,
+    product: Value,
 ) -> Result<OwnerPublicationOperation, ApiError> {
-    publish_product(
-        subject,
-        receipt_id,
-        ADVISORIES,
-        &serde_json::to_value(advisory).map_err(invalid)?,
-        content_hash(&(receipt_id, advisory)).map_err(invalid)?,
-    )
+    // Retained advisory publications keep their original typed serialization identity.
+    let revision = match kind {
+        ADVISORIES => content_hash(&(
+            receipt_id,
+            serde_json::from_value::<AdvisoryKnowledgeSnapshotV1>(product.clone())
+                .map_err(invalid)?,
+        )),
+        INVENTORY => content_hash(&(
+            receipt_id,
+            serde_json::from_value::<DependencyInventorySnapshotV1>(product.clone())
+                .map_err(invalid)?,
+        )),
+        _ => return Err(invalid("observation cannot publish a non-source product")),
+    }
+    .map_err(invalid)?;
+    publish_product(subject, receipt_id, kind, &product, revision)
 }
 
 fn publish_product(

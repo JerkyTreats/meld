@@ -1,4 +1,4 @@
-//! Durable, standing advisory observations. These are source evidence, never Task returns.
+//! Durable, standing Security source observations. These are source evidence, never Task returns.
 
 use super::{capability::*, contracts::*, policy::DependencySecurityPolicyV1, publication::OWNER};
 use meld_events::{
@@ -9,10 +9,12 @@ use meld_lang::AuthorityPolicyBinding;
 use serde::{Deserialize, Serialize};
 
 pub const EVENT: &str = "dependency_security.advisory_observed.v1";
+pub const INVENTORY_EVENT: &str = "dependency_security.inventory_observed.v1";
+pub(super) const INVENTORY_UNAVAILABLE: &str = "dependency_security_inventory_unavailable";
 pub(super) const UNAVAILABLE: &str = "dependency_security_advisory_unavailable";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) struct AdvisoryObservation {
+pub(super) struct SourceObservation {
     pub subject: DependencySecuritySubjectV1,
     pub policy: DependencySecurityPolicyV1,
     pub authority: AuthorityPolicyBinding,
@@ -23,34 +25,82 @@ pub(super) struct AdvisoryObservation {
     pub observed_at: u64,
     pub advisory: Option<AdvisoryKnowledgeSnapshotV1>,
     pub failure: Option<String>,
+    // Omitted fields preserve the exact identity of retained advisory v1 records.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_action: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inventory: Option<DependencyInventorySnapshotV1>,
 }
 
 pub(super) fn validate_permission(
     authority: &AuthorityPolicyBinding,
     subject: &meld_events::DomainObjectRef,
+    action: &str,
 ) -> Result<(), String> {
     authority.validate().map_err(|e| e.to_string())?;
     let policy = &authority.policy;
-    if &policy.subject != subject
+    if !matches!(action, ACQUIRE_ADVISORIES | OBSERVE_INVENTORY)
+        || &policy.subject != subject
         || !policy
             .principal_granted_action_ids
             .iter()
-            .any(|id| id == ACQUIRE_ADVISORIES)
+            .any(|id| id == action)
         || !policy
             .runtime_allowed_action_ids
             .iter()
-            .any(|id| id == ACQUIRE_ADVISORIES)
-        || policy
-            .restricted_action_ids
-            .iter()
-            .any(|id| id == ACQUIRE_ADVISORIES)
+            .any(|id| id == action)
+        || policy.restricted_action_ids.iter().any(|id| id == action)
     {
-        return Err("standing Security observation requires the exact granted advisory read action and subject".into());
+        return Err("standing Security observation requires the exact granted source read action and subject".into());
     }
     Ok(())
 }
 
-impl AdvisoryObservation {
+impl SourceObservation {
+    pub fn action(&self) -> &str {
+        self.source_action.as_deref().unwrap_or(ACQUIRE_ADVISORIES)
+    }
+
+    pub fn kind(&self) -> &str {
+        if self.action() == OBSERVE_INVENTORY {
+            INVENTORY
+        } else {
+            ADVISORIES
+        }
+    }
+
+    pub fn unavailable_kind(&self) -> &str {
+        if self.action() == OBSERVE_INVENTORY {
+            INVENTORY_UNAVAILABLE
+        } else {
+            UNAVAILABLE
+        }
+    }
+
+    fn event_type(&self) -> &str {
+        if self.action() == OBSERVE_INVENTORY {
+            INVENTORY_EVENT
+        } else {
+            EVENT
+        }
+    }
+
+    pub fn product(&self) -> Result<Option<(String, serde_json::Value)>, String> {
+        if let Some(product) = &self.inventory {
+            Ok(Some((
+                product.snapshot_id.clone(),
+                serde_json::to_value(product).map_err(|e| e.to_string())?,
+            )))
+        } else if let Some(product) = &self.advisory {
+            Ok(Some((
+                product.snapshot_id.clone(),
+                serde_json::to_value(product).map_err(|e| e.to_string())?,
+            )))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn record_id(&self, ledger: meld_events::LedgerIdentity) -> Result<String, String> {
         Ok(format!(
             "security-source-observation::{}",
@@ -59,7 +109,7 @@ impl AdvisoryObservation {
     }
 
     pub fn validate(&self) -> Result<(), String> {
-        validate_permission(&self.authority, &self.subject.subject)?;
+        validate_permission(&self.authority, &self.subject.subject, self.action())?;
         self.policy.validate()?;
         if self.binding_id.is_empty()
             || self.generation_id.is_empty()
@@ -67,8 +117,14 @@ impl AdvisoryObservation {
         {
             return Err("Security source observation has no bound owner incarnation".into());
         }
-        match (&self.advisory, &self.failure) {
-            (Some(advisory), None) => {
+        match (&self.advisory, &self.inventory, &self.failure) {
+            (None, Some(inventory), None) if self.action() == OBSERVE_INVENTORY => {
+                inventory.validate()?;
+                if inventory.subject != self.subject {
+                    return Err("observed inventory names a foreign subject".into());
+                }
+            }
+            (Some(advisory), None, None) if self.action() == ACQUIRE_ADVISORIES => {
                 advisory.validate()?;
                 if advisory.source_id != self.policy.required_advisory_source_id
                     || advisory.covered_ecosystem != self.policy.ecosystem
@@ -79,7 +135,7 @@ impl AdvisoryObservation {
                     );
                 }
             }
-            (None, Some(failure)) if !failure.is_empty() => {}
+            (None, None, Some(failure)) if !failure.is_empty() => {}
             _ => {
                 return Err(
                     "source observation requires one exact product or unavailable disposition"
@@ -96,7 +152,9 @@ impl AdvisoryObservation {
     ) -> Result<Self, String> {
         let value: Self = serde_json::from_value(record.data.clone()).map_err(|e| e.to_string())?;
         value.validate()?;
-        if record.record_id.as_deref() != Some(value.record_id(ledger)?.as_str()) {
+        if record.event_type != value.event_type()
+            || record.record_id.as_deref() != Some(value.record_id(ledger)?.as_str())
+        {
             return Err("Security observation identity differs from its retained body".into());
         }
         Ok(value)
@@ -108,7 +166,7 @@ impl AdvisoryObservation {
             "dependency-security-observation",
             OWNER,
             &self.subject.subject.object_id,
-            EVENT,
+            self.event_type(),
             None,
             serde_json::to_value(self).map_err(|e| e.to_string())?,
         )
@@ -119,14 +177,14 @@ impl AdvisoryObservation {
 fn latest(
     capability: &SecurityCapability,
     events: &EventReplayCapability,
-) -> Result<Option<(EventRecord, AdvisoryObservation)>, String> {
+) -> Result<Vec<(EventRecord, SourceObservation)>, String> {
     let ledger_id = events.ledger_identity();
     let mut cursor = LedgerCursor {
         ledger_id,
         after_seq: 0,
     };
     let mut tip = None;
-    let mut latest = None;
+    let mut latest = std::collections::BTreeMap::new();
     loop {
         let page = events
             .replay(ReplayRequest {
@@ -139,11 +197,13 @@ fn latest(
         }
         let frozen = *tip.get_or_insert(page.coverage.tip_seq);
         for record in page.records.into_iter().filter(|record| {
-            record.seq <= frozen && record.domain_id == OWNER && record.event_type == EVENT
+            record.seq <= frozen
+                && record.domain_id == OWNER
+                && matches!(record.event_type.as_str(), EVENT | INVENTORY_EVENT)
         }) {
-            let observed = AdvisoryObservation::from_record(&record, ledger_id)?;
+            let observed = SourceObservation::from_record(&record, ledger_id)?;
             if observed.subject == capability.subject && observed.policy == capability.policy {
-                latest = Some((record, observed));
+                latest.insert(observed.kind().to_owned(), (record, observed));
             }
         }
         if page.next_cursor.after_seq >= frozen {
@@ -154,7 +214,7 @@ fn latest(
         }
         cursor = page.next_cursor;
     }
-    Ok(latest)
+    Ok(latest.into_values().collect())
 }
 
 /// Finish an accepted source publication before another acquisition can supersede it.
@@ -163,31 +223,35 @@ pub(crate) fn resume_pending(
     events: &EventAppendCapability,
 ) -> Result<bool, String> {
     let replay = events.replay_capability();
-    let Some((record, observed)) = latest(capability, &replay)? else {
+    let observations = latest(capability, &replay)?;
+    if observations.is_empty() {
         return Ok(false);
-    };
-    let source_id = observed.record_id(events.ledger_identity())?;
+    }
     let mut envelopes = Vec::new();
-    if let Some(product) = &observed.advisory {
-        let operation = super::publication::observed_advisory_publication(
-            &observed.subject,
-            &source_id,
-            product,
-        )
-        .map_err(|e| e.to_string())?;
-        let mut envelope =
-            meld_world_model::world_state::graph::events::owner_publication_envelope(
-                "dependency-security-observation",
-                &operation,
+    for (record, observed) in observations {
+        let source_id = observed.record_id(events.ledger_identity())?;
+        if let Some((_, product)) = observed.product()? {
+            let operation = super::publication::observed_source_publication(
+                &observed.subject,
+                &source_id,
+                observed.kind(),
+                product,
             )
             .map_err(|e| e.to_string())?;
-        envelope.event_type = super::publication::EVENT.into();
-        envelopes.push(
-            envelope.with_source_records(vec![meld_events::EventRecordRef {
-                ledger_id: events.ledger_identity(),
-                seq: record.seq,
-            }]),
-        );
+            let mut envelope =
+                meld_world_model::world_state::graph::events::owner_publication_envelope(
+                    "dependency-security-observation",
+                    &operation,
+                )
+                .map_err(|e| e.to_string())?;
+            envelope.event_type = super::publication::EVENT.into();
+            envelopes.push(
+                envelope.with_source_records(vec![meld_events::EventRecordRef {
+                    ledger_id: events.ledger_identity(),
+                    seq: record.seq,
+                }]),
+            );
+        }
     }
     envelopes.push(super::condition::publication(capability, &replay).map_err(|e| e.to_string())?);
     let missing = envelopes
@@ -224,20 +288,132 @@ pub(crate) fn poll(
     incarnation_id: &str,
     events: &EventAppendCapability,
 ) -> Result<(bool, Option<String>), String> {
-    validate_permission(authority, &capability.subject.subject)?;
+    validate_permission(authority, &capability.subject.subject, ACQUIRE_ADVISORIES)?;
     let resumed = resume_pending(capability, events)?;
     let current = super::condition::current(capability, &events.replay_capability())
         .map_err(|e| e.to_string())?;
-    let captured = acquire(capability);
+    let captured = acquire(capability).map(|advisory| CapturedSource::Advisory(Box::new(advisory)));
+    record_capture(
+        capability,
+        authority,
+        binding_id,
+        generation_id,
+        incarnation_id,
+        events,
+        current,
+        captured,
+        resumed,
+    )
+}
+
+pub(crate) async fn poll_inventory(
+    capability: &SecurityCapability,
+    authority: &AuthorityPolicyBinding,
+    binding_id: &str,
+    generation_id: &str,
+    incarnation_id: &str,
+    events: &EventAppendCapability,
+) -> Result<(bool, Option<String>), String> {
+    validate_permission(authority, &capability.subject.subject, OBSERVE_INVENTORY)?;
+    let resumed = resume_pending(capability, events)?;
+    let (current, bodies) =
+        super::condition::current_state(capability, &events.replay_capability())
+            .map_err(|e| e.to_string())?;
+    let previous: Option<DependencyInventorySnapshotV1> = bodies
+        .get(INVENTORY)
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(|e| e.to_string())?;
+    // Stable source content retains its acquisition identity. Polling is not an age refresh.
+    let prior_time = previous.as_ref().map_or(0, |product| product.observed_at);
+    let captured = super::inventory::cargo::observe(
+        capability
+            .workspace
+            .as_deref()
+            .ok_or("inventory workspace is absent")?,
+        capability
+            .cargo
+            .as_deref()
+            .ok_or("inventory executable is absent")?,
+        capability.subject.clone(),
+        prior_time,
+        &capability.limits,
+    )
+    .await
+    .and_then(|product| {
+        if previous.as_ref() == Some(&product) {
+            return Ok(product);
+        }
+        DependencyInventorySnapshotV1::canonical(
+            product.subject,
+            product.workspace_revision,
+            product.manifest_content_hash,
+            product.lockfile_content_hash,
+            product.components,
+            product.completeness,
+            now()?,
+        )
+    })
+    .map(|product| CapturedSource::Inventory(Box::new(product)));
+    record_capture(
+        capability,
+        authority,
+        binding_id,
+        generation_id,
+        incarnation_id,
+        events,
+        current,
+        captured,
+        resumed,
+    )
+}
+
+enum CapturedSource {
+    Advisory(Box<AdvisoryKnowledgeSnapshotV1>),
+    Inventory(Box<DependencyInventorySnapshotV1>),
+}
+
+fn now() -> Result<u64, String> {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|time| time.as_secs())
+        .map_err(|e| e.to_string())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_capture(
+    capability: &SecurityCapability,
+    authority: &AuthorityPolicyBinding,
+    binding_id: &str,
+    generation_id: &str,
+    incarnation_id: &str,
+    events: &EventAppendCapability,
+    current: Option<super::condition::CurrentSecurityCondition>,
+    captured: Result<CapturedSource, String>,
+    resumed: bool,
+) -> Result<(bool, Option<String>), String> {
     let failure = captured.as_ref().err().cloned();
     let source_id = match &captured {
-        Ok(advisory) => advisory.snapshot_id.clone(),
+        Ok(CapturedSource::Advisory(product)) => product.snapshot_id.clone(),
+        Ok(CapturedSource::Inventory(product)) => product.snapshot_id.clone(),
         Err(error) => content_hash(error)?,
     };
-    let kind = if captured.is_ok() {
+    let inventory_source = capability.id == OBSERVE_INVENTORY;
+    let product_kind = if inventory_source {
+        INVENTORY
+    } else {
         ADVISORIES
+    };
+    let unavailable = if inventory_source {
+        INVENTORY_UNAVAILABLE
     } else {
         UNAVAILABLE
+    };
+    let kind = if captured.is_ok() {
+        product_kind
+    } else {
+        unavailable
     };
     if current
         .as_ref()
@@ -251,11 +427,16 @@ pub(crate) fn poll(
         .and_then(|condition| {
             condition
                 .products
-                .get(ADVISORIES)
-                .or_else(|| condition.products.get(UNAVAILABLE))
+                .get(product_kind)
+                .or_else(|| condition.products.get(unavailable))
         })
         .map(|position| position.receipt_id.clone());
-    let observation = AdvisoryObservation {
+    let (advisory, inventory) = match captured.ok() {
+        Some(CapturedSource::Advisory(product)) => (Some(*product), None),
+        Some(CapturedSource::Inventory(product)) => (None, Some(*product)),
+        None => (None, None),
+    };
+    let observation = SourceObservation {
         subject: capability.subject.clone(),
         policy: capability.policy.clone(),
         authority: authority.clone(),
@@ -263,12 +444,11 @@ pub(crate) fn poll(
         predecessor_source_id: prior,
         generation_id: generation_id.into(),
         incarnation_id: incarnation_id.into(),
-        observed_at: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| e.to_string())?
-            .as_secs(),
-        advisory: captured.ok(),
+        observed_at: now()?,
+        advisory,
         failure: failure.clone(),
+        source_action: inventory_source.then(|| OBSERVE_INVENTORY.into()),
+        inventory,
     };
     events
         .append_durable_proven(
@@ -369,7 +549,7 @@ pub(super) mod tests {
         ))
         .unwrap();
         std::fs::write(&path, &source).unwrap();
-        let observation = AdvisoryObservation {
+        let observation = SourceObservation {
             subject: capability.subject.clone(),
             policy: capability.policy.clone(),
             authority: authority.clone(),
@@ -380,7 +560,42 @@ pub(super) mod tests {
             observed_at: 10,
             advisory: Some(product.clone()),
             failure: None,
+            source_action: None,
+            inventory: None,
         };
+        #[derive(Serialize)]
+        struct RetainedAdvisoryV1<'a> {
+            subject: &'a DependencySecuritySubjectV1,
+            policy: &'a DependencySecurityPolicyV1,
+            authority: &'a AuthorityPolicyBinding,
+            binding_id: &'a str,
+            predecessor_source_id: &'a Option<String>,
+            generation_id: &'a str,
+            incarnation_id: &'a str,
+            observed_at: u64,
+            advisory: &'a Option<AdvisoryKnowledgeSnapshotV1>,
+            failure: &'a Option<String>,
+        }
+        let legacy = RetainedAdvisoryV1 {
+            subject: &observation.subject,
+            policy: &observation.policy,
+            authority: &observation.authority,
+            binding_id: &observation.binding_id,
+            predecessor_source_id: &observation.predecessor_source_id,
+            generation_id: &observation.generation_id,
+            incarnation_id: &observation.incarnation_id,
+            observed_at: observation.observed_at,
+            advisory: &observation.advisory,
+            failure: &observation.failure,
+        };
+        let retained_body = serde_json::to_vec(&legacy).unwrap();
+        assert_eq!(
+            serde_json::to_vec(&observation).unwrap(),
+            retained_body,
+            "old receipt identity must reproduce byte for byte"
+        );
+        let decoded: SourceObservation = serde_json::from_slice(&retained_body).unwrap();
+        assert_eq!(decoded, observation);
         let first_id;
         {
             let events = EventAuthority::open(
@@ -491,7 +706,187 @@ pub(super) mod tests {
             .unwrap()
             .clone();
         tampered.data["binding_id"] = "foreign-binding".into();
-        assert!(AdvisoryObservation::from_record(&tampered, events.ledger_identity()).is_err());
+        assert!(SourceObservation::from_record(&tampered, events.ledger_identity()).is_err());
+    }
+
+    #[tokio::test]
+    async fn inventory_observation_recovers_then_invalidates_unavailable_source_without_refreshing_unchanged_evidence(
+    ) {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir_all(workspace.join("src")).unwrap();
+        std::fs::write(workspace.join("src/lib.rs"), "pub fn run() {}\n").unwrap();
+        std::fs::write(
+            workspace.join("Cargo.toml"),
+            "[package]\nname = \"inventory-observer\"\nversion = \"1.0.0\"\nedition = \"2021\"\n",
+        )
+        .unwrap();
+        let generated = tokio::process::Command::new(env!("CARGO"))
+            .args(["generate-lockfile", "--offline"])
+            .current_dir(&workspace)
+            .output()
+            .await
+            .unwrap();
+        assert!(generated.status.success());
+        let lock = std::fs::read(workspace.join("Cargo.lock")).unwrap();
+        let (mut capability, authority, _) = fixture(&root.path().join("unused-advisories"));
+        capability.id = OBSERVE_INVENTORY.into();
+        capability.workspace = Some(workspace.clone());
+        capability.cargo = Some(env!("CARGO").into());
+        capability.advisories = None;
+        let mut policy = authority.policy;
+        policy.principal_granted_action_ids = vec![OBSERVE_INVENTORY.into()];
+        policy.runtime_allowed_action_ids = vec![OBSERVE_INVENTORY.into()];
+        let authority =
+            AuthorityPolicyBinding::new(policy.clone(), policy.content_hash().unwrap()).unwrap();
+        let product = super::super::inventory::cargo::observe(
+            &workspace,
+            std::path::Path::new(env!("CARGO")),
+            capability.subject.clone(),
+            7,
+            &capability.limits,
+        )
+        .await
+        .unwrap();
+        let observed = SourceObservation {
+            subject: capability.subject.clone(),
+            policy: capability.policy.clone(),
+            authority: authority.clone(),
+            binding_id: "inventory-binding".into(),
+            predecessor_source_id: None,
+            generation_id: "generation".into(),
+            incarnation_id: "incarnation".into(),
+            observed_at: 7,
+            advisory: None,
+            failure: None,
+            source_action: Some(OBSERVE_INVENTORY.into()),
+            inventory: Some(product.clone()),
+        };
+        {
+            let events = EventAuthority::open(
+                sled::open(root.path().join("events")).unwrap(),
+                EventAuthorityOpenOptions::default(),
+            )
+            .unwrap();
+            events
+                .append_capability()
+                .append_durable_proven(
+                    observed.envelope(events.ledger_identity()).unwrap(),
+                    AppendMode::Idempotent,
+                )
+                .unwrap();
+        }
+        std::fs::remove_file(workspace.join("Cargo.lock")).unwrap();
+        let events = EventAuthority::open(
+            sled::open(root.path().join("events")).unwrap(),
+            EventAuthorityOpenOptions::default(),
+        )
+        .unwrap();
+        assert!(resume_pending(&capability, &events.append_capability()).unwrap());
+        let (recovered, bodies) =
+            super::super::condition::current_state(&capability, &events.replay_capability())
+                .unwrap();
+        assert_eq!(bodies[INVENTORY], serde_json::to_value(&product).unwrap());
+        let original = recovered.unwrap().products[INVENTORY].clone();
+        let unavailable = poll_inventory(
+            &capability,
+            &authority,
+            "inventory-binding",
+            "generation",
+            "incarnation",
+            &events.append_capability(),
+        )
+        .await
+        .unwrap();
+        assert!(unavailable.0 && unavailable.1.is_some());
+        let (condition, bodies) =
+            super::super::condition::current_state(&capability, &events.replay_capability())
+                .unwrap();
+        let condition = condition.unwrap();
+        assert!(!bodies.contains_key(INVENTORY));
+        assert!(condition.products.contains_key(INVENTORY_UNAVAILABLE));
+        assert!(!condition.verified_clean && !condition.coverage_current);
+        let before = events.watermark_capability().snapshot().unwrap().tip_seq;
+        assert!(
+            !poll_inventory(
+                &capability,
+                &authority,
+                "inventory-binding",
+                "generation",
+                "incarnation",
+                &events.append_capability()
+            )
+            .await
+            .unwrap()
+            .0
+        );
+        assert_eq!(
+            events.watermark_capability().snapshot().unwrap().tip_seq,
+            before
+        );
+        std::fs::write(workspace.join("Cargo.lock"), lock).unwrap();
+        assert!(
+            poll_inventory(
+                &capability,
+                &authority,
+                "inventory-binding",
+                "generation",
+                "incarnation",
+                &events.append_capability()
+            )
+            .await
+            .unwrap()
+            .0
+        );
+        let restored = super::super::condition::current(&capability, &events.replay_capability())
+            .unwrap()
+            .unwrap();
+        assert_ne!(restored.products[INVENTORY].receipt_id, original.receipt_id);
+        let before = events.watermark_capability().snapshot().unwrap().tip_seq;
+        assert!(
+            !poll_inventory(
+                &capability,
+                &authority,
+                "inventory-binding",
+                "generation",
+                "incarnation",
+                &events.append_capability()
+            )
+            .await
+            .unwrap()
+            .0
+        );
+        assert_eq!(
+            events.watermark_capability().snapshot().unwrap().tip_seq,
+            before,
+            "polling cannot manufacture a newer acquisition time"
+        );
+        let records = events.replay_capability().newest_page(128).unwrap().records;
+        assert_eq!(
+            records
+                .iter()
+                .filter(|record| record.event_type == INVENTORY_EVENT)
+                .count(),
+            3
+        );
+        assert!(!records
+            .iter()
+            .any(|record| record.event_type == super::super::publication::RECEIPT_EVENT));
+        let mut denied = authority.policy.clone();
+        denied.principal_granted_action_ids = vec![ACQUIRE_ADVISORIES.into()];
+        let denied =
+            AuthorityPolicyBinding::new(denied.clone(), denied.content_hash().unwrap()).unwrap();
+        assert!(poll_inventory(
+            &capability,
+            &denied,
+            "inventory-binding",
+            "generation",
+            "incarnation",
+            &events.append_capability()
+        )
+        .await
+        .unwrap_err()
+        .contains("exact granted source read"));
     }
 
     #[test]
@@ -521,7 +916,7 @@ pub(super) mod tests {
                 "incarnation",
                 &events.append_capability(),
             );
-            assert!(result.unwrap_err().contains("exact granted advisory read"));
+            assert!(result.unwrap_err().contains("exact granted source read"));
         }
         assert_eq!(events.watermark_capability().snapshot().unwrap().tip_seq, 0);
     }
