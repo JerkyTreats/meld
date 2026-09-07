@@ -65,7 +65,8 @@ impl SharedActionDecision {
             .admission
             .as_ref()
             .ok_or("contributing admission missing")?;
-        if primary.lineage.authority_decision != candidate.lineage.authority_decision
+        if primary_admission.agent_id != candidate_admission.agent_id
+            || primary.lineage.authority_decision != candidate.lineage.authority_decision
             || state.admissions[&primary_admission.admission_id]
                 .request
                 .task
@@ -106,7 +107,6 @@ impl SharedActionDecision {
             .as_ref()
             .ok_or("shared work requires contributing admission")?;
         if left.admission_id == right.admission_id
-            || left.agent_id != right.agent_id
             || left.authority_scope_id != right.authority_scope_id
             || left.authority_policy_content_hash != right.authority_policy_content_hash
             || left.activation_generation != right.activation_generation
@@ -116,8 +116,9 @@ impl SharedActionDecision {
                 "shared work requires independent admissions under compatible authority".into(),
             );
         }
-        // Compatibility discharges this action, not the Tasks' different terminal
-        // obligations. Both intact grants remain attached to their admissions.
+        // Agent identity is attribution, not an action permission. Compatibility
+        // requires each Agent's grant to independently cover this action; complete
+        // grants and terminal obligations remain attached to their own admissions.
         let primary_authority = primary
             .lineage
             .authority_decision

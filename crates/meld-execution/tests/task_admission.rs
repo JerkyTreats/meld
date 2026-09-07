@@ -1,3 +1,5 @@
+#[path = "task_admission/cross_agent.rs"]
+mod cross_agent;
 #[path = "support/task_network.rs"]
 mod task_network_support;
 
@@ -876,10 +878,23 @@ fn share_metadata_roots(
 
 #[test]
 fn shared_operational_attempt_preserves_two_admission_accounts_across_reopen() {
+    assert_shared_admission_accounts(false);
+}
+
+#[test]
+fn different_agents_share_one_attempt_and_retain_their_own_discharge_accounts() {
+    assert_shared_admission_accounts(true);
+}
+
+fn assert_shared_admission_accounts(different_agents: bool) {
     use meld_execution::task_network::{dispatch, sharing::admission_discharge_account};
     let db = sled::Config::new().temporary(true).open().unwrap();
     let (catalog, first) = shared_input_request("first", true);
-    let (_, second) = shared_input_request("second", true);
+    let (_, mut second) = shared_input_request("second", true);
+    if different_agents {
+        second.lineage.agent_id = "another-agent".into();
+        second.lineage.context_id = "another-agent-context".into();
+    }
     let mut store = SledTaskNetworkStore::open(db.clone(), "network-docs").unwrap();
     let mut admissions = Vec::new();
     for request in [first, second] {
@@ -1003,6 +1018,16 @@ fn shared_operational_attempt_preserves_two_admission_accounts_across_reopen() {
         .collect();
     assert_ne!(accounts[0].account_id, accounts[1].account_id);
     assert_ne!(accounts[0].admission.goal_id, accounts[1].admission.goal_id);
+    assert_eq!(
+        accounts[0].admission.agent_id != accounts[1].admission.agent_id,
+        different_agents
+    );
+    for (account, admission) in accounts.iter().zip(&admissions) {
+        assert_eq!(
+            account.admission,
+            meld_execution::task_network::TaskAdmissionAttribution::from_record(admission)
+        );
+    }
     assert_eq!(accounts[0].outcome_id, accounts[1].outcome_id);
     assert_eq!(
         accounts[0].shared_action_decision_ids,
@@ -1069,7 +1094,7 @@ fn work_without_owner_permission_or_with_different_input_stays_distinct() {
 #[test]
 fn independently_valid_authority_and_lifecycle_contexts_do_not_imply_compatibility() {
     for difference in [
-        "agent",
+        "agent_and_principal",
         "policy",
         "generation",
         "epoch",
@@ -1079,7 +1104,7 @@ fn independently_valid_authority_and_lifecycle_contexts_do_not_imply_compatibili
         let (catalog, first) = shared_input_request("first", true);
         let (_, mut second) = shared_input_request("second", true);
         match difference {
-            "agent" => {
+            "agent_and_principal" => {
                 second.lineage.agent_id = "another-agent".into();
                 second
                     .lineage
