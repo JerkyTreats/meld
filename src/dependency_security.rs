@@ -8,6 +8,7 @@ pub mod contribution;
 pub mod events;
 pub mod inventory;
 pub mod policy;
+pub mod publication;
 pub mod theory;
 pub mod verification;
 

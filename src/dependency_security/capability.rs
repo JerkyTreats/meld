@@ -87,8 +87,8 @@ pub(crate) fn contract(id: &str) -> CapabilityTypeContract {
         effect_contract: effects,
         execution_contract: ExecutionContract {
             execution_class: ExecutionClass::Inline,
-            completion_semantics: "owner_validated_product_or_failure".into(),
-            retry_class: "source_reacquisition_or_exact_input_replay".into(),
+            completion_semantics: "durable_owner_product_and_graph_publication_or_failure".into(),
+            retry_class: "exact_invocation_receipt_or_source_acquisition".into(),
             cancellation_supported: false,
         },
     }
@@ -114,26 +114,19 @@ impl meld_execution::capability::CapabilityInvoker for SecurityCapability {
 
     async fn invoke(
         &self,
-        _api: &dyn ExecutionRuntimeContext,
+        api: &dyn ExecutionRuntimeContext,
         runtime_init: &CapabilityRuntimeInit,
         payload: &CapabilityInvocationPayload,
-        _event_context: Option<&ExecutionEventContext>,
+        event_context: Option<&ExecutionEventContext>,
     ) -> Result<CapabilityInvocationResult, ApiError> {
-        let expected = self.contract();
-        if runtime_init.capability_type_id != self.id
-            || runtime_init.capability_version != VERSION
-            || runtime_init.scope_ref != self.subject.subject.object_id
-            || runtime_init.scope_kind != expected.scope_contract.scope_kind
-            || runtime_init.input_contract != expected.input_contract
-            || runtime_init.output_contract != expected.output_contract
-            || runtime_init.effect_contract != expected.effect_contract
-            || runtime_init.execution_contract != expected.execution_contract
-        {
-            return Err(invalid(
-                "invocation differs from its prepared Security owner contract or subject",
-            ));
+        let publication =
+            super::publication::Publication::new(self, runtime_init, payload, event_context)?;
+        let events = api
+            .durable_event_append()
+            .ok_or_else(|| invalid("Security invocation has no durable Event authority"))?;
+        if let Some(result) = publication.resume(&events)? {
+            return Ok(result);
         }
-        payload.validate_against(runtime_init)?;
         let reference_time = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|error| invalid(error.to_string()))?
@@ -204,24 +197,159 @@ impl meld_execution::capability::CapabilityInvoker for SecurityCapability {
             }
             _ => return Err(invalid("unknown dependency-security action")),
         };
-        Ok(CapabilityInvocationResult {
-            emitted_artifacts: vec![ArtifactRecord {
-                artifact_id: format!("{}::{artifact_type}", payload.invocation_id),
-                artifact_type_id: artifact_type.into(),
-                schema_version: VERSION,
-                content,
-                producer: ArtifactProducerRef {
-                    task_id: payload
-                        .upstream_lineage
-                        .as_ref()
-                        .map(|lineage| lineage.task_id.clone())
-                        .unwrap_or_default(),
-                    capability_instance_id: runtime_init.capability_instance_id.clone(),
-                    invocation_id: Some(payload.invocation_id.clone()),
-                    output_slot_id: Some(artifact_type.into()),
-                },
-            }],
-        })
+        publication.publish(
+            &events,
+            result(runtime_init, payload, artifact_type, content),
+        )
+    }
+
+    async fn recover(
+        &self,
+        events: Option<&meld_events::EventReplayCapability>,
+        runtime_init: &CapabilityRuntimeInit,
+        payload: &CapabilityInvocationPayload,
+        event_context: Option<&ExecutionEventContext>,
+    ) -> Result<Option<CapabilityInvocationResult>, ApiError> {
+        let publication =
+            super::publication::Publication::new(self, runtime_init, payload, event_context)?;
+        events
+            .map(|events| publication.recover(events))
+            .transpose()
+            .map(Option::flatten)
+    }
+}
+
+impl SecurityCapability {
+    pub(crate) fn validate_invocation(
+        &self,
+        runtime_init: &CapabilityRuntimeInit,
+        payload: &CapabilityInvocationPayload,
+    ) -> Result<(), ApiError> {
+        let expected = self.contract();
+        if runtime_init.capability_type_id != self.id
+            || runtime_init.capability_version != VERSION
+            || runtime_init.scope_ref != self.subject.subject.object_id
+            || runtime_init.scope_kind != expected.scope_contract.scope_kind
+            || runtime_init.input_contract != expected.input_contract
+            || runtime_init.output_contract != expected.output_contract
+            || runtime_init.effect_contract != expected.effect_contract
+            || runtime_init.execution_contract != expected.execution_contract
+        {
+            return Err(invalid(
+                "invocation differs from its prepared Security owner contract or subject",
+            ));
+        }
+        payload.validate_against(runtime_init)?;
+        Ok(())
+    }
+
+    pub(crate) fn validate_result(
+        &self,
+        runtime: &CapabilityRuntimeInit,
+        payload: &CapabilityInvocationPayload,
+        offered: &CapabilityInvocationResult,
+    ) -> Result<(), ApiError> {
+        let [artifact] = offered.emitted_artifacts.as_slice() else {
+            return Err(invalid("Security receipt requires exactly one product"));
+        };
+        let (kind, canonical) = match self.id.as_str() {
+            OBSERVE_INVENTORY => {
+                let product: DependencyInventorySnapshotV1 =
+                    serde_json::from_value(artifact.content.clone())
+                        .map_err(|error| invalid(error.to_string()))?;
+                product.validate().map_err(invalid)?;
+                if product.subject != self.subject {
+                    return Err(invalid("Security inventory names a foreign subject"));
+                }
+                (INVENTORY, encode(product)?)
+            }
+            ACQUIRE_ADVISORIES => {
+                let product: AdvisoryKnowledgeSnapshotV1 =
+                    serde_json::from_value(artifact.content.clone())
+                        .map_err(|error| invalid(error.to_string()))?;
+                product.validate().map_err(invalid)?;
+                if product.source_id != self.policy.required_advisory_source_id
+                    || product.covered_ecosystem != self.policy.ecosystem
+                {
+                    return Err(invalid("Security advisory receipt names a foreign source"));
+                }
+                (ADVISORIES, encode(product)?)
+            }
+            ASSESS => {
+                let offered: DependencySecurityAssessmentV1 =
+                    serde_json::from_value(artifact.content.clone())
+                        .map_err(|error| invalid(error.to_string()))?;
+                let inventory = decode(payload, INVENTORY)?;
+                let advisories = decode(payload, ADVISORIES)?;
+                (
+                    ASSESSMENT,
+                    encode(
+                        super::assessment::assess(
+                            &self.subject,
+                            Some(&inventory),
+                            Some(&advisories),
+                            &self.policy,
+                            offered.reference_time,
+                        )
+                        .map_err(invalid)?,
+                    )?,
+                )
+            }
+            VERIFY => {
+                let inventory: DependencyInventorySnapshotV1 = decode(payload, INVENTORY)?;
+                let advisories = decode(payload, ADVISORIES)?;
+                let assessment: DependencySecurityAssessmentV1 = decode(payload, ASSESSMENT)?;
+                if assessment.subject != self.subject || inventory.subject != self.subject {
+                    return Err(invalid("Security verification names a foreign subject"));
+                }
+                (
+                    VERIFICATION,
+                    encode(
+                        super::verification::verify(
+                            &assessment,
+                            &inventory,
+                            &advisories,
+                            &self.policy,
+                        )
+                        .map_err(invalid)?,
+                    )?,
+                )
+            }
+            _ => return Err(invalid("unknown Security action")),
+        };
+        if result(runtime, payload, kind, canonical).emitted_artifacts != offered.emitted_artifacts
+        {
+            return Err(invalid(
+                "Security receipt differs from its exact owner product",
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn result(
+    runtime_init: &CapabilityRuntimeInit,
+    payload: &CapabilityInvocationPayload,
+    artifact_type: &str,
+    content: serde_json::Value,
+) -> CapabilityInvocationResult {
+    CapabilityInvocationResult {
+        emitted_artifacts: vec![ArtifactRecord {
+            artifact_id: format!("{}::{artifact_type}", payload.invocation_id),
+            artifact_type_id: artifact_type.into(),
+            schema_version: VERSION,
+            content,
+            producer: ArtifactProducerRef {
+                task_id: payload
+                    .upstream_lineage
+                    .as_ref()
+                    .map(|lineage| lineage.task_id.clone())
+                    .unwrap_or_default(),
+                capability_instance_id: runtime_init.capability_instance_id.clone(),
+                invocation_id: Some(payload.invocation_id.clone()),
+                output_slot_id: Some(artifact_type.into()),
+            },
+        }],
     }
 }
 

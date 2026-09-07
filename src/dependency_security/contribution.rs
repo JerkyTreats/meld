@@ -265,7 +265,31 @@ mod tests {
             effect_contract: contract.effect_contract,
             execution_contract: contract.execution_contract,
         };
-        let result = invoker.invoke(api, &runtime, &payload, None).await.unwrap();
+        let context = crate::execution::ExecutionEventContext {
+            session_id: "security-native-proof".into(),
+            effect_authority: Some(meld_execution::ExecutionEffectAuthority {
+                issuer_ref: "security-agent".into(),
+                principal_id: "workspace-owner".into(),
+                subject: DomainObjectRef::new("workspace_fs", "node", "repo").unwrap(),
+                fence_ref: "security-proof-fence".into(),
+            }),
+        };
+        let result = invoker
+            .invoke(api, &runtime, &payload, Some(&context))
+            .await
+            .unwrap();
+        let replay = api.durable_event_append().unwrap().replay_capability();
+        let recovered = invoker
+            .recover(Some(&replay), &runtime, &payload, Some(&context))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(recovered.emitted_artifacts, result.emitted_artifacts);
+        let replayed = invoker
+            .invoke(api, &runtime, &payload, Some(&context))
+            .await
+            .unwrap();
+        assert_eq!(replayed.emitted_artifacts, result.emitted_artifacts);
         assert_eq!(result.emitted_artifacts.len(), 1);
         result.emitted_artifacts.into_iter().next().unwrap()
     }
@@ -346,6 +370,12 @@ mod tests {
             "preparation must not manufacture source evidence"
         );
         let api = api(external.path());
+        let events = meld_events::EventAuthority::open(
+            sled::open(external.path().join("events")).unwrap(),
+            meld_events::EventAuthorityOpenOptions::default(),
+        )
+        .unwrap();
+        api.bind_event_append(events.append_capability()).unwrap();
         let mut artifacts = BTreeMap::new();
         let artifact = invoke(&closure, &api, OBSERVE_INVENTORY, &artifacts).await;
         let observed: DependencyInventorySnapshotV1 =
@@ -448,6 +478,79 @@ mod tests {
             !verified.verified,
             "a valid calculation cannot authenticate a forged product identity"
         );
+        use crate::runtime::ports::{
+            ProductEventAppendPort, ProductEventReplayPort, ProductGraphCursorPort,
+        };
+        use meld_world_model::world_state::graph::{
+            contracts::*,
+            runtime::{GraphCatchUpBudget, GraphRuntime},
+            store::TraversalStore,
+        };
+        let store = Arc::new(
+            TraversalStore::new(sled::open(external.path().join("graph")).unwrap()).unwrap(),
+        );
+        let route = super::super::publication::graph_route();
+        store.install_owner_event_route(&route).unwrap();
+        assert!(store
+            .owner_publications_through_seq(u64::MAX)
+            .unwrap()
+            .is_empty());
+        let graph = GraphRuntime::from_ports(
+            Arc::new(ProductEventReplayPort::new(events.replay_capability())),
+            Arc::new(ProductEventAppendPort::new(&events)),
+            Arc::new(ProductGraphCursorPort::new(
+                events.consumer_registry_capability(),
+            )),
+            store.clone(),
+        )
+        .unwrap();
+        graph
+            .catch_up_bounded(GraphCatchUpBudget { max_items: 128 })
+            .unwrap();
+        let projected = store.owner_publications_through_seq(u64::MAX).unwrap();
+        assert_eq!(
+            projected.len(),
+            12,
+            "recovery cannot append duplicate source publications"
+        );
+        let query = meld_world_model::TraversalQuery::new(&store);
+        for publication in &projected {
+            assert_eq!(publication.source_route, Some(route.source_ref().unwrap()));
+            let scope = publication.operation.batch.scope.clone();
+            let cut = query
+                .cut(&TraversalCutRequest {
+                    owners: vec![TraversalOwnerRequirement {
+                        owner_id: "dependency-security".into(),
+                        scope: scope.clone(),
+                        required: true,
+                        event_source: None,
+                    }],
+                    scope,
+                    currentness: OwnerCurrentnessPolicy::LatestComplete,
+                    event_position: meld_events::LedgerCursor {
+                        ledger_id: publication.source_event.ledger_id,
+                        after_seq: publication.source_event.seq,
+                    },
+                })
+                .unwrap();
+            assert_eq!(cut.status, TraversalCutStatus::Complete);
+        }
+        assert!(projected.iter().any(|publication| publication
+            .operation
+            .batch
+            .relations
+            .iter()
+            .any(|relation| relation.relation_type == "security_finding_component")));
+        assert!(projected
+            .iter()
+            .flat_map(|publication| &publication.operation.batch.objects)
+            .any(|object| object.object_ref.object_kind == ASSESSMENT
+                && serde_json::from_str::<DependencySecurityAssessmentV1>(
+                    &object.qualifications["product"]
+                )
+                .unwrap()
+                .posture
+                    == DependencySecurityPosture::Insufficient));
         assert!(!workspace.path().join("target").exists());
     }
 }

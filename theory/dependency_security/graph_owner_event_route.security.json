@@ -1,0 +1,7 @@
+{
+  "complete_event_source": true,
+  "route_id": "dependency-security-products",
+  "owner_id": "dependency-security",
+  "event_type": "dependency_security.product_published.v1",
+  "enumeration_rule_revision": "dependency_security.product_publication.v1"
+}

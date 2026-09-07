@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "package_id": "meld.dependency-security-fixture",
-  "package_version": "1.1.0",
+  "package_version": "1.2.0",
   "description": "Cargo inventory and declared advisory-source assessment with independent verification",
   "imports": [],
   "components": [
@@ -113,7 +113,7 @@
       "content": {
         "kind": "relative_file",
         "path": "strategy_theory.security.json",
-        "content_hash": "8c2b0fc27cd0b937845207d874f894feb5c6811371326279b4d793d2fe04192d"
+        "content_hash": "1554be70ee07e948d3d5173e2d13cadc2015a6e3c560643c548534a9dd355e1f"
       },
       "requires": []
     },
@@ -146,7 +146,7 @@
         "kind": "published_exact",
         "publisher": "execution.capability-contract.v1",
         "id": "dependency_security.observe_inventory.v1",
-        "content_identity": "capability-contract-2e90029efcdcf0f24eb1b27f58a413c4896437045e43cc1003789c38003c91d6"
+        "content_identity": "capability-contract-a4e8f541d894c1c12a0addd582656b8a211df48718ce1449f26cfb7a89b5f118"
       },
       "requires": []
     },
@@ -163,7 +163,7 @@
         "kind": "published_exact",
         "publisher": "execution.capability-contract.v1",
         "id": "dependency_security.acquire_advisories.v1",
-        "content_identity": "capability-contract-979809a1f6b4ab8d8254b3714472afa39b315175425d9ed657159aad89fb0d43"
+        "content_identity": "capability-contract-32eb3938631ede8dc4b6f07bedf19599f829ba38695a2b0491f1602c399c2e00"
       },
       "requires": []
     },
@@ -180,7 +180,7 @@
         "kind": "published_exact",
         "publisher": "execution.capability-contract.v1",
         "id": "dependency_security.assess.v1",
-        "content_identity": "capability-contract-334f551b82f12e219bc3d25e3e8fc4c5a1677e5a3f925579b410a87f1f1a20cd"
+        "content_identity": "capability-contract-2c8eb0e8fa7bf51090dcc50bc56d0f84f0b043045e0ba502d06f8e8f4b40d435"
       },
       "requires": []
     },
@@ -197,7 +197,23 @@
         "kind": "published_exact",
         "publisher": "execution.capability-contract.v1",
         "id": "dependency_security.verify.v1",
-        "content_identity": "capability-contract-100cfb62b3c9cfa0320e4e3d956851be8995a40a9ee7ce1fd3d3bd3e684d25cb"
+        "content_identity": "capability-contract-fc1911fa3d65906841af97cd7a9ced2652b3702df008766714de96a13da5dc0a"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-graph-event-route",
+      "owner_component_id": "dependency-security-products",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "graph-owner-event-route",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "graph_owner_event_route.security.json",
+        "content_hash": "09f3429579baf9bf564f367a8242daf05befe5d7fd8c4b87c43279e4d643fe3d"
       },
       "requires": []
     }

@@ -125,7 +125,7 @@ mod tests {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/dependency_security");
         let receipt = super::install_package(&stores, &package_root, 1).unwrap();
         assert_eq!(receipt.package_id, super::PACKAGE_ID);
-        assert_eq!(receipt.components.len(), 12);
+        assert_eq!(receipt.components.len(), 13);
         let owners: std::collections::BTreeSet<_> = receipt
             .components
             .iter()

@@ -40,7 +40,7 @@
   },
   "capabilities": [
     {
-      "contract_id": "capability-contract-2e90029efcdcf0f24eb1b27f58a413c4896437045e43cc1003789c38003c91d6",
+      "contract_id": "capability-contract-a4e8f541d894c1c12a0addd582656b8a211df48718ce1449f26cfb7a89b5f118",
       "operator": {
         "operator_id": "observe-cargo-inventory",
         "preconditions": [],
@@ -86,7 +86,7 @@
       "outcome_contract_id": "dependency_security.inventory_observed.v1"
     },
     {
-      "contract_id": "capability-contract-979809a1f6b4ab8d8254b3714472afa39b315175425d9ed657159aad89fb0d43",
+      "contract_id": "capability-contract-32eb3938631ede8dc4b6f07bedf19599f829ba38695a2b0491f1602c399c2e00",
       "operator": {
         "operator_id": "acquire-fixture-advisories",
         "preconditions": [],
@@ -132,7 +132,7 @@
       "outcome_contract_id": "dependency_security.advisory_snapshot_observed.v1"
     },
     {
-      "contract_id": "capability-contract-334f551b82f12e219bc3d25e3e8fc4c5a1677e5a3f925579b410a87f1f1a20cd",
+      "contract_id": "capability-contract-2c8eb0e8fa7bf51090dcc50bc56d0f84f0b043045e0ba502d06f8e8f4b40d435",
       "operator": {
         "operator_id": "assess-dependency-security",
         "preconditions": [],
@@ -191,7 +191,7 @@
       "outcome_contract_id": "dependency_security.assessment_completed.v1"
     },
     {
-      "contract_id": "capability-contract-100cfb62b3c9cfa0320e4e3d956851be8995a40a9ee7ce1fd3d3bd3e684d25cb",
+      "contract_id": "capability-contract-fc1911fa3d65906841af97cd7a9ced2652b3702df008766714de96a13da5dc0a",
       "operator": {
         "operator_id": "verify-dependency-security-calculation",
         "preconditions": [],
