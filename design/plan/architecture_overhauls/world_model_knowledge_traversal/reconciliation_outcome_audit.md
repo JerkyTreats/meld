@@ -6,6 +6,8 @@ Latest verification: 2026-09-07
 
 Current source account: native Startup, Docs, Security and declared code-change reconciliation is implemented within the tested product paths. Continued adverse-path review exposed unconsumed native intake refusals and provider rejections replayed indefinitely as unresolved claims; the corrections and their executable evidence are recorded below. Original-outcome coverage does not establish every failure or interruption path.
 
+The [acceptance and remediation assessment](reconciliation_acceptance.md) records what remains before product or full architectural acceptance. It is directional and does not restore the old delivery program’s authority.
+
 ## Authority and evidence
 
 The program owner explicitly withdrew the binding status of the delivery program and authorized audit of VC-01 through VC-06 followed by implementation of the complete rearchitecture. Previous slice exclusions and advancement permissions cannot narrow this mission. This account is an evidence and work record, not a substitute definition of the intended system.
