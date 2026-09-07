@@ -365,12 +365,9 @@ impl StandingCurationActor {
         } else {
             None
         };
-        let historical = resumed.as_ref().or_else(|| {
-            queued
-                .as_ref()
-                .filter(|operation| operation.authority != authority)
-        });
-        let selected_rule = if let Some(operation) = historical {
+        // An authorized product retains its selected semantics even when standing
+        // selection advances. Current authority is checked separately at admission.
+        let selected_rule = if let Some(operation) = resumed.as_ref().or(queued.as_ref()) {
             self.store.resolve_rule(&operation.rule_revision)
         } else {
             match self.rule.select(&authority) {

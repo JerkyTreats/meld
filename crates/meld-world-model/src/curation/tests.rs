@@ -276,6 +276,145 @@ fn planned_curation_reopens_after_result_before_event_without_duplicate_publicat
 }
 
 #[test]
+fn queued_confirmation_keeps_its_rule_when_standing_selection_changes_or_waits() {
+    struct NextSelection(Option<StandingCurationRuleRevision>);
+
+    impl CurationRuleSelectionPort for NextSelection {
+        fn select(
+            &self,
+            _authority: &CurationAuthority,
+        ) -> Result<CurationRuleSelection, StorageError> {
+            Ok(match &self.0 {
+                Some(rule) => CurationRuleSelection::Selected(Box::new(rule.clone())),
+                None => {
+                    CurationRuleSelection::Waiting(crate::waiting::WaitingOnDeclaration::broad(
+                        "next_request_pending",
+                        "the next standing request has not been prepared",
+                        vec![crate::waiting::StructuralWakeAddress::BindingRecovery(
+                            "next-request".into(),
+                        )],
+                    ))
+                }
+            })
+        }
+
+        fn binding_refs(&self) -> Result<Vec<String>, StorageError> {
+            Ok(vec!["request-rule-producer".into()])
+        }
+
+        fn template_refs(&self) -> Result<Vec<TheoryRevisionRef>, StorageError> {
+            Ok(Vec::new())
+        }
+
+        fn resolves_wake(
+            &self,
+            _wake: &crate::waiting::StructuralWakeAddress,
+        ) -> Result<bool, String> {
+            Ok(false)
+        }
+    }
+
+    for waiting in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("queued-curation.sled");
+        let fixture = Fixture::from_db(sled::open(&path).unwrap(), 0);
+        let operation = CurationOperation::reconstruct(
+            authority(),
+            fixture.rule.revision_ref(),
+            fixture.traversal.cut.lock().unwrap().clone(),
+            fixture.rule.rule.traversal_request(),
+        )
+        .unwrap()
+        .for_request("original-goal-confirmation".into())
+        .unwrap();
+        let authorization = planned_authorization(&operation);
+        fixture
+            .store
+            .submit_planned(
+                &operation
+                    .clone()
+                    .with_planned_authorization(authorization.clone())
+                    .unwrap(),
+            )
+            .unwrap();
+        let mut next_rule = rule();
+        next_rule.expected_object_id = "next-request::expected".into();
+        let next_rule = fixture.store.install_rule(next_rule, 2).unwrap();
+        let Fixture {
+            actor,
+            store,
+            rule,
+            traversal,
+            events,
+        } = fixture;
+        drop(actor);
+        store.flush().unwrap();
+        drop(store);
+        let store = Arc::new(CurationStore::new(sled::open(&path).unwrap()).unwrap());
+        let actor = StandingCurationActor::new(
+            "world_model.standing_curation",
+            "session-a",
+            authority(),
+            CurationRuleSource::Producer(Arc::new(NextSelection((!waiting).then_some(next_rule)))),
+            store.clone(),
+            traversal.clone(),
+            events.clone(),
+        )
+        .unwrap();
+        let fixture = Fixture {
+            actor,
+            store,
+            rule,
+            traversal,
+            events,
+        };
+
+        let confirmation = fixture.actor.bounded_step(1);
+        assert!(confirmation.fatal_errors.is_empty(), "{confirmation:?}");
+        assert!(confirmation.retryable_errors.is_empty(), "{confirmation:?}");
+        assert_eq!(confirmation.results_persisted, 1, "{confirmation:?}");
+        assert_eq!(confirmation.publications_appended, 2);
+        let result = fixture
+            .store
+            .result_for_operation(&operation.operation_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            result.semantic_publication.unwrap().batch.objects[0].object_ref,
+            fixture.rule.rule.expected_object().unwrap()
+        );
+        assert_eq!(
+            fixture
+                .store
+                .acceptance_for_planned_operation(&operation.operation_id)
+                .unwrap(),
+            Some(CurationAcceptanceRecord::for_operation(&operation, &fixture.rule).unwrap())
+        );
+        assert_eq!(
+            fixture
+                .store
+                .planned_authorization_for_operation(&operation.operation_id)
+                .unwrap(),
+            Some(authorization)
+        );
+        assert!(fixture
+            .store
+            .next_planned_operation("agent-a")
+            .unwrap()
+            .is_none());
+
+        let next = fixture.actor.bounded_step(1);
+        assert!(next.fatal_errors.is_empty(), "{next:?}");
+        assert_eq!(next.results_persisted, usize::from(!waiting), "{next:?}");
+        assert_eq!(next.waiting_on.len(), usize::from(waiting), "{next:?}");
+        assert_eq!(
+            fixture.traversal.traversals.load(Ordering::SeqCst),
+            1 + usize::from(!waiting)
+        );
+    }
+}
+
+#[test]
 fn named_confirmation_is_not_a_retroactive_standing_acceptance() {
     let fixture = Fixture::new(0);
     fixture.actor.bounded_step(1);
@@ -1418,6 +1557,10 @@ struct Fixture {
 impl Fixture {
     fn new(failures: usize) -> Self {
         let db = sled::Config::new().temporary(true).open().unwrap();
+        Self::from_db(db, failures)
+    }
+
+    fn from_db(db: sled::Db, failures: usize) -> Self {
         let store = Arc::new(CurationStore::new(db).unwrap());
         let rule = store.install_rule(rule(), 1).unwrap();
         let cut = cut(10);
