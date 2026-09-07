@@ -19,7 +19,8 @@ use meld_execution::task_network::dispatch::Claim;
 use meld_execution::task_network::dispatch_actor::{
     AdmissionGenerationObserver, ClaimedInvocationOutcome, ClaimedTaskInvoker, DispatchPortError,
 };
-use meld_execution::task_network::state::{admission_region_terminal_outcome_id, TaskNode};
+use meld_execution::task_network::sharing::admission_discharge_account;
+use meld_execution::task_network::state::TaskNode;
 use meld_execution::task_network::store::TaskNetworkStoreFactory;
 use meld_execution::task_network::{
     EventAppendSink, JournalRecord, PublicationState, SledTaskNetworkStore,
@@ -913,16 +914,22 @@ impl ProductAgentExecutionPort {
                     })
                     .then_some(commit.revision)
             });
-            let outcome_id =
-                admission_region_terminal_outcome_id(network.state(), &admission.admission_id)
-                    .map(str::to_string);
+            let account = admission_discharge_account(network.state(), &admission.admission_id);
+            let outcome_id = account.as_ref().map(|account| account.outcome_id.clone());
             let execution_publication_position_id = outcome_id.as_ref().and_then(|outcome_id| {
                 network
                     .state()
                     .publications
                     .values()
                     .find_map(|publication| {
-                        if &publication.outcome.outcome_id != outcome_id {
+                        let carries_return = account.as_ref().is_some_and(|account| {
+                            if account.shared_action_decision_ids.is_empty() {
+                                &publication.outcome.outcome_id == outcome_id
+                            } else {
+                                publication.shared_discharge_accounts.contains(account)
+                            }
+                        });
+                        if !carries_return {
                             return None;
                         }
                         match &publication.state {

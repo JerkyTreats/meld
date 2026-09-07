@@ -91,3 +91,5 @@ pub use state::{
     TaskNode, TaskStatus, UpstreamArtifactInitSource,
 };
 pub use store::{InMemoryTaskNetworkStore, SledTaskNetworkStore};
+
+pub mod sharing;

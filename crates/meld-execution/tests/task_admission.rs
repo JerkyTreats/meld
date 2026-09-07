@@ -322,7 +322,7 @@ fn admission_records_stale_and_rejected_offers_without_lowering_them() {
 }
 
 #[test]
-fn two_authorizations_commit_distinct_attributed_operational_regions() {
+fn contracts_without_sharing_permission_keep_distinct_attributed_regions() {
     let temp = tempfile::tempdir().unwrap();
     let db = sled::open(temp.path().join("execution.sled")).unwrap();
     let catalog = task_network_support::catalog();
@@ -757,5 +757,552 @@ fn frozen_task_input_lowers_with_its_exact_value_and_rejects_ambiguous_or_foreig
             matches!(record.decision, TaskAdmissionDecision::Rejected { .. }),
             "variant {variant}: {record:?}"
         );
+    }
+}
+
+fn shared_input_request(
+    name: &str,
+    opt_in: bool,
+) -> (
+    meld_execution::capability::CapabilityCatalog,
+    TaskAdmissionRequest,
+) {
+    let mut contract = task_network_support::single_input_dataflow_catalog()
+        .get("docs.write_metadata", 1)
+        .unwrap()
+        .clone();
+    if opt_in {
+        contract.execution_contract.completion_semantics =
+            meld_execution::task_network::sharing::EXACT_INPUT_SHARING_V1.into();
+    }
+    let mut catalog = meld_execution::capability::CapabilityCatalog::new();
+    catalog.register(contract.clone()).unwrap();
+    let mut request = frozen_input_request();
+    request
+        .task
+        .composition
+        .steps
+        .retain(|step| step.step_id == "write_metadata");
+    request.task.capability_contract_ids = vec![contract.content_identity()];
+    request.task.authority_requirements = vec![contract.capability_type_id.clone()];
+    let grant = request.lineage.authority_decision.as_mut().unwrap();
+    grant.requested_action_ids = request.task.authority_requirements.clone();
+    grant.authorized_action_ids = request.task.authority_requirements.clone();
+    request.lineage.authorization_id = format!("authorization-{name}");
+    request.lineage.goal_id = format!("goal-{name}");
+    request.lineage.plan_revision_id = format!("plan-{name}");
+    request.lineage.product_id = format!("task-{name}");
+    request.task.task_id = request.lineage.product_id.clone();
+    request.task.idempotency_key = request.task.task_id.clone();
+    request.idempotency_key = request.task.task_id.clone();
+    (catalog, request)
+}
+
+#[test]
+fn shared_operational_attempt_preserves_two_admission_accounts_across_reopen() {
+    use meld_execution::task_network::{dispatch, sharing::admission_discharge_account};
+    let db = sled::Config::new().temporary(true).open().unwrap();
+    let (catalog, first) = shared_input_request("first", true);
+    let (_, second) = shared_input_request("second", true);
+    let mut store = SledTaskNetworkStore::open(db.clone(), "network-docs").unwrap();
+    let mut admissions = Vec::new();
+    for request in [first, second] {
+        let record = TaskAdmissionApi::new(
+            &mut store,
+            &catalog,
+            "generation-v1",
+            "policy-content-docs-v1",
+        )
+        .admit(request)
+        .unwrap();
+        assert_eq!(
+            record.decision,
+            TaskAdmissionDecision::Admitted,
+            "{record:?}"
+        );
+        admissions.push(record);
+    }
+    let actor = TaskAdmissionRuntimeActor::new(TaskAdmissionLowerer::new(
+        TaskCompiler::new(),
+        catalog.clone(),
+    ));
+    let report = actor
+        .run_once(
+            &mut store,
+            TaskAdmissionRuntimeRequest {
+                network_id: "network-docs".into(),
+                max_items: 2,
+            },
+        )
+        .unwrap();
+    assert_eq!(report.committed, 2, "{report:?}");
+    assert_eq!(store.state().tasks.len(), 1);
+    assert_eq!(store.state().shared_steps.len(), 1);
+    let before = store.state().clone();
+    store.flush().unwrap();
+    drop(store);
+    let mut store = SledTaskNetworkStore::open(db.clone(), "network-docs").unwrap();
+    assert_eq!(store.state(), &before);
+    assert_eq!(
+        actor
+            .run_once(
+                &mut store,
+                TaskAdmissionRuntimeRequest {
+                    network_id: "network-docs".into(),
+                    max_items: 2
+                }
+            )
+            .unwrap()
+            .attempted,
+        0
+    );
+    let node_id = store.state().tasks.keys().next().unwrap().clone();
+    let state = store.state();
+    let request = meld_execution::task_network::command::Request {
+        command_id: "one-claim".into(),
+        network_id: state.network_id.clone(),
+        base_revision: state.revision,
+        base_state_hash: state.state_hash.clone(),
+        read_preconditions: Vec::new(),
+        command: Command::ClaimReadyTask(dispatch::Request {
+            claim_id: "one-claim".into(),
+            task_instance_id: node_id.clone(),
+            worker_id: "worker".into(),
+            idempotency_key: "one-attempt".into(),
+        }),
+    };
+    assert!(matches!(
+        store.submit(request).unwrap(),
+        meld_execution::task_network::command::Response::Accepted { .. }
+    ));
+    let claim = store.state().claims["one-claim"].clone();
+    assert_eq!(claim.shared_action_decision_ids.len(), 1);
+    let (_, late) = shared_input_request("late", true);
+    let late = TaskAdmissionApi::new(
+        &mut store,
+        &catalog,
+        "generation-v1",
+        "policy-content-docs-v1",
+    )
+    .admit(late)
+    .unwrap();
+    let late_report = actor
+        .run_once(
+            &mut store,
+            TaskAdmissionRuntimeRequest {
+                network_id: "network-docs".into(),
+                max_items: 1,
+            },
+        )
+        .unwrap();
+    assert_eq!(late_report.committed, 1, "{late_report:?}");
+    assert_eq!(store.state().tasks.len(), 2);
+    assert_eq!(store.state().shared_steps.len(), 1);
+    assert!(admission_discharge_account(store.state(), &late.admission_id).is_none());
+    let mut outcome = task_network_support::outcome_for_claim("one-outcome", &node_id, &claim);
+    outcome.artifact_records[0].artifact_type_id = "summary_doc".into();
+    outcome.artifact_records[0].producer.task_id = node_id.clone();
+    outcome.artifact_records[0].producer.capability_instance_id = "write_metadata".into();
+    outcome.artifact_records[0].producer.output_slot_id = Some("summary_doc".into());
+    let state = store.state();
+    let request = meld_execution::task_network::command::Request {
+        command_id: "one-outcome".into(),
+        network_id: state.network_id.clone(),
+        base_revision: state.revision,
+        base_state_hash: state.state_hash.clone(),
+        read_preconditions: Vec::new(),
+        command: Command::RecordTaskOutcome(outcome),
+    };
+    assert!(matches!(
+        store.submit(request).unwrap(),
+        meld_execution::task_network::command::Response::Accepted { .. }
+    ));
+    let accounts: Vec<_> = admissions
+        .iter()
+        .map(|admission| {
+            admission_discharge_account(store.state(), &admission.admission_id).unwrap()
+        })
+        .collect();
+    assert_ne!(accounts[0].account_id, accounts[1].account_id);
+    assert_ne!(accounts[0].admission.goal_id, accounts[1].admission.goal_id);
+    assert_eq!(accounts[0].outcome_id, accounts[1].outcome_id);
+    assert_eq!(
+        accounts[0].shared_action_decision_ids,
+        accounts[1].shared_action_decision_ids
+    );
+    assert_eq!(store.state().claims.len(), 1);
+    assert_eq!(store.state().outcomes.len(), 1);
+    store.flush().unwrap();
+    drop(store);
+    let reopened = SledTaskNetworkStore::open(db, "network-docs").unwrap();
+    for account in accounts {
+        assert_eq!(
+            admission_discharge_account(reopened.state(), &account.admission.admission_id),
+            Some(account)
+        );
+    }
+}
+
+#[test]
+fn work_without_owner_permission_or_with_different_input_stays_distinct() {
+    for opt_in in [false, true] {
+        let (catalog, first) = shared_input_request("first", opt_in);
+        let (_, mut second) = shared_input_request("second", opt_in);
+        if opt_in {
+            second.task.initial_inputs[0].content =
+                serde_json::json!({"exact":"different-source-revision"});
+        }
+        let mut store = InMemoryTaskNetworkStore::new("network-docs");
+        for request in [first, second] {
+            let record = TaskAdmissionApi::new(
+                &mut store,
+                &catalog,
+                "generation-v1",
+                "policy-content-docs-v1",
+            )
+            .admit(request)
+            .unwrap();
+            assert_eq!(
+                record.decision,
+                TaskAdmissionDecision::Admitted,
+                "{record:?}"
+            );
+        }
+        let actor =
+            TaskAdmissionRuntimeActor::new(TaskAdmissionLowerer::new(TaskCompiler::new(), catalog));
+        let report = actor
+            .run_once_in_memory(
+                &mut store,
+                TaskAdmissionRuntimeRequest {
+                    network_id: "network-docs".into(),
+                    max_items: 2,
+                },
+            )
+            .unwrap();
+        assert_eq!(report.committed, 2, "{report:?}");
+        assert_eq!(store.state().tasks.len(), 2);
+        assert!(store.state().shared_steps.is_empty());
+    }
+}
+
+#[test]
+fn independently_valid_authority_and_lifecycle_contexts_do_not_imply_compatibility() {
+    for difference in [
+        "agent",
+        "policy",
+        "generation",
+        "epoch",
+        "subject",
+        "result",
+    ] {
+        let (catalog, first) = shared_input_request("first", true);
+        let (_, mut second) = shared_input_request("second", true);
+        match difference {
+            "agent" => {
+                second.lineage.agent_id = "another-agent".into();
+                second
+                    .lineage
+                    .authority_decision
+                    .as_mut()
+                    .unwrap()
+                    .principal_id = "another-agent".into();
+            }
+            "policy" => {
+                second.lineage.authority_policy_content_hash = "another-policy-revision".into();
+                second
+                    .lineage
+                    .authority_decision
+                    .as_mut()
+                    .unwrap()
+                    .policy_content_hash = "another-policy-revision".into();
+            }
+            "generation" => second.lineage.activation_generation = "generation-v2".into(),
+            "epoch" => second.lineage.admission_epoch = Some("epoch-v2".into()),
+            "subject" => {
+                let subject = DomainObjectRef::new("workspace", "node", "another-readme").unwrap();
+                second.lineage.authority_decision.as_mut().unwrap().subject = subject.clone();
+                second.task.execution_subject = Some(subject);
+            }
+            "result" => second.task.expected_outcome_contract_id = "another-result-contract".into(),
+            _ => unreachable!(),
+        }
+        let mut store = InMemoryTaskNetworkStore::new("network-docs");
+        for request in [first, second] {
+            let generation = request.lineage.activation_generation.clone();
+            let policy = request.lineage.authority_policy_content_hash.clone();
+            let epoch = request.lineage.admission_epoch.clone();
+            let record = TaskAdmissionApi::new(&mut store, &catalog, &generation, &policy)
+                .with_admission_epoch(epoch.as_deref())
+                .admit(request)
+                .unwrap();
+            assert_eq!(
+                record.decision,
+                TaskAdmissionDecision::Admitted,
+                "{difference}: {record:?}"
+            );
+        }
+        let actor =
+            TaskAdmissionRuntimeActor::new(TaskAdmissionLowerer::new(TaskCompiler::new(), catalog));
+        let report = actor
+            .run_once_in_memory(
+                &mut store,
+                TaskAdmissionRuntimeRequest {
+                    network_id: "network-docs".into(),
+                    max_items: 2,
+                },
+            )
+            .unwrap();
+        assert_eq!(report.committed, 2, "{difference}: {report:?}");
+        assert_eq!(store.state().tasks.len(), 2, "{difference}");
+        assert!(store.state().shared_steps.is_empty(), "{difference}");
+    }
+}
+
+#[test]
+fn sharing_permission_cannot_cover_external_writes_or_missing_inputs() {
+    let (catalog, _) = shared_input_request("first", true);
+    let contract = catalog.get("docs.write_metadata", 1).unwrap();
+    let mut missing_input = contract.clone();
+    missing_input.input_contract.clear();
+    assert!(missing_input.validate().is_err());
+    let mut missing_output = contract.clone();
+    missing_output.output_contract.clear();
+    assert!(missing_output.validate().is_err());
+    let mut writes = contract.clone();
+    writes.effect_contract = vec![meld_execution::capability::EffectSpec {
+        effect_id: "write".into(),
+        kind: meld_execution::capability::EffectKind::Write,
+        target: "workspace".into(),
+        exclusive: true,
+    }];
+    assert!(writes.validate().is_err());
+    writes.effect_contract[0].kind = meld_execution::capability::EffectKind::Emit;
+    assert!(
+        writes.validate().is_err(),
+        "exclusive effects cannot be shared"
+    );
+}
+
+#[test]
+fn shared_root_feeds_separate_admitted_descendants_and_waits_for_each_return() {
+    for (fail_root, delayed_failure) in [(false, false), (true, false), (true, true)] {
+        use meld_execution::task_network::{
+            dispatch, sharing::admission_discharge_account, TaskInitSource,
+        };
+        let (mut catalog, first) = shared_input_request("first", true);
+        let (_, second) = shared_input_request("second", true);
+        let mut consumer = catalog.get("docs.write_metadata", 1).unwrap().clone();
+        consumer.capability_type_id = "docs.consume_summary".into();
+        consumer.input_contract[0].accepted_artifact_type_ids = vec!["summary_doc".into()];
+        consumer.execution_contract.completion_semantics = "result_or_failure".into();
+        catalog.register(consumer.clone()).unwrap();
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        let mut store = SledTaskNetworkStore::open(db.clone(), "network-docs").unwrap();
+        let mut admissions = Vec::new();
+        for mut request in [first, second] {
+            let mut downstream = request.task.composition.steps[0].clone();
+            downstream.step_id = "consume_summary".into();
+            let StepKind::Op(operator) = &mut downstream.kind else {
+                unreachable!()
+            };
+            operator.operator_id = "consume_summary".into();
+            operator
+                .resolution
+                .specific
+                .as_mut()
+                .unwrap()
+                .capability_type_id = consumer.capability_type_id.clone();
+            request.task.composition.steps.push(downstream);
+            if delayed_failure {
+                let mut independent = request.task.composition.steps[0].clone();
+                independent.step_id = "independent".into();
+                request.task.composition.steps.push(independent);
+                let mut input = request.task.initial_inputs[0].clone();
+                input.step_id = "independent".into();
+                input.content = serde_json::json!({"independent": request.task.task_id});
+                request.task.initial_inputs.push(input);
+                request.task.composition.edges.push(meld_lang::Edge {
+                    from: "independent".into(),
+                    to: "consume_summary".into(),
+                    kind: meld_lang::EdgeKind::Ordering,
+                });
+            }
+
+            request.task.composition.edges.push(meld_lang::Edge {
+                from: "write_metadata".into(),
+                to: "consume_summary".into(),
+                kind: meld_lang::EdgeKind::DataFlow {
+                    artifact_type: Term::ArtifactType("summary_doc".into()),
+                },
+            });
+            request
+                .task
+                .capability_contract_ids
+                .push(consumer.content_identity());
+            request.task.capability_contract_ids.sort();
+            request
+                .task
+                .authority_requirements
+                .push(consumer.capability_type_id.clone());
+            request.task.authority_requirements.sort();
+            let grant = request.lineage.authority_decision.as_mut().unwrap();
+            grant.requested_action_ids = request.task.authority_requirements.clone();
+            grant.authorized_action_ids = request.task.authority_requirements.clone();
+            let record = TaskAdmissionApi::new(
+                &mut store,
+                &catalog,
+                "generation-v1",
+                "policy-content-docs-v1",
+            )
+            .admit(request)
+            .unwrap();
+            assert_eq!(
+                record.decision,
+                TaskAdmissionDecision::Admitted,
+                "{record:?}"
+            );
+            admissions.push(record);
+        }
+        let actor =
+            TaskAdmissionRuntimeActor::new(TaskAdmissionLowerer::new(TaskCompiler::new(), catalog));
+        let report = actor
+            .run_once(
+                &mut store,
+                TaskAdmissionRuntimeRequest {
+                    network_id: "network-docs".into(),
+                    max_items: 2,
+                },
+            )
+            .unwrap();
+        assert_eq!(report.committed, 2, "{report:?}");
+        assert_eq!(
+            store.state().tasks.len(),
+            if delayed_failure { 5 } else { 3 }
+        );
+        assert_eq!(store.state().shared_steps.len(), 1);
+        let root = store
+            .state()
+            .tasks
+            .values()
+            .find(|node| node.lineage.step_id == "write_metadata")
+            .unwrap()
+            .task_instance_id
+            .clone();
+        let descendants: Vec<_> = store
+            .state()
+            .tasks
+            .values()
+            .filter(|node| node.lineage.step_id == "consume_summary")
+            .map(|node| {
+                let [TaskInitSource::UpstreamArtifact(source)] = node.init_sources.as_slice()
+                else {
+                    panic!("{node:?}")
+                };
+                assert_eq!(source.upstream_task_instance_id, root);
+                assert!(store
+                    .state()
+                    .edges
+                    .iter()
+                    .any(|edge| edge.from == root && edge.to == node.task_instance_id));
+                node.task_instance_id.clone()
+            })
+            .collect();
+        let remaining = if delayed_failure {
+            store
+                .state()
+                .tasks
+                .values()
+                .filter(|node| node.lineage.step_id == "independent")
+                .map(|node| node.task_instance_id.clone())
+                .collect()
+        } else {
+            descendants
+        };
+        for (index, node_id) in std::iter::once(root).chain(remaining).enumerate() {
+            let claim_id = format!("claim-{index}");
+            let request = task_network_support::apply_sled_command(
+                &store,
+                &claim_id,
+                Command::ClaimReadyTask(dispatch::Request {
+                    claim_id: claim_id.clone(),
+                    task_instance_id: node_id.clone(),
+                    worker_id: "worker".into(),
+                    idempotency_key: claim_id.clone(),
+                }),
+            );
+            assert!(matches!(
+                store.submit(request).unwrap(),
+                meld_execution::task_network::command::Response::Accepted { .. }
+            ));
+            let claim = store.state().claims[&claim_id].clone();
+            let mut outcome = task_network_support::outcome_for_claim(
+                &format!("outcome-{index}"),
+                &node_id,
+                &claim,
+            );
+            outcome.artifact_records[0].artifact_type_id = "summary_doc".into();
+            outcome.artifact_records[0].producer.task_id = node_id.clone();
+            outcome.artifact_records[0].producer.capability_instance_id =
+                store.state().tasks[&node_id].lineage.step_id.clone();
+            outcome.artifact_records[0].producer.output_slot_id = Some("summary_doc".into());
+            if fail_root && index == 0 {
+                outcome.status = dispatch::OutcomeStatus::Failed;
+                outcome.error = Some("shared producer failed".into());
+                outcome.artifact_records.clear();
+            }
+            let request = task_network_support::apply_sled_command(
+                &store,
+                &format!("return-{index}"),
+                Command::RecordTaskOutcome(outcome),
+            );
+            assert!(matches!(
+                store.submit(request).unwrap(),
+                meld_execution::task_network::command::Response::Accepted { .. }
+            ));
+            let accounts: Vec<_> = admissions
+                .iter()
+                .filter_map(|record| {
+                    admission_discharge_account(store.state(), &record.admission_id)
+                })
+                .collect();
+            assert_eq!(
+                accounts.len(),
+                if fail_root && !delayed_failure {
+                    2
+                } else {
+                    index
+                },
+                "shared root alone cannot discharge either complete Task"
+            );
+            for account in accounts {
+                assert!(!account.shared_action_decision_ids.is_empty());
+                let publication = store
+                    .state()
+                    .publications
+                    .values()
+                    .find(|publication| publication.shared_discharge_accounts.contains(&account))
+                    .unwrap();
+                assert!(publication.shared_discharge_accounts.contains(&account));
+                if delayed_failure {
+                    assert_ne!(publication.outcome.outcome_id, account.outcome_id);
+                }
+            }
+            if fail_root && !delayed_failure {
+                break;
+            }
+        }
+        let before = store.state().clone();
+        store.flush().unwrap();
+        drop(store);
+        let reopened = SledTaskNetworkStore::open(db, "network-docs").unwrap();
+        assert_eq!(reopened.state(), &before);
+        let accounts: Vec<_> = reopened
+            .state()
+            .publications
+            .values()
+            .flat_map(|publication| &publication.shared_discharge_accounts)
+            .collect();
+        assert_eq!(accounts.len(), 2);
+        assert_ne!(accounts[0].account_id, accounts[1].account_id);
     }
 }

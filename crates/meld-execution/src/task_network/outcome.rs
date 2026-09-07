@@ -22,6 +22,9 @@ use serde_json::Value;
 /// Durable publication outbox entry for one task outcome.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Publication {
+    /// Newly completed shared-admission accounts established by this return.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub shared_discharge_accounts: Vec<super::sharing::AdmissionDischargeAccount>,
     /// Stable publication id.
     pub publication_id: String,
     /// Stable task network identifier.
@@ -43,6 +46,7 @@ impl Publication {
         }
 
         Self {
+            shared_discharge_accounts: Vec::new(),
             publication_id: stable_id(
                 "task-network-publication",
                 &Identity {
@@ -77,6 +81,8 @@ impl<'de> Deserialize<'de> for Publication {
         if value.get("outcome").is_some() {
             #[derive(Deserialize)]
             struct Wire {
+                #[serde(default)]
+                shared_discharge_accounts: Vec<super::sharing::AdmissionDischargeAccount>,
                 publication_id: String,
                 network_id: String,
                 outcome: dispatch::Outcome,
@@ -85,6 +91,7 @@ impl<'de> Deserialize<'de> for Publication {
 
             let wire: Wire = serde_json::from_value(value).map_err(serde::de::Error::custom)?;
             return Ok(Self {
+                shared_discharge_accounts: wire.shared_discharge_accounts,
                 publication_id: wire.publication_id,
                 network_id: wire.network_id,
                 outcome: wire.outcome,
@@ -121,6 +128,7 @@ impl<'de> Deserialize<'de> for Publication {
         }
 
         Ok(Self {
+            shared_discharge_accounts: Vec::new(),
             publication_id: wire.publication_id,
             network_id: wire.network_id,
             outcome: wire.event_payload,

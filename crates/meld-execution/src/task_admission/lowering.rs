@@ -174,6 +174,64 @@ where
         }
     }
 
+    fn coalesce_pending(
+        &self,
+        state: &crate::task_network::NetworkState,
+        plan: &mut TaskAdmissionLoweringPlan,
+    ) {
+        let mut replacements = BTreeMap::new();
+        for mutation::Mutation::Inject(inject) in &mut plan.mutations.mutations {
+            if !inject.incoming_edges.is_empty() {
+                continue;
+            }
+            let Some(contract) = self.catalog.get(
+                &inject.task_node.lineage.capability_type_id,
+                inject.task_node.lineage.capability_version,
+            ) else {
+                continue;
+            };
+            for primary in state.tasks.values() {
+                if let Ok(decision) = crate::task_network::sharing::SharedActionDecision::decide(
+                    state,
+                    &inject.task_node,
+                    primary,
+                    contract,
+                ) {
+                    replacements.insert(
+                        inject.task_node.task_instance_id.clone(),
+                        primary.task_instance_id.clone(),
+                    );
+                    inject.mutation_id = stable_id(
+                        "shared-admitted-step",
+                        &(&inject.mutation_id, &decision.decision_id),
+                    );
+                    inject.sharing = Some(decision);
+                    break;
+                }
+            }
+        }
+        for mutation::Mutation::Inject(inject) in &mut plan.mutations.mutations {
+            for edge in &mut inject.incoming_edges {
+                if let Some(shared) = replacements.get(&edge.from) {
+                    edge.from = shared.clone();
+                }
+            }
+            for source in &mut inject.task_node.init_sources {
+                if let TaskInitSource::UpstreamArtifact(source) = source {
+                    if let Some(shared) = replacements.get(&source.upstream_task_instance_id) {
+                        source.upstream_task_instance_id = shared.clone();
+                    }
+                }
+            }
+        }
+        plan.mutations = mutation::Set::new(
+            &plan.network_id,
+            &plan.mutations.source_task_id,
+            &plan.mutations.idempotency_key,
+            plan.mutations.mutations.clone(),
+        );
+    }
+
     fn lower_step(
         &self,
         network_id: &str,
@@ -354,11 +412,9 @@ where
             .values()
             .filter(|admission| {
                 admission.decision == TaskAdmissionDecision::Admitted
-                    && !state.tasks.values().any(|node| {
-                        node.lineage.admission.as_ref().is_some_and(|attribution| {
-                            attribution.admission_id == admission.admission_id
-                        })
-                    })
+                    && !state
+                        .admitted_region_node_hashes
+                        .contains_key(&admission.admission_id)
             })
             .collect();
         let contracts: Vec<_> = self.lowerer.catalog.iter().collect();
@@ -491,11 +547,10 @@ where
             .values()
             .filter(|admission| admission.decision == TaskAdmissionDecision::Admitted)
             .filter(|admission| {
-                !store.network_state().tasks.values().any(|node| {
-                    node.lineage.admission.as_ref().is_some_and(|attribution| {
-                        attribution.admission_id == admission.admission_id
-                    })
-                })
+                !store
+                    .network_state()
+                    .admitted_region_node_hashes
+                    .contains_key(&admission.admission_id)
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -505,7 +560,9 @@ where
         let mut items = Vec::new();
         let mut committed = 0;
         for admission in pending {
-            let plan = self.lowerer.lower(&request.network_id, &admission);
+            let mut plan = self.lowerer.lower(&request.network_id, &admission);
+            self.lowerer
+                .coalesce_pending(store.network_state(), &mut plan);
             if !plan.diagnostics.is_empty() || plan.mutations.mutations.is_empty() {
                 items.push(TaskAdmissionRuntimeItem {
                     admission_id: admission.admission_id,

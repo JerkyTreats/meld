@@ -7732,6 +7732,242 @@ mod tests {
     }
 
     #[test]
+    fn native_docs_drafting_shares_one_provider_invocation_for_two_admitted_tasks() {
+        use meld_execution::task_admission::TaskAdmissionDecision;
+        use meld_execution::task_network::sharing::admission_discharge_account;
+        use meld_world_model::{AgentAuthorizedProduct, AgentProductAuthorization};
+        let provider = super::docs_fixture::ProviderServer::new();
+        let harness = StewardshipHarness::new();
+        std::fs::write(
+            harness._workspace.path().join("lib.rs"),
+            "pub fn run() {}\n",
+        )
+        .unwrap();
+        {
+            let assembly = harness.assembly();
+            harness.run_world_genesis(&assembly);
+        }
+        let assembly = harness.assembly();
+        let api = harness.bind_production_routes_with_loss(&assembly, None);
+        let mut config =
+            stewardship_merkle_config(harness._workspace.path(), &harness.binding.storage_root);
+        config.providers.get_mut("main-provider").unwrap().endpoint = Some(provider.endpoint());
+        api.provider_registry()
+            .write()
+            .load_from_config(&config)
+            .unwrap();
+        assert!(assembly.bind_production_docs_claim_judge(api));
+        let mut supervisor = harness.start_supervisor(&assembly);
+        let RuntimeSemanticHandleFactory::AgentActor(agent) = &assembly
+            .handle_factories()
+            .get(AGENT_RECONCILIATION_RUNTIME_ID)
+            .unwrap()
+            .semantic
+        else {
+            unreachable!()
+        };
+        let RuntimeSemanticHandleFactory::TaskAdmission(execution) = &assembly
+            .handle_factories()
+            .get("execution.task_admission")
+            .unwrap()
+            .semantic
+        else {
+            unreachable!()
+        };
+        let fence = agent.authority_port.observe().unwrap().unwrap();
+        let policy = agent.strategy.authority_policy.as_ref().unwrap();
+        let capability = agent
+            .strategy
+            .package
+            .capabilities
+            .iter()
+            .find(|capability| capability.operator.operator_id == "draft-docs-patch-set")
+            .unwrap();
+        let composition = meld_lang::Composition {
+            steps: vec![meld_lang::Step {
+                step_id: "draft".into(),
+                kind: meld_lang::StepKind::Op(capability.operator.clone()),
+            }],
+            edges: Vec::new(),
+        };
+        let actions = vec![crate::docs::capability::DRAFT_PATCH_SET.to_string()];
+        let authority =
+            meld_lang::evaluate_authority(policy, &actions, &composition, &agent.strategy.subject)
+                .unwrap();
+        let evidence = crate::docs::capability::inspect_scope(harness._workspace.path()).unwrap();
+        let mut admissions = Vec::new();
+        let mut authorizations = Vec::new();
+        for name in ["first", "second"] {
+            let task_id = format!("shared-draft-task-{name}");
+            let authorization = AgentProductAuthorization {
+                agent_id: agent.strategy.agent_id.clone(),
+                goal_id: format!("shared-draft-goal-{name}"),
+                plan_revision_id: format!("shared-draft-plan-{name}"),
+                product_id: task_id.clone(),
+                authorization_id: format!("shared-draft-authorization-{name}"),
+                context_id: format!("shared-draft-context-{name}"),
+                authority_scope_id: policy.policy.policy_id.clone(),
+                authority_policy_content_hash: policy.content_hash.clone(),
+                authority_decision: Some(authority.clone()),
+                activation_generation: fence.activation_generation.clone(),
+                admission_epoch: fence.admission_epoch.clone(),
+                curation_authorization: None,
+                product: AgentAuthorizedProduct::Task(Box::new(
+                    meld_world_model::strategy::StrategyTask {
+                        effect_visibility: None,
+                        return_milestone: None,
+                        task_id: task_id.clone(),
+                        execution_subject: Some(agent.strategy.subject.clone()),
+                        initial_inputs: vec![meld_lang::TaskInput {
+                            step_id: "draft".into(),
+                            slot_id: crate::docs::capability::EVIDENCE_BUNDLE.into(),
+                            artifact_type_id: crate::docs::capability::EVIDENCE_BUNDLE.into(),
+                            schema_version: 1,
+                            content: serde_json::to_value(&evidence).unwrap(),
+                        }],
+                        composition: composition.clone(),
+                        bindings: meld_lang::Bindings::empty(),
+                        capability_contract_ids: vec![capability.contract_id.clone()],
+                        expected_outcome_contract_id: capability.outcome_contract_id.clone(),
+                        authority_requirements: actions.clone(),
+                        idempotency_key: task_id.clone(),
+                    },
+                )),
+                idempotency_key: task_id,
+            };
+            let position = agent.execution.submit(&authorization).unwrap();
+            let admission = execution.network.lock().unwrap().state().admissions
+                [&position.admission_id]
+                .clone();
+            authorizations.push(authorization);
+            assert_eq!(
+                admission.decision,
+                TaskAdmissionDecision::Admitted,
+                "{admission:?}"
+            );
+            admissions.push(admission);
+        }
+        let lowered =
+            supervisor.step_owner_for_test("execution.task_admission", WorkBudget { max_items: 2 });
+        assert!(lowered.fatal_errors.is_empty(), "{lowered:?}");
+        {
+            let network = execution.network.lock().unwrap();
+            assert_eq!(network.state().tasks.len(), 1, "{lowered:?}");
+            assert_eq!(network.state().shared_steps.len(), 1);
+        }
+        for _ in 0..4 {
+            let dispatched = supervisor
+                .step_owner_for_test("execution.task_dispatch", WorkBudget { max_items: 4 });
+            assert!(dispatched.fatal_errors.is_empty(), "{dispatched:?}");
+            assert!(dispatched.retryable_errors.is_empty(), "{dispatched:?}");
+        }
+        let accounts = {
+            let network = execution.network.lock().unwrap();
+            assert_eq!(network.state().claims.len(), 1);
+            assert_eq!(network.state().outcomes.len(), 1);
+            let outcome = network.state().outcomes.values().next().unwrap();
+            assert_eq!(
+                outcome.status,
+                meld_execution::task_network::dispatch::OutcomeStatus::Succeeded,
+                "{outcome:?}"
+            );
+            let artifact = outcome
+                .artifact_records
+                .iter()
+                .find(|artifact| artifact.artifact_type_id == crate::docs::capability::PATCH_SET)
+                .unwrap();
+            let patches: crate::docs::capability::DocsPatchSet =
+                serde_json::from_value(artifact.content.clone()).unwrap();
+            assert_eq!(patches.source_fingerprint, evidence.source_fingerprint);
+            assert_eq!(patches.patches[0].content, super::docs_fixture::README);
+            admissions
+                .iter()
+                .map(|admission| {
+                    admission_discharge_account(network.state(), &admission.admission_id).unwrap()
+                })
+                .collect::<Vec<_>>()
+        };
+        let published =
+            supervisor.step_owner_for_test("execution.publication", WorkBudget { max_items: 4 });
+        assert!(published.fatal_errors.is_empty(), "{published:?}");
+        assert!(published.retryable_errors.is_empty(), "{published:?}");
+        {
+            let network = execution.network.lock().unwrap();
+            let publication = network.state().publications.values().next().unwrap();
+            assert_eq!(publication.shared_discharge_accounts.len(), 2);
+            let event = harness
+                .authority
+                .replay_capability()
+                .committed_record(
+                    &meld_execution::task_network::publication::build_publication_envelope(
+                        "shared-draft-proof",
+                        publication,
+                    )
+                    .unwrap()
+                    .record_id
+                    .unwrap(),
+                )
+                .unwrap()
+                .unwrap();
+            for account in &accounts {
+                assert!(event
+                    .objects
+                    .iter()
+                    .any(|object| object.object_id == account.account_id));
+                assert!(event
+                    .objects
+                    .iter()
+                    .any(|object| object.object_id == account.admission.goal_id));
+            }
+            assert_eq!(
+                event.data,
+                serde_json::to_value(&publication.outcome).unwrap()
+            );
+        }
+        for (authorization, account) in authorizations.iter().zip(&accounts) {
+            let position = agent.execution.observe(authorization).unwrap().unwrap();
+            assert_eq!(
+                position.authorization_id,
+                account.admission.authorization_id
+            );
+            assert_eq!(position.admission_id, account.admission.admission_id);
+            assert_eq!(position.outcome_id.as_ref(), Some(&account.outcome_id));
+            assert!(position.network_commit_revision.is_some());
+            assert!(position.execution_publication_position_id.is_some());
+        }
+        assert_ne!(accounts[0].account_id, accounts[1].account_id);
+        assert_ne!(
+            accounts[0].admission.authorization_id,
+            accounts[1].admission.authorization_id
+        );
+        assert_eq!(accounts[0].outcome_id, accounts[1].outcome_id);
+        assert_eq!(provider.calls(), vec!["draft"]);
+        assert!(!harness._workspace.path().join("README.md").exists());
+        supervisor.request_shutdown(2_000).unwrap();
+        drop(supervisor);
+        drop(assembly);
+        let reopened = harness.assembly();
+        let RuntimeSemanticHandleFactory::TaskAdmission(execution) = &reopened
+            .handle_factories()
+            .get("execution.task_admission")
+            .unwrap()
+            .semantic
+        else {
+            unreachable!()
+        };
+        for account in accounts {
+            assert_eq!(
+                admission_discharge_account(
+                    execution.network.lock().unwrap().state(),
+                    &account.admission.admission_id
+                ),
+                Some(account)
+            );
+        }
+        assert_eq!(provider.calls(), vec!["draft"]);
+    }
+
+    #[test]
     fn native_docs_publication_recovers_a_lost_callback_without_rewriting() {
         assert_docs_publication_recovery(false);
     }

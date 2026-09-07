@@ -44,6 +44,9 @@ pub struct Request {
 /// Fenced dispatch claim persisted before task execution.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Claim {
+    /// Exact compatibility decisions frozen before this one operational attempt.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shared_action_decision_ids: Vec<String>,
     /// Stable claim id.
     pub claim_id: String,
     /// Stable task network identifier.
@@ -73,6 +76,7 @@ impl Claim {
         admission: Option<crate::task_network::state::TaskAdmissionAttribution>,
     ) -> Self {
         Self {
+            shared_action_decision_ids: Vec::new(),
             claim_id: request.claim_id.clone(),
             network_id: network_id.into(),
             task_instance_id: request.task_instance_id.clone(),

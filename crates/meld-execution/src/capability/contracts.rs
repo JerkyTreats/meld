@@ -136,6 +136,12 @@ pub enum ExecutionClass {
     SessionScoped,
 }
 
+/// Owner-selected permission to use one artifact result for independent admissions
+/// with identical immutable inputs and bindings. The result's validity must not depend
+/// on invocation or Task identity. This permits nondeterministic valid artifacts,
+/// but no product effects beyond the returned artifacts.
+pub const EXACT_INPUT_SHARING_V1: &str = "shared_exact_input_artifact_or_failure_v1";
+
 /// Execution-facing behavior published by a capability.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionContract {
@@ -197,6 +203,19 @@ impl CapabilityTypeContract {
             &self.execution_contract.completion_semantics,
         )?;
         require_non_empty("retry_class", &self.execution_contract.retry_class)?;
+        if self.execution_contract.completion_semantics == EXACT_INPUT_SHARING_V1
+            && (self.input_contract.iter().all(|slot| !slot.required)
+                || self.output_contract.is_empty()
+                || self
+                    .effect_contract
+                    .iter()
+                    .any(|effect| effect.kind != EffectKind::Emit || effect.exclusive))
+        {
+            return Err(ApiError::ConfigError(
+                "shared exact-input completion requires immutable input and artifact-only results"
+                    .into(),
+            ));
+        }
 
         ensure_unique_ids(
             "binding",

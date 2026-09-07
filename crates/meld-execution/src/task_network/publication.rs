@@ -202,6 +202,32 @@ pub fn build_publication_envelope(
         relation("member_of", task_run.clone(), network)?,
     ];
 
+    for account in &publication.shared_discharge_accounts {
+        let support = object("task_outcome", &account.outcome_id)?;
+        if !objects.contains(&support) {
+            objects.push(support.clone());
+        }
+        let discharge = object("admission_discharge", &account.account_id)?;
+        let admission = object("task_admission", &account.admission.admission_id)?;
+        let task = object("admitted_task", &account.admission.task_id)?;
+        let goal = DomainObjectRef::new("world-model", "goal", &account.admission.goal_id)
+            .map_err(|error| PublicationBridgeError::InvalidRequest(error.to_string()))?;
+        objects.extend([
+            discharge.clone(),
+            admission.clone(),
+            task.clone(),
+            goal.clone(),
+        ]);
+        relations.push(relation(
+            "discharges",
+            discharge.clone(),
+            admission.clone(),
+        )?);
+        relations.push(relation("supported_by", discharge, support)?);
+        relations.push(relation("admits", admission, task.clone())?);
+        relations.push(relation("attributed_to", task, goal)?);
+    }
+
     for artifact in &publication.outcome.artifact_records {
         require_text("artifact_id", &artifact.artifact_id)?;
         require_text("artifact_type_id", &artifact.artifact_type_id)?;

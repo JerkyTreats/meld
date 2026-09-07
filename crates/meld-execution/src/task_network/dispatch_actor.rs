@@ -529,6 +529,22 @@ where
     }
 
     fn validate_task_authority(&self, state: &NetworkState, node: &TaskNode) -> Result<(), String> {
+        self.validate_one_task_authority(state, node)?;
+        for step in state.shared_steps.values().filter(|step| {
+            step.sharing
+                .as_ref()
+                .is_some_and(|decision| decision.shared_node_id == node.task_instance_id)
+        }) {
+            self.validate_one_task_authority(state, &step.task_node)?;
+        }
+        Ok(())
+    }
+
+    fn validate_one_task_authority(
+        &self,
+        state: &NetworkState,
+        node: &TaskNode,
+    ) -> Result<(), String> {
         validate_task_admission_attribution(state, node)?;
         let observed_generation = match (
             self.admission_generation_observer.as_ref(),

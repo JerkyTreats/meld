@@ -25,6 +25,9 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Complete reduced task network state at one journal revision.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NetworkState {
+    /// Intact lowered steps and compatibility decisions attached to shared nodes.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub shared_steps: BTreeMap<String, super::mutation::Inject>,
     /// Stable task network identifier.
     pub network_id: String,
     /// Monotonic journal revision applied to this state.
@@ -57,6 +60,7 @@ impl NetworkState {
     /// Creates an empty state snapshot with a stable initial hash.
     pub fn empty(network_id: impl Into<String>) -> Self {
         let mut state = Self {
+            shared_steps: BTreeMap::new(),
             network_id: network_id.into(),
             revision: 0,
             state_hash: String::new(),
@@ -78,6 +82,8 @@ impl NetworkState {
     pub fn recompute_state_hash(&self) -> String {
         #[derive(Serialize)]
         struct HashProjection<'a> {
+            #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+            shared_steps: &'a BTreeMap<String, super::mutation::Inject>,
             network_id: &'a str,
             revision: u64,
             #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -99,6 +105,7 @@ impl NetworkState {
         artifact_availability.sort();
 
         stable_hash(&HashProjection {
+            shared_steps: &self.shared_steps,
             network_id: &self.network_id,
             revision: self.revision,
             admissions: &self.admissions,
@@ -140,6 +147,10 @@ pub fn admission_region_terminal_outcome_id<'a>(
                 .is_some_and(|attribution| attribution.admission_id == admission_id)
         })
         .map(|node| node.task_instance_id.as_str())
+        .chain(state.shared_steps.values().filter_map(|step| {
+            (step.task_node.lineage.admission.as_ref()?.admission_id == admission_id)
+                .then_some(step.sharing.as_ref()?.shared_node_id.as_str())
+        }))
         .collect::<BTreeSet<_>>();
     if region.is_empty() {
         return None;

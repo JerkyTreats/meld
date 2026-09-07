@@ -372,7 +372,11 @@ fn contract(
             } else {
                 ExecutionClass::Inline
             },
-            completion_semantics: "artifact_or_failure".to_string(),
+            completion_semantics: if capability_type_id == DRAFT_PATCH_SET {
+                crate::capability::EXACT_INPUT_SHARING_V1.to_string()
+            } else {
+                "artifact_or_failure".to_string()
+            },
             retry_class: if is_provider_capability(capability_type_id) {
                 "bounded_provider_io".to_string()
             } else {

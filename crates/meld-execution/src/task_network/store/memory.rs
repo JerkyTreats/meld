@@ -320,7 +320,9 @@ impl InMemoryTaskNetworkStore {
                         );
                     }
                     let task_instance_id = inject.task_node.task_instance_id.clone();
-                    if proposed.tasks.contains_key(&task_instance_id) {
+                    if proposed.tasks.contains_key(&task_instance_id)
+                        || proposed.shared_steps.contains_key(&task_instance_id)
+                    {
                         return self.record_response(
                             command_id,
                             request_hash,
@@ -328,6 +330,12 @@ impl InMemoryTaskNetworkStore {
                                 mutation::ReadPrecondition::NodeAbsent(task_instance_id),
                             )),
                         );
+                    }
+                    if inject.sharing.is_some() {
+                        proposed
+                            .shared_steps
+                            .insert(task_instance_id, inject.clone());
+                        continue;
                     }
                     proposed
                         .statuses
@@ -465,13 +473,15 @@ impl InMemoryTaskNetworkStore {
         }
 
         let revision = self.state.revision + 1;
-        let claim = dispatch::Claim::accepted(
+        let mut claim = dispatch::Claim::accepted(
             self.state.network_id.clone(),
             &request,
             node.lifecycle_epoch,
             revision,
             node.lineage.admission.clone(),
         );
+        claim.shared_action_decision_ids =
+            super::super::sharing::decision_ids_for_node(&self.state, &request.task_instance_id);
         self.state.statuses.insert(
             request.task_instance_id.clone(),
             TaskStatus::Running {
@@ -566,7 +576,9 @@ impl InMemoryTaskNetworkStore {
         self.state
             .outcomes
             .insert(outcome.outcome_id.clone(), outcome.clone());
-        let publication = Publication::pending_for_outcome(&self.state.network_id, &outcome);
+        let mut publication = Publication::pending_for_outcome(&self.state.network_id, &outcome);
+        publication.shared_discharge_accounts =
+            super::super::sharing::unpublished_shared_discharge_accounts(&self.state);
         self.state
             .publications
             .insert(publication.publication_id.clone(), publication.clone());
@@ -642,7 +654,10 @@ impl InMemoryTaskNetworkStore {
             );
         }
 
-        if current.network_id != publication.network_id || current.outcome != publication.outcome {
+        if current.network_id != publication.network_id
+            || current.outcome != publication.outcome
+            || current.shared_discharge_accounts != publication.shared_discharge_accounts
+        {
             return self.record_response(
                 command_id,
                 request_hash,
@@ -837,6 +852,12 @@ impl InMemoryTaskNetworkStore {
                     match mutation {
                         mutation::Mutation::Inject(inject) => {
                             let task_instance_id = inject.task_node.task_instance_id.clone();
+                            if inject.sharing.is_some() {
+                                self.state
+                                    .shared_steps
+                                    .insert(task_instance_id, inject.clone());
+                                continue;
+                            }
                             self.state
                                 .statuses
                                 .insert(task_instance_id.clone(), TaskStatus::Pending);
@@ -853,6 +874,16 @@ impl InMemoryTaskNetworkStore {
             JournalRecord::Claim(claim) => {
                 if claim.network_id != self.state.network_id || claim.claim_revision != revision {
                     return Err(decode_error("claim journal record metadata mismatch"));
+                }
+                if claim.shared_action_decision_ids
+                    != super::super::sharing::decision_ids_for_node(
+                        &self.state,
+                        &claim.task_instance_id,
+                    )
+                {
+                    return Err(decode_error(
+                        "claim has different shared admission attribution",
+                    ));
                 }
                 self.state.statuses.insert(
                     claim.task_instance_id.clone(),
@@ -897,6 +928,13 @@ impl InMemoryTaskNetworkStore {
                 self.state
                     .outcomes
                     .insert(outcome.outcome_id.clone(), outcome.clone());
+                if publication.shared_discharge_accounts
+                    != super::super::sharing::unpublished_shared_discharge_accounts(&self.state)
+                {
+                    return Err(decode_error(
+                        "publication carries different shared admission accounts",
+                    ));
+                }
                 self.state
                     .publications
                     .insert(publication.publication_id.clone(), publication.clone());
@@ -957,6 +995,12 @@ fn validate_admitted_mutation_set(state: &NetworkState, set: &mutation::Set) -> 
     for mutation in &set.mutations {
         let mutation::Mutation::Inject(inject) = mutation;
         validate_task_admission_attribution_for_lowering(state, &inject.task_node)?;
+        if let Some(decision) = &inject.sharing {
+            if !inject.incoming_edges.is_empty() {
+                return Err("shared step must have no unmet dependencies".into());
+            }
+            decision.validate(state, &inject.task_node)?;
+        }
         let Some(attribution) = &inject.task_node.lineage.admission else {
             contains_unattributed = true;
             continue;
@@ -1126,6 +1170,7 @@ mod tests {
     #[test]
     fn replay_rejects_claim_record_network_mismatch_even_when_hash_matches_mutated_state() {
         let mismatched_claim = dispatch::Claim {
+            shared_action_decision_ids: Vec::new(),
             claim_id: "claim-alpha".to_string(),
             network_id: "other-network".to_string(),
             task_instance_id: "task-alpha".to_string(),

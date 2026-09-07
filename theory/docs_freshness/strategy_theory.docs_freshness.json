@@ -73,7 +73,7 @@
       "outcome_contract_id": "docs.scope_inspected.v1"
     },
     {
-      "contract_id": "capability-contract-d76dfe828a7c5b9dbbac001f36bcdde7f445417d3aa5e1f2fb38b2c7f4b5a37d",
+      "contract_id": "capability-contract-c0b9c79f582bdca4fc627eb19b85465ffb6dc24109e13b95659aaf881dc65e80",
       "operator": {
         "operator_id": "draft-docs-patch-set",
         "preconditions": [],

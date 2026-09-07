@@ -110,6 +110,9 @@ pub enum Mutation {
 /// Mutation that injects one task node.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Inject {
+    /// Exact decision attaching this admitted step to an existing operational node.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sharing: Option<super::sharing::SharedActionDecision>,
     /// Stable mutation id.
     pub mutation_id: String,
     /// Task node to add.
@@ -140,6 +143,7 @@ impl Inject {
         );
 
         Self {
+            sharing: None,
             mutation_id,
             task_node,
             incoming_edges,
