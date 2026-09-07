@@ -224,6 +224,27 @@ pub fn handle_cli_command_with_account_writer(
     account_writer: &mut dyn Write,
 ) -> Result<String, ApiError> {
     match command {
+        RuntimeCommands::StartupAccount {
+            agent_id,
+            generation_id,
+            admission_epoch,
+            nonce_id,
+            inspection_fence,
+            format,
+        } => {
+            validate_format(format)?;
+            let request = crate::harness::startup::StartupAccountRequest {
+                agent_id: agent_id.clone(),
+                generation_id: generation_id.clone(),
+                admission_epoch: admission_epoch.clone(),
+                nonce_id: nonce_id.clone(),
+                inspection_fence: inspection_fence.clone(),
+            };
+            let account = crate::harness::startup::StartupAccountReader::over_assembly(assembly)
+                .inspect(&request)
+                .map_err(|error| runtime_message(error.to_string()))?;
+            format_startup_account(&account, format)
+        }
         RuntimeCommands::Request {
             agent_id,
             request_key,
@@ -282,6 +303,89 @@ struct RuntimeRunOptions<'a> {
     restart_policy: &'a str,
     restart_attempt_limit: u64,
     restart_backoff_ms: u64,
+}
+
+fn format_startup_account(
+    account: &crate::harness::startup::StartupNonceAccount,
+    format: &str,
+) -> Result<String, ApiError> {
+    if format == "json" {
+        return serde_json::to_string_pretty(account)
+            .map_err(|error| runtime_message(error.to_string()));
+    }
+    let mut lines = vec![format!(
+        "Startup account for {}: {:?}",
+        account.agent_id, account.read_state
+    )];
+    if account.read_state == crate::harness::startup::EvidenceState::Stale {
+        lines.push("Owner positions changed; request a fresh inspection.".into());
+    } else if let Some(position) = account.first_missing {
+        lines.push(format!("First missing position: {position:?}"));
+    } else {
+        lines.push("All inspected success-path positions are available.".into());
+    }
+    for position in &account.positions {
+        lines.push(format!(
+            "{:?}: {:?} [{}] {}",
+            position.position,
+            position.state,
+            position.owner,
+            position.references.join(", ")
+        ));
+    }
+    for obligation in &account.parallel_obligations {
+        lines.push(format!(
+            "Parallel obligation: {} [{}] {}",
+            obligation.condition,
+            obligation.owner,
+            obligation.references.join(", ")
+        ));
+    }
+    lines.push(format!("Inspection fence: {}", account.inspection_fence));
+    Ok(lines.join("\n"))
+}
+
+/// Read native Startup positions from the process already holding the stores.
+pub fn try_live_startup_account(
+    workspace_root: &std::path::Path,
+    config: &crate::config::MerkleConfig,
+    request: &crate::harness::startup::StartupAccountRequest,
+    format: &str,
+) -> Option<Result<String, ApiError>> {
+    if let Err(error) = validate_format(format) {
+        return Some(Err(error));
+    }
+    let description =
+        ProductRuntimeAssembly::describe_for_workspace(workspace_root, config).ok()?;
+    if !description.product_root.is_dir() {
+        return Some(Err(runtime_message(
+            "Startup product storage is absent; inspection does not initialize it",
+        )));
+    }
+    let discovery = crate::serve::discovery::read(&description.product_root)?;
+    ureq::get(&format!("http://{}/v1/ledger", discovery.addr))
+        .timeout(std::time::Duration::from_secs(2))
+        .call()
+        .ok()?;
+    Some((|| {
+        let response = ureq::post(&format!(
+            "http://{}/v1/projections/startup_nonce_account",
+            discovery.addr
+        ))
+        .timeout(std::time::Duration::from_secs(5))
+        .send_json(&crate::serve::routes::StartupAccountReadRequest {
+            product_root: description.product_root,
+            request: request.clone(),
+        })
+        .map_err(|error| runtime_message(error.to_string()))?;
+        let account: crate::harness::startup::StartupNonceAccount = response
+            .into_json()
+            .map_err(|error| runtime_message(error.to_string()))?;
+        if account.agent_id != request.agent_id {
+            return Err(runtime_message("Startup response names another Agent"));
+        }
+        format_startup_account(&account, format)
+    })())
 }
 
 fn format_request_status(

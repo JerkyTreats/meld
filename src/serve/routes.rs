@@ -70,9 +70,28 @@ pub struct ReconciliationRequest {
     pub request_key: String,
 }
 
+/// Structural product address around an intact read-only inspection request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StartupAccountReadRequest {
+    pub product_root: std::path::PathBuf,
+    pub request: crate::harness::startup::StartupAccountRequest,
+}
+
 /// Dispatch one request against the served sources.
 pub fn dispatch(sources: &ServeSources, method: &str, path: &str, body: &[u8]) -> RouteResponse {
     match (method, path) {
+        ("POST", "/v1/projections/startup_nonce_account") => {
+            handle(body, |request: StartupAccountReadRequest| {
+                if request.product_root != sources.product_root {
+                    return Err("Startup inspection addresses another product root".into());
+                }
+                sources
+                    .startup
+                    .inspect(&request.request)
+                    .map_err(|error| error.to_string())
+            })
+        }
         ("POST", "/v1/agents/reconciliation_requests") => {
             handle(body, |request: ReconciliationRequest| {
                 if !sources.accepts_reconciliation_requests

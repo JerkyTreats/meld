@@ -25,6 +25,7 @@ use crate::runtime::supervisor::SupervisorReportStore;
 
 /// Owned domain surfaces for one served root.
 pub struct ServeSources {
+    pub(crate) startup: crate::harness::startup::StartupAccountReader,
     pub(crate) product_root: std::path::PathBuf,
     pub(crate) accepts_reconciliation_requests: bool,
     pub(crate) events: LocalEventAuthorityClient,
@@ -55,6 +56,7 @@ impl ServeSources {
         // never serves a previous boot's declarations as current state.
         let action_floor = reports.sequence_watermark();
         Ok(Self {
+            startup: crate::harness::startup::StartupAccountReader::over_assembly(assembly),
             product_root: assembly.product_root().to_path_buf(),
             accepts_reconciliation_requests: false,
             events: LocalEventAuthorityClient::new(authority.as_ref()),

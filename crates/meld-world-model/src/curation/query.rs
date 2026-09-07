@@ -3,6 +3,16 @@ use crate::curation::{
     CurationPublicationReceipt, CurationResult, CurationStore, StandingCurationRuleRevision,
 };
 use crate::error::StorageError;
+use serde::{Deserialize, Serialize};
+
+/// Intact native records for one operation, including publication lag.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CurationOperationAccount {
+    pub operation: CurationOperation,
+    pub acceptance: Option<CurationAcceptanceRecord>,
+    pub result: Option<CurationResult>,
+    pub publications: Vec<CurationPublicationReceipt>,
+}
 
 /// Read-only facade over durable standing Curation state.
 pub struct CurationQuery<'a> {
@@ -10,6 +20,18 @@ pub struct CurationQuery<'a> {
 }
 
 impl<'a> CurationQuery<'a> {
+    /// Monotonic position over immutable operation, decision, result and publication records.
+    pub fn position(&self) -> u64 {
+        self.store.inspection_position()
+    }
+    /// Exact authority and rule scope; historical epochs cannot answer for this selection.
+    pub fn operation_accounts(
+        &self,
+        authority: &crate::curation::CurationAuthority,
+        rule: &crate::belief::TheoryRevisionRef,
+    ) -> Result<Vec<CurationOperationAccount>, StorageError> {
+        self.store.operation_accounts(authority, rule)
+    }
     /// Bind a query facade to the Curation-owned store family.
     pub fn new(store: &'a CurationStore) -> Self {
         Self { store }

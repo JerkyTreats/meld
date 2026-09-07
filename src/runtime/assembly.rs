@@ -1667,6 +1667,24 @@ impl ProductRuntimeAssembly {
         self.prepared_activation.as_ref()
     }
 
+    /// Read the same native network used by admission and dispatch without opening another store.
+    pub fn task_network_reader(
+        &self,
+    ) -> Option<meld_execution::task_network::store::TaskNetworkReader> {
+        self.handle_factories
+            .factories
+            .values()
+            .find_map(|factory| {
+                if let RuntimeSemanticHandleFactory::TaskAdmission(admission) = &factory.semantic {
+                    Some(meld_execution::task_network::store::TaskNetworkReader::new(
+                        Arc::clone(&admission.network),
+                    ))
+                } else {
+                    None
+                }
+            })
+    }
+
     /// Return desired runtime states prepared for supervisor handoff.
     pub fn desired_runtime_state(&self) -> &[DesiredRuntimeState] {
         &self.desired_runtime_state
@@ -5453,6 +5471,7 @@ mod tests {
     #[cfg(unix)]
     mod security_native_mitigation;
     mod security_planning;
+    mod startup_account;
     use std::sync::Mutex;
 
     use meld_events::EventEnvelope;
@@ -10418,13 +10437,7 @@ mod tests {
         RestartInterrupted,
     }
 
-    fn prove_installed_startup(callback: StartupCallback) {
-        let lose_callback = !matches!(callback, StartupCallback::Normal);
-        let continuous_retry = matches!(callback, StartupCallback::ContinuousRetry);
-        let restart_pending = matches!(
-            callback,
-            StartupCallback::RestartWithheld | StartupCallback::RestartInterrupted
-        );
+    fn startup_harness() -> StewardshipHarness {
         let mut harness = StewardshipHarness::new();
         harness.binding.subject = DomainObjectRef::new("runtime", "instance", "meld").unwrap();
         harness.binding.workspace_root = None;
@@ -10442,6 +10455,17 @@ mod tests {
             authority_policy_id: "startup_nonce_local".into(),
             claim_policy_id: String::new(),
         };
+        harness
+    }
+
+    fn prove_installed_startup(callback: StartupCallback) {
+        let lose_callback = !matches!(callback, StartupCallback::Normal);
+        let continuous_retry = matches!(callback, StartupCallback::ContinuousRetry);
+        let restart_pending = matches!(
+            callback,
+            StartupCallback::RestartWithheld | StartupCallback::RestartInterrupted
+        );
+        let harness = startup_harness();
         let assembly = harness.assembly();
         harness.run_world_genesis_from(
             &assembly,

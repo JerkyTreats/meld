@@ -491,7 +491,8 @@ impl AgentStore {
         )
     }
 
-    pub(crate) fn reconciliation_cut(
+    /// Read the immutable native cut retained for a judgment or return attribution.
+    pub fn reconciliation_cut(
         &self,
         cut_id: &str,
     ) -> Result<Option<crate::planner::PlannerCut>, StorageError> {

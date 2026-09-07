@@ -20,6 +20,7 @@ mod error;
 mod factory;
 mod legacy;
 mod memory;
+mod reader;
 mod records;
 mod sled;
 
@@ -27,4 +28,5 @@ pub use crate::task_network::journal::JournalRecord;
 pub use error::TaskNetworkStoreError;
 pub use factory::{network_storage_key, TaskNetworkStoreFactory};
 pub use memory::InMemoryTaskNetworkStore;
+pub use reader::TaskNetworkReader;
 pub use sled::SledTaskNetworkStore;

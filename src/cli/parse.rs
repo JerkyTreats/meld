@@ -400,6 +400,22 @@ pub enum EventCommands {
 
 #[derive(Subcommand)]
 pub enum RuntimeCommands {
+    /// Inspect the native Startup nonce path without advancing any owner
+    StartupAccount {
+        #[arg(long)]
+        agent_id: String,
+        #[arg(long)]
+        generation_id: Option<String>,
+        #[arg(long)]
+        admission_epoch: Option<String>,
+        #[arg(long)]
+        nonce_id: Option<String>,
+        /// Require exactly the owner positions returned by a previous inspection
+        #[arg(long)]
+        inspection_fence: Option<String>,
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
     /// Request another native reconciliation of an installed Agent intent
     Request {
         #[arg(long)]

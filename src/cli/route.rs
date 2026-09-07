@@ -260,6 +260,16 @@ impl RunContext {
 
     /// Execute a CLI command via the single route table.
     pub fn execute(&self, command: &Commands) -> Result<String, ApiError> {
+        // Inspection must not advance its fenced ledger through command-session
+        // telemetry or touch the workspace branch as a routing side effect.
+        if matches!(
+            command,
+            Commands::Runtime {
+                command: crate::cli::RuntimeCommands::StartupAccount { .. }
+            }
+        ) {
+            return self.execute_inner(command, "", None);
+        }
         let started = Instant::now();
         let command_name = command_name(command);
         let command_event_position =

@@ -136,7 +136,9 @@ fn try_execute_live_runtime_command(cli: &Cli) -> Option<Result<String, meld::er
     };
     if !matches!(
         command,
-        meld::cli::RuntimeCommands::Status { .. } | meld::cli::RuntimeCommands::Request { .. }
+        meld::cli::RuntimeCommands::Status { .. }
+            | meld::cli::RuntimeCommands::Request { .. }
+            | meld::cli::RuntimeCommands::StartupAccount { .. }
     ) {
         return None;
     }
@@ -146,6 +148,25 @@ fn try_execute_live_runtime_command(cli: &Cli) -> Option<Result<String, meld::er
         None => ConfigLoader::load(&cli.workspace).ok()?,
     };
     match command {
+        meld::cli::RuntimeCommands::StartupAccount {
+            agent_id,
+            generation_id,
+            admission_epoch,
+            nonce_id,
+            inspection_fence,
+            format,
+        } => meld::runtime::tooling::try_live_startup_account(
+            &cli.workspace,
+            &config,
+            &meld::harness::startup::StartupAccountRequest {
+                agent_id: agent_id.clone(),
+                generation_id: generation_id.clone(),
+                admission_epoch: admission_epoch.clone(),
+                nonce_id: nonce_id.clone(),
+                inspection_fence: inspection_fence.clone(),
+            },
+            format,
+        ),
         meld::cli::RuntimeCommands::Status {
             format,
             runtime_ids,

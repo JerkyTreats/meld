@@ -18,6 +18,8 @@ Live and playback handlers serve equivalent values from the same session evidenc
 
 Waiting-on declarations are observational products of domain selectors. They never gate, reorder, or fail semantic work. Their vocabulary remains domain-owned.
 
+The Startup nonce account correlates the exact native preparation, generation, epoch, nonce, Curation, Plan, Task, Event, Graph, Belief and Agent positions. It names the first missing success-path position and keeps unresolved operational returns and publication obligations separate. Its two reads must agree on native positions, and a supplied inspection fence must match. A changed or historical fence cannot become a current success claim. The live Task Network reader shares the already opened native store and exposes no command submission.
+
 ## Durable Compatibility
 
 Stored Harness records follow their actual encoding contract. A durable shape change preserves readable historical data through a bounded compatibility reader and characterization evidence. Compatibility does not create a second writer.

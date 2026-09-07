@@ -668,6 +668,18 @@ authority_policy_id = "startup_nonce_local"
             ProductRuntimeAssembly::describe_for_workspace(&absent_workspace, &config).unwrap();
         assert_eq!(description.product_root, product_root);
         assert!(!product_root.exists());
+        assert!(meld::runtime::tooling::try_live_startup_account(
+            &absent_workspace,
+            &config,
+            &meld::harness::startup::StartupAccountRequest {
+                agent_id: "startup-agent".into(),
+                ..Default::default()
+            },
+            "json",
+        )
+        .unwrap()
+        .is_err());
+        assert!(!product_root.exists());
         let run = RunContext::new(absent_workspace.clone(), None).unwrap();
         assert!(run.api().workspace_root().is_none());
         run.execute(&Commands::World {
@@ -749,6 +761,23 @@ authority_policy_id = "startup_nonce_local"
             .unwrap()
             .expect("Startup Goal unsatisfied");
         assert!(!disposition.accepted_milestone_ids.is_empty());
+        let products = store.epoch_products(goal_id).unwrap().unwrap();
+        let before_inspection = run.event_watermark_capability().snapshot().unwrap();
+        run.execute(&Commands::Runtime {
+            command: RuntimeCommands::StartupAccount {
+                agent_id: "startup-agent".into(),
+                generation_id: Some(products.specification.fence.activation_generation.clone()),
+                admission_epoch: products.specification.fence.admission_epoch.clone(),
+                nonce_id: None,
+                inspection_fence: None,
+                format: "text".into(),
+            },
+        })
+        .unwrap();
+        assert_eq!(
+            run.event_watermark_capability().snapshot().unwrap(),
+            before_inspection
+        );
         drop(run);
         let run = RunContext::new(absent_workspace.clone(), None).unwrap();
         assert_eq!(

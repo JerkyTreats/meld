@@ -71,6 +71,55 @@ impl CurationStore {
         &self.resource_id
     }
 
+    pub(super) fn inspection_position(&self) -> u64 {
+        [
+            &self.operations,
+            &self.planned_authorizations,
+            &self.acceptances,
+            &self.results,
+            &self.publication_receipts,
+        ]
+        .iter()
+        .map(|tree| tree.len() as u64)
+        .sum()
+    }
+
+    pub(super) fn operation_accounts(
+        &self,
+        authority: &CurationAuthority,
+        rule: &crate::belief::TheoryRevisionRef,
+    ) -> Result<Vec<super::query::CurationOperationAccount>, StorageError> {
+        let mut accounts = Vec::new();
+        for row in &self.operations {
+            let (_, raw) = row.map_err(to_storage_io)?;
+            let operation: CurationOperation = decode(&raw)?;
+            if operation.authority != *authority || operation.rule_revision != *rule {
+                continue;
+            }
+            operation.validate()?;
+            let acceptance = self.acceptance_for_operation(&operation.operation_id)?;
+            let result = self.result_for_operation(&operation.operation_id)?;
+            let mut publications = Vec::new();
+            if let Some(result) = &result {
+                for kind in [
+                    CurationPublicationKind::Semantic,
+                    CurationPublicationKind::Terminal,
+                ] {
+                    if let Some(receipt) = self.publication_receipt(&result.result_id, kind)? {
+                        publications.push(receipt);
+                    }
+                }
+            }
+            accounts.push(super::query::CurationOperationAccount {
+                operation,
+                acceptance,
+                result,
+                publications,
+            });
+        }
+        Ok(accounts)
+    }
+
     /// Persist one exact grounded rule without selecting a live runtime.
     fn persist_rule(
         &self,
