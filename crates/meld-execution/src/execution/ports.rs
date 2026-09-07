@@ -13,6 +13,8 @@ use crate::generation::{
 /// Exact effect boundary derived from an admitted Task's authority.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionEffectAuthority {
+    /// Opaque Agent-owned request identity, retained independently of the live effect fence.
+    pub request_ref: Option<String>,
     /// Issuer of the admitted Task, distinct from the principal granting its authority.
     pub issuer_ref: String,
     /// Principal whose effect grant Execution validated.

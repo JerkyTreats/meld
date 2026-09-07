@@ -95,6 +95,7 @@ fn admitted_record(
     TaskAdmissionApi::new(store, &catalog, generation, &policy.content_hash)
         .admit(TaskAdmissionRequest {
             lineage: TaskAdmissionLineage {
+                request_ref: None,
                 agent_id: "agent-docs".to_string(),
                 goal_id: "goal-docs".to_string(),
                 plan_revision_id: "plan-docs-v1".to_string(),

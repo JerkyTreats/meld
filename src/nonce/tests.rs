@@ -219,6 +219,7 @@ async fn capability_requires_exact_effect_authority_and_returns_a_proven_append_
     let context = crate::execution::ExecutionEventContext {
         session_id: "emitter-proof".into(),
         effect_authority: Some(meld_execution::ExecutionEffectAuthority {
+            request_ref: None,
             issuer_ref: request.issuer_ref.clone(),
             principal_id: request.issuer_ref.clone(),
             subject: request.subject_ref.clone(),
@@ -469,6 +470,7 @@ async fn admitted_nonce_task_reaches_graph_before_outcome_and_recovers_one_durab
             .with_admission_epoch(Some("task-epoch"))
             .admit(TaskAdmissionRequest {
                 lineage: TaskAdmissionLineage {
+                    request_ref: None,
                     agent_id: nonce.issuer_ref.clone(),
                     goal_id: "nonce-goal".into(),
                     plan_revision_id: "nonce-plan".into(),

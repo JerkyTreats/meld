@@ -27,6 +27,7 @@ fn request(authorization_id: &str, generation: &str) -> TaskAdmissionRequest {
     });
     TaskAdmissionRequest {
         lineage: TaskAdmissionLineage {
+            request_ref: None,
             agent_id: "agent-docs".to_string(),
             goal_id: "goal-docs".to_string(),
             plan_revision_id: "plan-docs-v1".to_string(),
@@ -93,6 +94,7 @@ fn dataflow_request(with_edge: bool) -> TaskAdmissionRequest {
     ];
     TaskAdmissionRequest {
         lineage: TaskAdmissionLineage {
+            request_ref: None,
             agent_id: "agent-docs".to_string(),
             goal_id: "goal-docs".to_string(),
             plan_revision_id: "plan-docs-v1".to_string(),
@@ -158,6 +160,7 @@ fn duplicate_optional_dataflow_request() -> TaskAdmissionRequest {
     let task_id = "task-duplicate-optional-input".to_string();
     TaskAdmissionRequest {
         lineage: TaskAdmissionLineage {
+            request_ref: None,
             agent_id: "agent-docs".to_string(),
             goal_id: "goal-docs".to_string(),
             plan_revision_id: "plan-docs-v1".to_string(),
@@ -319,6 +322,45 @@ fn admission_records_stale_and_rejected_offers_without_lowering_them() {
         .lower("network-docs", &rejected)
         .diagnostics
         .is_empty());
+}
+
+#[test]
+fn admitted_request_attribution_is_exact_and_absent_from_legacy_wire() {
+    let catalog = task_network_support::catalog();
+    let legacy = request("legacy", "generation-v1");
+    let body = serde_json::to_value(&legacy).unwrap();
+    assert!(body["lineage"].get("request_ref").is_none());
+    let mut attributed = legacy.clone();
+    attributed.lineage.authorization_id = "attributed".into();
+    attributed.lineage.request_ref = Some(attributed.lineage.goal_id.clone());
+    let mut store = InMemoryTaskNetworkStore::new("request-attribution");
+    let admitted = TaskAdmissionApi::new(
+        &mut store,
+        &catalog,
+        "generation-v1",
+        "policy-content-docs-v1",
+    )
+    .admit(attributed.clone())
+    .unwrap();
+    assert_eq!(admitted.decision, TaskAdmissionDecision::Admitted);
+    assert_eq!(
+        meld_execution::task_network::TaskAdmissionAttribution::from_record(&admitted).request_ref,
+        attributed.lineage.request_ref
+    );
+    attributed.lineage.authorization_id = "foreign".into();
+    attributed.lineage.request_ref = Some("foreign-goal".into());
+    let rejected = TaskAdmissionApi::new(
+        &mut store,
+        &catalog,
+        "generation-v1",
+        "policy-content-docs-v1",
+    )
+    .admit(attributed)
+    .unwrap();
+    assert!(matches!(
+        rejected.decision,
+        TaskAdmissionDecision::Rejected { .. }
+    ));
 }
 
 #[test]

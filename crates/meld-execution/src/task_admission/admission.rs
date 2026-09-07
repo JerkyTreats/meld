@@ -34,6 +34,9 @@ pub struct ExecutionTask {
 /// Exact producer lineage retained at the Execution boundary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskAdmissionLineage {
+    /// Explicit Agent-owned observation request, independent of activation fencing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_ref: Option<String>,
     /// Agent that granted Task authority.
     pub agent_id: String,
     /// Goal to which the Task remains attributed.
@@ -293,6 +296,15 @@ fn validation_grounds(request: &TaskAdmissionRequest, catalog: &CapabilityCatalo
     }
     if declared_actions.len() != request.task.authority_requirements.len() {
         grounds.push("Task authority requirements contain duplicates".to_string());
+    }
+    if request
+        .lineage
+        .request_ref
+        .as_ref()
+        .is_some_and(|request_ref| request_ref != &request.lineage.goal_id)
+    {
+        grounds
+            .push("Task observation request differs from its Agent Goal attribution".to_string());
     }
     for value in [
         request.lineage.agent_id.as_str(),

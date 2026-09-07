@@ -45,6 +45,7 @@ fn admission(index: usize, byte: u8) -> TaskAdmissionRequest {
     let task_id = format!("admission-task-{index}-{byte}");
     TaskAdmissionRequest {
         lineage: TaskAdmissionLineage {
+ request_ref: None,
             agent_id: "agent-fuzz".to_string(),
             goal_id: "goal-fuzz".to_string(),
             plan_revision_id: "plan-fuzz".to_string(),

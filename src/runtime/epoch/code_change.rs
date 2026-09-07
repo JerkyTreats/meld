@@ -57,15 +57,23 @@ impl AgentEpochPreparationPort for ProductCodeChangeEpochPreparation {
             ));
         }
         let authority = &specification.authority;
-        let (scope, root) = crate::code_change::publication::observation_source(
-            &authority.agent_id,
-            &authority.subject,
-            specification
-                .fence
-                .admission_epoch
-                .as_deref()
-                .ok_or_else(|| StorageError::InvalidPath("code-change epoch absent".into()))?,
-        )
+        let (scope, root) = if specification.is_prepared_request() {
+            crate::code_change::publication::request_observation_source(
+                &authority.agent_id,
+                &authority.subject,
+                &specification.goal_id,
+            )
+        } else {
+            crate::code_change::publication::observation_source(
+                &authority.agent_id,
+                &authority.subject,
+                specification
+                    .fence
+                    .admission_epoch
+                    .as_deref()
+                    .ok_or_else(|| StorageError::InvalidPath("code-change epoch absent".into()))?,
+            )
+        }
         .map_err(StorageError::InvalidPath)?;
         let expected = crate::code_change::publication::graph_route();
         let route = self

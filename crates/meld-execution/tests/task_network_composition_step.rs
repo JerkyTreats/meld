@@ -242,6 +242,7 @@ fn admission_request(task: ExecutionTask) -> TaskAdmissionRequest {
     let task_id = task.task_id.clone();
     TaskAdmissionRequest {
         lineage: TaskAdmissionLineage {
+            request_ref: None,
             agent_id: "agent-fanout".to_string(),
             goal_id: "goal-fanout".to_string(),
             plan_revision_id: "plan-fanout-v1".to_string(),

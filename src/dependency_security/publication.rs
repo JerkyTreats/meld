@@ -489,6 +489,7 @@ mod tests {
         let context = ExecutionEventContext {
             session_id: "security-recovery".into(),
             effect_authority: Some(meld_execution::ExecutionEffectAuthority {
+                request_ref: None,
                 issuer_ref: "agent".into(),
                 principal_id: "owner".into(),
                 subject: subject.subject,

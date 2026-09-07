@@ -408,6 +408,9 @@ impl NetworkState {
 /// Exact producer and consumer lineage retained on every admitted Task node.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct TaskAdmissionAttribution {
+    /// Explicit Agent-owned observation request, independent of activation fencing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_ref: Option<String>,
     /// Agent that granted Task authority.
     pub agent_id: String,
     /// Goal to which operational work remains attributed.
@@ -435,6 +438,7 @@ impl TaskAdmissionAttribution {
     /// Project complete attribution from one durable admission record.
     pub fn from_record(record: &crate::task_admission::TaskAdmissionRecord) -> Self {
         Self {
+            request_ref: record.request.lineage.request_ref.clone(),
             agent_id: record.request.lineage.agent_id.clone(),
             goal_id: record.request.lineage.goal_id.clone(),
             plan_revision_id: record.request.lineage.plan_revision_id.clone(),

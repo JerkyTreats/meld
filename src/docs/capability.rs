@@ -969,6 +969,7 @@ mod tests {
         let context = ExecutionEventContext {
             session_id: "publication-session".into(),
             effect_authority: Some(meld_execution::ExecutionEffectAuthority {
+                request_ref: None,
                 issuer_ref: config.agent_id.clone(),
                 principal_id: "workspace-owner".into(),
                 subject: DomainObjectRef::new("workspace", "repository", &config.subject_id)

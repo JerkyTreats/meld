@@ -3,6 +3,6 @@
   "dimension_id": "code_materialization",
   "threshold": 0.7,
   "priority_urgency": 50,
-  "desired_summary": "the declared code change has a confirmed materialization account in this epoch",
+  "desired_summary": "the declared code-change request has a confirmed materialization account",
   "source_kind": "belief_divergence"
 }

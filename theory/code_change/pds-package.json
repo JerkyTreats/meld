@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "package_id": "meld.code-change",
-  "package_version": "1.0.0",
+  "package_version": "1.1.0",
   "description": "Declared code changes constructed and separately authorized by Agent, materialized by their native owner, and confirmed through Graph, Curation and Belief",
   "imports": [],
   "components": [
@@ -57,7 +57,7 @@
       "content": {
         "kind": "relative_file",
         "path": "maintained_condition.code_change.json",
-        "content_hash": "0afa85b26cd41cc7c8461e85fbd434f6774443d344cda7e9b3b2a5f3792678c6"
+        "content_hash": "c934b1f85c64e98aa16b7509de2b3453e859a3a6745dc0bb58aaa06c7e5e0716"
       },
       "requires": [
         {
@@ -81,7 +81,7 @@
       "content": {
         "kind": "relative_file",
         "path": "curation_rule.code_change.json",
-        "content_hash": "3985ab77653199bf3987a9dd5b8e23605a743e90e314b4e8a590d2acafce6f64"
+        "content_hash": "77c926baa97885bf88cede2f543f3e245ef68c9eb31672fb42e15d3e94dd72b5"
       },
       "requires": [
         {

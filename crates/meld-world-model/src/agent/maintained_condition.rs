@@ -36,6 +36,8 @@ pub enum AgentObservationScope {
     #[default]
     AssignedSubject,
     AdmissionEpoch,
+    /// One requested observation for the exact prepared intent, retained across generations.
+    PreparedRequest,
 }
 
 impl AgentObservationScope {

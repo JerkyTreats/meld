@@ -189,8 +189,15 @@ impl CodeChangeCapability {
             }
         };
         // Intent retains the intact change once; the payload hash binds its original transport envelope.
+        let mut binding = serde_json::json!({"runtime": runtime, "payload_identity": hash(payload).map_err(invalid)?, "invocation_id": payload.invocation_id, "input_origin": input_origin, "lineage": payload.upstream_lineage, "execution_context": payload.execution_context, "workspace": self.root, "session": context.session_id, "authority": {"issuer": authority.issuer_ref, "principal": authority.principal_id, "subject": authority.subject, "fence": authority.fence_ref}});
+        if let Some(request) = &authority.request_ref {
+            if request.trim().is_empty() {
+                return Err(invalid("code request identity is empty"));
+            }
+            binding["authority"]["request_ref"] = request.clone().into();
+        }
         Ok(Operation {
-            binding: serde_json::json!({"runtime": runtime, "payload_identity": hash(payload).map_err(invalid)?, "invocation_id": payload.invocation_id, "input_origin": input_origin, "lineage": payload.upstream_lineage, "execution_context": payload.execution_context, "workspace": self.root, "session": context.session_id, "authority": {"issuer": authority.issuer_ref, "principal": authority.principal_id, "subject": authority.subject, "fence": authority.fence_ref}}),
+            binding,
             change,
             root: &self.root,
         })
@@ -216,6 +223,9 @@ impl CapabilityInvoker for CodeChangeCapability {
         let events = api
             .durable_event_append()
             .ok_or_else(|| invalid("code change requires durable Event authority"))?;
+        let operation = operation
+            .retain_original_binding(&events.replay_capability())
+            .map_err(invalid)?;
         let result = result(runtime, payload, operation.apply(&events).map_err(invalid)?)?;
         let authority = context
             .and_then(|context| context.effect_authority.as_ref())
@@ -244,6 +254,7 @@ impl CapabilityInvoker for CodeChangeCapability {
         let Some(events) = events else {
             return Ok(None);
         };
+        let operation = operation.retain_original_binding(events).map_err(invalid)?;
         let result = operation
             .recover(events)
             .map_err(invalid)?
@@ -439,6 +450,7 @@ mod tests {
         let context = ExecutionEventContext {
             session_id: "code-test".into(),
             effect_authority: Some(meld_execution::ExecutionEffectAuthority {
+                request_ref: None,
                 issuer_ref: "agent".into(),
                 principal_id: "workspace-owner".into(),
                 subject,
@@ -603,5 +615,63 @@ mod tests {
             std::fs::read_to_string(target.join("Cargo.toml")).unwrap(),
             "later edit"
         );
+        let mut attributed = context.clone();
+        attributed.effect_authority.as_mut().unwrap().request_ref = Some("new-request".into());
+        let count = events.watermark_capability().snapshot().unwrap().tip_seq;
+        assert_eq!(
+            invoker
+                .invoke(&api, &runtime, &payload, Some(&attributed))
+                .await
+                .unwrap()
+                .emitted_artifacts,
+            result.emitted_artifacts
+        );
+        assert_eq!(
+            events.watermark_capability().snapshot().unwrap().tip_seq,
+            count,
+            "legacy replay cannot create a newly attributed account"
+        );
+        let mut next_payload = payload.clone();
+        next_payload.invocation_id = "second-materialization".into();
+        let next_change = CodeChangeSet::new(
+            context.effect_authority.as_ref().unwrap().subject.clone(),
+            vec![],
+            vec![FileReplacement {
+                relative_path: "Cargo.toml".into(),
+                expected_content_hash: blake3::hash(b"later edit").to_hex().to_string(),
+                replacement: "second change".into(),
+            }],
+        )
+        .unwrap();
+        next_payload.supplied_inputs[0].value =
+            SuppliedValueRef::StructuredValue(serde_json::to_value(next_change).unwrap());
+        let next_result = invoker
+            .invoke(&api, &runtime, &next_payload, Some(&attributed))
+            .await
+            .unwrap();
+        let evidence = super::super::publication::envelope(
+            &events.replay_capability(),
+            attributed.effect_authority.as_ref().unwrap(),
+            &next_result.emitted_artifacts[0],
+        )
+        .unwrap();
+        let expected = super::super::publication::request_observation_source(
+            "agent",
+            &context.effect_authority.as_ref().unwrap().subject,
+            "new-request",
+        )
+        .unwrap()
+        .0;
+        assert_eq!(
+            evidence.data["batch"]["scope"],
+            serde_json::to_value(expected).unwrap()
+        );
+        attributed.effect_authority.as_mut().unwrap().request_ref = Some("foreign-request".into());
+        assert!(super::super::publication::envelope(
+            &events.replay_capability(),
+            attributed.effect_authority.as_ref().unwrap(),
+            &next_result.emitted_artifacts[0]
+        )
+        .is_err());
     }
 }

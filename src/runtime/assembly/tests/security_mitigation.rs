@@ -169,6 +169,7 @@ fn materialize(
         meld_lang::evaluate_authority(policy, &actions, &composition, &change.subject).unwrap();
     let task_id = format!("mitigation-task::{}", change.change_id);
     let authorization = AgentProductAuthorization {
+        request_ref: None,
         agent_id: agent.strategy.agent_id.clone(),
         goal_id: format!("explicit-change-goal::{}", change.change_id),
         plan_revision_id: format!("explicit-change-plan::{}", change.change_id),

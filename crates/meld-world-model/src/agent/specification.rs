@@ -1,4 +1,4 @@
-//! Native Agent identity for an epoch-specific desired observation and frozen inputs.
+//! Native Agent inception identity for a scoped desired observation and frozen inputs.
 
 use meld_events::DomainObjectRef;
 use meld_lang::TaskInput;
@@ -22,6 +22,29 @@ pub struct AgentEpochSpecification {
 }
 
 impl AgentEpochSpecification {
+    /// Request lifetime is independent of execution authority. Epoch observations
+    /// retain their original generation-scoped identity; prepared requests retain genesis.
+    pub fn goal_identity(
+        intent: &AgentReconciliationIntent,
+        genesis: &AgentGenesisIntentV1,
+        generation: &str,
+        epoch: Option<&str>,
+    ) -> String {
+        let scope = if matches!(intent, AgentReconciliationIntent::MaintainedCondition(binding)
+            if binding.condition.observation_scope == super::AgentObservationScope::PreparedRequest)
+        {
+            format!("prepared-request::{}", genesis.intent_id)
+        } else {
+            AgentAuthorizationFence::scope_for(generation, epoch)
+        };
+        intent.goal_id(&genesis.registration.agent_id, &scope)
+    }
+
+    /// Only the prepared-request scope permits retaining an observation across fences.
+    pub fn is_prepared_request(&self) -> bool {
+        matches!(&self.intent, AgentReconciliationIntent::MaintainedCondition(binding)
+            if binding.condition.observation_scope == super::AgentObservationScope::PreparedRequest)
+    }
     /// Agent-authored opaque correlation references for independently owned effects.
     pub fn effect_correlations(&self) -> Vec<String> {
         vec![
@@ -41,7 +64,12 @@ impl AgentEpochSpecification {
         fence: AgentAuthorizationFence,
         genesis: AgentGenesisIntentV1,
     ) -> Result<Self, StorageError> {
-        let goal_id = intent.goal_id(&authority.agent_id, &fence.reconciliation_scope());
+        let goal_id = Self::goal_identity(
+            &intent,
+            &genesis,
+            &fence.activation_generation,
+            fence.admission_epoch.as_deref(),
+        );
         let specification_id =
             specification_identity(&goal_id, &intent, &authority, &fence, &genesis)?;
         let value = Self {
@@ -64,9 +92,9 @@ impl AgentEpochSpecification {
             ));
         };
         condition.validate()?;
-        if condition.condition.observation_scope != super::AgentObservationScope::AdmissionEpoch {
+        if condition.condition.observation_scope == super::AgentObservationScope::AssignedSubject {
             return Err(invalid(
-                "maintained condition does not declare an epoch observation",
+                "maintained condition does not declare a scoped observation",
             ));
         }
         let canonical_genesis = AgentGenesisIntentV1::new(
@@ -96,9 +124,12 @@ impl AgentEpochSpecification {
                 .contains(&condition.revision)
             || self.genesis.registration.maintained_condition.as_ref() != Some(condition)
             || self.goal_id
-                != self
-                    .intent
-                    .goal_id(&self.authority.agent_id, &self.fence.reconciliation_scope())
+                != Self::goal_identity(
+                    &self.intent,
+                    &self.genesis,
+                    &self.fence.activation_generation,
+                    self.fence.admission_epoch.as_deref(),
+                )
             || self.specification_id
                 != specification_identity(
                     &self.goal_id,

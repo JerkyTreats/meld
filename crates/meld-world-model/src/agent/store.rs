@@ -604,6 +604,15 @@ impl AgentStore {
         &self,
         record: &AgentProductAuthorization,
     ) -> Result<bool, StorageError> {
+        if record
+            .request_ref
+            .as_ref()
+            .is_some_and(|request| request != &record.goal_id)
+        {
+            return Err(StorageError::InvalidPath(
+                "product request differs from its native Goal".into(),
+            ));
+        }
         put_immutable(
             &self.reconciliation_progress,
             &format!("authorization::{}", record.authorization_id),

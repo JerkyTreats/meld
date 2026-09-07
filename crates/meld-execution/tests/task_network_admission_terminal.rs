@@ -11,6 +11,7 @@ use meld_execution::task_network::state::{
 
 fn attribution(admission_id: &str) -> TaskAdmissionAttribution {
     TaskAdmissionAttribution {
+        request_ref: None,
         admission_epoch: None,
         agent_id: "agent-docs".to_string(),
         goal_id: "goal-docs".to_string(),

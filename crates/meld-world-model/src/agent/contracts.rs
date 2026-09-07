@@ -162,6 +162,9 @@ pub struct AgentProductProgress {
 /// Immutable per-product authorization persisted before publication.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentProductAuthorization {
+    /// Explicit Agent-owned observation request, independent of activation fencing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_ref: Option<String>,
     pub authorization_id: String,
     pub agent_id: String,
     pub goal_id: String,

@@ -52,6 +52,7 @@ pub trait AgentPlannerPort: Send + Sync {
     fn assemble_epoch(
         &self,
         products: &crate::agent::AgentEpochProducts,
+        _fence: &AgentAuthorizationFence,
     ) -> PlannerAssemblyOutcome {
         PlannerAssemblyOutcome::Refused(PlannerRefusal {
             request_context_id: format!("agent-context::{}", products.specification.goal_id),
@@ -187,7 +188,7 @@ impl AgentReconciliationActor {
         let preparation = preparation.into();
         if let crate::agent::AgentReconciliationIntent::MaintainedCondition(binding) = &intent {
             let declared_epoch = binding.condition.observation_scope
-                == crate::agent::AgentObservationScope::AdmissionEpoch;
+                != crate::agent::AgentObservationScope::AssignedSubject;
             if declared_epoch != matches!(preparation, crate::agent::AgentPreparation::Epoch { .. })
             {
                 return Err(StorageError::InvalidPath(
@@ -252,20 +253,43 @@ impl AgentReconciliationActor {
             .ok_or_else(|| {
                 StorageError::InvalidPath("epoch preparation requires native Agent genesis".into())
             })?;
+        let goal_id = crate::agent::AgentEpochSpecification::goal_identity(
+            &self.intent,
+            &genesis,
+            &fence.activation_generation,
+            fence.admission_epoch.as_deref(),
+        );
+        if let Some(products) = self.store.epoch_products(&goal_id)? {
+            let original = &products.specification;
+            let same_observation = original.intent == self.intent
+                && original.genesis == genesis
+                && original.authority.agent_id == authority.agent_id
+                && original.authority.subject == authority.subject
+                && original.authority.perspective == authority.perspective
+                && original.authority.branch_scope == authority.branch_scope;
+            if !same_observation
+                || original.fence.authority_policy_content_hash
+                    != fence.authority_policy_content_hash
+                || if original.is_prepared_request() {
+                    !self
+                        .authority
+                        .same_preparation(&original.fence.activation_generation, fence)?
+                } else {
+                    original.fence != *fence || original.authority != *authority
+                }
+            {
+                return Err(StorageError::InvalidPath(
+                    "persisted observation belongs to another request or preparation".into(),
+                ));
+            }
+            return Ok(Some(Arc::new(products)));
+        }
         let specification = crate::agent::AgentEpochSpecification::new(
             self.intent.clone(),
             authority.clone(),
             fence.clone(),
             genesis,
         )?;
-        if let Some(products) = self.store.epoch_products(&specification.goal_id)? {
-            if products.specification != specification {
-                return Err(StorageError::InvalidPath(
-                    "persisted epoch products name another specification".into(),
-                ));
-            }
-            return Ok(Some(Arc::new(products)));
-        }
         if self.authority.observe()?.as_ref() != Some(fence) {
             return Err(StorageError::InvalidPath(
                 "Agent authority changed before epoch preparation".into(),
@@ -390,7 +414,7 @@ impl AgentReconciliationActor {
                 .epoch_products(&goal_id)
                 .map_err(|error| error.to_string())?
             {
-                Some(products) => self.planner.assemble_epoch(&products),
+                Some(products) => self.planner.assemble_epoch(&products, &fence),
                 None => self.planner.assemble_for(&goal_id, &fence),
             };
             return Ok(match assembled {
@@ -455,8 +479,8 @@ impl AgentReconciliationActor {
                 .store
                 .epoch_products(
                     &self
-                        .intent
-                        .goal_id(&self.strategy.agent_id, &fence.reconciliation_scope()),
+                        .reconciliation_goal_id(fence)
+                        .map_err(|error| error.to_string())?,
                 )
                 .map_err(|error| error.to_string())?,
             None => None,
@@ -581,6 +605,7 @@ impl AgentReconciliationActor {
     fn subscribe_epoch(
         &self,
         products: &crate::agent::AgentEpochProducts,
+        fence: &AgentAuthorizationFence,
         max_items: usize,
     ) -> Result<(bool, usize), StorageError> {
         let crate::agent::AgentPreparation::Epoch { subscriptions, .. } = &self.preparation else {
@@ -599,9 +624,7 @@ impl AgentReconciliationActor {
                 }
                 continue;
             }
-            if consumed == max_items
-                || self.authority.observe()?.as_ref() != Some(&products.specification.fence)
-            {
+            if consumed == max_items || self.authority.observe()?.as_ref() != Some(fence) {
                 return Ok((false, consumed));
             }
             let proof = subscriptions.subscribe(&request)?;
@@ -622,6 +645,22 @@ impl AgentReconciliationActor {
         else {
             return Ok(fresh);
         };
+        if binding.condition.observation_scope
+            == crate::agent::AgentObservationScope::PreparedRequest
+        {
+            let genesis = self
+                .store
+                .genesis_intent_for_agent(&self.strategy.agent_id)?
+                .ok_or_else(|| {
+                    StorageError::InvalidPath("prepared request has no native genesis".into())
+                })?;
+            return Ok(crate::agent::AgentEpochSpecification::goal_identity(
+                &self.intent,
+                &genesis,
+                &fence.activation_generation,
+                fence.admission_epoch.as_deref(),
+            ));
+        }
         if binding.condition.observation_scope
             != crate::agent::AgentObservationScope::AssignedSubject
         {
@@ -889,7 +928,7 @@ impl AgentReconciliationActor {
             }
         };
         if let Some(products) = &products {
-            match self.subscribe_epoch(products, max_items) {
+            match self.subscribe_epoch(products, &frozen_authority, max_items) {
                 Ok((_, consumed)) if consumed == max_items => {
                     report.budget_exhausted = true;
                     return report;
@@ -947,7 +986,7 @@ impl AgentPlannerPort for EpochPlanner<'_> {
     }
     fn assemble(&self) -> PlannerAssemblyOutcome {
         match &self.products {
-            Some(products) => self.port.assemble_epoch(products),
+            Some(products) => self.port.assemble_epoch(products, &self.fence),
             None => self.port.assemble_for(&self.goal_id, &self.fence),
         }
     }
@@ -1834,6 +1873,7 @@ impl GoalReconciliation<'_, '_> {
         let inserted = self
             .store
             .put_product_authorization(&AgentProductAuthorization {
+                request_ref: None,
                 authorization_id: authorization_id.clone(),
                 agent_id: cut.context.agent_id.clone(),
                 goal_id: self.goal.goal_id.clone(),
@@ -2282,6 +2322,11 @@ impl GoalReconciliation<'_, '_> {
             })
             .transpose()?;
         let authorization = AgentProductAuthorization {
+            request_ref: self
+                .products
+                .as_ref()
+                .filter(|products| products.specification.is_prepared_request())
+                .map(|products| products.specification.goal_id.clone()),
             authorization_id: authorization_id.clone(),
             agent_id: cut.context.agent_id.clone(),
             goal_id: self.goal.goal_id.clone(),
@@ -3824,13 +3869,14 @@ mod tests {
         fn assemble_epoch(
             &self,
             products: &crate::agent::AgentEpochProducts,
+            fence: &AgentAuthorizationFence,
         ) -> PlannerAssemblyOutcome {
             let mut cut = self.0.clone();
             let specification = &products.specification;
             cut.context.goal_id = specification.goal_id.clone();
             cut.context.context_id = format!("agent-context::{}", specification.goal_id);
-            cut.context.activation_generation = specification.fence.activation_generation.clone();
-            cut.context.admission_epoch = specification.fence.admission_epoch.clone();
+            cut.context.activation_generation = fence.activation_generation.clone();
+            cut.context.admission_epoch = fence.admission_epoch.clone();
             cut.context.observation_subject = Some(products.observation_subject.clone());
             cut.traversal_request = products.curation_rule.rule.traversal_request();
             cut.cut_id = stable_id("epoch-prepared-test-cut", &cut.context);
@@ -3875,6 +3921,15 @@ mod tests {
 
     #[test]
     fn native_epoch_specification_freezes_inputs_and_separates_observation_from_authority() {
+        assert_native_observation(crate::agent::AgentObservationScope::AdmissionEpoch);
+    }
+
+    #[test]
+    fn prepared_request_retains_observation_and_refuses_foreign_preparation() {
+        assert_native_observation(crate::agent::AgentObservationScope::PreparedRequest);
+    }
+
+    fn assert_native_observation(scope: crate::agent::AgentObservationScope) {
         use crate::agent::*;
         let fixture = Fixture::new();
         let (mut actor, _) = fixture.actor(
@@ -3892,7 +3947,7 @@ mod tests {
                     desired: Condition::Above(Term::Literal(Literal::Number(0.7))),
                     goal_priority: fixture.goal.priority.clone(),
                     desired_summary: "current epoch evidence".into(),
-                    observation_scope: crate::agent::AgentObservationScope::AdmissionEpoch,
+                    observation_scope: scope,
                 },
                 1,
             )
@@ -3996,9 +4051,7 @@ mod tests {
             "{report:?}"
         );
         assert_eq!(report.products_authorized, 1, "{report:?}");
-        let goal_id = actor
-            .intent
-            .goal_id(&actor.strategy.agent_id, &fence.reconciliation_scope());
+        let goal_id = actor.reconciliation_goal_id(&fence).unwrap();
         let products = fixture.store.epoch_products(&goal_id).unwrap().unwrap();
         assert_eq!(products.specification.genesis, genesis);
         assert_eq!(
@@ -4045,6 +4098,31 @@ mod tests {
             next.fatal_errors.is_empty() && next.retryable_errors.is_empty(),
             "{next:?}"
         );
+        if scope == AgentObservationScope::PreparedRequest {
+            assert_eq!(actor.reconciliation_goal_id(&fence).unwrap(), goal_id);
+            assert_eq!(
+                actor.store.epoch_products(&goal_id).unwrap(),
+                Some(products)
+            );
+            assert_eq!(*source.calls.lock().unwrap(), 1);
+            let original = actor
+                .store
+                .product_authorizations_for_goal(&goal_id)
+                .unwrap();
+            assert!(original.iter().any(
+                |authorization| authorization.request_ref.as_deref() == Some(goal_id.as_str())
+            ));
+            fence.activation_generation = "unproved-foreign-preparation".into();
+            *observer.0.lock().unwrap() = Some(fence);
+            let refused = actor.bounded_step(8);
+            assert_eq!(refused.products_authorized, 0);
+            assert!(refused
+                .retryable_errors
+                .iter()
+                .any(|error| error.contains("preparation")));
+            assert_eq!(*source.calls.lock().unwrap(), 1);
+            return;
+        }
         assert_eq!(next.products_authorized, 1);
         let next_goal = actor
             .intent

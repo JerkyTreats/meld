@@ -31,11 +31,20 @@ pub fn observation_source(
     subject: &DomainObjectRef,
     fence: &str,
 ) -> Result<(OwnerPublicationScope, DomainObjectRef), String> {
+    account_source("code-account", issuer, subject, fence)
+}
+
+fn account_source(
+    kind: &str,
+    issuer: &str,
+    subject: &DomainObjectRef,
+    correlation: &str,
+) -> Result<(OwnerPublicationScope, DomainObjectRef), String> {
     subject.validate().map_err(|error| error.to_string())?;
-    if issuer.trim().is_empty() || fence.trim().is_empty() {
-        return Err("code observation requires a complete issuer and fence".into());
+    if issuer.trim().is_empty() || correlation.trim().is_empty() {
+        return Err("code observation requires a complete issuer and correlation".into());
     }
-    let id = format!("code-account::{}", hash(&(issuer, subject, fence))?);
+    let id = format!("{kind}::{}", hash(&(issuer, subject, correlation))?);
     Ok((
         OwnerPublicationScope {
             scope_id: id.clone(),
@@ -46,6 +55,15 @@ pub fn observation_source(
         DomainObjectRef::new(OWNER, "materialization_account", id)
             .map_err(|error| error.to_string())?,
     ))
+}
+
+/// A durable request keeps the same observed account when execution authority changes.
+pub fn request_observation_source(
+    issuer: &str,
+    subject: &DomainObjectRef,
+    request: &str,
+) -> Result<(OwnerPublicationScope, DomainObjectRef), String> {
+    account_source("code-request-account", issuer, subject, request)
 }
 
 /// Reconstruct solely from the exact retained intent and completion. This performs
@@ -73,11 +91,22 @@ pub(super) fn envelope(
     {
         return Err("code account authority differs from the materialized intent".into());
     }
-    let (scope, object_ref) = observation_source(
-        &authority.issuer_ref,
-        &authority.subject,
-        &authority.fence_ref,
-    )?;
+    let (scope, object_ref) = match retained.get("request_ref") {
+        Some(value) => {
+            let request = value.as_str().ok_or("retained code request is malformed")?;
+            if authority.request_ref.as_deref() != Some(request) {
+                return Err("code account belongs to another request".into());
+            }
+            request_observation_source(&authority.issuer_ref, &authority.subject, request)?
+        }
+        // Old intents predate request attribution. They retain their original epoch
+        // account; a retry cannot promote them into a newly attributed request.
+        None => observation_source(
+            &authority.issuer_ref,
+            &authority.subject,
+            &authority.fence_ref,
+        )?,
+    };
     let positions = vec![evidence.intent, evidence.materialization];
     let revision = format!(
         "code-account-revision::{}",

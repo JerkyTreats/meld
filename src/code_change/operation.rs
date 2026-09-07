@@ -23,6 +23,32 @@ pub(super) struct Operation<'a> {
 }
 
 impl Operation<'_> {
+    /// Preserve the exact accepted invocation when replaying an intent written before
+    /// request attribution existed. No new intent may supersede that retained writer.
+    /// Remove this reader once retained intents without request attribution are retired.
+    pub fn retain_original_binding(
+        mut self,
+        events: &EventReplayCapability,
+    ) -> Result<Self, String> {
+        if self.intent(events)?.is_some() {
+            return Ok(self);
+        }
+        let Some(authority) = self
+            .binding
+            .get_mut("authority")
+            .and_then(Value::as_object_mut)
+        else {
+            return Ok(self);
+        };
+        let Some(request) = authority.remove("request_ref") else {
+            return Ok(self);
+        };
+        if self.intent(events)?.is_none() {
+            self.binding["authority"]["request_ref"] = request;
+        }
+        Ok(self)
+    }
+
     fn id(&self, events: &EventReplayCapability) -> Result<String, String> {
         Ok(format!(
             "code-operation::{}",

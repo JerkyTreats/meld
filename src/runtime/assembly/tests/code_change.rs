@@ -9,7 +9,7 @@ fn installed_code_change_constructs_authorizes_and_confirms_native_work() {
 }
 
 #[test]
-fn code_change_returns_remain_separate_from_successor_epoch_confirmation() {
+fn code_change_request_survives_restart_without_repeating_materialization() {
     prove_native_code_change(true);
 }
 
@@ -111,18 +111,19 @@ fn prove_native_code_change(restart: bool) {
     );
     let operation: meld_world_model::world_state::graph::contracts::OwnerPublicationOperation =
         serde_json::from_value(accounts[0].data.clone()).unwrap();
-    let (scope, root) = publication::observation_source(
-        "code-agent",
-        &harness.binding.subject,
-        tasks[0].0.admission_epoch.as_deref().unwrap(),
-    )
-    .unwrap();
+    let (scope, root) =
+        publication::request_observation_source("code-agent", &harness.binding.subject, &goal_id)
+            .unwrap();
     assert_eq!(operation.batch.scope, scope);
     assert_eq!(operation.batch.objects[0].object_ref, root);
     assert_ne!(
-        publication::observation_source("code-agent", &harness.binding.subject, "foreign-epoch")
-            .unwrap()
-            .0,
+        publication::request_observation_source(
+            "code-agent",
+            &harness.binding.subject,
+            "foreign-request"
+        )
+        .unwrap()
+        .0,
         scope
     );
     assert_eq!(accounts[0].provenance.source_records.len(), 2);
@@ -145,37 +146,65 @@ fn prove_native_code_change(restart: bool) {
         command.registration_set = assembly.registration_set().cloned();
         let mut supervisor =
             RuntimeSupervisor::start(assembly.supervisor_startup_package(), command).unwrap();
-        for pass in 0..35 {
-            supervisor.tick(1_000_100 + pass * 10).unwrap();
-        }
+        finish(
+            &harness,
+            &assembly,
+            &mut supervisor,
+            &goal_id,
+            accounts[0].seq,
+            1_000_100,
+        );
         let store = &assembly.stores().agent_store;
-        let goals = store.reconciliation_goals_for_agent("code-agent").unwrap();
-        assert_eq!(goals.len(), 2);
-        let successor = goals
-            .iter()
-            .find(|goal| goal.goal.goal_id != goal_id)
-            .unwrap();
-        assert!(
-            !satisfied(store, &successor.goal.goal_id),
-            "a prior materialization cannot satisfy an independently requested successor epoch"
-        );
-        let history = store.completed_history_for_goal(&goal_id).unwrap();
-        assert!(
-            history.iter().any(|entry| matches!(
-                entry.accepted_milestone,
-                meld_world_model::strategy::PlanMilestoneRequirement::ExecutionTerminal { .. }
-            )),
-            "the prior Task still owes and retains its original return"
-        );
         assert_eq!(
-            records(&harness)
-                .iter()
-                .filter(|record| record.event_type == publication::EVENT)
-                .count(),
+            store
+                .reconciliation_goals_for_agent("code-agent")
+                .unwrap()
+                .len(),
             1
         );
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "later user edit\n");
-        supervisor.request_shutdown(1_001_000).unwrap();
+        let retained = store.epoch_products(&goal_id).unwrap().unwrap();
+        let history = store.completed_history_for_goal(&goal_id).unwrap();
+        assert!(history.iter().any(|entry| matches!(
+            entry.accepted_milestone,
+            meld_world_model::strategy::PlanMilestoneRequirement::ExecutionTerminal { .. }
+        )));
+        let plan = store
+            .current_reconciliation_plan(&goal_id)
+            .unwrap()
+            .unwrap();
+        let disposition = store
+            .goal_disposition_for_plan(&plan.plan_revision_id)
+            .unwrap()
+            .unwrap();
+        assert_ne!(
+            disposition.activation_generation,
+            retained.specification.fence.activation_generation
+        );
+        drop(supervisor);
+        drop(assembly);
+        let assembly = harness.assembly();
+        harness.bind_production_routes(&assembly);
+        let mut command = SupervisorStartCommand::new("code-completed-request", 2_000_000);
+        command.registration_set = assembly.registration_set().cloned();
+        let mut supervisor =
+            RuntimeSupervisor::start(assembly.supervisor_startup_package(), command).unwrap();
+        finish(
+            &harness,
+            &assembly,
+            &mut supervisor,
+            &goal_id,
+            accounts[0].seq,
+            2_000_100,
+        );
+        let store = &assembly.stores().agent_store;
+        assert_eq!(
+            store
+                .reconciliation_goals_for_agent("code-agent")
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(store.epoch_products(&goal_id).unwrap(), Some(retained));
     } else {
         loss.store(false, std::sync::atomic::Ordering::SeqCst);
         finish(
@@ -184,6 +213,7 @@ fn prove_native_code_change(restart: bool) {
             &mut supervisor,
             &goal_id,
             accounts[0].seq,
+            1_500,
         );
     }
 }
@@ -194,11 +224,12 @@ fn finish(
     supervisor: &mut RuntimeSupervisor<'_>,
     goal_id: &str,
     account_seq: u64,
+    now: u64,
 ) {
     let store = &assembly.stores().agent_store;
     let path = harness._workspace.path().join("lib.rs");
     for pass in 0..35 {
-        supervisor.tick(1_500 + pass * 10).unwrap();
+        supervisor.tick(now + pass * 10).unwrap();
     }
     assert!(
         satisfied(store, goal_id),
@@ -241,7 +272,7 @@ fn finish(
     assert!(records.iter().any(
         |record| record.event_type == "world_model.curation.result.v1" && record.seq > account_seq
     ));
-    supervisor.request_shutdown(2_000).unwrap();
+    supervisor.request_shutdown(now + 500).unwrap();
 }
 
 fn records(harness: &StewardshipHarness) -> Vec<meld_events::EventRecord> {

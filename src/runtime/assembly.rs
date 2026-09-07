@@ -8840,6 +8840,7 @@ mod tests {
         for name in ["first", "second"] {
             let task_id = format!("shared-draft-task-{name}");
             let authorization = AgentProductAuthorization {
+                request_ref: None,
                 agent_id: agent.strategy.agent_id.clone(),
                 goal_id: format!("shared-draft-goal-{name}"),
                 plan_revision_id: format!("shared-draft-plan-{name}"),
@@ -11227,6 +11228,7 @@ mod tests {
         );
         assert!(first.admission_epoch.is_some());
         let mut attribution = meld_execution::task_network::TaskAdmissionAttribution {
+            request_ref: None,
             agent_id: STEWARD_AGENT_ID.into(),
             goal_id: "epoch-test-goal".into(),
             plan_revision_id: "epoch-test-plan".into(),

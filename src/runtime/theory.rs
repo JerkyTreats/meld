@@ -497,7 +497,7 @@ impl ResolvedStewardshipTheory {
         agent: &meld_world_model::agent::AgentRecord,
     ) -> Result<Option<PreparedCurationSelection>, TheoryResolutionError> {
         let epoch = self.maintained_condition.condition.observation_scope
-            == meld_world_model::agent::AgentObservationScope::AdmissionEpoch;
+            != meld_world_model::agent::AgentObservationScope::AssignedSubject;
         let Some(closure) = &self.prepared_closure else {
             if epoch {
                 return Err(missing("epoch observation prepared closure"));

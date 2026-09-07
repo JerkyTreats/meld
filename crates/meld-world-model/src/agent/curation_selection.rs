@@ -51,14 +51,17 @@ impl CurationRuleSelectionPort for AgentEpochCurationSource {
         let condition = registration.maintained_condition.clone().ok_or_else(|| {
             StorageError::InvalidPath("epoch Curation source has no maintained condition".into())
         })?;
-        let scope = super::AgentAuthorizationFence::scope_for(
+        let intent = AgentReconciliationIntent::MaintainedCondition(condition);
+        let goal_id = super::AgentEpochSpecification::goal_identity(
+            &intent,
+            &genesis,
             &authority.activation_generation,
             authority.admission_epoch.as_deref(),
         );
-        let goal_id = AgentReconciliationIntent::MaintainedCondition(condition)
-            .goal_id(&self.agent_id, &scope);
         if let Some(products) = self.store.epoch_products(&goal_id)? {
-            if products.specification.authority != *authority
+            if (!products.specification.is_prepared_request()
+                && products.specification.authority != *authority)
+                || products.specification.intent != intent
                 || products.specification.genesis != genesis
             {
                 return Err(StorageError::InvalidPath(

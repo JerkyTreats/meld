@@ -311,6 +311,7 @@ mod tests {
         let context = crate::execution::ExecutionEventContext {
             session_id: "security-native-proof".into(),
             effect_authority: Some(meld_execution::ExecutionEffectAuthority {
+                request_ref: None,
                 issuer_ref: "security-agent".into(),
                 principal_id: "workspace-owner".into(),
                 subject: DomainObjectRef::new("workspace_fs", "node", "repo").unwrap(),
@@ -580,6 +581,7 @@ mod tests {
         let context = crate::execution::ExecutionEventContext {
             session_id: binding["session"].as_str().unwrap().into(),
             effect_authority: Some(meld_execution::ExecutionEffectAuthority {
+                request_ref: None,
                 issuer_ref: binding["issuer"].as_str().unwrap().into(),
                 principal_id: binding["principal"].as_str().unwrap().into(),
                 subject: serde_json::from_value(binding["subject"]["subject"].clone()).unwrap(),

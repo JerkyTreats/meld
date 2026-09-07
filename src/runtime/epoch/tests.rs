@@ -372,7 +372,9 @@ fn native_epoch_specification_drives_curation_and_preserves_distinct_observation
     };
     let planner = build_planner(planner_request.clone());
     for selected in [&products, &next] {
-        let PlannerAssemblyOutcome::Complete(cut) = planner.assemble_epoch(selected) else {
+        let PlannerAssemblyOutcome::Complete(cut) =
+            planner.assemble_epoch(selected, &selected.specification.fence)
+        else {
             panic!("exact nonce source absence must be readable after Graph replay");
         };
         assert_eq!(cut.context.subject, subject);
@@ -452,7 +454,7 @@ fn native_epoch_specification_drives_curation_and_preserves_distinct_observation
         .required_sources
         .push(PlannerSourceKind::Belief);
     let planner = build_planner(planner_request);
-    let prior_cut = planner.assemble_epoch(&next);
+    let prior_cut = planner.assemble_epoch(&next, &next.specification.fence);
     let PlannerAssemblyOutcome::Complete(unobserved) = prior_cut else {
         panic!("prior cut missing: {prior_cut:?}")
     };
@@ -612,7 +614,9 @@ fn native_epoch_specification_drives_curation_and_preserves_distinct_observation
         .catch_up_bounded(GraphCatchUpBudget { max_items: 64 })
         .unwrap();
     let mut third = fence.clone();
-    let PlannerAssemblyOutcome::Complete(positive_cut) = planner.assemble_epoch(&next) else {
+    let PlannerAssemblyOutcome::Complete(positive_cut) =
+        planner.assemble_epoch(&next, &next.specification.fence)
+    else {
         panic!("realized cut missing")
     };
     assert!(positive_cut
@@ -670,7 +674,8 @@ fn native_epoch_specification_drives_curation_and_preserves_distinct_observation
     graph
         .catch_up_bounded(GraphCatchUpBudget { max_items: 64 })
         .unwrap();
-    let PlannerAssemblyOutcome::Complete(third_cut) = planner.assemble_epoch(&third_products)
+    let PlannerAssemblyOutcome::Complete(third_cut) =
+        planner.assemble_epoch(&third_products, &third_products.specification.fence)
     else {
         panic!("new epoch cut missing")
     };

@@ -12,6 +12,6 @@
     "urgency": 50,
     "cost_ceiling": null
   },
-  "desired_summary": "the declared code change has a confirmed materialization account in this epoch",
-  "observation_scope": "AdmissionEpoch"
+  "desired_summary": "the declared code-change request has a confirmed materialization account",
+  "observation_scope": "PreparedRequest"
 }

@@ -196,6 +196,7 @@ impl AgentPlannerPort for ProductEpochAgentPlannerPort {
     fn assemble_epoch(
         &self,
         products: &meld_world_model::agent::AgentEpochProducts,
+        fence: &AgentAuthorizationFence,
     ) -> PlannerAssemblyOutcome {
         let current = match self.event_append.watermark() {
             Ok(current) => current,
@@ -232,7 +233,7 @@ impl AgentPlannerPort for ProductEpochAgentPlannerPort {
             self.event_append.clone(),
             request,
         )
-        .assemble_epoch(products)
+        .assemble_epoch(products, fence)
     }
 }
 
@@ -698,11 +699,16 @@ impl AgentPlannerPort for ProductAgentPlannerPort {
     fn assemble_epoch(
         &self,
         products: &meld_world_model::agent::AgentEpochProducts,
+        fence: &AgentAuthorizationFence,
     ) -> PlannerAssemblyOutcome {
         let validation = products.validate().and_then(|()| {
             let authority = &products.specification.authority;
             let context = &self.request.context;
-            if authority.agent_id != context.agent_id
+            if (!products.specification.is_prepared_request()
+                && products.specification.fence != *fence)
+                || products.specification.fence.authority_policy_content_hash
+                    != fence.authority_policy_content_hash
+                || authority.agent_id != context.agent_id
                 || authority.subject != context.subject
                 || authority.perspective != self.request.belief_key.perspective
                 || authority.branch_scope != self.request.belief_key.branch_scope
@@ -727,8 +733,8 @@ impl AgentPlannerPort for ProductAgentPlannerPort {
         let mut request = self.request.clone();
         request.context.goal_id = specification.goal_id.clone();
         request.context.context_id = format!("agent-context::{}", specification.goal_id);
-        request.context.activation_generation = specification.fence.activation_generation.clone();
-        request.context.admission_epoch = specification.fence.admission_epoch.clone();
+        request.context.activation_generation = fence.activation_generation.clone();
+        request.context.admission_epoch = fence.admission_epoch.clone();
         request.context.scope_id = rule.rule.scope.scope_id.clone();
         request.context.observation_subject = Some(products.observation_subject.clone());
         request.belief_key.subject = products.observation_subject.clone();
@@ -836,6 +842,7 @@ impl ProductAgentExecutionPort {
         };
         let request = TaskAdmissionRequest {
             lineage: TaskAdmissionLineage {
+                request_ref: authorization.request_ref.clone(),
                 agent_id: authorization.agent_id.clone(),
                 goal_id: authorization.goal_id.clone(),
                 plan_revision_id: authorization.plan_revision_id.clone(),
@@ -1427,6 +1434,7 @@ impl CompiledTaskClaimInvoker {
                     .and_then(|(admission, decision)| {
                         admission.admission_epoch.as_ref().map(|epoch| {
                             meld_execution::ExecutionEffectAuthority {
+                                request_ref: admission.request_ref.clone(),
                                 issuer_ref: admission.agent_id.clone(),
                                 principal_id: decision.principal_id.clone(),
                                 subject: decision.subject.clone(),
