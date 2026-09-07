@@ -1422,14 +1422,12 @@ impl GoalReconciliation<'_, '_> {
                         && plan.epistemic_operations.iter().all(|operation| {
                             product_completed(plan, &operation.product_id, &history)
                         });
-                if !confirmation_returned
-                    || !matches!(
-                        meld_lang::evaluate(&cut.world_model_view.world_state, &self.goal.target),
-                        meld_lang::EvalResult::Satisfied
-                    )
-                {
+                if !confirmation_returned {
                     return Ok(Some((plan.clone(), false)));
                 }
+                // A completed negative confirmation is a reason to seek a
+                // different causal response. Strategy prevents repeated work;
+                // retaining this leaf forever would hide valid alternatives.
             }
             for product_id in plan.tasks.iter().map(|task| &task.task_id).chain(
                 plan.epistemic_operations

@@ -171,6 +171,20 @@ pub fn validate_strategy_theory_package(
         }
     }
     for rule in &package.snapshot.settlement_rules {
+        let mut ordering = BTreeSet::new();
+        for constraint in &rule.task_ordering {
+            if constraint.before_contract_id == constraint.after_contract_id
+                || !contracts.contains(constraint.before_contract_id.as_str())
+                || !contracts.contains(constraint.after_contract_id.as_str())
+                || !ordering.insert(constraint)
+            {
+                return Err(StorageError::InvalidPath(
+                    "Task ordering requires distinct exact selected contracts without duplicates"
+                        .into(),
+                ));
+            }
+        }
+
         require_non_empty(
             "prospective evidence route id",
             &rule.evidence_route.route_id,
@@ -247,12 +261,16 @@ mod tests {
     }
 
     #[test]
-    fn empty_methods_preserve_historical_package_identity() {
+    fn empty_construction_extensions_preserve_historical_package_identity() {
         let package = package();
         let body = serde_json::to_value(&package).unwrap();
         assert!(body.get("methods").is_none());
         let mut with_empty = body.clone();
         with_empty["methods"] = serde_json::json!([]);
+        assert!(body["snapshot"]["settlement_rules"][0]
+            .get("task_ordering")
+            .is_none());
+        with_empty["snapshot"]["settlement_rules"][0]["task_ordering"] = serde_json::json!([]);
         let decoded: StrategyTheoryPackage = serde_json::from_value(with_empty).unwrap();
         assert_eq!(hash_body(&decoded).unwrap(), hash_body(&package).unwrap());
     }

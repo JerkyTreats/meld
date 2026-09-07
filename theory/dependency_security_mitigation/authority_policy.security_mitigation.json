@@ -1,0 +1,26 @@
+{
+  "policy_id": "dependency_security_declared_mitigation",
+  "principal_id": "workspace-owner",
+  "subject": {
+    "domain_id": "workspace_fs",
+    "object_kind": "node",
+    "object_id": "dependency-graph"
+  },
+  "principal_granted_action_ids": [
+    "code_change.apply_existing_files",
+    "code_change.read_proposal",
+    "dependency_security.acquire_advisories",
+    "dependency_security.assess",
+    "dependency_security.observe_inventory",
+    "dependency_security.verify"
+  ],
+  "runtime_allowed_action_ids": [
+    "code_change.apply_existing_files",
+    "code_change.read_proposal",
+    "dependency_security.acquire_advisories",
+    "dependency_security.assess",
+    "dependency_security.observe_inventory",
+    "dependency_security.verify"
+  ],
+  "restricted_action_ids": []
+}

@@ -156,6 +156,29 @@ fn verify_with_history(
             None => grounds.push(StrategyRejectionGround::InvalidComposition),
         }
     }
+    let task_ids: BTreeSet<_> = candidate
+        .tasks
+        .iter()
+        .map(|task| task.task_id.as_str())
+        .collect();
+    let mut task_dependencies: Vec<_> = candidate
+        .dependencies
+        .iter()
+        .filter(|dependency| {
+            task_ids.contains(dependency.consumer_product_id.as_str())
+                && matches!(
+                    dependency.required_milestone,
+                    PlanMilestoneRequirement::ExecutionTerminal { .. }
+                )
+        })
+        .cloned()
+        .collect();
+    task_dependencies.sort_by(|left, right| left.dependency_id.cmp(&right.dependency_id));
+    if super::search::task_ordering_dependencies(rule, &candidate.tasks, history).as_ref()
+        != Ok(&task_dependencies)
+    {
+        grounds.push(StrategyRejectionGround::InvalidComposition);
+    }
     let confirmation = candidate.tasks.is_empty();
     if confirmation {
         if !rule.epistemic_placement.is_confirmation()
@@ -480,7 +503,7 @@ pub fn verify_successor_plan(
     standard
 }
 
-fn dependencies_valid(
+pub(crate) fn dependencies_valid(
     candidate: &StrategyPlan,
     history: &[super::StrategyCompletedHistoryEntry],
 ) -> bool {

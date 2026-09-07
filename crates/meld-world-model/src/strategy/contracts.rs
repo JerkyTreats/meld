@@ -15,6 +15,9 @@ pub struct StrategyTheorySnapshot {
 /// Declared settlement meaning for one class of Goals.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StrategySettlementRule {
+    /// When both contracts are selected, their distinct complete Tasks must progress in this order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub task_ordering: Vec<StrategyTaskOrdering>,
     /// Goal pattern to which this rule applies.
     pub goal_pattern: Proposition,
     /// Proposition that prospective action must contribute toward.
@@ -27,6 +30,14 @@ pub struct StrategySettlementRule {
         skip_serializing_if = "StrategyEpistemicPlacement::is_prerequisite"
     )]
     pub epistemic_placement: StrategyEpistemicPlacement,
+}
+
+/// A causal requirement between complete Tasks containing exact Capability contracts.
+/// The consumer waits for the producer Task's accepted operational return.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct StrategyTaskOrdering {
+    pub before_contract_id: String,
+    pub after_contract_id: String,
 }
 
 /// Causal placement of configured epistemic work relative to executable realization.

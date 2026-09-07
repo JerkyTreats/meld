@@ -1,0 +1,195 @@
+{
+  "mapping_id": "dependency_security_outcome_mapping_v1",
+  "rules": [
+    {
+      "mapping_id": "security-realized",
+      "source_kind": "security_verified_condition",
+      "match_domain_id": "curation",
+      "match_event_type": "world_model.curation.result.v1",
+      "match_content": [
+        {
+          "rule": "field_equals",
+          "pointer": "/disposition",
+          "equals": "applied"
+        },
+        {
+          "rule": "field_equals",
+          "pointer": "/semantic_publication/batch/objects/0/qualifications/realization",
+          "equals": "realized"
+        },
+        {
+          "rule": "field_equals",
+          "pointer": "/semantic_publication/batch/objects/0/qualifications/output_policy_revision",
+          "equals": "security-current-verification-v1"
+        },
+        {
+          "rule": "field_equals",
+          "pointer": "/semantic_publication/batch/objects/0/qualifications/judgment_subject_domain",
+          "equals": "workspace_fs"
+        },
+        {
+          "rule": "field_equals",
+          "pointer": "/semantic_publication/batch/objects/0/qualifications/judgment_subject_kind",
+          "equals": "node"
+        }
+      ],
+      "subject": {
+        "object_kind": "node",
+        "domain_id": "workspace_fs",
+        "from": {
+          "source": "payload_object_id",
+          "pointer": "/semantic_publication/batch/objects/0/qualifications/judgment_subject_id"
+        }
+      },
+      "evidence_fields": [
+        {
+          "field": "clean_within_coverage_probability",
+          "source": {
+            "source": "constant",
+            "value": 1.0
+          }
+        }
+      ]
+    },
+    {
+      "mapping_id": "security-not_realized",
+      "source_kind": "security_verified_condition",
+      "match_domain_id": "curation",
+      "match_event_type": "world_model.curation.result.v1",
+      "match_content": [
+        {
+          "rule": "field_equals",
+          "pointer": "/disposition",
+          "equals": "applied"
+        },
+        {
+          "rule": "field_equals",
+          "pointer": "/semantic_publication/batch/objects/0/qualifications/realization",
+          "equals": "not_realized"
+        },
+        {
+          "rule": "field_equals",
+          "pointer": "/semantic_publication/batch/objects/0/qualifications/output_policy_revision",
+          "equals": "security-current-verification-v1"
+        },
+        {
+          "rule": "field_equals",
+          "pointer": "/semantic_publication/batch/objects/0/qualifications/judgment_subject_domain",
+          "equals": "workspace_fs"
+        },
+        {
+          "rule": "field_equals",
+          "pointer": "/semantic_publication/batch/objects/0/qualifications/judgment_subject_kind",
+          "equals": "node"
+        }
+      ],
+      "subject": {
+        "object_kind": "node",
+        "domain_id": "workspace_fs",
+        "from": {
+          "source": "payload_object_id",
+          "pointer": "/semantic_publication/batch/objects/0/qualifications/judgment_subject_id"
+        }
+      },
+      "evidence_fields": [
+        {
+          "field": "clean_within_coverage_probability",
+          "source": {
+            "source": "constant",
+            "value": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "mapping_id": "security-coverage-true",
+      "source_kind": "security_current_coverage",
+      "match_domain_id": "dependency-security",
+      "match_event_type": "dependency_security.current_condition.v1",
+      "match_content": [
+        {
+          "rule": "field_equals",
+          "pointer": "/batch/objects/0/qualifications/coverage_current",
+          "equals": "true"
+        },
+        {
+          "rule": "field_equals",
+          "pointer": "/batch/relations/0/relation_type",
+          "equals": "security_condition_subject"
+        },
+        {
+          "rule": "field_equals",
+          "pointer": "/batch/relations/0/dst/domain_id",
+          "equals": "workspace_fs"
+        },
+        {
+          "rule": "field_equals",
+          "pointer": "/batch/relations/0/dst/object_kind",
+          "equals": "node"
+        }
+      ],
+      "subject": {
+        "object_kind": "node",
+        "domain_id": "workspace_fs",
+        "from": {
+          "source": "payload_object_id",
+          "pointer": "/batch/relations/0/dst/object_id"
+        }
+      },
+      "evidence_fields": [
+        {
+          "field": "coverage_probability",
+          "source": {
+            "source": "constant",
+            "value": 1.0
+          }
+        }
+      ]
+    },
+    {
+      "mapping_id": "security-coverage-false",
+      "source_kind": "security_current_coverage",
+      "match_domain_id": "dependency-security",
+      "match_event_type": "dependency_security.current_condition.v1",
+      "match_content": [
+        {
+          "rule": "field_equals",
+          "pointer": "/batch/objects/0/qualifications/coverage_current",
+          "equals": "false"
+        },
+        {
+          "rule": "field_equals",
+          "pointer": "/batch/relations/0/relation_type",
+          "equals": "security_condition_subject"
+        },
+        {
+          "rule": "field_equals",
+          "pointer": "/batch/relations/0/dst/domain_id",
+          "equals": "workspace_fs"
+        },
+        {
+          "rule": "field_equals",
+          "pointer": "/batch/relations/0/dst/object_kind",
+          "equals": "node"
+        }
+      ],
+      "subject": {
+        "object_kind": "node",
+        "domain_id": "workspace_fs",
+        "from": {
+          "source": "payload_object_id",
+          "pointer": "/batch/relations/0/dst/object_id"
+        }
+      },
+      "evidence_fields": [
+        {
+          "field": "coverage_probability",
+          "source": {
+            "source": "constant",
+            "value": 0.0
+          }
+        }
+      ]
+    }
+  ]
+}

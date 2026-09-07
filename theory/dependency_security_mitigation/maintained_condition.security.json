@@ -1,0 +1,7 @@
+{
+  "condition_id": "dependency_security_posture",
+  "dimension_id": "dependency_security_posture",
+  "desired": {"Above":{"Literal":{"Number":0.9}}},
+  "goal_priority": {"urgency":60,"cost_ceiling":null},
+  "desired_summary": "verified clean within complete current coverage"
+}

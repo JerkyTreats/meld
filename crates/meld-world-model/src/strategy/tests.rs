@@ -260,6 +260,7 @@ fn problem() -> StrategyProblem {
         theory: StrategyTheorySnapshot {
             theory_id: "theory-docs-v1".into(),
             settlement_rules: vec![StrategySettlementRule {
+                task_ordering: Vec::new(),
                 epistemic_placement: StrategyEpistemicPlacement::Prerequisite,
                 goal_pattern: goal_pattern(),
                 settlement_obligation: Proposition::Exists {
@@ -1190,6 +1191,122 @@ fn method_cannot_remove_a_canonical_capability_guard() {
     candidate.plan_revision_id = super::search::plan_revision_identity(&candidate);
     assert!(matches!(
         verify_plan(&request.problem, &candidate),
+        PlanVerification::Invalid { .. }
+    ));
+}
+
+#[test]
+fn installed_task_ordering_requires_distinct_tasks_and_cannot_be_dropped() {
+    let mut request = StrategySearchRequest {
+        problem: compound_problem(),
+        bounds: StrategySearchBounds {
+            max_expansions: 64,
+            max_depth: 8,
+        },
+    };
+    request.problem.theory.settlement_rules[0].task_ordering = vec![StrategyTaskOrdering {
+        before_contract_id: "contract-index-v1".into(),
+        after_contract_id: "contract-evaluate-v1".into(),
+    }];
+    let plan = search(&request).recommendation.unwrap();
+    assert_eq!(plan.tasks.len(), 2);
+    assert_eq!(plan.dependencies.len(), 3);
+    assert!(matches!(
+        verify_plan(&request.problem, &plan),
+        PlanVerification::Valid { .. }
+    ));
+    let mut unordered = plan.clone();
+    unordered.dependencies.retain(|dependency| {
+        !matches!(
+            dependency.required_milestone,
+            PlanMilestoneRequirement::ExecutionTerminal { .. }
+        )
+    });
+    unordered.plan_revision_id = super::search::plan_revision_identity(&unordered);
+    assert!(matches!(
+        verify_plan(&request.problem, &unordered),
+        PlanVerification::Invalid { .. }
+    ));
+    request.problem.theory.settlement_rules[0]
+        .task_ordering
+        .push(StrategyTaskOrdering {
+            before_contract_id: "contract-evaluate-v1".into(),
+            after_contract_id: "contract-index-v1".into(),
+        });
+    assert!(search(&request).recommendation.is_none());
+}
+
+#[test]
+fn successor_verification_retains_completed_task_as_its_causal_predecessor() {
+    let mut request = StrategySearchRequest {
+        problem: compound_problem(),
+        bounds: StrategySearchBounds {
+            max_expansions: 64,
+            max_depth: 8,
+        },
+    };
+    let seed = search(&request).recommendation.unwrap();
+    request.problem.theory.settlement_rules[0].settlement_obligation =
+        problem().theory.settlement_rules[0]
+            .settlement_obligation
+            .clone();
+    request.problem.theory.settlement_rules[0].task_ordering = vec![StrategyTaskOrdering {
+        before_contract_id: "contract-index-v1".into(),
+        after_contract_id: "contract-evaluate-v1".into(),
+    }];
+    request.problem.methods.push(meld_lang::Method {
+        method_id: "prepare-then-evaluate".into(),
+        trigger: request.problem.goal.target.clone(),
+        preconditions: Vec::new(),
+        composition: seed.composition,
+        net_effects: Vec::new(),
+        cost: CostEstimate::zero(),
+        preference: 0,
+    });
+    request.bounds.max_expansions = 1;
+    let predecessor = search(&request).recommendation.unwrap();
+    let completed = predecessor
+        .tasks
+        .iter()
+        .find(|task| {
+            task.capability_contract_ids
+                .contains(&"contract-index-v1".into())
+        })
+        .unwrap()
+        .clone();
+    request.bounds.max_expansions = 64;
+    request.problem.planner_cut = planner_cut_at("after-preparation");
+    let successor_request = StrategySuccessorRequest {
+        search: request,
+        predecessor_plan: Box::new(predecessor.clone()),
+        completed_history: vec![StrategyCompletedHistoryEntry {
+            source_plan_revision_id: predecessor.plan_revision_id,
+            product_id: completed.task_id.clone(),
+            accepted_milestone: PlanMilestoneRequirement::ExecutionTerminal {
+                task_id: completed.task_id.clone(),
+            },
+            owner_position_id: "accepted-preparation-outcome".into(),
+            product: Some(StrategyProduct::Task(Box::new(completed.clone()))),
+        }],
+    };
+    let mut successor = search_successor(&successor_request).recommendation.unwrap();
+    assert_eq!(successor.plan.tasks.len(), 1);
+    assert!(successor
+        .plan
+        .dependencies
+        .iter()
+        .any(|dependency| dependency.producer_product_id == completed.task_id));
+    assert!(matches!(
+        verify_successor_plan(&successor_request, &successor),
+        PlanVerification::Valid { .. }
+    ));
+    successor
+        .plan
+        .dependencies
+        .retain(|dependency| dependency.producer_product_id != completed.task_id);
+    successor.plan.plan_revision_id = super::search::plan_revision_identity(&successor.plan);
+    assert!(matches!(
+        verify_successor_plan(&successor_request, &successor),
         PlanVerification::Invalid { .. }
     ));
 }

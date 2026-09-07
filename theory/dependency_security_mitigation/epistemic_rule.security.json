@@ -1,0 +1,24 @@
+{
+  "rule_id": "security-current-verification",
+  "source_owner_id": "dependency-security",
+  "traversal_direction": "Incoming",
+  "bounds": {
+    "max_depth": 2,
+    "max_objects": 32,
+    "max_occurrences": 32,
+    "max_paths": 32
+  },
+  "expected_object_kind": "assessment",
+  "expected_object_key": "current-security-verification",
+  "relation_type": "curation_assesses",
+  "output_policy_revision": "security-current-verification-v1",
+  "realization": {
+    "observed_object": "source_root",
+    "required_qualifications": {
+      "policy_revision": "a26928a1c99b82cfe4486e98e2e78c81a5f272e569aca1bc46802a89e44e89be",
+      "verified_clean": "true"
+    },
+    "realized_relation_type": "realizes",
+    "not_realized_relation_type": "not_realized"
+  }
+}

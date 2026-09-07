@@ -172,15 +172,47 @@ pub fn search_successor(request: &StrategySuccessorRequest) -> StrategySuccessor
     } else {
         Vec::new()
     };
-    let result = confirmation.unwrap_or_else(|| search_with_completed(&request.search, &completed));
-    let recommendation = result.recommendation.map(|mut plan| {
+    let mut result =
+        confirmation.unwrap_or_else(|| search_with_completed(&request.search, &completed));
+    let recommendation = result.recommendation.and_then(|mut plan| {
+        if let Some(rule) = request
+            .search
+            .problem
+            .theory
+            .settlement_rules
+            .iter()
+            .find(|rule| unify(&rule.goal_pattern, &request.search.problem.goal.target).is_some())
+        {
+            let ordering =
+                match task_ordering_dependencies(rule, &plan.tasks, &request.completed_history) {
+                    Ok(ordering) => ordering,
+                    Err(ground) => {
+                        result.rejections.push(ground);
+                        return None;
+                    }
+                };
+            let tasks: BTreeSet<_> = plan
+                .tasks
+                .iter()
+                .map(|task| task.task_id.as_str())
+                .collect();
+            plan.dependencies.retain(|dependency| {
+                !(tasks.contains(dependency.consumer_product_id.as_str())
+                    && matches!(
+                        dependency.required_milestone,
+                        PlanMilestoneRequirement::ExecutionTerminal { .. }
+                    ))
+            });
+            plan.dependencies.extend(ordering);
+        }
+
         plan.plan_family_id = predecessor.plan_family_id.clone();
         plan.predecessor_plan_revision_id = Some(predecessor.plan_revision_id.clone());
         plan.plan_revision_id = plan_revision_identity(&plan);
-        StrategySuccessorPlan {
+        Some(StrategySuccessorPlan {
             plan,
             completed_history: request.completed_history.clone(),
-        }
+        })
     });
     StrategySuccessorResult {
         problem_id: result.problem_id,
@@ -410,6 +442,58 @@ fn dependency(
         consumer_product_id: consumer.into(),
         required_milestone: milestone,
     }
+}
+
+pub(crate) fn task_ordering_dependencies(
+    rule: &StrategySettlementRule,
+    tasks: &[StrategyTask],
+    history: &[StrategyCompletedHistoryEntry],
+) -> Result<Vec<StrategyPlanDependency>, StrategyRejectionGround> {
+    let mut producers: std::collections::BTreeMap<_, _> = tasks
+        .iter()
+        .map(|task| (task.task_id.as_str(), task))
+        .collect();
+    for entry in history {
+        if let Some(StrategyProduct::Task(task)) = &entry.product {
+            if entry.product_id == task.task_id
+                && !entry.owner_position_id.is_empty()
+                && entry.accepted_milestone
+                    == (PlanMilestoneRequirement::ExecutionTerminal {
+                        task_id: task.task_id.clone(),
+                    })
+            {
+                producers
+                    .entry(task.task_id.as_str())
+                    .or_insert(task.as_ref());
+            }
+        }
+    }
+    let mut dependencies = Vec::new();
+    for constraint in &rule.task_ordering {
+        for before in producers.values().filter(|task| {
+            task.capability_contract_ids
+                .contains(&constraint.before_contract_id)
+        }) {
+            for after in tasks.iter().filter(|task| {
+                task.capability_contract_ids
+                    .contains(&constraint.after_contract_id)
+            }) {
+                if before.task_id == after.task_id {
+                    return Err(StrategyRejectionGround::InvalidComposition);
+                }
+                dependencies.push(dependency(
+                    &before.task_id,
+                    &after.task_id,
+                    PlanMilestoneRequirement::ExecutionTerminal {
+                        task_id: before.task_id.clone(),
+                    },
+                ));
+            }
+        }
+    }
+    dependencies.sort_by(|left, right| left.dependency_id.cmp(&right.dependency_id));
+    dependencies.dedup();
+    Ok(dependencies)
 }
 
 struct SearchState<'a> {
@@ -908,7 +992,7 @@ fn finish_bodies(
     }
     let evaluation = evaluate_candidate(&composition);
     let epistemic_operations = epistemic_products(&request.problem);
-    let dependencies = tasks
+    let mut dependencies: Vec<_> = tasks
         .iter()
         .flat_map(|task| {
             epistemic_operations
@@ -930,6 +1014,13 @@ fn finish_bodies(
                 })
         })
         .collect();
+    match task_ordering_dependencies(rule, &tasks, &[]) {
+        Ok(ordering) => dependencies.extend(ordering),
+        Err(ground) => {
+            state.reject(ground);
+            return None;
+        }
+    }
     let plan_family_id = plan_family_identity(&request.problem);
     let mut candidate = StrategyPlan {
         plan_revision_id: String::new(),
@@ -955,6 +1046,10 @@ fn finish_bodies(
         predecessor_plan_revision_id: None,
         evaluation,
     };
+    if !super::verification::dependencies_valid(&candidate, &[]) {
+        state.reject(StrategyRejectionGround::InvalidComposition);
+        return None;
+    }
     candidate.plan_revision_id = plan_revision_identity(&candidate);
     Some(candidate)
 }

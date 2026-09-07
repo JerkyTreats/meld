@@ -1,0 +1,303 @@
+{
+  "schema_version": 1,
+  "package_id": "meld.dependency-security-mitigation",
+  "package_version": "1.0.0",
+  "description": "Declared existing-file interventions with separately authorized successor Security verification",
+  "imports": [],
+  "components": [
+    {
+      "component_id": "security-policy",
+      "owner_component_id": "cargo_fixture_security",
+      "route": {
+        "owner_domain": "dependency-security",
+        "component_kind": "policy",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "policy.cargo_fixture.json",
+        "content_hash": "25bec03a49997ace536c20079c56bf01583c136ec76c370c7135360490ef6ef4"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-coverage-belief",
+      "owner_component_id": "dependency_security_coverage",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "belief-family",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "belief_family.security_coverage.json",
+        "content_hash": "45c526c13b3c57db2b18bd72bf2ded418367eca3c6e819db2a41f6cfb53d9d6a"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-posture-belief",
+      "owner_component_id": "dependency_security_posture",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "belief-family",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "belief_family.security_posture.json",
+        "content_hash": "48cdc271106524de669fe09f6f4d18b8e43053c68d92a1aa46047ad40ccc345f"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-outcome-mapping",
+      "owner_component_id": "dependency_security_outcome_mapping_v1",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "outcome-mapping",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "outcome_mapping.security.json",
+        "content_hash": "e61e5ff2a95e08cad756a07d5607911f513181c0c721a42ab141fee92b26a168"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-curation-rule",
+      "owner_component_id": "dependency_security_posture",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "agent-curation-rule",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "curation_rule.security.json",
+        "content_hash": "dc81c0d546f04cd155e550802abc64415bb9303d2cf11345331e9bec9c9659fb"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-maintained-condition",
+      "owner_component_id": "dependency_security_posture",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "agent-maintained-condition",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "maintained_condition.security.json",
+        "content_hash": "b3fecaac09daa498017745fb142384d8b80ab8b58190e1fc65b120e4715eb63f"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-strategy",
+      "owner_component_id": "dependency_security_mitigation",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "strategy-theory",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "strategy_theory.security.json",
+        "content_hash": "c4282229074b64e7f1f921882057e4adba37ba92ca98992912b0a761e168f474"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-authority",
+      "owner_component_id": "dependency_security_declared_mitigation",
+      "route": {
+        "owner_domain": "execution",
+        "component_kind": "authority-policy",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "authority_policy.security_mitigation.json",
+        "content_hash": "34ecd2e9bec8a57210f87f191df77c680ffd2627162f77c48a17de8a244eb2b8"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-capability-inventory",
+      "owner_component_id": "dependency_security.observe_inventory.v1",
+      "route": {
+        "owner_domain": "execution",
+        "component_kind": "capability-contract",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "published_exact",
+        "publisher": "execution.capability-contract.v1",
+        "id": "dependency_security.observe_inventory.v1",
+        "content_identity": "capability-contract-6ec4322cfe43bc6b3fa609b85bad7c8d860b53f61a459d1a43f16862dcd0ee46"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-capability-advisories",
+      "owner_component_id": "dependency_security.acquire_advisories.v1",
+      "route": {
+        "owner_domain": "execution",
+        "component_kind": "capability-contract",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "published_exact",
+        "publisher": "execution.capability-contract.v1",
+        "id": "dependency_security.acquire_advisories.v1",
+        "content_identity": "capability-contract-8587e9b6cdeb14a1e6c722ad51312ee58383dc9b863808322a63dbb8c83a71f4"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-capability-assess",
+      "owner_component_id": "dependency_security.assess.v1",
+      "route": {
+        "owner_domain": "execution",
+        "component_kind": "capability-contract",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "published_exact",
+        "publisher": "execution.capability-contract.v1",
+        "id": "dependency_security.assess.v1",
+        "content_identity": "capability-contract-16b8e90fdc8019c24a8a3d9ce8f3193a7ab424f5e7713e8940e69c2fb2dc4c34"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-capability-verify",
+      "owner_component_id": "dependency_security.verify.v1",
+      "route": {
+        "owner_domain": "execution",
+        "component_kind": "capability-contract",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "published_exact",
+        "publisher": "execution.capability-contract.v1",
+        "id": "dependency_security.verify.v1",
+        "content_identity": "capability-contract-3cc19889cf4004591749dcf8b4223185da44dd1cc127381e3c650c424d5dd3f5"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-graph-event-route",
+      "owner_component_id": "dependency-security-products",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "graph-owner-event-route",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "graph_owner_event_route.security.json",
+        "content_hash": "09f3429579baf9bf564f367a8242daf05befe5d7fd8c4b87c43279e4d643fe3d"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-native-curation",
+      "owner_component_id": "security-current-verification",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "epistemic-curation-rule",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "epistemic_rule.security.json",
+        "content_hash": "5c924ebaf0c0a0b587a2af5792481f5b7ea16b01e39af8b2251f7fb82bab9143"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "security-condition-graph-route",
+      "owner_component_id": "dependency-security-current-condition",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "graph-owner-event-route",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "graph_owner_event_route.condition.json",
+        "content_hash": "c4eb5d4a3d0e04cb580bac4bb1b7f86700595cc1ad9438e0eed163bdedd6b65a"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "code-change-capability-apply",
+      "owner_component_id": "code_change.apply_existing_files.v1",
+      "route": {
+        "owner_domain": "execution",
+        "component_kind": "capability-contract",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "published_exact",
+        "publisher": "execution.capability-contract.v1",
+        "id": "code_change.apply_existing_files.v1",
+        "content_identity": "capability-contract-165d0b8840429f28803918f8b2b413c707971b7e1e4eb8c45f2d77037a19d2df"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "code-change-capability-read",
+      "owner_component_id": "code_change.read_proposal.v1",
+      "route": {
+        "owner_domain": "execution",
+        "component_kind": "capability-contract",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "published_exact",
+        "publisher": "execution.capability-contract.v1",
+        "id": "code_change.read_proposal.v1",
+        "content_identity": "capability-contract-d50c1c2a36495aea31ccdd0958b262370f7fe5a22c26ef262804743dfba45b8f"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "code-change-graph-event-route",
+      "owner_component_id": "code-change-materialization",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "graph-owner-event-route",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "graph_owner_event_route.code_change.json",
+        "content_hash": "7c4d5b8e26ca93596326c17bb0bf9f23b300b46ebecbf02cd173a6d5578e5f43"
+      },
+      "requires": []
+    }
+  ]
+}

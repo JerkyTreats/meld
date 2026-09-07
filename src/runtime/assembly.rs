@@ -5449,6 +5449,8 @@ mod tests {
     mod code_change;
     #[cfg(unix)]
     mod security_mitigation;
+    #[cfg(unix)]
+    mod security_native_mitigation;
     mod security_planning;
     use std::sync::Mutex;
 
@@ -7810,9 +7812,22 @@ mod tests {
         GuardedMethod,
         #[cfg(unix)]
         Mitigation,
+        #[cfg(unix)]
+        NativeMitigation,
     }
 
     impl SecuritySourceAdvance {
+        fn is_native_mitigation(self) -> bool {
+            #[cfg(unix)]
+            {
+                self == Self::NativeMitigation
+            }
+            #[cfg(not(unix))]
+            {
+                false
+            }
+        }
+
         fn is_mitigation(self) -> bool {
             #[cfg(unix)]
             {
@@ -7828,7 +7843,7 @@ mod tests {
             match self {
                 Self::Inventory => true,
                 #[cfg(unix)]
-                Self::Mitigation => true,
+                Self::Mitigation | Self::NativeMitigation => true,
                 _ => false,
             }
         }
@@ -7935,6 +7950,13 @@ mod tests {
             authority_policy_id: "dependency_security_fixture_read_only".into(),
             claim_policy_id: String::new(),
         };
+        #[cfg(unix)]
+        if advance == SecuritySourceAdvance::NativeMitigation {
+            harness.binding.package.expression = "dependency_security_mitigation".into();
+            harness.binding.package.strategy_theory_id = "dependency_security_mitigation".into();
+            harness.binding.package.authority_policy_id =
+                "dependency_security_declared_mitigation".into();
+        }
         harness.binding.bindings.insert(
             crate::dependency_security::contribution::CARGO.into(),
             crate::config::PhysicalBindingRef::ExecutableRef(env!("CARGO").into()),
@@ -7944,7 +7966,10 @@ mod tests {
             crate::config::PhysicalBindingRef::EndpointRef(source.display().to_string()),
         );
         #[cfg(unix)]
-        if advance == SecuritySourceAdvance::Mitigation {
+        if matches!(
+            advance,
+            SecuritySourceAdvance::Mitigation | SecuritySourceAdvance::NativeMitigation
+        ) {
             harness.binding.bindings.insert(
                 crate::code_change::acquisition::SOURCE.into(),
                 crate::config::PhysicalBindingRef::EndpointRef(
@@ -7959,7 +7984,13 @@ mod tests {
         }
         {
             let assembly = harness.assembly();
-            if advance == SecuritySourceAdvance::GuardedMethod {
+            if advance.is_native_mitigation() {
+                harness.run_world_genesis_from(
+                    &assembly,
+                    &Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("theory/dependency_security_mitigation"),
+                );
+            } else if advance == SecuritySourceAdvance::GuardedMethod {
                 security_planning::genesis(&harness, &assembly);
             } else if advance.is_mitigation() {
                 #[cfg(unix)]
@@ -8286,8 +8317,29 @@ mod tests {
             } else {
                 std::fs::write(&source, serde_json::to_vec(&changed).unwrap()).unwrap();
             }
+            #[cfg(unix)]
+            if advance == SecuritySourceAdvance::NativeMitigation {
+                security_native_mitigation::declare(&harness, &manifest);
+            }
             for pass in 0..60 {
                 resumed.tick(4_100 + pass * 10).unwrap();
+            }
+            #[cfg(unix)]
+            if advance == SecuritySourceAdvance::NativeMitigation {
+                security_native_mitigation::admit_coverage(
+                    &harness,
+                    &reopened,
+                    inventory.subject.clone(),
+                );
+                for pass in 0..60 {
+                    resumed.tick(5_100 + pass * 10).unwrap();
+                }
+                security_native_mitigation::verify(&harness, &reopened, &manifest);
+                resumed.request_shutdown(6_000).unwrap();
+                drop(resumed);
+                drop(reopened);
+                security_mitigation::restart(&harness);
+                return;
             }
             let goals = store
                 .reconciliation_goals_for_agent(&harness.binding.agent_id)

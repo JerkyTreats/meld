@@ -1,0 +1,8 @@
+{
+  "maintained_condition_id": "dependency_security_posture",
+  "dimension_id": "dependency_security_posture",
+  "threshold": 0.9,
+  "priority_urgency": 60,
+  "desired_summary": "verified clean within complete current coverage",
+  "source_kind": "belief_divergence"
+}
