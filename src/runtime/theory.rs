@@ -257,8 +257,32 @@ impl ResolvedStewardshipTheory {
             .prepared_closure(&head.prepared_id)
             .map_err(|failure| TheoryResolutionError::Inconsistent(failure.to_string()))?
             .ok_or_else(|| missing("prepared product closure"))?;
-        if closure.assignment.assignment_id != head.assignment_id
-            || closure.assignment.principal_id != selection.principal_id
+        if closure.assignment.assignment_id != head.assignment_id {
+            return Err(TheoryResolutionError::Inconsistent(
+                "prepared product head differs from its assignment".into(),
+            ));
+        }
+        Self::resolve_prepared_closure(stores, selection, subject, closure)
+    }
+
+    /// Reconstruct exact historical owner bindings for retirement, without selecting a live head.
+    pub(crate) fn resolve_prepared_closure(
+        stores: &OpenProductStores,
+        selection: &SelectedStewardshipPackage,
+        subject: &DomainObjectRef,
+        closure: PreparedActivationClosureV1,
+    ) -> Result<Self, TheoryResolutionError> {
+        closure
+            .verify_identity()
+            .map_err(|error| TheoryResolutionError::Inconsistent(error.to_string()))?;
+        let persisted = stores
+            .pds_products
+            .prepared_closure(&closure.prepared_id)
+            .map_err(|error| TheoryResolutionError::Inconsistent(error.to_string()))?;
+        if persisted.as_ref() != Some(&closure) {
+            return Err(missing("exact persisted preparation for retirement"));
+        }
+        if closure.assignment.principal_id != selection.principal_id
             || &closure.assignment.subject != subject
         {
             return Err(TheoryResolutionError::Inconsistent(

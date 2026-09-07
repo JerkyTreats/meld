@@ -309,7 +309,9 @@ impl ActivationLifecycleStore {
         let generation = required_generation_mut(&mut assignment, generation_id)?;
         if !matches!(
             generation.status,
-            ActivationGenerationStatus::Preparing | ActivationGenerationStatus::Interrupted
+            ActivationGenerationStatus::Preparing
+                | ActivationGenerationStatus::Interrupted
+                | ActivationGenerationStatus::Draining
         ) {
             return Err(LifecycleError::Conflict(
                 "generation cannot create an incarnation from its current state".to_string(),
@@ -369,7 +371,9 @@ impl ActivationLifecycleStore {
         }
         if !matches!(
             generation.status,
-            ActivationGenerationStatus::Preparing | ActivationGenerationStatus::Interrupted
+            ActivationGenerationStatus::Preparing
+                | ActivationGenerationStatus::Interrupted
+                | ActivationGenerationStatus::Draining
         ) {
             return Err(LifecycleError::Conflict(
                 "generation cannot accept readiness from its current state".to_string(),
@@ -407,7 +411,7 @@ impl ActivationLifecycleStore {
         generation
             .readiness
             .insert(participant_id.to_string(), receipt);
-        if generation.status != ActivationGenerationStatus::Interrupted
+        if generation.status == ActivationGenerationStatus::Preparing
             && generation
                 .realizations
                 .keys()
@@ -682,6 +686,45 @@ impl ActivationLifecycleStore {
         assignment.current_generation_id = None;
         self.commit_assignment(&mut assignment)?;
         Ok(epoch)
+    }
+
+    /// Reconstruct a non-current drain without reopening admission or reusing old incarnation proofs.
+    pub fn recover_drain(
+        &self,
+        assignment_id: &str,
+        generation_id: &str,
+    ) -> Result<(), LifecycleError> {
+        let mut assignment = self.required_assignment(assignment_id)?;
+        if assignment.current_generation_id.as_deref() == Some(generation_id) {
+            return Err(LifecycleError::Conflict(
+                "current generation cannot recover predecessor retirement".into(),
+            ));
+        }
+        let generation = required_generation_mut(&mut assignment, generation_id)?;
+        if !matches!(
+            generation.status,
+            ActivationGenerationStatus::Draining | ActivationGenerationStatus::FencedQuiescent
+        ) || generation.admission_open()
+        {
+            return Err(LifecycleError::Conflict(
+                "generation has no closed retirement to recover".into(),
+            ));
+        }
+        generation.status = ActivationGenerationStatus::Draining;
+        generation.readiness.clear();
+        generation.waits.clear();
+        generation.safe_points.clear();
+        generation.passive_fences.clear();
+        generation.stop_receipts.clear();
+        generation.stop_order.clear();
+        generation.release_receipts.clear();
+        generation.fenced_quiescence = None;
+        generation.last_transition_ref = content_hash(&(
+            generation_id,
+            "retirement-recovery",
+            &generation.incarnations,
+        ))?;
+        self.commit_assignment(&mut assignment)
     }
 
     /// Record one native-owner stop acknowledgement after admission closes.
@@ -1002,13 +1045,9 @@ impl ActivationLifecycleStore {
         assignment.lifecycle_revision = expected_revision.checked_add(1).ok_or_else(|| {
             LifecycleError::Conflict("assignment lifecycle revision overflow".to_string())
         })?;
-        let transition_ref = assignment
-            .generations
-            .values()
-            .max_by_key(|generation| generation.generation_number)
-            .map(|generation| generation.last_transition_ref.clone())
-            .unwrap_or_else(|| assignment.assignment_id.clone());
         let assignment_bytes = encode(assignment)?;
+        // A predecessor transition must not overwrite the successor's snapshot.
+        let transition_ref = content_hash(assignment)?;
         let transition_bytes = assignment_bytes.clone();
         (&self.assignments, &self.transitions)
             .transaction(|(assignments, transitions)| {
@@ -1039,11 +1078,12 @@ impl ActivationLifecycleStore {
         })?;
         let assignment_bytes = encode(assignment)?;
         let decision_bytes = encode(decision)?;
-        let generation = decision
+        decision
             .generation_id
             .as_ref()
             .and_then(|id| assignment.generations.get(id))
             .ok_or_else(|| LifecycleError::Invalid("accepted generation is absent".to_string()))?;
+        let transition_ref = content_hash(assignment)?;
         let transition_bytes = assignment_bytes.clone();
         (&self.assignments, &self.decisions, &self.transitions)
             .transaction(|(assignments, decisions, transitions)| {
@@ -1064,10 +1104,7 @@ impl ActivationLifecycleStore {
                     assignment_bytes.clone(),
                 )?;
                 decisions.insert(decision.request_key.as_bytes(), decision_bytes.clone())?;
-                transitions.insert(
-                    generation.last_transition_ref.as_bytes(),
-                    transition_bytes.clone(),
-                )?;
+                transitions.insert(transition_ref.as_bytes(), transition_bytes.clone())?;
                 Ok(())
             })
             .map_err(transaction)?;
@@ -1678,10 +1715,36 @@ mod tests {
             predecessor.current_admission_epoch().unwrap().status,
             AdmissionEpochStatus::Closed
         );
+        let snapshots = fixture
+            .store
+            .transitions
+            .iter()
+            .map(|entry| entry.unwrap())
+            .collect::<Vec<_>>();
         fixture
             .store
-            .begin_drain(&fixture.prepared.assignment.assignment_id, &predecessor_id)
+            .recover_drain(&fixture.prepared.assignment.assignment_id, &predecessor_id)
             .unwrap();
+        for (key, value) in snapshots {
+            assert_eq!(
+                fixture.store.transitions.get(key).unwrap().as_ref(),
+                Some(&value),
+                "predecessor transitions must preserve prior successor snapshots"
+            );
+        }
+        assert!(fixture
+            .store
+            .recover_drain(&fixture.prepared.assignment.assignment_id, &successor_id)
+            .is_err());
+        assert_eq!(
+            fixture
+                .store
+                .current_generation(&fixture.prepared.assignment.assignment_id)
+                .unwrap()
+                .unwrap()
+                .generation_id,
+            successor_id
+        );
     }
 
     #[test]
@@ -2003,6 +2066,119 @@ mod tests {
             OwnerReleaseReceiptV1::new(&actor, "proof::actor.one::released".into()).unwrap();
         wrong_release.released_binding_ref = "another-binding".into();
         assert!(validate_release_receipt(&generation, &wrong_release).is_err());
+    }
+
+    #[test]
+    fn interrupted_retirement_reconstructs_incarnations_without_reopening_or_erasing_evidence() {
+        let fixture = fixture();
+        let id = accept_and_ready(&fixture);
+        let assignment = &fixture.prepared.assignment.assignment_id;
+        fixture.store.publish_current(assignment, &id).unwrap();
+        fixture.store.begin_drain(assignment, &id).unwrap();
+        let actor = context(&fixture, &fixture.prepared, &id, "actor.one");
+        let source = context(&fixture, &fixture.prepared, &id, "source.one");
+        let safe = OwnerSafePointReceiptV1::new(
+            &actor,
+            "actor-checkpoint".into(),
+            "durable-pending-account".into(),
+            vec!["actor-safe-proof".into()],
+        )
+        .unwrap();
+        fixture
+            .store
+            .record_safe_point(assignment, &id, safe.clone())
+            .unwrap();
+        fixture
+            .store
+            .record_passive_fence(
+                assignment,
+                &id,
+                PassiveFenceReceiptV1::new(
+                    &source,
+                    "source-checkpoint".into(),
+                    "source-fence".into(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        fixture
+            .store
+            .commit_fenced_quiescence(assignment, &id)
+            .unwrap();
+        fixture
+            .store
+            .record_stop(
+                assignment,
+                &id,
+                OwnerStopReceiptV1::new(&source, "source-checkpoint".into(), "source-stop".into())
+                    .unwrap(),
+            )
+            .unwrap();
+        let before = fixture.store.assignment(assignment).unwrap().unwrap();
+        let bytes = encode(&before).unwrap();
+        assert!(fixture
+            .store
+            .transitions
+            .iter()
+            .any(|entry| entry.unwrap().1.as_ref() == bytes));
+        fixture.store.recover_drain(assignment, &id).unwrap();
+        let recovered = fixture.store.generation(assignment, &id).unwrap().unwrap();
+        assert_eq!(recovered.status, ActivationGenerationStatus::Draining);
+        assert_eq!(
+            recovered.admission_epochs,
+            before.generations[&id].admission_epochs
+        );
+        assert!(!recovered.admission_open());
+        assert!(recovered.safe_points.is_empty());
+        assert!(recovered.stop_receipts.is_empty());
+        assert!(recovered.fenced_quiescence.is_none());
+        for participant in ["actor.one", "source.one"] {
+            fixture
+                .store
+                .create_incarnation(assignment, &id, participant, "successor-owner-lease".into())
+                .unwrap();
+            let renewed = context(&fixture, &fixture.prepared, &id, participant);
+            fixture
+                .store
+                .record_readiness(
+                    assignment,
+                    &id,
+                    participant,
+                    readiness(&renewed, "retirement-reconstruction"),
+                    &fixture.prepared,
+                )
+                .unwrap();
+        }
+        assert!(fixture
+            .store
+            .record_safe_point(assignment, &id, safe)
+            .is_err());
+        assert!(fixture
+            .store
+            .reopen(assignment, &id, &fixture.prepared)
+            .is_err());
+        assert!(fixture
+            .store
+            .current_generation(assignment)
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            fixture
+                .store
+                .generation(assignment, &id)
+                .unwrap()
+                .unwrap()
+                .status,
+            ActivationGenerationStatus::Draining
+        );
+        assert!(
+            fixture
+                .store
+                .transitions
+                .iter()
+                .any(|entry| entry.unwrap().1.as_ref() == bytes),
+            "partial native stop evidence remains durable after recovery"
+        );
     }
 
     #[test]

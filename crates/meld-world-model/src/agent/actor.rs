@@ -75,6 +75,16 @@ pub trait AgentAuthorityPort: Send + Sync {
         Ok(prior_generation == current.activation_generation
             && self.observe()?.as_ref() == Some(current))
     }
+
+    /// Unchanged semantic assignment may survive replacement of physical activation bindings.
+    /// It permits a new judgment of an existing assigned Goal, never reuse of an old grant.
+    fn same_assignment(
+        &self,
+        prior_generation: &str,
+        current: &AgentAuthorizationFence,
+    ) -> Result<bool, StorageError> {
+        self.same_preparation(prior_generation, current)
+    }
 }
 
 /// Curation-owned planned intake and result query boundary.
@@ -750,7 +760,7 @@ impl AgentReconciliationActor {
                 || record.goal.target != target
                 || !self
                     .authority
-                    .same_preparation(&record.activation_generation, fence)?
+                    .same_assignment(&record.activation_generation, fence)?
             {
                 continue;
             }
@@ -769,7 +779,7 @@ impl AgentReconciliationActor {
             let same_intent = match &record.maintained_condition_revision {
                 Some(revision) => revision == &binding.revision,
                 // Historical Goals retain the native cut that formed their scoped identity.
-                // The lifecycle owner separately proves unchanged preparation.
+                // The lifecycle owner separately proves unchanged semantic assignment.
                 None => self.historical_goal_matches(&record, plan)?,
             };
             if same_intent {
@@ -1842,15 +1852,27 @@ impl GoalReconciliation<'_, '_> {
         Ok(())
     }
 
+    fn goal_assignment_continues(&self, prior_generation: &str) -> Result<bool, StorageError> {
+        let assigned = matches!(&self.intent,
+            crate::agent::AgentReconciliationIntent::MaintainedCondition(binding)
+                if binding.condition.observation_scope == crate::agent::AgentObservationScope::AssignedSubject
+        );
+        if assigned {
+            self.authority
+                .same_assignment(prior_generation, &self.frozen_authority)
+        } else {
+            self.authority
+                .same_preparation(prior_generation, &self.frozen_authority)
+        }
+    }
+
     fn persist_goal(&self, cut: &PlannerCut) -> Result<bool, StorageError> {
         if let Some(original) = self.store.reconciliation_goal(&self.goal.goal_id)? {
             if original.goal != self.goal
-                || !self
-                    .authority
-                    .same_preparation(&original.activation_generation, &self.frozen_authority)?
+                || !self.goal_assignment_continues(&original.activation_generation)?
             {
                 return Err(StorageError::InvalidPath(
-                    "Goal resumption changed its intent or preparation".into(),
+                    "Goal resumption changed its intent or required product lineage".into(),
                 ));
             }
             // A successor Plan records the new context; inception stays immutable.

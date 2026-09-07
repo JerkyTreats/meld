@@ -214,6 +214,7 @@ pub struct RuntimeSupervisor<'a> {
     incarnations: BTreeMap<String, ParticipantIncarnationV1>,
     passive_sources: BTreeMap<String, WorkspaceSourceLifecycle>,
     event_append: crate::runtime::ports::ProductEventAppendPort,
+    retirement_recovery: &'a dyn crate::runtime::assembly::RetirementRuntimeRecovery,
 }
 
 /// Root classification for one desired runtime id.
@@ -325,6 +326,7 @@ impl<'a> RuntimeSupervisor<'a> {
             incarnations: BTreeMap::new(),
             passive_sources: BTreeMap::new(),
             event_append: package.ports.event_append().clone(),
+            retirement_recovery: package.retirement_recovery,
         };
 
         supervisor.register_instance()?;
@@ -333,6 +335,7 @@ impl<'a> RuntimeSupervisor<'a> {
         let activation_mode = supervisor.prepare_activation()?;
         supervisor.start_enabled_runtimes(command.started_at_ms)?;
         supervisor.publish_activation(activation_mode)?;
+        supervisor.retire_predecessors()?;
         supervisor.mark_instance(RuntimeInstanceStatus::Running, None, command.started_at_ms)?;
         supervisor.supervisor_store.flush()?;
         Ok(supervisor)
@@ -1074,6 +1077,186 @@ impl<'a> RuntimeSupervisor<'a> {
             stop_reports,
             flush_reports,
         })
+    }
+
+    /// Recover only native lifecycle hooks from a predecessor's exact preparation.
+    /// Its pending semantic work remains in the existing owner stores under original lineage.
+    fn retire_predecessors(&mut self) -> Result<(), SupervisorRuntimeError> {
+        let (Some(store), Some(current), Some(current_id)) = (
+            self.lifecycle_store,
+            self.prepared_activation,
+            self.generation_id.as_deref(),
+        ) else {
+            return Ok(());
+        };
+        let assignment_id = &current.assignment.assignment_id;
+        let history = store.assignment(assignment_id)?.ok_or_else(|| {
+            SupervisorRuntimeError::InvalidCommand("assignment history is absent".into())
+        })?;
+        for prior in history.generations.values().filter(|generation| {
+            generation.generation_id != current_id
+                && matches!(
+                    generation.status,
+                    ActivationGenerationStatus::Draining
+                        | ActivationGenerationStatus::FencedQuiescent
+                )
+        }) {
+            let prepared = self
+                .stores
+                .pds_products
+                .prepared_closure(&prior.prepared_id)
+                .map_err(|error| SupervisorRuntimeError::InvalidCommand(error.to_string()))?
+                .ok_or_else(|| {
+                    SupervisorRuntimeError::InvalidCommand(
+                        "predecessor preparation is absent".into(),
+                    )
+                })?;
+            let mut handles = self
+                .retirement_recovery
+                .recover_retirement_handles(&prepared)?;
+            // The current process must own every physical actor before it can reconstruct
+            // a stopped predecessor. No second actor scheduler or lease is created.
+            for participant in prepared
+                .participant_plan
+                .participants
+                .iter()
+                .filter(|participant| participant.kind != ParticipantKind::PassiveSource)
+            {
+                let owner = self
+                    .handles
+                    .get(&participant.participant_id)
+                    .ok_or_else(|| {
+                        SupervisorRuntimeError::InvalidCommand(
+                            "predecessor owner has no current lease".into(),
+                        )
+                    })?;
+                let lease = self
+                    .supervisor_store
+                    .get_active_runtime_lease(&owner.owner.runtime_id)?;
+                if lease.as_ref().map(RuntimeLease::owner) != Some(owner.owner.clone()) {
+                    return Err(SupervisorRuntimeError::InvalidCommand(
+                        "predecessor recovery lost its native owner lease".into(),
+                    ));
+                }
+            }
+            store.recover_drain(assignment_id, &prior.generation_id)?;
+            let mut contexts = BTreeMap::new();
+            let mut passive = BTreeMap::new();
+            for participant in &prepared.participant_plan.participants {
+                let lease_ref = if participant.kind == ParticipantKind::PassiveSource {
+                    if participant.participant_id != "workspace.source" {
+                        return Err(SupervisorRuntimeError::InvalidCommand(
+                            "unknown predecessor passive owner".into(),
+                        ));
+                    }
+                    let source = WorkspaceSourceLifecycle::new(
+                        self.event_append.clone(),
+                        format!("workspace-source::{}", self.product_root.display()),
+                    );
+                    let binding = source.binding_ref().to_string();
+                    passive.insert(participant.participant_id.clone(), source);
+                    binding
+                } else {
+                    self.handles[&participant.participant_id]
+                        .owner
+                        .lease_id
+                        .clone()
+                };
+                // This releases a recovered generation session, never the current
+                // process's physical lease or passive-source binding.
+                let lease_ref = format!("retirement-session::{}::{lease_ref}", prior.generation_id);
+                let incarnation = store.create_incarnation(
+                    assignment_id,
+                    &prior.generation_id,
+                    &participant.participant_id,
+                    lease_ref.clone(),
+                )?;
+                let context = ParticipantLifecycleContextV1::new(
+                    participant,
+                    &prior.realizations[&participant.participant_id],
+                    &incarnation,
+                )?;
+                let readiness = if let Some(source) = passive.get(&participant.participant_id) {
+                    source.readiness(&context)?
+                } else {
+                    handles
+                        .get_mut(&participant.participant_id)
+                        .unwrap()
+                        .start_after_lifecycle_lease(
+                            RuntimeLeaseContext {
+                                runtime_id: participant.participant_id.clone(),
+                                lease_id: lease_ref,
+                            },
+                            &context,
+                        )?
+                        .owner_readiness
+                        .ok_or_else(|| {
+                            SupervisorRuntimeError::InvalidCommand(
+                                "native retirement readiness is absent".into(),
+                            )
+                        })?
+                };
+                store.record_readiness(
+                    assignment_id,
+                    &prior.generation_id,
+                    &participant.participant_id,
+                    readiness,
+                    &prepared,
+                )?;
+                contexts.insert(participant.participant_id.clone(), context);
+            }
+            let order = reverse_participant_order(&prepared);
+            for id in &order {
+                let context = &contexts[id];
+                if let Some(source) = passive.get_mut(id) {
+                    store.record_passive_fence(
+                        assignment_id,
+                        &prior.generation_id,
+                        source.fence(context)?,
+                    )?;
+                } else {
+                    let handle = handles.get_mut(id).unwrap();
+                    let safe = handle.wait_for_lifecycle_safe_point(context)?;
+                    let receipt = safe.owner_safe_point.ok_or_else(|| {
+                        SupervisorRuntimeError::InvalidCommand(
+                            "native retirement safe point is absent".into(),
+                        )
+                    })?;
+                    store.record_safe_point(assignment_id, &prior.generation_id, receipt)?;
+                    handle.flush_resources()?;
+                }
+            }
+            store.commit_fenced_quiescence(assignment_id, &prior.generation_id)?;
+            for id in &order {
+                let context = &contexts[id];
+                let receipt = if let Some(source) = passive.get_mut(id) {
+                    source.stop(context)?
+                } else {
+                    handles
+                        .get_mut(id)
+                        .unwrap()
+                        .request_lifecycle_stop(context)?
+                        .owner_stop
+                        .ok_or_else(|| {
+                            SupervisorRuntimeError::InvalidCommand(
+                                "native retirement stop is absent".into(),
+                            )
+                        })?
+                };
+                store.record_stop(assignment_id, &prior.generation_id, receipt)?;
+            }
+            for id in &order {
+                let context = &contexts[id];
+                let receipt = if let Some(source) = passive.get(id) {
+                    source.release(context)?
+                } else {
+                    handles.get_mut(id).unwrap().release_lifecycle(context)?
+                };
+                store.record_release(assignment_id, &prior.generation_id, receipt)?;
+            }
+            store.retire(assignment_id, &prior.generation_id)?;
+        }
+        Ok(())
     }
 
     fn prepare_activation(&mut self) -> Result<ActivationStartMode, SupervisorRuntimeError> {

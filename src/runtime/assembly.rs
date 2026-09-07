@@ -114,6 +114,7 @@ pub struct ProductRuntimeAssembly {
     dispatch_route_slot: Option<DispatchRouteSlot>,
     dispatch_route_seed: Option<DispatchRouteSeed>,
     capability_runtime: Option<ProductCapabilityRuntime>,
+    physical_binding: Option<PhysicalBinding>,
 }
 
 /// Read-only product runtime description for operator CLI commands.
@@ -500,6 +501,15 @@ fn hydrate_stewardship_theory(
     binding: &PhysicalBinding,
     diagnostics: &mut Vec<AssemblyDiagnostic>,
 ) -> HydratedStewardshipTheory {
+    hydrate_prepared_stewardship_theory(stores, binding, None, diagnostics)
+}
+
+fn hydrate_prepared_stewardship_theory(
+    stores: &OpenProductStores,
+    binding: &PhysicalBinding,
+    historical: Option<crate::theory::PreparedActivationClosureV1>,
+    diagnostics: &mut Vec<AssemblyDiagnostic>,
+) -> HydratedStewardshipTheory {
     let mut theory = HydratedStewardshipTheory::default();
     let subject = match stewardship_subject_ref(binding) {
         Ok(subject) => subject,
@@ -511,11 +521,18 @@ fn hydrate_stewardship_theory(
             return theory;
         }
     };
-    let resolved = match ResolvedStewardshipTheory::resolve_prepared_product(
-        stores,
-        &binding.package,
-        &subject,
-    ) {
+    let resolution = match historical {
+        Some(closure) => ResolvedStewardshipTheory::resolve_prepared_closure(
+            stores,
+            &binding.package,
+            &subject,
+            closure,
+        ),
+        None => {
+            ResolvedStewardshipTheory::resolve_prepared_product(stores, &binding.package, &subject)
+        }
+    };
+    let resolved = match resolution {
         Ok(resolved) => Arc::new(resolved),
         Err(error) => {
             diagnostics.push(AssemblyDiagnostic {
@@ -1233,6 +1250,16 @@ pub struct SupervisorStartupPackage<'a> {
     pub lifecycle_store: Option<&'a ActivationLifecycleStore>,
     /// Exact inert closure whose participant plan composes this supervisor.
     pub prepared_activation: Option<&'a crate::theory::PreparedActivationClosureV1>,
+    /// Reconstruct native lifecycle handles for retained predecessor preparations.
+    pub retirement_recovery: &'a dyn RetirementRuntimeRecovery,
+}
+
+/// Structural reconstruction of a predecessor's exact native owners.
+pub trait RetirementRuntimeRecovery {
+    fn recover_retirement_handles(
+        &self,
+        prepared: &crate::theory::PreparedActivationClosureV1,
+    ) -> Result<BTreeMap<String, InertRuntimeHandle>, RuntimeAssemblyError>;
 }
 
 impl ProductRuntimeConfig {
@@ -1400,6 +1427,9 @@ impl ProductRuntimeAssembly {
             ));
         }
 
+        let physical_binding = stewardship
+            .as_ref()
+            .map(|composition| composition.binding.clone());
         let has_stewardship = stewardship.is_some();
         let product_root = ProductStorageRoot::new(config.product_root);
         let layout = product_root.layout();
@@ -1591,6 +1621,7 @@ impl ProductRuntimeAssembly {
             dispatch_route_slot,
             dispatch_route_seed,
             capability_runtime,
+            physical_binding,
         })
     }
 
@@ -1787,6 +1818,7 @@ impl ProductRuntimeAssembly {
             registration_set: self.registration_set(),
             lifecycle_store: self.lifecycle_store(),
             prepared_activation: self.prepared_activation(),
+            retirement_recovery: self,
         }
     }
 
@@ -1808,6 +1840,105 @@ impl ProductRuntimeAssembly {
     pub fn flush_supervisor_store(&self) -> Result<(), RuntimeAssemblyError> {
         self.supervisor_store.flush()?;
         Ok(())
+    }
+}
+
+impl RetirementRuntimeRecovery for ProductRuntimeAssembly {
+    fn recover_retirement_handles(
+        &self,
+        prepared: &crate::theory::PreparedActivationClosureV1,
+    ) -> Result<BTreeMap<String, InertRuntimeHandle>, RuntimeAssemblyError> {
+        use crate::config::PhysicalBindingRef;
+        let invalid = |message: String| RuntimeAssemblyError::SupervisorHandoff(message);
+        let current = self
+            .prepared_activation()
+            .ok_or_else(|| invalid("current preparation is absent".into()))?;
+        if prepared.assignment != current.assignment {
+            return Err(invalid(
+                "retirement preparation belongs to another assignment".into(),
+            ));
+        }
+        let mut binding = self
+            .physical_binding
+            .clone()
+            .ok_or_else(|| invalid("physical product binding is absent".into()))?;
+        binding.bindings = prepared.activation.bindings.clone();
+        binding.provider_id = match prepared.activation.bindings.get("provider") {
+            Some(PhysicalBindingRef::ProviderRef(provider)) => Some(provider.clone()),
+            None => None,
+            _ => {
+                return Err(invalid(
+                    "historical provider binding has a foreign type".into(),
+                ))
+            }
+        };
+        binding.workspace_root = match prepared.activation.bindings.get("workspace") {
+            Some(PhysicalBindingRef::WorkspaceRef(root)) => Some(PathBuf::from(root)),
+            None => None,
+            _ => {
+                return Err(invalid(
+                    "historical workspace binding has a foreign type".into(),
+                ))
+            }
+        };
+        let mut diagnostics = Vec::new();
+        let theory = hydrate_prepared_stewardship_theory(
+            self.stores(),
+            &binding,
+            Some(prepared.clone()),
+            &mut diagnostics,
+        );
+        if theory.resolved.is_none() {
+            return Err(invalid(format!(
+                "historical owner preparation is unavailable: {diagnostics:?}"
+            )));
+        }
+        let bindings = StewardshipActorBindings::derive(&binding)?;
+        let current_network = self
+            .handle_factories
+            .get("execution.task_dispatch")
+            .and_then(|factory| match &factory.semantic {
+                RuntimeSemanticHandleFactory::Dispatch(dispatch) => Some(dispatch.network.clone()),
+                _ => None,
+            });
+        let composed = ComposedStewardship {
+            provider_id: binding.provider_id.clone(),
+            workspace_root: binding.workspace_root.clone(),
+            lifecycle: self.lifecycle_store.clone(),
+            dispatch_slot: self.dispatch_route_slot.clone().unwrap_or_default(),
+            network: current_network,
+            cursor_registry: self.event_authority.consumer_registry_capability(),
+            worker_id: format!("runtime-worker::{}", self.event_authority.ledger_identity()),
+            dispatch_route_seed: dispatch_route_seed(&binding, &bindings),
+            bindings,
+            theory,
+        };
+        let factories = RuntimeHandleFactoryRegistry::from_registry(
+            &self.registry,
+            &self.ports,
+            &self.stores,
+            self.graph_runtime.as_ref(),
+            Some(&composed),
+            &mut diagnostics,
+        )?;
+        prepared
+            .participant_plan
+            .participants
+            .iter()
+            .filter(|participant| participant.kind != crate::theory::ParticipantKind::PassiveSource)
+            .map(|participant| {
+                let factory = factories
+                    .get(&participant.participant_id)
+                    .filter(|factory| factory.has_semantic_body())
+                    .ok_or_else(|| {
+                        invalid(format!(
+                            "historical native owner '{}' is unavailable",
+                            participant.participant_id
+                        ))
+                    })?;
+                Ok((participant.participant_id.clone(), factory.build_handle()))
+            })
+            .collect()
     }
 }
 
@@ -5466,6 +5597,7 @@ mod tests {
     #[cfg(unix)]
     mod code_change;
     mod reconciliation_requests;
+    mod replacement;
     #[cfg(unix)]
     mod security_mitigation;
     #[cfg(unix)]
@@ -9396,7 +9528,16 @@ mod tests {
         assert_docs_publication_recovery(true);
     }
 
+    #[test]
+    fn native_docs_publication_recovers_a_lost_callback_after_provider_replacement() {
+        assert_docs_publication_recovery_with_binding(true, true);
+    }
+
     fn assert_docs_publication_recovery(restart: bool) {
+        assert_docs_publication_recovery_with_binding(restart, false);
+    }
+
+    fn assert_docs_publication_recovery_with_binding(restart: bool, replace_binding: bool) {
         fn publications(harness: &StewardshipHarness) -> Vec<meld_events::EventRecord> {
             let watermark = harness.authority.watermark_capability().snapshot().unwrap();
             let page = harness
@@ -9417,7 +9558,7 @@ mod tests {
                 .collect()
         }
         let provider = super::docs_fixture::ProviderServer::new();
-        let harness = StewardshipHarness::new();
+        let mut harness = StewardshipHarness::new();
         std::fs::write(
             harness._workspace.path().join("lib.rs"),
             "pub fn run() {}\n",
@@ -9511,18 +9652,29 @@ mod tests {
             .product_authorizations_for_goal(&goal_id)
             .unwrap();
         let judgments_before_reopen = assembly.stores().agent_store.condition_judgments().unwrap();
-        supervisor.request_shutdown(2_100).unwrap();
+        let recovery_at = if replace_binding {
+            harness.binding.provider_id = Some("replacement-provider".into());
+            harness.run_world_genesis(&assembly);
+            2_101
+                + assembly
+                    .supervisor_startup_package()
+                    .lifecycle_config
+                    .lease_duration_ms
+        } else {
+            supervisor.request_shutdown(2_100).unwrap();
+            3_000
+        };
         drop(supervisor);
         drop(assembly);
         let reopened = harness.assembly();
         harness.bind_production_routes(&reopened);
-        let mut command = SupervisorStartCommand::new("docs-publication-recovery", 3_000);
+        let mut command = SupervisorStartCommand::new("docs-publication-recovery", recovery_at);
         command.registration_set = reopened.registration_set().cloned();
         let mut resumed =
             RuntimeSupervisor::start(reopened.supervisor_startup_package(), command).unwrap();
         let mut reports = Vec::new();
         for pass in 0..40 {
-            reports.push(resumed.tick(3_100 + pass * 10).unwrap());
+            reports.push(resumed.tick(recovery_at + 100 + pass * 10).unwrap());
         }
         let history = reopened
             .stores()
@@ -9620,7 +9772,7 @@ mod tests {
                 .len(),
             1
         );
-        resumed.request_shutdown(3_600).unwrap();
+        resumed.request_shutdown(recovery_at + 600).unwrap();
     }
 
     #[test]
