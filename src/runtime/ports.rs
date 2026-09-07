@@ -136,6 +136,7 @@ pub struct ProductAgentPlannerPort {
 /// Structural Planner inputs known before native Agent selects an epoch observation.
 #[derive(Clone)]
 pub struct ProductEpochPlannerBinding {
+    pub additional_beliefs: Vec<meld_world_model::planner::PlannerBeliefSelection>,
     pub belief_family: meld_world_model::belief::TheoryRevisionRef,
     pub outcome_mappings: Vec<meld_world_model::belief::TheoryRevisionRef>,
     pub context: meld_world_model::planner::PlannerDecisionContext,
@@ -210,6 +211,7 @@ impl AgentPlannerPort for ProductEpochAgentPlannerPort {
             }
         };
         let request = PlannerCurrentAssemblyRequest {
+            additional_beliefs: self.binding.additional_beliefs.clone(),
             required_derived_evidence: products.curation_rule.rule.publishes_source_judgments().then(|| meld_world_model::planner::PlannerDerivedEvidenceRequirement {
                 curation_rule: products.curation_rule.revision_ref(),
                 belief_family: self.binding.belief_family.clone(),
@@ -738,6 +740,9 @@ impl AgentPlannerPort for ProductAgentPlannerPort {
         request.context.scope_id = rule.rule.scope.scope_id.clone();
         request.context.observation_subject = Some(products.observation_subject.clone());
         request.belief_key.subject = products.observation_subject.clone();
+        for selected in &mut request.additional_beliefs {
+            selected.key.subject = products.observation_subject.clone();
+        }
         request.traversal_request = rule.rule.traversal_request();
         request.traversal_cut_request.scope = rule.rule.scope.clone();
         request.traversal_cut_request.owners = vec![

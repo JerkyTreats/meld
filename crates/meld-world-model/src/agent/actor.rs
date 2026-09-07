@@ -3513,6 +3513,53 @@ mod tests {
     }
 
     #[test]
+    fn installed_method_reaches_native_agent_judgment_and_task_authorization() {
+        let mut fixture = Fixture::new();
+        fixture.cut.world_model_view.world_state = WorldState::new(vec![Proposition::Accessible {
+            scope: Term::Object(subject()),
+        }])
+        .unwrap();
+        let direct = fixture.expected_plan();
+        fixture.strategy.package.methods.push(meld_lang::Method {
+            method_id: "installed-docs-method".into(),
+            trigger: fixture.goal.target.clone(),
+            preconditions: vec![Proposition::Accessible {
+                scope: Term::Object(subject()),
+            }],
+            composition: direct.composition,
+            net_effects: Vec::new(),
+            cost: meld_lang::CostEstimate::zero(),
+            preference: 0,
+        });
+        fixture.strategy.package.search_bounds.max_expansions = 1;
+        let plan = fixture.expected_plan();
+        assert!(matches!(
+            plan.origin,
+            crate::strategy::StrategyPlanOrigin::Method { .. }
+        ));
+        let (actor, _) = fixture.actor(
+            vec![PlannerAssemblyOutcome::Complete(Box::new(
+                fixture.cut.clone(),
+            ))],
+            true,
+        );
+        let report = actor.bounded_step(8);
+        assert!(report.fatal_errors.is_empty(), "{:?}", report.fatal_errors);
+        assert_eq!(report.products_authorized, 2);
+        assert_eq!(
+            report.eligible_task_ids,
+            vec![plan.tasks[0].task_id.clone()]
+        );
+        assert_eq!(
+            fixture
+                .store
+                .reconciliation_plan(&plan.plan_revision_id)
+                .unwrap(),
+            Some(plan)
+        );
+    }
+
+    #[test]
     fn pending_curation_wait_names_the_operation_observed_by_the_bound_agent() {
         let fixture = Fixture::new();
         let (actor, _) = fixture.actor(

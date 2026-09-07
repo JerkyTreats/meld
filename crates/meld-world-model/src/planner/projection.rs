@@ -151,7 +151,63 @@ fn validate_assembly_request(request: &PlannerAssemblyRequest) -> Vec<PlannerRef
         if supplied.is_empty() {
             grounds.push(PlannerRefusalGround::Missing { kind: *kind });
         } else if supplied.len() > 1 {
-            grounds.push(PlannerRefusalGround::Duplicate { kind: *kind });
+            let views: Vec<_> = request
+                .view_input
+                .belief_view
+                .iter()
+                .chain(
+                    request
+                        .view_input
+                        .additional_beliefs
+                        .iter()
+                        .filter_map(|selected| selected.view.as_ref()),
+                )
+                .collect();
+            let exact_beliefs = *kind == PlannerSourceKind::Belief
+                && supplied
+                    .iter()
+                    .map(|source| &source.source_id)
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+                    == supplied.len()
+                && views.len() == supplied.len()
+                && views.iter().all(|view| {
+                    supplied.iter().any(|source| {
+                        source.source_id == view.key.index_key()
+                            && view.current_revision_id.as_ref().is_some_and(|id| {
+                                &source.revision_id == id && &source.content_hash == id
+                            })
+                    })
+                });
+            if !exact_beliefs {
+                grounds.push(PlannerRefusalGround::Duplicate { kind: *kind });
+            }
+        }
+    }
+    for selected in &request.view_input.additional_beliefs {
+        let supplied: Vec<_> = request
+            .source_positions
+            .iter()
+            .filter(|source| {
+                source.kind == PlannerSourceKind::Belief
+                    && source.source_id == selected.selection.key.index_key()
+            })
+            .collect();
+        let exact = match &selected.view {
+            Some(view) => {
+                supplied.len() == 1
+                    && view.current_revision_id.as_ref().is_some_and(|id| {
+                        &supplied[0].revision_id == id
+                            && &supplied[0].content_hash == id
+                            && supplied[0].owner_id == "world_model.belief"
+                    })
+            }
+            None => supplied.is_empty(),
+        };
+        if !exact {
+            grounds.push(PlannerRefusalGround::InvalidInput {
+                detail: "additional Belief projection and source position disagree".into(),
+            });
         }
     }
     for source in &request.source_positions {
@@ -238,6 +294,61 @@ pub fn project_world_state(
         warnings.push(PlannerProjectionWarning::MissingBelief {
             subject: input.context.subject.clone(),
         });
+    }
+
+    let mut dimensions = std::collections::BTreeSet::new();
+    if let Some(view) = &input.belief_view {
+        dimensions.insert(view.key.dimension_id.clone());
+    }
+    for selected in &input.additional_beliefs {
+        let key = &selected.selection.key;
+        let family = &selected.selection.family;
+        if key.validate().is_err()
+            || key.subject != input.context.subject
+            || key.perspective != input.context.perspective
+            || key.branch_scope != input.context.branch_scope
+            || family.validate_for_registry("belief_family").is_err()
+            || !dimensions.insert(key.dimension_id.clone())
+        {
+            return Err(PlannerProjectionError::Storage(
+                crate::error::StorageError::InvalidPath(
+                    "additional Belief selection is invalid, foreign, or repeats a dimension"
+                        .into(),
+                ),
+            ));
+        }
+        source_refs.push(PlannerSourceRef::BeliefSelection {
+            key_id: key.index_key(),
+            family_id: family.id.clone(),
+            content_hash: family.content_hash.clone(),
+        });
+        match &selected.view {
+            Some(view) => {
+                if &view.key != key
+                    || view.theory_revision.as_ref() != Some(family)
+                    || view
+                        .current_revision_id
+                        .as_ref()
+                        .is_none_or(|id| id.trim().is_empty())
+                {
+                    return Err(PlannerProjectionError::Storage(crate::error::StorageError::InvalidPath(
+                        "additional Belief view does not match the exact selected question and family".into(),
+                    )));
+                }
+                validate_view_context(&input, view)?;
+                project_belief_view(
+                    &input.context.subject,
+                    view,
+                    &input.field_config,
+                    &mut propositions,
+                    &mut source_refs,
+                    &mut hydration_refs,
+                )?;
+            }
+            None => warnings.push(PlannerProjectionWarning::MissingBeliefDimension {
+                dimension_id: key.dimension_id.clone(),
+            }),
+        }
     }
 
     if let Some(scope) = input.graph_scope.as_ref() {
@@ -517,6 +628,29 @@ mod cut_tests {
         assert!(substituted.validate().is_err());
     }
 
+    #[test]
+    fn undeclared_and_conflicting_belief_positions_refuse() {
+        let mut input = request();
+        let mut second = input
+            .source_positions
+            .iter()
+            .find(|source| source.kind == PlannerSourceKind::Belief)
+            .unwrap()
+            .clone();
+        second.source_id = "coverage-question".into();
+        input.source_positions.push(second.clone());
+        assert!(matches!(
+            PlannerCut::assemble(input.clone()),
+            PlannerAssemblyOutcome::Refused(_)
+        ));
+        second.revision_id = "foreign-revision".into();
+        input.source_positions.push(second);
+        assert!(matches!(
+            PlannerCut::assemble(input),
+            PlannerAssemblyOutcome::Refused(_)
+        ));
+    }
+
     fn request() -> PlannerAssemblyRequest {
         let subject = DomainObjectRef::new("workspace_fs", "node", "meld").unwrap();
         let context = PlannerDecisionContext {
@@ -625,6 +759,7 @@ mod cut_tests {
                 })
                 .collect(),
             view_input: PlannerProjectionInput {
+                additional_beliefs: Vec::new(),
                 context: PlannerProjectionContext {
                     subject,
                     perspective: PerspectiveKey::new("frame", "default").unwrap(),

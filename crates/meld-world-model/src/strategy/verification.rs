@@ -18,7 +18,7 @@ use super::{
 /// Verification re-resolves every operator against the supplied capability
 /// vocabulary, rechecks current preconditions, artifact closure, settlement
 /// contribution, evidence routing, and content identity. It performs no
-/// repair and never relies on the candidate construction origin.
+/// repair. Method applicability cannot replace canonical operator guards.
 pub fn verify_plan(problem: &StrategyProblem, candidate: &StrategyPlan) -> PlanVerification {
     verify_with_history(problem, candidate, &[])
 }
@@ -135,6 +135,26 @@ fn verify_with_history(
         })
     {
         grounds.push(StrategyRejectionGround::UnchangedCompletedWork);
+    }
+    if let super::StrategyPlanOrigin::Method { method_id } = &candidate.origin {
+        match problem
+            .methods
+            .iter()
+            .find(|method| &method.method_id == method_id)
+        {
+            Some(method) => {
+                let method_bindings = meld_lang::unify(&method.trigger, &problem.goal.target)
+                    .and_then(|method_bindings| bindings.merge(&method_bindings));
+                if method_bindings.as_ref() != Some(&candidate.bindings) {
+                    grounds.push(StrategyRejectionGround::InvalidComposition);
+                } else if let Err(ground) =
+                    super::search::method_preconditions(problem, method, &candidate.bindings)
+                {
+                    grounds.push(ground);
+                }
+            }
+            None => grounds.push(StrategyRejectionGround::InvalidComposition),
+        }
     }
     let confirmation = candidate.tasks.is_empty();
     if confirmation {

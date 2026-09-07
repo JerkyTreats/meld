@@ -687,7 +687,13 @@ impl ResolvedStewardshipTheory {
                 .package
                 .requested_dimensions
                 .iter()
-                .any(|dimension| dimension != &self.belief_family.config.dimension_id)
+                .any(|dimension| {
+                    self.belief_families
+                        .iter()
+                        .filter(|family| &family.config.dimension_id == dimension)
+                        .count()
+                        != 1
+                })
         {
             return Err(TheoryResolutionError::Inconsistent(
                 "resolved cross-domain projection dimensions disagree".to_string(),

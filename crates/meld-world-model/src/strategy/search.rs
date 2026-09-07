@@ -482,6 +482,10 @@ fn method_candidates(
         let Some(bindings) = goal_bindings.merge(&method_bindings) else {
             continue;
         };
+        if let Err(ground) = method_preconditions(&request.problem, method, &bindings) {
+            state.reject(ground);
+            continue;
+        }
         let Ok(composition) = substitute(&method.composition, &bindings) else {
             state.reject(StrategyRejectionGround::UnboundVariable {
                 variable: "method composition".to_string(),
@@ -513,6 +517,31 @@ fn method_candidates(
         }
     }
     candidates
+}
+
+pub(crate) fn method_preconditions(
+    problem: &super::StrategyProblem,
+    method: &meld_lang::Method,
+    bindings: &meld_lang::Bindings,
+) -> Result<(), StrategyRejectionGround> {
+    for precondition in &method.preconditions {
+        let ground = ground_proposition(precondition, bindings)
+            .map_err(|variable| StrategyRejectionGround::UnboundVariable { variable })?;
+        match evaluate(&problem.planner_cut.world_model_view.world_state, &ground) {
+            EvalResult::Satisfied => {}
+            EvalResult::Unsatisfied { .. } => {
+                return Err(StrategyRejectionGround::UnsatisfiedMethodPrecondition {
+                    method_id: method.method_id.clone(),
+                });
+            }
+            EvalResult::Indeterminate { .. } => {
+                return Err(StrategyRejectionGround::IndeterminateMethodPrecondition {
+                    method_id: method.method_id.clone(),
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 fn direct_candidates(

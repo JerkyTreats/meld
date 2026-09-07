@@ -188,6 +188,7 @@ fn test_view(dimension_id: &str, confidence: f64, stale: bool, observation: bool
 
 fn projection_input(view: Option<BeliefView>) -> PlannerProjectionInput {
     PlannerProjectionInput {
+        additional_beliefs: Vec::new(),
         context: PlannerProjectionContext::first_slice(subject()),
         belief_view: view,
         graph_scope: Some(PlannerGraphScope {
@@ -393,6 +394,7 @@ fn planner_indeterminate_projection() {
 #[test]
 fn planner_graph_projection() {
     let output = project_world_state(PlannerProjectionInput {
+        additional_beliefs: Vec::new(),
         context: PlannerProjectionContext::first_slice(subject()),
         belief_view: None,
         graph_scope: Some(PlannerGraphScope {
@@ -680,4 +682,81 @@ proptest! {
             prop_assert!(result.is_ok());
         }
     }
+}
+
+#[test]
+fn selected_beliefs_preserve_independent_evidence_absence_and_exact_lineage() {
+    use meld_world_model::planner::{PlannerBeliefSelection, PlannerSelectedBeliefView};
+    let mut coverage = test_view("coverage", 1.0, false, false);
+    coverage.current_revision_id = Some("coverage-revision".into());
+    coverage.theory_revision = Some(meld_world_model::belief::TheoryRevisionRef {
+        registry: "belief_family".into(),
+        id: "coverage-family".into(),
+        content_hash: "installed-coverage".into(),
+    });
+    let selected = PlannerSelectedBeliefView {
+        selection: PlannerBeliefSelection {
+            key: coverage.key.clone(),
+            family: coverage.theory_revision.clone().unwrap(),
+        },
+        view: Some(coverage),
+    };
+    let mut input = projection_input(Some(test_view("posture", 0.0, false, false)));
+    input.additional_beliefs = vec![selected.clone()];
+    let guard = Proposition::Holds {
+        subject: Term::Object(subject()),
+        dimension: Term::Dimension("coverage".into()),
+        condition: Condition::Above(Term::Literal(Literal::Number(0.9))),
+    };
+    let admitted = project_world_state(input.clone()).unwrap();
+    assert_eq!(
+        evaluate(&admitted.world_state, &guard),
+        EvalResult::Satisfied
+    );
+    assert!(admitted
+        .hydration_refs
+        .revision_ids
+        .contains(&"coverage-revision".into()));
+    input.additional_beliefs[0].view = None;
+    let absent = project_world_state(input.clone()).unwrap();
+    assert!(matches!(
+        evaluate(&absent.world_state, &guard),
+        EvalResult::Indeterminate { .. }
+    ));
+    assert!(absent.source_refs.iter().any(|source| matches!(source,
+        PlannerSourceRef::BeliefSelection { content_hash, .. } if content_hash == "installed-coverage"
+    )));
+    input.additional_beliefs = vec![selected.clone()];
+    input.additional_beliefs[0]
+        .view
+        .as_mut()
+        .unwrap()
+        .freshness
+        .stale = true;
+    assert!(matches!(
+        evaluate(
+            &project_world_state(input.clone()).unwrap().world_state,
+            &guard
+        ),
+        EvalResult::Indeterminate { .. }
+    ));
+    input.additional_beliefs = vec![selected.clone()];
+    input.additional_beliefs[0]
+        .view
+        .as_mut()
+        .unwrap()
+        .theory_revision
+        .as_mut()
+        .unwrap()
+        .content_hash = "foreign-family-revision".into();
+    assert!(project_world_state(input.clone()).is_err());
+    input.additional_beliefs = vec![selected.clone(), selected.clone()];
+    assert!(project_world_state(input.clone()).is_err());
+    input.additional_beliefs = vec![selected];
+    input.additional_beliefs[0]
+        .selection
+        .key
+        .branch_scope
+        .branch_id = "foreign-branch".into();
+    assert!(project_world_state(input).is_err());
 }

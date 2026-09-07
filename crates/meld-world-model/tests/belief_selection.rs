@@ -612,6 +612,29 @@ fn second_evidence_revision_flows_to_planner_projection_with_theory_ref() {
             .unwrap();
     }
 
+    let (retained, pending) = query.current_revision_and_view(&key).unwrap().unwrap();
+    assert_eq!(retained, first_revision);
+    assert_eq!(pending.current_revision_id, first_view.current_revision_id);
+    assert_eq!(
+        pending.status,
+        meld_world_model::BeliefStatus::AssessmentPending
+    );
+    assert!(pending.freshness.stale);
+    assert_eq!(
+        fixture.belief.current_view(&key).unwrap().unwrap(),
+        first_view
+    );
+    let pending_projection = PlannerQuery::new(
+        BeliefQuery::new(fixture.belief.as_ref()),
+        TraversalQuery::new(fixture.graph.as_ref()),
+    )
+    .project_world_state_for_key(&key)
+    .unwrap();
+    assert!(!pending_projection.world_state.propositions().iter().any(|proposition|
+        matches!(proposition, meld_lang::Proposition::Holds { dimension: meld_lang::Term::Dimension(dimension), .. }
+            if dimension == &key.dimension_id)
+    ));
+
     let reassessed = actor.bounded_step(&BeliefAssessmentRequest {
         sequence: 11,
         max_items: 4,

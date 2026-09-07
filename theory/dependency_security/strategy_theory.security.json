@@ -265,7 +265,8 @@
     "max_depth": 6
   },
   "requested_dimensions": [
-    "dependency_security_posture"
+    "dependency_security_posture",
+    "dependency_security_coverage"
   ],
   "requested_authority": [
     "dependency_security.acquire_advisories",

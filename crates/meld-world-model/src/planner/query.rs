@@ -60,6 +60,18 @@ impl<'a> PlannerQuery<'a> {
                 "Planner observation key differs from the selected judgment scope".into(),
             );
         }
+        let mut dimensions =
+            std::collections::BTreeSet::from([request.belief_key.dimension_id.clone()]);
+        for selected in &request.additional_beliefs {
+            if selected.key.validate().is_err()
+                || selected.key.subject != observation_subject
+                || selected.key.perspective != request.belief_key.perspective
+                || selected.key.branch_scope != request.belief_key.branch_scope
+                || !dimensions.insert(selected.key.dimension_id.clone())
+            {
+                return refuse("additional Belief selection differs from the judgment scope or repeats a dimension".into());
+            }
+        }
         let cut = match self.traversal_query.cut(&request.traversal_cut_request) {
             Ok(cut) => cut,
             Err(error) => return refuse(error.to_string()),
@@ -94,6 +106,14 @@ impl<'a> PlannerQuery<'a> {
             Ok(current) => current,
             Err(error) => return refuse(error.to_string()),
         };
+        if current.is_none()
+            && request
+                .policy
+                .required_sources
+                .contains(&PlannerSourceKind::Belief)
+        {
+            return refuse("primary Belief question has no committed revision".into());
+        }
         if let Some(required) = &request.required_derived_evidence {
             let Some(curation) = &self.curation_query else {
                 return refuse("derived evidence requires its native Curation source".into());
@@ -115,6 +135,18 @@ impl<'a> PlannerQuery<'a> {
                 Ok(false) => return refuse("Belief has not consumed the selected current Curation evidence under the installed interpretation".into()),
                 Err(error) => return refuse(error.to_string()),
             }
+        }
+        let mut additional_beliefs = Vec::new();
+        for selection in &request.additional_beliefs {
+            let view = match self.belief_query.current_revision_and_view(&selection.key) {
+                Ok(Some((_, view))) => Some(view),
+                Ok(None) => None,
+                Err(error) => return refuse(error.to_string()),
+            };
+            additional_beliefs.push(crate::planner::PlannerSelectedBeliefView {
+                selection: selection.clone(),
+                view,
+            });
         }
         let belief_view = current.as_ref().map(|(_, view)| view.clone());
         let field_config = belief_view
@@ -141,13 +173,20 @@ impl<'a> PlannerQuery<'a> {
             authority_scope_id: request.context.authority_scope_id.clone(),
             invalidated_by_revision_id: None,
         });
-        if let Some((revision, _)) = current {
+        for view in belief_view.iter().chain(
+            additional_beliefs
+                .iter()
+                .filter_map(|selected| selected.view.as_ref()),
+        ) {
+            let Some(revision_id) = &view.current_revision_id else {
+                return refuse("Belief view has no committed revision".into());
+            };
             source_positions.push(PlannerSourcePosition {
                 kind: PlannerSourceKind::Belief,
-                owner_id: "world_model.belief".to_string(),
-                source_id: request.belief_key.index_key(),
-                revision_id: revision.revision_id.clone(),
-                content_hash: revision.revision_id,
+                owner_id: "world_model.belief".into(),
+                source_id: view.key.index_key(),
+                revision_id: revision_id.clone(),
+                content_hash: revision_id.clone(),
                 scope_id: request.context.scope_id.clone(),
                 branch_id: request.context.branch_id.clone(),
                 perspective_id: request.context.perspective_id.clone(),
@@ -163,6 +202,7 @@ impl<'a> PlannerQuery<'a> {
             traversal_result,
             source_positions,
             view_input: PlannerProjectionInput {
+                additional_beliefs,
                 context: PlannerProjectionContext {
                     subject: observation_subject.clone(),
                     perspective: request.belief_key.perspective,
@@ -431,6 +471,7 @@ impl<'a> PlannerQuery<'a> {
             traversal_result,
             source_positions,
             view_input: PlannerProjectionInput {
+                additional_beliefs: Vec::new(),
                 context,
                 belief_view,
                 graph_scope: Some(PlannerGraphScope {

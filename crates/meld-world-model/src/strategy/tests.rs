@@ -210,6 +210,7 @@ fn planner_cut_at(revision: &str) -> PlannerCut {
             })
             .collect(),
         view_input: PlannerProjectionInput {
+            additional_beliefs: Vec::new(),
             context: PlannerProjectionContext {
                 subject: subject_ref(),
                 perspective: PerspectiveKey::new("frame", "default").unwrap(),
@@ -1102,5 +1103,93 @@ fn method_components_preserve_explicit_operational_dependencies() {
     assert!(matches!(
         verify_plan(&request.problem, &connected),
         PlanVerification::Valid { .. }
+    ));
+}
+
+#[test]
+fn method_guards_require_ground_current_evidence_in_search_and_verification() {
+    let mut request = StrategySearchRequest {
+        problem: compound_problem(),
+        bounds: StrategySearchBounds {
+            max_expansions: 64,
+            max_depth: 8,
+        },
+    };
+    let direct = search(&request).recommendation.unwrap();
+    request.problem.methods.push(meld_lang::Method {
+        method_id: "guarded-method".into(),
+        trigger: goal_pattern(),
+        preconditions: vec![Proposition::Accessible {
+            scope: Term::Variable("?subject".into()),
+        }],
+        composition: direct.composition,
+        net_effects: Vec::new(),
+        cost: CostEstimate::zero(),
+        preference: 0,
+    });
+    request.bounds.max_expansions = 1;
+    let accepted = search(&request).recommendation.unwrap();
+    assert!(matches!(accepted.origin, StrategyPlanOrigin::Method { .. }));
+    assert!(matches!(
+        verify_plan(&request.problem, &accepted),
+        PlanVerification::Valid { .. }
+    ));
+    for guard in [
+        Proposition::Not(Box::new(Proposition::Accessible { scope: subject() })),
+        Proposition::Holds {
+            subject: subject(),
+            dimension: Term::Dimension("missing-coverage".into()),
+            condition: Condition::Above(Term::Literal(meld_lang::Literal::Number(0.9))),
+        },
+        Proposition::Accessible {
+            scope: Term::Variable("?unbound".into()),
+        },
+    ] {
+        request.problem.methods[0].preconditions = vec![guard];
+        assert!(search(&request).recommendation.is_none());
+        assert!(matches!(
+            verify_plan(&request.problem, &accepted),
+            PlanVerification::Invalid { .. }
+        ));
+    }
+}
+
+#[test]
+fn method_cannot_remove_a_canonical_capability_guard() {
+    let mut request = StrategySearchRequest {
+        problem: compound_problem(),
+        bounds: StrategySearchBounds {
+            max_expansions: 64,
+            max_depth: 8,
+        },
+    };
+    let direct = search(&request).recommendation.unwrap();
+    let mut composition = direct.composition;
+    for step in &mut composition.steps {
+        let meld_lang::StepKind::Op(operator) = &mut step.kind else {
+            unreachable!()
+        };
+        operator.preconditions.clear();
+    }
+    request.problem.methods.push(meld_lang::Method {
+        method_id: "guard-stripping-template".into(),
+        trigger: request.problem.goal.target.clone(),
+        preconditions: Vec::new(),
+        composition,
+        net_effects: Vec::new(),
+        cost: CostEstimate::zero(),
+        preference: 0,
+    });
+    request.bounds.max_expansions = 1;
+    let mut candidate = search(&request).recommendation.unwrap();
+    assert!(matches!(
+        verify_plan(&request.problem, &candidate),
+        PlanVerification::Invalid { .. }
+    ));
+    candidate.origin = StrategyPlanOrigin::Direct;
+    candidate.plan_revision_id = super::search::plan_revision_identity(&candidate);
+    assert!(matches!(
+        verify_plan(&request.problem, &candidate),
+        PlanVerification::Invalid { .. }
     ));
 }

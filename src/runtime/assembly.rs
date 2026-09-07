@@ -2750,6 +2750,26 @@ impl RuntimeSemanticHandleFactory {
                     &agent.perspective_key,
                     &agent.branch_scope,
                 );
+                let additional_beliefs = resolved
+                    .belief_families
+                    .iter()
+                    .filter(|family| {
+                        family.config.dimension_id != family_revision.config.dimension_id
+                            && strategy
+                                .package
+                                .requested_dimensions
+                                .contains(&family.config.dimension_id)
+                    })
+                    .map(|family| meld_world_model::planner::PlannerBeliefSelection {
+                        key: meld_world_model::configured_belief_key(
+                            family,
+                            &agent.subject,
+                            &agent.perspective_key,
+                            &agent.branch_scope,
+                        ),
+                        family: family.revision_ref(),
+                    })
+                    .collect::<Vec<_>>();
                 let current = ports.event_append().watermark().map_err(|error| {
                     RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
                 })?;
@@ -2823,6 +2843,7 @@ impl RuntimeSemanticHandleFactory {
                 ) = match rule {
                     crate::runtime::theory::PreparedCurationSelection::Installed(rule) => {
                         let planner_request = PlannerCurrentAssemblyRequest {
+                            additional_beliefs: additional_beliefs.clone(),
                             required_derived_evidence: rule.rule.publishes_source_judgments().then(
                                 || meld_world_model::planner::PlannerDerivedEvidenceRequirement {
                                     curation_rule: rule.revision_ref(),
@@ -2936,6 +2957,7 @@ impl RuntimeSemanticHandleFactory {
                             Arc::clone(curation_store),
                             ports.event_append().clone(),
                             crate::runtime::ports::ProductEpochPlannerBinding {
+                                additional_beliefs,
                                 belief_family: resolved.belief_family.revision_ref(),
                                 outcome_mappings: vec![resolved.outcome_mapping.revision_ref()],
                                 context: context.clone(),
@@ -5427,6 +5449,7 @@ mod tests {
     mod code_change;
     #[cfg(unix)]
     mod security_mitigation;
+    mod security_planning;
     use std::sync::Mutex;
 
     use meld_events::EventEnvelope;
@@ -7784,6 +7807,7 @@ mod tests {
         Advisory,
         Inventory,
         Expiry,
+        GuardedMethod,
         #[cfg(unix)]
         Mitigation,
     }
@@ -7935,7 +7959,9 @@ mod tests {
         }
         {
             let assembly = harness.assembly();
-            if advance.is_mitigation() {
+            if advance == SecuritySourceAdvance::GuardedMethod {
+                security_planning::genesis(&harness, &assembly);
+            } else if advance.is_mitigation() {
                 #[cfg(unix)]
                 security_mitigation::genesis(&harness, &assembly);
             } else {
@@ -7987,6 +8013,31 @@ mod tests {
             .iter()
             .filter(|record| record.event_type == "dependency_security.invocation_return.v1")
             .collect();
+        if advance == SecuritySourceAdvance::GuardedMethod {
+            let authorizations = store
+                .product_authorizations_for_goal(&goals[0].goal.goal_id)
+                .unwrap();
+            let tasks: Vec<_> = authorizations
+                .iter()
+                .filter(|authorization| {
+                    matches!(
+                        authorization.product,
+                        meld_world_model::AgentAuthorizedProduct::Task(_)
+                    )
+                })
+                .collect();
+            assert!(!tasks.is_empty());
+            for authorization in tasks {
+                let plan = store
+                    .reconciliation_plan(&authorization.plan_revision_id)
+                    .unwrap()
+                    .unwrap();
+                assert!(matches!(
+                    plan.origin,
+                    meld_world_model::strategy::StrategyPlanOrigin::Method { .. }
+                ));
+            }
+        }
         assert_eq!(
             products.len(),
             4,
@@ -8043,6 +8094,38 @@ mod tests {
         assert_eq!(
             coverage.planner_projection.confidence,
             if complete { 1.0 } else { 0.0 }
+        );
+        let RuntimeSemanticHandleFactory::AgentActor(agent) = &assembly
+            .handle_factories()
+            .get(AGENT_RECONCILIATION_RUNTIME_ID)
+            .unwrap()
+            .semantic
+        else {
+            unreachable!()
+        };
+        let meld_world_model::PlannerAssemblyOutcome::Complete(cut) = agent.planner.assemble()
+        else {
+            panic!("both independently assessed Security questions must be admitted");
+        };
+        assert!(cut
+            .source_positions
+            .iter()
+            .any(|position| position.kind == PlannerSourceKind::Belief
+                && position.source_id == coverage_key.index_key()
+                && Some(&position.revision_id) == coverage.current_revision_id.as_ref()));
+        let coverage_guard = meld_lang::Proposition::Holds {
+            subject: meld_lang::Term::Object(harness.binding.subject.clone()),
+            dimension: meld_lang::Term::Dimension("dependency_security_coverage".into()),
+            condition: meld_lang::Condition::Above(meld_lang::Term::Literal(
+                meld_lang::Literal::Number(0.9),
+            )),
+        };
+        assert_eq!(
+            matches!(
+                meld_lang::evaluate(&cut.world_model_view.world_state, &coverage_guard),
+                meld_lang::EvalResult::Satisfied
+            ),
+            complete
         );
         let goal_id = goals[0].goal.goal_id.clone();
         supervisor.request_shutdown(2_000).unwrap();
@@ -8170,7 +8253,10 @@ mod tests {
             resumed.request_shutdown(6_000).unwrap();
             return;
         }
-        if advance != SecuritySourceAdvance::None {
+        if !matches!(
+            advance,
+            SecuritySourceAdvance::None | SecuritySourceAdvance::GuardedMethod
+        ) {
             let advisory_bytes = std::fs::read(&source).unwrap();
             let manifest = std::fs::read(harness._workspace.path().join("Cargo.toml")).unwrap();
             let mut changed: AdvisorySourceDocumentV1 =

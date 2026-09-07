@@ -142,6 +142,16 @@ pub fn validate_strategy_theory_package(
             )));
         }
     }
+    let mut methods = BTreeSet::new();
+    for method in &package.methods {
+        require_non_empty("strategy method id", &method.method_id)?;
+        if !methods.insert(method.method_id.as_str()) {
+            return Err(StorageError::InvalidPath(format!(
+                "duplicate strategy method '{}'",
+                method.method_id
+            )));
+        }
+    }
     let mut dimensions = BTreeSet::new();
     for dimension in &package.requested_dimensions {
         require_non_empty("strategy requested dimension", dimension)?;
@@ -234,6 +244,17 @@ mod tests {
             "../../../../theory/docs_freshness/strategy_theory.docs_freshness.json"
         ))
         .unwrap()
+    }
+
+    #[test]
+    fn empty_methods_preserve_historical_package_identity() {
+        let package = package();
+        let body = serde_json::to_value(&package).unwrap();
+        assert!(body.get("methods").is_none());
+        let mut with_empty = body.clone();
+        with_empty["methods"] = serde_json::json!([]);
+        let decoded: StrategyTheoryPackage = serde_json::from_value(with_empty).unwrap();
+        assert_eq!(hash_body(&decoded).unwrap(), hash_body(&package).unwrap());
     }
 
     #[test]

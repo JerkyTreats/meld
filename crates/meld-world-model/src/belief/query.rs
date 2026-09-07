@@ -53,7 +53,8 @@ impl<'a> BeliefQuery<'a> {
     ///
     /// The revision head is the durable authority: the returned view is
     /// rebuilt from that revision when the view cache is missing, and both
-    /// halves always cite the same revision identity.
+    /// halves always cite the same revision identity. A newer dirty assignment
+    /// makes the returned projection pending without rewriting that revision.
     pub fn current_revision_and_view(
         &self,
         key: &BeliefKey,
@@ -61,7 +62,7 @@ impl<'a> BeliefQuery<'a> {
         let Some(revision) = self.store.current_revision(key)? else {
             return Ok(None);
         };
-        let view = match self.store.current_view(key)? {
+        let mut view = match self.store.current_view(key)? {
             Some(view) if view.current_revision_id.as_deref() == Some(&revision.revision_id) => {
                 view
             }
@@ -75,6 +76,25 @@ impl<'a> BeliefQuery<'a> {
                     )
                 })?,
         };
+        // The immutable revision remains inspectable while a newer assignment
+        // awaits assessment. Its old posterior cannot authorize current work.
+        if self
+            .store
+            .dirty_state(key)?
+            .is_some_and(|dirty| dirty.latest_seq > revision.source_cursor_end)
+        {
+            view.status = crate::belief::BeliefStatus::AssessmentPending;
+            view.freshness.stale = true;
+            if !view
+                .freshness
+                .reasons
+                .contains(&crate::belief::FreshnessReason::NewerEvidence)
+            {
+                view.freshness
+                    .reasons
+                    .push(crate::belief::FreshnessReason::NewerEvidence);
+            }
+        }
         Ok(Some((revision, view)))
     }
 

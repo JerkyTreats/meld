@@ -105,8 +105,25 @@ pub struct PlannerCurrentAssemblyRequest {
     pub traversal_cut_request: TraversalCutRequest,
     pub traversal_request: BoundedTraversalRequest,
     pub belief_key: crate::belief::BeliefKey,
+    /// Exact additional questions from the compiled package, never arbitrary current heads.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub additional_beliefs: Vec<PlannerBeliefSelection>,
     pub unanchored_belief: bool,
     pub source_positions: Vec<PlannerSourcePosition>,
+}
+
+/// One installed Belief question admitted alongside the primary desired condition.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlannerBeliefSelection {
+    pub key: crate::belief::BeliefKey,
+    pub family: crate::belief::TheoryRevisionRef,
+}
+
+/// Absence is retained with the exact selected question and interpretation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlannerSelectedBeliefView {
+    pub selection: PlannerBeliefSelection,
+    pub view: Option<BeliefView>,
 }
 
 /// Exact installed lineage required for a Curation-derived desired condition.
@@ -260,6 +277,8 @@ impl Default for PlannerFieldProjectionConfig {
 pub struct PlannerProjectionInput {
     pub context: PlannerProjectionContext,
     pub belief_view: Option<BeliefView>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub additional_beliefs: Vec<PlannerSelectedBeliefView>,
     pub graph_scope: Option<PlannerGraphScope>,
     pub field_config: PlannerFieldProjectionConfig,
 }
@@ -291,11 +310,26 @@ pub struct WorldModelView {
 /// Traceable origin of one projection input or rule.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum PlannerSourceRef {
-    BeliefRevision { revision_id: String },
-    Evidence { evidence_id: String },
-    SourceFact { source_fact_id: String },
-    GraphAnchor { anchor_id: AnchorId },
-    ProjectionRule { rule_id: String },
+    BeliefSelection {
+        key_id: String,
+        family_id: String,
+        content_hash: String,
+    },
+    BeliefRevision {
+        revision_id: String,
+    },
+    Evidence {
+        evidence_id: String,
+    },
+    SourceFact {
+        source_fact_id: String,
+    },
+    GraphAnchor {
+        anchor_id: AnchorId,
+    },
+    ProjectionRule {
+        rule_id: String,
+    },
 }
 
 /// Handles that let callers hydrate detailed lower-layer records later.
@@ -319,6 +353,7 @@ impl PlannerHydrationRefs {
 /// Non-fatal projection condition.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum PlannerProjectionWarning {
+    MissingBeliefDimension { dimension_id: String },
     MissingBelief { subject: DomainObjectRef },
     MissingGraphScope { subject: DomainObjectRef },
     InvalidConfidence { dimension_id: String },

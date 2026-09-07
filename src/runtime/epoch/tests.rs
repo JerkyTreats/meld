@@ -329,6 +329,7 @@ fn native_epoch_specification_drives_curation_and_preserves_distinct_observation
         )
     };
     let mut planner_request = PlannerCurrentAssemblyRequest {
+        additional_beliefs: Vec::new(),
         required_derived_evidence: None,
         required_graph_evidence: Vec::new(),
         context: PlannerDecisionContext {

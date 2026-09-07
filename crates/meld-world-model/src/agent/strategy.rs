@@ -61,7 +61,7 @@ impl AgentStrategyRuntimeConfig {
             planner_cut,
             theory: self.package.snapshot.clone(),
             capabilities: self.package.capabilities.clone(),
-            methods: Vec::new(),
+            methods: self.package.methods.clone(),
             evaluation_policy: self.package.evaluation_policy.clone(),
             curation_operations,
         }

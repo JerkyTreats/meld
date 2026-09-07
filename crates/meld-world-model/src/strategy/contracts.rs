@@ -99,6 +99,9 @@ pub struct StrategyTheoryPackage {
     pub snapshot: StrategyTheorySnapshot,
     /// Atomic construction vocabulary.
     pub capabilities: Vec<StrategyCapability>,
+    /// Installed reusable templates, subject to the same capability contracts as direct search.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub methods: Vec<Method>,
     /// Deterministic candidate comparison policy.
     pub evaluation_policy: StrategyEvaluationPolicy,
     /// Structural limits for bounded search.
@@ -425,6 +428,10 @@ pub enum StrategyRejectionGround {
     UnsatisfiedPrecondition { operator_id: String },
     /// A required world-state precondition is indeterminate.
     IndeterminatePrecondition { operator_id: String },
+    /// A reusable template does not apply to the admitted world state.
+    UnsatisfiedMethodPrecondition { method_id: String },
+    /// A reusable template needs evidence absent from the admitted world state.
+    IndeterminateMethodPrecondition { method_id: String },
     /// No Capability can produce a required artifact.
     UnclosedArtifact { artifact_type: String },
     /// Substitution left a variable unbound.
