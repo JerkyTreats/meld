@@ -73,21 +73,28 @@ impl ProductCapabilityContributor for CodeChangeCapabilityContributor {
         "code-change"
     }
     fn published_contracts(&self) -> Vec<meld_execution::capability::CapabilityContractRevision> {
-        let contract = contract();
-        vec![meld_execution::capability::CapabilityContractRevision {
-            content_identity: contract.content_identity(),
-            contract,
-            installed_at_seq: 0,
-        }]
+        [contract(), super::acquisition::contract()]
+            .into_iter()
+            .map(
+                |contract| meld_execution::capability::CapabilityContractRevision {
+                    content_identity: contract.content_identity(),
+                    contract,
+                    installed_at_seq: 0,
+                },
+            )
+            .collect()
     }
     fn implementation_offers(&self) -> Vec<CapabilityImplementationOffer> {
-        vec![CapabilityImplementationOffer {
-            contract_ref: self.published_contracts()[0].revision_ref(),
-            implementation_ref: "code-change.directory-handles.v1".into(),
-            required_binding_ids: BTreeSet::from(["workspace".into(), "subject".into()]),
-            execution_class: ExecutionClass::Inline,
-            factory: Arc::new(Factory),
-        }]
+        vec![
+            CapabilityImplementationOffer {
+                contract_ref: self.published_contracts()[0].revision_ref(),
+                implementation_ref: "code-change.directory-handles.v1".into(),
+                required_binding_ids: BTreeSet::from(["workspace".into(), "subject".into()]),
+                execution_class: ExecutionClass::Inline,
+                factory: Arc::new(Factory),
+            },
+            super::acquisition::offer(),
+        ]
     }
 }
 

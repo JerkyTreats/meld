@@ -5400,6 +5400,8 @@ fn validate_runtime_id(runtime_id: &str) -> Result<(), RuntimeRegistryError> {
 }
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    mod security_mitigation;
     use std::sync::Mutex;
 
     use meld_events::EventEnvelope;
@@ -7757,6 +7759,30 @@ mod tests {
         Advisory,
         Inventory,
         Expiry,
+        #[cfg(unix)]
+        Mitigation,
+    }
+
+    impl SecuritySourceAdvance {
+        fn is_mitigation(self) -> bool {
+            #[cfg(unix)]
+            {
+                self == Self::Mitigation
+            }
+            #[cfg(not(unix))]
+            {
+                false
+            }
+        }
+
+        fn changes_inventory(self) -> bool {
+            match self {
+                Self::Inventory => true,
+                #[cfg(unix)]
+                Self::Mitigation => true,
+                _ => false,
+            }
+        }
     }
 
     fn assert_native_security_reconciliation(
@@ -7830,7 +7856,7 @@ mod tests {
                         source_identity: component.source_identity.clone(),
                     })
                     .collect(),
-                advisories: if finding || advance == SecuritySourceAdvance::Inventory {
+                advisories: if finding || advance.changes_inventory() {
                     vec![NormalizedAdvisoryV1 {
                         source_advisory_id: "runtime-advisory".into(),
                         aliases: vec![],
@@ -7868,12 +7894,31 @@ mod tests {
             crate::dependency_security::contribution::ADVISORY_SOURCE.into(),
             crate::config::PhysicalBindingRef::EndpointRef(source.display().to_string()),
         );
+        #[cfg(unix)]
+        if advance == SecuritySourceAdvance::Mitigation {
+            harness.binding.bindings.insert(
+                crate::code_change::acquisition::SOURCE.into(),
+                crate::config::PhysicalBindingRef::EndpointRef(
+                    harness
+                        ._external
+                        .path()
+                        .join("code-proposal.json")
+                        .display()
+                        .to_string(),
+                ),
+            );
+        }
         {
             let assembly = harness.assembly();
-            harness.run_world_genesis_from(
-                &assembly,
-                &Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/dependency_security"),
-            );
+            if advance.is_mitigation() {
+                #[cfg(unix)]
+                security_mitigation::genesis(&harness, &assembly);
+            } else {
+                harness.run_world_genesis_from(
+                    &assembly,
+                    &Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/dependency_security"),
+                );
+            }
             let mut diagnostics = Vec::new();
             let theory =
                 hydrate_stewardship_theory(assembly.stores(), &harness.binding, &mut diagnostics);
@@ -8125,7 +8170,7 @@ mod tests {
                     .unwrap();
                 assert!(output.status.success());
             };
-            if advance == SecuritySourceAdvance::Inventory {
+            if advance.changes_inventory() {
                 replace_inventory("2.0.0");
             } else {
                 std::fs::write(&source, serde_json::to_vec(&changed).unwrap()).unwrap();
@@ -8156,7 +8201,7 @@ mod tests {
                     disposition.lifecycle,
                     meld_lang::GoalLifecycle::Satisfied { .. }
                 )));
-            if advance == SecuritySourceAdvance::Inventory {
+            if advance.changes_inventory() {
                 assert_eq!(std::fs::read(&source).unwrap(), advisory_bytes);
             } else {
                 assert_eq!(
@@ -8184,8 +8229,20 @@ mod tests {
             assert_eq!(returned.iter().filter(|record| record.event_type == "dependency_security.invocation_return.v1").count(), 8);
             changed.source_revision = "restored-current-coverage".into();
             changed.advisories.clear();
-            if advance == SecuritySourceAdvance::Inventory {
-                replace_inventory("1.0.0");
+            #[cfg(unix)]
+            if advance == SecuritySourceAdvance::Mitigation {
+                security_mitigation::exercise(
+                    &harness,
+                    &reopened,
+                    &mut resumed,
+                    &successor_id,
+                    &manifest,
+                );
+            }
+            if advance.changes_inventory() {
+                if !advance.is_mitigation() {
+                    replace_inventory("1.0.0");
+                }
             } else {
                 std::fs::write(&source, serde_json::to_vec(&changed).unwrap()).unwrap();
             }
@@ -8220,13 +8277,24 @@ mod tests {
                 .newest_page(1024)
                 .unwrap()
                 .records;
-            assert_eq!(returned.iter().filter(|record| record.event_type == "dependency_security.invocation_return.v1").count(), 12);
+            let expected_returns = if advance.is_mitigation() { 16 } else { 12 };
+            assert_eq!(returned.iter().filter(|record| record.event_type == "dependency_security.invocation_return.v1").count(), expected_returns);
             assert_eq!(
                 std::fs::read(harness._workspace.path().join("Cargo.toml")).unwrap(),
                 manifest
             );
         }
+        #[cfg(unix)]
+        if advance.is_mitigation() {
+            security_mitigation::verify_trace(&harness);
+        }
         resumed.request_shutdown(6_000).unwrap();
+        #[cfg(unix)]
+        if advance.is_mitigation() {
+            drop(resumed);
+            drop(reopened);
+            security_mitigation::restart(&harness);
+        }
     }
 
     #[test]
