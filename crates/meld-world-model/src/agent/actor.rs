@@ -63,6 +63,17 @@ pub trait AgentPlannerPort: Send + Sync {
 /// Read-only root observation of the currently active Agent authority fence.
 pub trait AgentAuthorityPort: Send + Sync {
     fn observe(&self) -> Result<Option<AgentAuthorizationFence>, StorageError>;
+
+    /// Structural preparation continuity, distinct from permission to reuse old authority.
+    /// Adapters without durable preparation lineage can prove only the same generation.
+    fn same_preparation(
+        &self,
+        prior_generation: &str,
+        current: &AgentAuthorizationFence,
+    ) -> Result<bool, StorageError> {
+        Ok(prior_generation == current.activation_generation
+            && self.observe()?.as_ref() == Some(current))
+    }
 }
 
 /// Curation-owned planned intake and result query boundary.
@@ -298,8 +309,8 @@ impl AgentReconciliationActor {
             .map_err(|error| error.to_string())?
             .unwrap_or_else(|| self.frozen_authority.clone());
         let goal_id = self
-            .intent
-            .goal_id(&self.strategy.agent_id, &fence.reconciliation_scope());
+            .reconciliation_goal_id(&fence)
+            .map_err(|error| error.to_string())?;
         let mut goal_ids = vec![goal_id.clone()];
         goal_ids.extend(
             self.store
@@ -596,6 +607,110 @@ impl AgentReconciliationActor {
         Ok((true, consumed))
     }
 
+    fn reconciliation_goal_id(
+        &self,
+        fence: &AgentAuthorizationFence,
+    ) -> Result<String, StorageError> {
+        let fresh = self
+            .intent
+            .goal_id(&self.strategy.agent_id, &fence.reconciliation_scope());
+        let crate::agent::AgentReconciliationIntent::MaintainedCondition(binding) = &self.intent
+        else {
+            return Ok(fresh);
+        };
+        if binding.condition.observation_scope
+            != crate::agent::AgentObservationScope::AssignedSubject
+        {
+            return Ok(fresh);
+        }
+        let target = binding
+            .condition
+            .target_for(self.strategy.subject.clone())?;
+        let mut pending = Vec::new();
+        for record in self
+            .store
+            .reconciliation_goals_for_agent(&self.strategy.agent_id)?
+        {
+            if record.goal.target != target
+                || !self
+                    .authority
+                    .same_preparation(&record.activation_generation, fence)?
+            {
+                continue;
+            }
+            let plan = self
+                .store
+                .current_reconciliation_plan(&record.goal.goal_id)?;
+            if let Some(plan) = &plan {
+                if self
+                    .store
+                    .goal_disposition_for_plan(&plan.plan_revision_id)?
+                    .is_some()
+                {
+                    continue;
+                }
+            }
+            let same_intent = match &record.maintained_condition_revision {
+                Some(revision) => revision == &binding.revision,
+                // Historical Goals retain the native cut that formed their scoped identity.
+                // The lifecycle owner separately proves unchanged preparation.
+                None => self.historical_goal_matches(&record, plan)?,
+            };
+            if same_intent {
+                pending.push(record);
+            }
+        }
+        pending.sort_by(|left, right| {
+            (left.created_at_seq, &left.goal.goal_id)
+                .cmp(&(right.created_at_seq, &right.goal.goal_id))
+        });
+        Ok(pending
+            .into_iter()
+            .next()
+            .map_or(fresh, |record| record.goal.goal_id))
+    }
+
+    fn historical_goal_matches(
+        &self,
+        record: &AgentReconciliationGoal,
+        mut plan: Option<StrategyPlan>,
+    ) -> Result<bool, StorageError> {
+        let mut visited = std::collections::BTreeSet::new();
+        while let Some(current) = plan {
+            if !visited.insert(current.plan_revision_id.clone())
+                || current.goal_id != record.goal.goal_id
+            {
+                return Err(StorageError::InvalidPath(
+                    "Goal inception has invalid Plan lineage".into(),
+                ));
+            }
+            if let Some(cut) = self.store.reconciliation_cut(&current.planner_cut_id)? {
+                if cut.context.context_id == record.context_id
+                    && cut.context.agent_id == self.strategy.agent_id
+                    && cut.context.subject == self.strategy.subject
+                    && cut.context.activation_generation == record.activation_generation
+                    && record.goal.goal_id
+                        == self.intent.goal_id(
+                            &self.strategy.agent_id,
+                            &AgentAuthorizationFence::scope_for(
+                                &cut.context.activation_generation,
+                                cut.context.admission_epoch.as_deref(),
+                            ),
+                        )
+                {
+                    return Ok(true);
+                }
+            }
+            plan = match current.predecessor_plan_revision_id {
+                Some(id) => Some(self.store.reconciliation_plan(&id)?.ok_or_else(|| {
+                    StorageError::InvalidPath("Goal inception Plan predecessor is absent".into())
+                })?),
+                None => None,
+            };
+        }
+        Ok(false)
+    }
+
     fn observe_prior_returns(
         &self,
         current: Option<&AgentAuthorizationFence>,
@@ -752,10 +867,13 @@ impl AgentReconciliationActor {
             }
             _ => self.frozen_authority.clone(),
         };
-        let goal_id = self.intent.goal_id(
-            &self.strategy.agent_id,
-            &frozen_authority.reconciliation_scope(),
-        );
+        let goal_id = match self.reconciliation_goal_id(&frozen_authority) {
+            Ok(goal_id) => goal_id,
+            Err(error) => {
+                report.retryable_errors.push(error.to_string());
+                return report;
+            }
+        };
         let mut curation_authority = self.curation_authority.clone();
         curation_authority.activation_generation = frozen_authority.activation_generation.clone();
         curation_authority.admission_epoch = frozen_authority.admission_epoch.clone();
@@ -917,10 +1035,7 @@ impl ReconciliationEpoch<'_> {
             AgentReconciliationIntent::Goal(goal) => return Ok(Some(goal.clone())),
             AgentReconciliationIntent::MaintainedCondition(binding) => binding,
         };
-        let goal_id = self.intent.goal_id(
-            &self.strategy.agent_id,
-            &self.frozen_authority.reconciliation_scope(),
-        );
+        let goal_id = self.planner.goal_id.clone();
         if let Some(record) = self.store.reconciliation_goal(&goal_id)? {
             return Ok(Some(record.goal));
         }
@@ -1272,6 +1387,12 @@ impl GoalReconciliation<'_, '_> {
                 match &authorization.product {
                     AgentAuthorizedProduct::Task(task) => {
                         let visible = self.accept_effect_visibility(cut, plan, task, report)?;
+                        if authorization_completed(
+                            authorization,
+                            &self.store.completed_history_for_goal(&self.goal.goal_id)?,
+                        ) {
+                            continue;
+                        }
                         let prior_waits = report.waiting_on.len();
                         self.reconcile_execution(cut, plan, authorization, report)?;
                         if !visible
@@ -1283,6 +1404,13 @@ impl GoalReconciliation<'_, '_> {
                         }
                     }
                     AgentAuthorizedProduct::Epistemic(epistemic) => {
+                        if authorization.activation_generation != cut.context.activation_generation
+                            || authorization.admission_epoch != cut.context.admission_epoch
+                        {
+                            // Closed-epoch returns use their retained cut in observe_prior_returns.
+                            continue;
+                        }
+
                         if self
                             .curation
                             .result(&epistemic.operation.operation_id)?
@@ -1500,19 +1628,32 @@ impl GoalReconciliation<'_, '_> {
     }
 
     fn persist_goal(&self, cut: &PlannerCut) -> Result<bool, StorageError> {
-        let created_at_seq = self
-            .store
-            .reconciliation_goal(&self.goal.goal_id)?
-            .map_or(cut.traversal_cut.event_position.after_seq, |record| {
-                record.created_at_seq
-            });
+        if let Some(original) = self.store.reconciliation_goal(&self.goal.goal_id)? {
+            if original.goal != self.goal
+                || !self
+                    .authority
+                    .same_preparation(&original.activation_generation, &self.frozen_authority)?
+            {
+                return Err(StorageError::InvalidPath(
+                    "Goal resumption changed its intent or preparation".into(),
+                ));
+            }
+            // A successor Plan records the new context; inception stays immutable.
+            return Ok(false);
+        }
         self.store
             .put_reconciliation_goal(&AgentReconciliationGoal {
+                maintained_condition_revision: match &self.intent {
+                    crate::agent::AgentReconciliationIntent::MaintainedCondition(binding) => {
+                        Some(binding.revision.clone())
+                    }
+                    crate::agent::AgentReconciliationIntent::Goal(_) => None,
+                },
                 goal: self.goal.clone(),
                 context_id: cut.context.context_id.clone(),
                 authority_scope_id: cut.context.authority_scope_id.clone(),
                 activation_generation: cut.context.activation_generation.clone(),
-                created_at_seq,
+                created_at_seq: cut.traversal_cut.event_position.after_seq,
             })
     }
 
@@ -2236,6 +2377,24 @@ impl GoalReconciliation<'_, '_> {
             self.execution.advance(authorization)?
         };
         self.persist_execution_position(authorization, &position)?;
+        if authorization.activation_generation != cut.context.activation_generation
+            || authorization.admission_epoch != cut.context.admission_epoch
+        {
+            let original_cut = self
+                .store
+                .reconciliation_cut(&plan.planner_cut_id)?
+                .ok_or_else(|| {
+                    StorageError::InvalidPath(
+                        "historical Task return has no retained admitted cut".into(),
+                    )
+                })?;
+            return GoalReconciliation {
+                historical_return: true,
+                epoch: self.epoch,
+                goal: self.goal.clone(),
+            }
+            .project_execution_wait(&original_cut, plan, task, &position, report);
+        }
         self.project_execution_wait(cut, plan, task, &position, report)
     }
 
@@ -3765,7 +3924,16 @@ mod tests {
     }
 
     #[test]
-    fn admission_epochs_create_distinct_goals_and_preserve_predecessor_authority() {
+    fn admission_epochs_resume_assigned_subject_goal_with_fresh_authority() {
+        assert_assigned_goal_resumption(false);
+    }
+
+    #[test]
+    fn historical_assigned_goal_resumes_without_rewriting_inception() {
+        assert_assigned_goal_resumption(true);
+    }
+
+    fn assert_assigned_goal_resumption(historical: bool) {
         let fixture = Fixture::new();
         let (mut actor, _) = fixture.actor(
             vec![PlannerAssemblyOutcome::Complete(Box::new(
@@ -3825,6 +3993,23 @@ mod tests {
             first_authorizations[0].admission_epoch.as_deref(),
             Some("epoch-1")
         );
+        if historical {
+            let tree = fixture.db.open_tree("agent_reconciliation_goals").unwrap();
+            let mut value: serde_json::Value =
+                serde_json::from_slice(&tree.get(&first_goal).unwrap().unwrap()).unwrap();
+            value
+                .as_object_mut()
+                .unwrap()
+                .remove("maintained_condition_revision");
+            tree.insert(&first_goal, serde_json::to_vec(&value).unwrap())
+                .unwrap();
+            tree.flush().unwrap();
+        }
+        let inception = fixture
+            .store
+            .reconciliation_goal(&first_goal)
+            .unwrap()
+            .unwrap();
         *observer.0.lock().unwrap() = None;
         let closed = actor.bounded_step(8);
         assert_eq!(closed.products_authorized, 0);
@@ -3836,36 +4021,44 @@ mod tests {
         assert!(second.fatal_errors.is_empty(), "{second:?}");
         assert!(second.retryable_errors.is_empty(), "{second:?}");
         assert_eq!(second.products_authorized, 1);
-        let second_goal = actor
+        let fresh_goal = actor
             .intent
             .goal_id(&actor.strategy.agent_id, &next.reconciliation_scope());
-        assert_ne!(first_goal, second_goal);
-        assert_eq!(
-            fixture
-                .store
-                .reconciliation_goals_for_agent(&actor.strategy.agent_id)
-                .unwrap()
-                .len(),
-            2
-        );
-        assert_eq!(
-            fixture
-                .store
-                .product_authorizations_for_goal(&first_goal)
-                .unwrap(),
-            first_authorizations
-        );
-        let second_authorizations = fixture
+        assert!(fixture
             .store
-            .product_authorizations_for_goal(&second_goal)
+            .reconciliation_goal(&fresh_goal)
+            .unwrap()
+            .is_none());
+        let authorizations = fixture
+            .store
+            .product_authorizations_for_goal(&first_goal)
             .unwrap();
-        assert_eq!(
-            second_authorizations[0].admission_epoch.as_deref(),
-            Some("epoch-2")
-        );
+        assert_eq!(authorizations.len(), 2);
+        assert!(authorizations.contains(&first_authorizations[0]));
+        let second_authorization = authorizations
+            .iter()
+            .find(|record| record.admission_epoch.as_deref() == Some("epoch-2"))
+            .unwrap();
         assert_ne!(
             first_authorizations[0].authorization_id,
-            second_authorizations[0].authorization_id
+            second_authorization.authorization_id
+        );
+        let successor = fixture
+            .store
+            .current_reconciliation_plan(&first_goal)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            successor.predecessor_plan_revision_id.as_deref(),
+            Some(first_authorizations[0].plan_revision_id.as_str())
+        );
+        assert_eq!(
+            fixture
+                .store
+                .reconciliation_goal(&first_goal)
+                .unwrap()
+                .unwrap(),
+            inception
         );
         actor.store = Arc::new(AgentStore::new(fixture.db.clone()).unwrap());
         assert_eq!(actor.bounded_step(8).products_authorized, 0);
@@ -3875,8 +4068,95 @@ mod tests {
                 .reconciliation_goals_for_agent(&actor.strategy.agent_id)
                 .unwrap()
                 .len(),
-            2
+            1
         );
+    }
+
+    #[test]
+    fn assigned_goal_resumption_requires_exact_intent_and_preparation_even_before_a_plan() {
+        let fixture = Fixture::new();
+        let (mut actor, _) = fixture.actor(
+            vec![PlannerAssemblyOutcome::Complete(Box::new(
+                fixture.cut.clone(),
+            ))],
+            false,
+        );
+        let condition = crate::agent::AgentMaintainedCondition {
+            condition_id: "durable-maintained-condition".into(),
+            dimension_id: "docs_freshness".into(),
+            desired: Condition::Above(Term::Literal(Literal::Number(0.7))),
+            goal_priority: fixture.goal.priority.clone(),
+            desired_summary: "current docs".into(),
+            observation_scope: crate::agent::AgentObservationScope::AssignedSubject,
+        };
+        let registry =
+            crate::agent::AgentMaintainedConditionRegistryStore::new(fixture.db.clone()).unwrap();
+        let (_, revision) = registry.install(condition.clone(), 1).unwrap();
+        let binding = revision.binding().unwrap();
+        actor.intent =
+            crate::agent::AgentReconciliationIntent::MaintainedCondition(binding.clone());
+        let mut current = actor.frozen_authority.clone();
+        current.admission_epoch = Some("next-epoch".into());
+        let observer = Arc::new(MutableEpochAuthority(Mutex::new(Some(current.clone()))));
+        actor.authority = observer.clone();
+        let prior_id = actor.intent.goal_id(
+            &actor.strategy.agent_id,
+            &actor.frozen_authority.reconciliation_scope(),
+        );
+        let mut goal = fixture.goal.clone();
+        goal.goal_id = prior_id.clone();
+        goal.target = binding
+            .condition
+            .target_for(actor.strategy.subject.clone())
+            .unwrap();
+        fixture
+            .store
+            .put_reconciliation_goal(&AgentReconciliationGoal {
+                maintained_condition_revision: Some(binding.revision.clone()),
+                goal,
+                context_id: fixture.cut.context.context_id.clone(),
+                authority_scope_id: fixture.cut.context.authority_scope_id.clone(),
+                activation_generation: current.activation_generation.clone(),
+                created_at_seq: 1,
+            })
+            .unwrap();
+        assert_eq!(actor.reconciliation_goal_id(&current).unwrap(), prior_id);
+        assert!(fixture
+            .store
+            .current_reconciliation_plan(&prior_id)
+            .unwrap()
+            .is_none());
+
+        let mut changed = condition.clone();
+        changed.desired_summary = "a revised directive".into();
+        let (_, changed) = registry.install(changed, 2).unwrap();
+        actor.intent = crate::agent::AgentReconciliationIntent::MaintainedCondition(
+            changed.binding().unwrap(),
+        );
+        assert_ne!(actor.reconciliation_goal_id(&current).unwrap(), prior_id);
+        actor.intent =
+            crate::agent::AgentReconciliationIntent::MaintainedCondition(binding.clone());
+        let original_subject = actor.strategy.subject.clone();
+        actor.strategy.subject.object_id = "another-repository".into();
+        assert_ne!(actor.reconciliation_goal_id(&current).unwrap(), prior_id);
+        actor.strategy.subject = original_subject;
+
+        let mut epoch_condition = condition;
+        epoch_condition.observation_scope = crate::agent::AgentObservationScope::AdmissionEpoch;
+        let (_, epoch_condition) = registry.install(epoch_condition, 3).unwrap();
+        actor.intent = crate::agent::AgentReconciliationIntent::MaintainedCondition(
+            epoch_condition.binding().unwrap(),
+        );
+        assert_ne!(actor.reconciliation_goal_id(&current).unwrap(), prior_id);
+        actor.intent = crate::agent::AgentReconciliationIntent::MaintainedCondition(binding);
+        current.activation_generation = "unproved-generation".into();
+        *observer.0.lock().unwrap() = Some(current.clone());
+        assert_ne!(actor.reconciliation_goal_id(&current).unwrap(), prior_id);
+        assert!(fixture
+            .store
+            .product_authorizations_for_goal(&prior_id)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

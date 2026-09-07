@@ -45,9 +45,12 @@ pub struct AgentConditionJudgment {
     pub evaluation: meld_lang::EvalResult,
 }
 
-/// Durable Agent-owned Goal under one exact reconciliation fence.
+/// Durable Agent-owned Goal with immutable inception context.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AgentReconciliationGoal {
+    /// Exact standing intent that caused this transient Goal, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub maintained_condition_revision: Option<crate::belief::TheoryRevisionRef>,
     pub goal: Goal,
     pub context_id: String,
     pub authority_scope_id: String,

@@ -7844,6 +7844,17 @@ mod tests {
                 meld_world_model::strategy::PlanMilestoneRequirement::BeliefRevision { .. }
             )));
         }
+        let original_goal = assembly
+            .stores()
+            .agent_store
+            .reconciliation_goal(&goal_id)
+            .unwrap()
+            .unwrap();
+        let original_authorizations = assembly
+            .stores()
+            .agent_store
+            .product_authorizations_for_goal(&goal_id)
+            .unwrap();
         let judgments_before_reopen = assembly.stores().agent_store.condition_judgments().unwrap();
         supervisor.request_shutdown(2_100).unwrap();
         drop(supervisor);
@@ -7869,6 +7880,71 @@ mod tests {
                 meld_world_model::strategy::PlanMilestoneRequirement::ExecutionTerminal { .. }
             )),
             "{history:#?}; {reports:#?}"
+        );
+        assert_eq!(
+            reopened
+                .stores()
+                .agent_store
+                .reconciliation_goal(&goal_id)
+                .unwrap()
+                .unwrap(),
+            original_goal
+        );
+        let after_authorizations = reopened
+            .stores()
+            .agent_store
+            .product_authorizations_for_goal(&goal_id)
+            .unwrap();
+        assert!(original_authorizations
+            .iter()
+            .all(|record| after_authorizations.contains(record)));
+        let task_milestones: Vec<_> = reopened
+            .stores()
+            .agent_store
+            .milestones_for_goal(&goal_id)
+            .unwrap()
+            .into_iter()
+            .filter(|milestone| {
+                matches!(
+                    milestone.requirement,
+                    meld_world_model::strategy::PlanMilestoneRequirement::ExecutionTerminal { .. }
+                )
+            })
+            .collect();
+        assert_eq!(task_milestones.len(), 1);
+        assert_eq!(
+            task_milestones[0].activation_generation,
+            original_goal.activation_generation
+        );
+        if restart {
+            assert!(after_authorizations.iter().any(|authorization| matches!(
+                authorization.product,
+                meld_world_model::agent::AgentAuthorizedProduct::Epistemic(_)
+            ) && authorization
+                .activation_generation
+                != original_goal.activation_generation));
+        }
+        let plan = reopened
+            .stores()
+            .agent_store
+            .current_reconciliation_plan(&goal_id)
+            .unwrap()
+            .unwrap();
+        assert!(
+            reopened
+                .stores()
+                .agent_store
+                .goal_disposition_for_plan(&plan.plan_revision_id)
+                .unwrap()
+                .is_some(),
+            "recovered repair must finish its original Goal: {plan:#?}; {reports:#?}"
+        );
+        assert!(
+            history.iter().any(|entry| matches!(
+                entry.accepted_milestone,
+                meld_world_model::strategy::PlanMilestoneRequirement::BeliefRevision { .. }
+            )),
+            "recovered repair must consume its planned owner return"
         );
         assert_eq!(provider.calls(), calls);
         assert_eq!(
@@ -9715,6 +9791,38 @@ mod tests {
         let reopened = agent.authority_port.observe().unwrap().unwrap();
         assert_eq!(reopened.activation_generation, first.activation_generation);
         assert_eq!(reopened.admission_epoch.as_ref(), Some(&second.epoch_id));
+        assert!(agent
+            .authority_port
+            .same_preparation(&first.activation_generation, &reopened)
+            .unwrap());
+        assert!(!agent
+            .authority_port
+            .same_preparation("foreign-generation", &reopened)
+            .unwrap());
+        assert!(!agent
+            .authority_port
+            .same_preparation(&first.activation_generation, &first)
+            .unwrap());
+        let mut foreign_prepared = prepared.clone();
+        foreign_prepared.prepared_id = "different-preparation".into();
+        let foreign_observer = ProductAdmissionGenerationObserver::new(
+            assembly.stores().agent_store.opened().unwrap().clone(),
+            assembly.lifecycle_store().unwrap().clone(),
+            &foreign_prepared,
+        );
+        let foreign_port = ProductAgentAuthorityPort::new(
+            foreign_observer,
+            STEWARD_AGENT_ID.into(),
+            reopened.authority_policy_content_hash.clone(),
+        );
+        assert!(
+            !meld_world_model::agent::AgentAuthorityPort::same_preparation(
+                &foreign_port,
+                &first.activation_generation,
+                &reopened
+            )
+            .unwrap()
+        );
         attribution.admission_epoch = Some(second.epoch_id);
         assert!(observer.validates_admission(&attribution).unwrap());
         attribution.admission_epoch = None;

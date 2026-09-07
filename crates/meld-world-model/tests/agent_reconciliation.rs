@@ -34,6 +34,7 @@ fn reconciliation_owner_records_survive_shared_database_reopen() {
     let db = sled::open(temp.path().join("world_model.sled")).unwrap();
     let store = AgentStore::new(db.clone()).unwrap();
     let goal_record = AgentReconciliationGoal {
+        maintained_condition_revision: None,
         goal: goal(),
         context_id: "context-v1".to_string(),
         authority_scope_id: "authority-v1".to_string(),
@@ -112,6 +113,7 @@ fn immutable_reconciliation_identity_rejects_divergent_replay() {
     let temp = tempfile::tempdir().unwrap();
     let store = AgentStore::new(sled::open(temp.path().join("world_model.sled")).unwrap()).unwrap();
     let mut record = AgentReconciliationGoal {
+        maintained_condition_revision: None,
         goal: goal(),
         context_id: "context-v1".to_string(),
         authority_scope_id: "authority-v1".to_string(),

@@ -1094,6 +1094,27 @@ impl AgentAuthorityPort for ProductAgentAuthorityPort {
                 authority_policy_content_hash: self.authority_policy_content_hash.clone(),
             }))
     }
+    fn same_preparation(
+        &self,
+        prior_generation: &str,
+        current: &AgentAuthorizationFence,
+    ) -> Result<bool, meld_world_model::error::StorageError> {
+        if self.observe()?.as_ref() != Some(current) {
+            return Ok(false);
+        }
+        let prior = self
+            .admission
+            .lifecycle
+            .generation(&self.admission.assignment_id, prior_generation)
+            .map_err(|error| {
+                meld_world_model::error::StorageError::InvalidPath(error.to_string())
+            })?;
+        Ok(prior.is_some_and(|generation| {
+            generation.assignment_id == self.admission.assignment_id
+                && generation.activation_id == self.admission.activation_id
+                && generation.prepared_id == self.admission.prepared_id
+        }))
+    }
 }
 
 impl AgentCurationPort for ProductPlannedCurationPort {
