@@ -7814,13 +7814,15 @@ mod tests {
         Mitigation,
         #[cfg(unix)]
         NativeMitigation,
+        #[cfg(unix)]
+        NativeMitigationRestart,
     }
 
     impl SecuritySourceAdvance {
         fn is_native_mitigation(self) -> bool {
             #[cfg(unix)]
             {
-                self == Self::NativeMitigation
+                matches!(self, Self::NativeMitigation | Self::NativeMitigationRestart)
             }
             #[cfg(not(unix))]
             {
@@ -7843,7 +7845,7 @@ mod tests {
             match self {
                 Self::Inventory => true,
                 #[cfg(unix)]
-                Self::Mitigation | Self::NativeMitigation => true,
+                Self::Mitigation | Self::NativeMitigation | Self::NativeMitigationRestart => true,
                 _ => false,
             }
         }
@@ -7951,7 +7953,7 @@ mod tests {
             claim_policy_id: String::new(),
         };
         #[cfg(unix)]
-        if advance == SecuritySourceAdvance::NativeMitigation {
+        if advance.is_native_mitigation() {
             harness.binding.package.expression = "dependency_security_mitigation".into();
             harness.binding.package.strategy_theory_id = "dependency_security_mitigation".into();
             harness.binding.package.authority_policy_id =
@@ -7968,7 +7970,9 @@ mod tests {
         #[cfg(unix)]
         if matches!(
             advance,
-            SecuritySourceAdvance::Mitigation | SecuritySourceAdvance::NativeMitigation
+            SecuritySourceAdvance::Mitigation
+                | SecuritySourceAdvance::NativeMitigation
+                | SecuritySourceAdvance::NativeMitigationRestart
         ) {
             harness.binding.bindings.insert(
                 crate::code_change::acquisition::SOURCE.into(),
@@ -8318,19 +8322,33 @@ mod tests {
                 std::fs::write(&source, serde_json::to_vec(&changed).unwrap()).unwrap();
             }
             #[cfg(unix)]
-            if advance == SecuritySourceAdvance::NativeMitigation {
+            if advance.is_native_mitigation() {
                 security_native_mitigation::declare(&harness, &manifest);
             }
             for pass in 0..60 {
                 resumed.tick(4_100 + pass * 10).unwrap();
             }
             #[cfg(unix)]
-            if advance == SecuritySourceAdvance::NativeMitigation {
+            if advance.is_native_mitigation() {
                 security_native_mitigation::admit_coverage(
                     &harness,
                     &reopened,
                     inventory.subject.clone(),
                 );
+                if advance == SecuritySourceAdvance::NativeMitigationRestart {
+                    let mutation = security_native_mitigation::interrupt_after_materialization(
+                        &harness,
+                        &reopened,
+                        &mut resumed,
+                    );
+                    resumed.request_shutdown(6_000).unwrap();
+                    drop(resumed);
+                    drop(reopened);
+                    security_native_mitigation::resume_after_interruption(
+                        &harness, &manifest, &mutation,
+                    );
+                    return;
+                }
                 for pass in 0..60 {
                     resumed.tick(5_100 + pass * 10).unwrap();
                 }

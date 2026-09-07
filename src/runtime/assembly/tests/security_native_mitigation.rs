@@ -234,3 +234,168 @@ pub(super) fn verify(
         original
     );
 }
+
+#[test]
+fn native_mitigation_interruption_recovers_without_repeating_mutation() {
+    assert_native_security_reconciliation(
+        true,
+        false,
+        SecuritySourceAdvance::NativeMitigationRestart,
+    );
+}
+
+pub(super) fn interrupt_after_materialization(
+    harness: &StewardshipHarness,
+    assembly: &ProductRuntimeAssembly,
+    supervisor: &mut RuntimeSupervisor<'_>,
+) -> meld_world_model::AgentProductAuthorization {
+    for pass in 0..60 {
+        supervisor.tick(5_100 + pass * 10).unwrap();
+        let records = harness
+            .authority
+            .replay_capability()
+            .newest_page(1024)
+            .unwrap()
+            .records;
+        if records
+            .iter()
+            .any(|record| record.event_type == "code_change.materialized.v1")
+        {
+            assert_eq!(records.iter().filter(|record| record.event_type == "dependency_security.invocation_return.v1").count(), 12,
+                "stop after mutation, before successor Security acquisition");
+            let goals = assembly
+                .stores()
+                .agent_store
+                .reconciliation_goals_for_agent(&harness.binding.agent_id)
+                .unwrap();
+            let mutation = goals.into_iter().flat_map(|goal|
+                assembly.stores().agent_store.product_authorizations_for_goal(&goal.goal.goal_id).unwrap()
+            ).find(|authorization| matches!(&authorization.product,
+                meld_world_model::AgentAuthorizedProduct::Task(task) if task.authority_requirements.contains(&APPLY.into())
+            )).expect("materialization must have a native Agent authorization");
+            let plan = assembly
+                .stores()
+                .agent_store
+                .current_reconciliation_plan(&mutation.goal_id)
+                .unwrap()
+                .unwrap();
+            assert!(!assembly
+                .stores()
+                .agent_store
+                .goal_disposition_for_plan(&plan.plan_revision_id)
+                .unwrap()
+                .is_some_and(|disposition| matches!(
+                    disposition.lifecycle,
+                    meld_lang::GoalLifecycle::Satisfied { .. }
+                )));
+            return mutation;
+        }
+    }
+    panic!("native mitigation did not reach materialization");
+}
+
+pub(super) fn resume_after_interruption(
+    harness: &StewardshipHarness,
+    original: &[u8],
+    mutation: &meld_world_model::AgentProductAuthorization,
+) {
+    let proposal = harness._external.path().join("code-proposal.json");
+    std::fs::remove_file(&proposal).unwrap();
+    let later = format!(
+        "{}\n# later user edit, after materialization\n",
+        std::fs::read_to_string(harness._workspace.path().join("Cargo.lock")).unwrap()
+    );
+    std::fs::write(harness._workspace.path().join("Cargo.lock"), &later).unwrap();
+    let assembly = harness.assembly();
+    harness.bind_production_routes(&assembly);
+    let mut command = SupervisorStartCommand::new("interrupted-mitigation-successor", 7_000);
+    command.registration_set = assembly.registration_set().cloned();
+    let mut supervisor =
+        RuntimeSupervisor::start(assembly.supervisor_startup_package(), command).unwrap();
+    for pass in 0..60 {
+        supervisor.tick(7_100 + pass * 10).unwrap();
+    }
+    verify(harness, &assembly, original);
+    let store = &assembly.stores().agent_store;
+    assert_eq!(
+        store
+            .product_authorization(&mutation.authorization_id)
+            .unwrap()
+            .as_ref(),
+        Some(mutation)
+    );
+    let accepted: Vec<_> = store
+        .milestones_for_goal(&mutation.goal_id)
+        .unwrap()
+        .into_iter()
+        .filter(|milestone| {
+            milestone.product_id == mutation.product_id
+                && matches!(
+                    milestone.requirement,
+                    meld_world_model::strategy::PlanMilestoneRequirement::ExecutionTerminal { .. }
+                )
+        })
+        .collect();
+    assert_eq!(accepted.len(), 1);
+    assert_eq!(
+        accepted[0].activation_generation,
+        mutation.activation_generation
+    );
+    let RuntimeSemanticHandleFactory::AgentActor(agent) = &assembly
+        .handle_factories()
+        .get(AGENT_RECONCILIATION_RUNTIME_ID)
+        .unwrap()
+        .semantic
+    else {
+        unreachable!()
+    };
+    let current = agent.authority_port.observe().unwrap().unwrap();
+    assert_ne!(
+        current.activation_generation,
+        mutation.activation_generation
+    );
+    let verification = store
+        .product_authorizations_for_goal(&mutation.goal_id)
+        .unwrap()
+        .into_iter()
+        .find(|authorization| {
+            store
+                .reconciliation_plan(&authorization.plan_revision_id)
+                .unwrap()
+                .unwrap()
+                .dependencies
+                .iter()
+                .any(|dependency| {
+                    dependency.producer_product_id == mutation.product_id
+                        && dependency.consumer_product_id == authorization.product_id
+                })
+        })
+        .expect("successor verification retains its mutation prerequisite");
+    assert_eq!(
+        verification.activation_generation,
+        current.activation_generation
+    );
+    assert_eq!(verification.admission_epoch, current.admission_epoch);
+    let plan = store
+        .current_reconciliation_plan(&mutation.goal_id)
+        .unwrap()
+        .unwrap();
+    let disposition = store
+        .goal_disposition_for_plan(&plan.plan_revision_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        disposition.activation_generation,
+        current.activation_generation
+    );
+    assert!(disposition
+        .accepted_milestone_ids
+        .contains(&accepted[0].milestone_id));
+
+    assert_eq!(
+        std::fs::read_to_string(harness._workspace.path().join("Cargo.lock")).unwrap(),
+        later
+    );
+    assert!(!proposal.exists());
+    supervisor.request_shutdown(8_000).unwrap();
+}

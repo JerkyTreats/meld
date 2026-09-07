@@ -1666,10 +1666,8 @@ impl GoalReconciliation<'_, '_> {
             .store
             .milestones_for_goal(&self.goal.goal_id)?
             .into_iter()
-            .filter(|milestone| {
-                milestone.agent_id == self.goal.agent_id
-                    && milestone.activation_generation == cut.context.activation_generation
-            })
+            // Resumed Goals retain predecessor acceptances without changing their fences.
+            .filter(|milestone| milestone.agent_id == self.goal.agent_id)
             .map(|milestone| milestone.milestone_id)
             .collect();
         self.store
