@@ -35,6 +35,7 @@ pub struct StandingCurationActor {
     events: Arc<dyn CurationEventPort>,
     lifecycle: crate::lifecycle::NativeLifecycle,
     work_lock: parking_lot::Mutex<()>,
+    last_standing_rule: parking_lot::Mutex<Option<crate::belief::TheoryRevisionRef>>,
 }
 
 impl StandingCurationActor {
@@ -60,6 +61,7 @@ impl StandingCurationActor {
         Ok(Self {
             lifecycle: crate::lifecycle::NativeLifecycle::new(actor_id.clone()),
             work_lock: parking_lot::Mutex::new(()),
+            last_standing_rule: parking_lot::Mutex::new(None),
             actor_id,
             session_id,
             authority,
@@ -370,7 +372,10 @@ impl StandingCurationActor {
         let selected_rule = if let Some(operation) = resumed.as_ref().or(queued.as_ref()) {
             self.store.resolve_rule(&operation.rule_revision)
         } else {
-            match self.rule.select(&authority) {
+            match self
+                .rule
+                .select_next(&authority, self.last_standing_rule.lock().as_ref())
+            {
                 Ok(super::CurationRuleSelection::Selected(rule)) => Ok(*rule),
                 Ok(super::CurationRuleSelection::Waiting(wait)) => {
                     report.waiting_on.push(wait);
@@ -386,6 +391,9 @@ impl StandingCurationActor {
                 return report;
             }
         };
+        if resumed.is_none() && queued.is_none() {
+            *self.last_standing_rule.lock() = Some(selected_rule.revision_ref());
+        }
         let watermark = match self.events.watermark() {
             Ok(watermark) => watermark,
             Err(error) => {

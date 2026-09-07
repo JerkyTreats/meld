@@ -1,11 +1,11 @@
-//! Owned read surfaces behind the served substrate.
+//! Owned domain handles behind the served substrate.
 //!
 //! The sources own their handles (Arc'd stores, cloned ports, sibling
 //! sled trees) so the listener thread shares nothing borrowed from the
 //! foreground tick loop; sled and the event authority are safe for
-//! concurrent same-process readers. Live and playback differ only in how
-//! the sources are built — the handlers cannot tell them apart, which is
-//! what makes the two surfaces byte-consistent.
+//! concurrent same-process access. Read products remain the same across live
+//! and playback mounts. Explicit Agent intake is enabled only by the live
+//! runtime composition and delegates to the same native Agent store.
 
 use std::sync::Arc;
 
@@ -23,8 +23,10 @@ use crate::runtime::assembly::ProductRuntimeAssembly;
 use crate::runtime::ports::ProductEventReplayPort;
 use crate::runtime::supervisor::SupervisorReportStore;
 
-/// Owned read surfaces for one served root.
+/// Owned domain surfaces for one served root.
 pub struct ServeSources {
+    pub(crate) product_root: std::path::PathBuf,
+    pub(crate) accepts_reconciliation_requests: bool,
     pub(crate) events: LocalEventAuthorityClient,
     pub(crate) ledger_id: LedgerIdentity,
     pub(crate) reports: SupervisorReportStore,
@@ -53,6 +55,8 @@ impl ServeSources {
         // never serves a previous boot's declarations as current state.
         let action_floor = reports.sequence_watermark();
         Ok(Self {
+            product_root: assembly.product_root().to_path_buf(),
+            accepts_reconciliation_requests: false,
             events: LocalEventAuthorityClient::new(authority.as_ref()),
             ledger_id: authority.ledger_identity(),
             reports,
@@ -78,6 +82,13 @@ impl ServeSources {
     /// present as current state.
     pub fn with_full_history(mut self) -> Self {
         self.action_floor = 0;
+        self.accepts_reconciliation_requests = false;
+        self
+    }
+
+    /// Enable native intake only on the foreground runtime's live surface.
+    pub fn with_reconciliation_requests(mut self) -> Self {
+        self.accepts_reconciliation_requests = true;
         self
     }
 

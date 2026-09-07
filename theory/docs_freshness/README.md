@@ -36,3 +36,11 @@ cargo run --bin meld -- runtime run
 Preparation remains inert. Activation opens the native owner lifecycle and admission path. The installed claim policy supplies the questions, acceptance rules and drafting instructions. The runtime observes current workspace evidence before deciding on work and returns published results through Docs observations, Curation, Belief and Agent judgment.
 
 The old bundled `docs_writer_thread_v1` Workflow and `docs_writer` task package are no longer installed by `meld init` or embedded as an Execution fallback. This package is their maintained-Docs successor. Existing user-supplied Workflow profiles and package documents remain explicit compatibility inputs; their turn completion and frame-head output do not establish native Docs satisfaction.
+
+You can also request an independent reconciliation of the installed intent:
+
+```sh
+meld runtime request --agent-id docs-writer --request-key docs-review-1 --format json
+```
+
+The command reaches the live owner when the foreground runtime is running, or durably records the request for the next run. Repeating the key returns the same request and its completion status. A new key creates another request under the same preparation. Intake does not create a Goal or authorize a Task: Agent judges current evidence first. A correct README can complete the request without either. When work is needed, requests retain separate Goals and decisions while Execution may share compatible actions.

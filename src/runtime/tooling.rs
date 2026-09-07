@@ -224,6 +224,28 @@ pub fn handle_cli_command_with_account_writer(
     account_writer: &mut dyn Write,
 ) -> Result<String, ApiError> {
     match command {
+        RuntimeCommands::Request {
+            agent_id,
+            request_key,
+            format,
+        } => {
+            validate_format(format)?;
+            let store = assembly
+                .stores()
+                .agent_store
+                .opened()
+                .ok_or_else(|| runtime_message("native Agent store is not available"))?;
+            let request = store
+                .request_reconciliation(agent_id, request_key.clone())
+                .map_err(|error| runtime_message(error.to_string()))?;
+            let completed = store
+                .reconciliation_request_completed(&request)
+                .map_err(|error| runtime_message(error.to_string()))?;
+            format_request_status(
+                &meld_world_model::agent::AgentReconciliationRequestStatus { request, completed },
+                format,
+            )
+        }
         RuntimeCommands::Status {
             format,
             runtime_ids,
@@ -260,6 +282,73 @@ struct RuntimeRunOptions<'a> {
     restart_policy: &'a str,
     restart_attempt_limit: u64,
     restart_backoff_ms: u64,
+}
+
+fn format_request_status(
+    status: &meld_world_model::agent::AgentReconciliationRequestStatus,
+    format: &str,
+) -> Result<String, ApiError> {
+    if format == "json" {
+        serde_json::to_string_pretty(status).map_err(|error| runtime_message(error.to_string()))
+    } else {
+        Ok(format!(
+            "Request {}: {}",
+            status.request.request_id,
+            if status.completed {
+                "completed"
+            } else {
+                "pending native reconciliation"
+            }
+        ))
+    }
+}
+
+/// Address the existing live owner instead of opening a second copy of its stores.
+pub fn try_live_runtime_request(
+    workspace_root: &std::path::Path,
+    config: &crate::config::MerkleConfig,
+    agent_id: &str,
+    request_key: &str,
+    format: &str,
+) -> Option<Result<String, ApiError>> {
+    if let Err(error) = validate_format(format) {
+        return Some(Err(error));
+    }
+    let description =
+        ProductRuntimeAssembly::describe_for_workspace(workspace_root, config).ok()?;
+    let discovery = crate::serve::discovery::read(&description.product_root)?;
+    // Probe before intake. Once a POST is attempted, an uncertain response must
+    // be retried with the same key rather than falling through to another writer.
+    ureq::get(&format!("http://{}/v1/ledger", discovery.addr))
+        .timeout(std::time::Duration::from_secs(2))
+        .call()
+        .ok()?;
+    Some((|| {
+        let response = ureq::post(&format!(
+            "http://{}/v1/agents/reconciliation_requests",
+            discovery.addr
+        ))
+        .timeout(std::time::Duration::from_secs(5))
+        .send_json(&crate::serve::routes::ReconciliationRequest {
+            product_root: description.product_root,
+            agent_id: agent_id.into(),
+            request_key: request_key.into(),
+        })
+        .map_err(|error| {
+            runtime_message(format!(
+                "live request failed; retry the same request key: {error}"
+            ))
+        })?;
+        let status: meld_world_model::agent::AgentReconciliationRequestStatus = response
+            .into_json()
+            .map_err(|error| runtime_message(error.to_string()))?;
+        if status.request.agent_id != agent_id || status.request.request_key != request_key {
+            return Err(runtime_message(
+                "live request response names another request",
+            ));
+        }
+        format_request_status(&status, format)
+    })())
 }
 
 /// Serve `meld runtime status` for a live composition without opening
@@ -477,11 +566,15 @@ fn runtime_run(
         .unwrap_or(0);
     // The running foreground process serves the substrate: store access
     // is single-process, so live observation must come from here. The
-    // surface is observational — a bind failure never gates the run —
-    // and the handle's drop withdraws the discovery advertisement.
+    // surface serves owner reads and explicit Agent intake. A bind failure
+    // never gates the run; dropping the handle withdraws discovery.
     let _serve_handle =
         match crate::serve::sources::ServeSources::from_assembly(assembly).and_then(|sources| {
-            crate::serve::listener::serve_with_discovery(sources, 0, assembly.product_root())
+            crate::serve::listener::serve_with_discovery(
+                sources.with_reconciliation_requests(),
+                0,
+                assembly.product_root(),
+            )
         }) {
             Ok(handle) => {
                 tracing::info!(addr = %handle.addr(), "serving the /v1 substrate over loopback");

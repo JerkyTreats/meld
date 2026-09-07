@@ -400,6 +400,16 @@ pub enum EventCommands {
 
 #[derive(Subcommand)]
 pub enum RuntimeCommands {
+    /// Request another native reconciliation of an installed Agent intent
+    Request {
+        #[arg(long)]
+        agent_id: String,
+        /// Stable caller key; repeating it resumes the same request
+        #[arg(long)]
+        request_key: String,
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
     /// Show runtime supervisor status
     Status {
         /// Output format

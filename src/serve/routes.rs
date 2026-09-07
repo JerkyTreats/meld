@@ -62,9 +62,45 @@ pub struct RouteError {
     pub error: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReconciliationRequest {
+    pub product_root: std::path::PathBuf,
+    pub agent_id: String,
+    pub request_key: String,
+}
+
 /// Dispatch one request against the served sources.
 pub fn dispatch(sources: &ServeSources, method: &str, path: &str, body: &[u8]) -> RouteResponse {
     match (method, path) {
+        ("POST", "/v1/agents/reconciliation_requests") => {
+            handle(body, |request: ReconciliationRequest| {
+                if !sources.accepts_reconciliation_requests
+                    || request.product_root != sources.product_root
+                {
+                    return Err(
+                        "reconciliation intake is not enabled for the addressed live product"
+                            .to_string(),
+                    );
+                }
+                let store = sources
+                    .agent
+                    .as_ref()
+                    .ok_or("native Agent store is unavailable")?;
+                let request = store
+                    .request_reconciliation(&request.agent_id, request.request_key)
+                    .map_err(|error| error.to_string())?;
+                let completed = store
+                    .reconciliation_request_completed(&request)
+                    .map_err(|error| error.to_string())?;
+                Ok(
+                    meld_world_model::agent::AgentReconciliationRequestStatus {
+                        request,
+                        completed,
+                    },
+                )
+            })
+        }
         ("GET", "/v1/ledger") => {
             respond(Ok::<_, std::convert::Infallible>(sources.ledger_identity()))
         }

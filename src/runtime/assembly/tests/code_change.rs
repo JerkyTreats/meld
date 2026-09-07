@@ -13,7 +13,12 @@ fn code_change_request_survives_restart_without_repeating_materialization() {
     prove_native_code_change(true);
 }
 
-fn prove_native_code_change(restart: bool) {
+fn native_code_change_fixture() -> (
+    StewardshipHarness,
+    std::path::PathBuf,
+    CodeChangeSet,
+    std::path::PathBuf,
+) {
     let mut harness = StewardshipHarness::new();
     harness.binding.subject = DomainObjectRef::new("workspace_fs", "node", "repo").unwrap();
     harness.binding.agent_id = "code-agent".into();
@@ -49,6 +54,11 @@ fn prove_native_code_change(restart: bool) {
         acquisition::SOURCE.into(),
         crate::config::PhysicalBindingRef::EndpointRef(source.display().to_string()),
     );
+    (harness, path, change, source)
+}
+
+fn prove_native_code_change(restart: bool) {
+    let (harness, path, change, source) = native_code_change_fixture();
     let assembly = harness.assembly();
     harness.run_world_genesis_from(
         &assembly,
@@ -216,6 +226,149 @@ fn prove_native_code_change(restart: bool) {
             1_500,
         );
     }
+}
+
+#[test]
+fn named_code_change_request_recovers_its_own_observation_and_original_effect() {
+    let (harness, path, _, source) = native_code_change_fixture();
+    {
+        let assembly = harness.assembly();
+        harness.run_world_genesis_from(
+            &assembly,
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/code_change"),
+        );
+    }
+    let assembly = harness.assembly();
+    let loss = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    harness.bind_production_routes_with_loss(&assembly, Some((loss.clone(), false, Some(APPLY))));
+    let mut supervisor = harness.start_supervisor(&assembly);
+    for pass in 0..60 {
+        supervisor.tick(1_100 + pass * 10).unwrap();
+    }
+    let store = &assembly.stores().agent_store;
+    let first_goal = store
+        .reconciliation_goals_for_agent("code-agent")
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert!(satisfied(store, &first_goal.goal.goal_id));
+    let first_products = store
+        .epoch_products(&first_goal.goal.goal_id)
+        .unwrap()
+        .unwrap();
+    assert!(first_products.specification.request.is_none());
+    let change = CodeChangeSet::new(
+        harness.binding.subject.clone(),
+        vec![],
+        vec![FileReplacement {
+            relative_path: "lib.rs".into(),
+            expected_content_hash: blake3::hash(&std::fs::read(&path).unwrap())
+                .to_hex()
+                .to_string(),
+            replacement: "pub const VERSION: u8 = 3;\n".into(),
+        }],
+    )
+    .unwrap();
+    std::fs::write(&source, serde_json::to_vec(&change).unwrap()).unwrap();
+    let request = store
+        .request_reconciliation("code-agent", "second-declared-change")
+        .unwrap();
+    assert_eq!(
+        store
+            .reconciliation_goals_for_agent("code-agent")
+            .unwrap()
+            .len(),
+        1
+    );
+    loss.store(true, std::sync::atomic::Ordering::SeqCst);
+    for pass in 0..45 {
+        supervisor.tick(3_000 + pass * 10).unwrap();
+    }
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        change.files[0].replacement
+    );
+    assert!(!store.reconciliation_request_completed(&request).unwrap());
+    let products = store
+        .epoch_products_for_agent("code-agent")
+        .unwrap()
+        .into_iter()
+        .find(|products| products.specification.request.as_ref() == Some(&request))
+        .unwrap();
+    let authorizations = store
+        .product_authorizations_for_goal(&products.specification.goal_id)
+        .unwrap();
+    assert!(authorizations.iter().any(|authorization| matches!(
+        authorization.product,
+        meld_world_model::AgentAuthorizedProduct::Task(_)
+    ) && authorization.request_ref.as_deref()
+        == Some(products.specification.goal_id.as_str())));
+    std::fs::remove_file(&source).unwrap();
+    std::fs::write(&path, "later edit after second request\n").unwrap();
+    supervisor.request_shutdown(4_000).unwrap();
+    drop(supervisor);
+    drop(assembly);
+    let assembly = harness.assembly();
+    harness.bind_production_routes(&assembly);
+    let mut command = SupervisorStartCommand::new("named-code-recovery", 1_000_000);
+    command.registration_set = assembly.registration_set().cloned();
+    let mut supervisor =
+        RuntimeSupervisor::start(assembly.supervisor_startup_package(), command).unwrap();
+    for pass in 0..75 {
+        supervisor.tick(1_000_100 + pass * 10).unwrap();
+    }
+    let store = &assembly.stores().agent_store;
+    assert_eq!(
+        store
+            .request_reconciliation("code-agent", "second-declared-change")
+            .unwrap(),
+        request
+    );
+    assert!(store.reconciliation_request_completed(&request).unwrap());
+    assert_eq!(
+        store
+            .epoch_products(&products.specification.goal_id)
+            .unwrap(),
+        Some(products.clone())
+    );
+    assert_eq!(
+        store.epoch_products(&first_goal.goal.goal_id).unwrap(),
+        Some(first_products)
+    );
+    assert_eq!(
+        store
+            .reconciliation_goals_for_agent("code-agent")
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "later edit after second request\n"
+    );
+    let retained = store
+        .product_authorizations_for_goal(&products.specification.goal_id)
+        .unwrap();
+    assert!(authorizations
+        .iter()
+        .all(|authorization| retained.contains(authorization)));
+    let events = records(&harness);
+    for kind in [
+        acquisition::EVENT,
+        "code_change.intent.v1",
+        "code_change.materialized.v1",
+        publication::EVENT,
+    ] {
+        assert_eq!(
+            events
+                .iter()
+                .filter(|record| record.event_type == kind)
+                .count(),
+            2,
+            "{kind}"
+        );
+    }
+    supervisor.request_shutdown(1_001_000).unwrap();
 }
 
 fn finish(

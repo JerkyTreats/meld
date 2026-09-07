@@ -146,6 +146,7 @@ pub struct AgentReconciliationActor {
     // Scheduling position carries no authorization or completion meaning. Restart
     // may reset the rotation; durable product history still governs eligibility.
     last_selected_product: parking_lot::Mutex<Option<(String, String)>>,
+    last_selected_request: parking_lot::Mutex<Option<String>>,
 }
 
 impl AgentReconciliationActor {
@@ -225,6 +226,7 @@ impl AgentReconciliationActor {
             lifecycle: crate::lifecycle::NativeLifecycle::new(actor_id.clone()),
             work_lock: parking_lot::Mutex::new(()),
             last_selected_product: parking_lot::Mutex::new(None),
+            last_selected_request: parking_lot::Mutex::new(None),
             actor_id,
             intent,
             store,
@@ -243,6 +245,7 @@ impl AgentReconciliationActor {
         &self,
         authority: &CurationAuthority,
         fence: &AgentAuthorizationFence,
+        request: Option<&crate::agent::AgentReconciliationRequest>,
     ) -> Result<Option<Arc<crate::agent::AgentEpochProducts>>, StorageError> {
         let crate::agent::AgentPreparation::Epoch { products: port, .. } = &self.preparation else {
             return Ok(None);
@@ -253,15 +256,20 @@ impl AgentReconciliationActor {
             .ok_or_else(|| {
                 StorageError::InvalidPath("epoch preparation requires native Agent genesis".into())
             })?;
-        let goal_id = crate::agent::AgentEpochSpecification::goal_identity(
-            &self.intent,
-            &genesis,
-            &fence.activation_generation,
-            fence.admission_epoch.as_deref(),
-        );
+        let goal_id = request
+            .map(|request| request.goal_id(&self.intent))
+            .unwrap_or_else(|| {
+                crate::agent::AgentEpochSpecification::goal_identity(
+                    &self.intent,
+                    &genesis,
+                    &fence.activation_generation,
+                    fence.admission_epoch.as_deref(),
+                )
+            });
         if let Some(products) = self.store.epoch_products(&goal_id)? {
             let original = &products.specification;
             let same_observation = original.intent == self.intent
+                && original.request.as_ref() == request
                 && original.genesis == genesis
                 && original.authority.agent_id == authority.agent_id
                 && original.authority.subject == authority.subject
@@ -284,11 +292,12 @@ impl AgentReconciliationActor {
             }
             return Ok(Some(Arc::new(products)));
         }
-        let specification = crate::agent::AgentEpochSpecification::new(
+        let specification = crate::agent::AgentEpochSpecification::for_request(
             self.intent.clone(),
             authority.clone(),
             fence.clone(),
             genesis,
+            request.cloned(),
         )?;
         if self.authority.observe()?.as_ref() != Some(fence) {
             return Err(StorageError::InvalidPath(
@@ -331,6 +340,16 @@ impl AgentReconciliationActor {
         let Some(value) = crate::waiting::bound_address(value, self.store.resource_id()) else {
             return Ok(false);
         };
+        if matches!(wake, StructuralWakeAddress::OwnerRevision(_))
+            && crate::waiting::after_position(
+                value,
+                &format!("agent-requests::{}", self.strategy.agent_id),
+            )
+        {
+            return self
+                .supports_request_intake()
+                .map_err(|error| error.to_string());
+        }
         let fence = self
             .authority
             .observe()
@@ -340,6 +359,13 @@ impl AgentReconciliationActor {
             .reconciliation_goal_id(&fence)
             .map_err(|error| error.to_string())?;
         let mut goal_ids = vec![goal_id.clone()];
+        goal_ids.extend(
+            self.store
+                .reconciliation_requests(&self.strategy.agent_id)
+                .map_err(|error| error.to_string())?
+                .iter()
+                .map(|request| request.goal_id(&self.intent)),
+        );
         goal_ids.extend(
             self.store
                 .reconciliation_goals_for_agent(&self.strategy.agent_id)
@@ -386,7 +412,7 @@ impl AgentReconciliationActor {
             _ => None,
         };
         if let Some(key) = key {
-            if key == goal_id
+            if goal_ids.iter().any(|goal_id| goal_id == key)
                 || authorizations.iter().any(|authorization| {
                     authorization.authorization_id == key || authorization.product_id == key
                 })
@@ -409,25 +435,27 @@ impl AgentReconciliationActor {
             {
                 return Ok(true);
             }
-            let assembled = match self
-                .store
-                .epoch_products(&goal_id)
-                .map_err(|error| error.to_string())?
-            {
-                Some(products) => self.planner.assemble_epoch(&products, &fence),
-                None => self.planner.assemble_for(&goal_id, &fence),
-            };
-            return Ok(match assembled {
-                PlannerAssemblyOutcome::Complete(cut) => {
-                    key == cut.cut_id || key == cut.context.context_id
-                }
-                PlannerAssemblyOutcome::Refused(refusal) => {
-                    key == refusal.request_context_id
+            for goal_id in &goal_ids {
+                let assembled = match self
+                    .store
+                    .epoch_products(goal_id)
+                    .map_err(|error| error.to_string())?
+                {
+                    Some(products) => self.planner.assemble_epoch(&products, &fence),
+                    None => self.planner.assemble_for(goal_id, &fence),
+                };
+                if match assembled {
+                    PlannerAssemblyOutcome::Complete(cut) => {
+                        key == cut.cut_id || key == cut.context.context_id
+                    }
+                    PlannerAssemblyOutcome::Refused(refusal) => key == refusal.request_context_id
                         && !refusal.grounds.contains(
                             &crate::planner::PlannerRefusalGround::UnsupportedObservationSelection,
-                        )
+                        ),
+                } {
+                    return Ok(true);
                 }
-            });
+            }
         }
         // Rejected intake and frozen policy changes require a new authority or
         // construction result. They are not live work in this instance.
@@ -466,6 +494,20 @@ impl AgentReconciliationActor {
             .iter()
             .filter(|authorization| !authorization_completed(authorization, &history))
             .collect();
+        let mut pending_requests = Vec::new();
+        for request in self
+            .store
+            .reconciliation_requests(&self.strategy.agent_id)
+            .map_err(|error| error.to_string())?
+        {
+            if !self
+                .store
+                .reconciliation_request_completed(&request)
+                .map_err(|error| error.to_string())?
+            {
+                pending_requests.push(request);
+            }
+        }
         let checkpoint_ref = format!(
             "agent-reconciliation::{}::{position}",
             self.strategy.agent_id
@@ -485,7 +527,7 @@ impl AgentReconciliationActor {
                 .map_err(|error| error.to_string())?,
             None => None,
         };
-        Ok(crate::lifecycle::NativeLifecycleEvidence {
+        let evidence = crate::lifecycle::NativeLifecycleEvidence {
             checkpoint_ref: checkpoint_ref.clone(),
             installed_revision_refs: vec![
                 crate::lifecycle::evidence_ref("agent-intent", &self.intent)?,
@@ -507,11 +549,19 @@ impl AgentReconciliationActor {
             ],
             subscription_refs: vec![format!("agent-plan-products::{}", self.strategy.agent_id)],
             proof_position_ref: checkpoint_ref,
-            unresolved_operation_summary_ref: crate::lifecycle::evidence_ref(
-                "agent-unresolved-products",
-                &pending,
-            )?,
-        })
+            unresolved_operation_summary_ref: if pending_requests.is_empty() {
+                crate::lifecycle::evidence_ref("agent-unresolved-products", &pending)?
+            } else {
+                crate::lifecycle::evidence_ref(
+                    "agent-unresolved-requests-and-products",
+                    &(&pending_requests, &pending),
+                )?
+            },
+        };
+        if self.store.reconciliation_position() != position {
+            return Err("Agent inputs changed while authoring lifecycle evidence".into());
+        }
+        Ok(evidence)
     }
 
     /// Author native start evidence with bounded work excluded.
@@ -595,6 +645,22 @@ impl AgentReconciliationActor {
         let _guard = self.work_lock.lock();
         let input_position = self.store.reconciliation_position();
         let mut report = self.bounded_step_inner(max_items);
+        match self.supports_request_intake() {
+            Ok(true) => {
+                report.waiting_on.push(WaitingOnDeclaration::about(
+                    "agent_request_intake",
+                    &self.strategy.agent_id,
+                    "another named request is a durable Agent input",
+                    vec![StructuralWakeAddress::OwnerRevision(format!(
+                        "agent-requests::{}::after::{}",
+                        self.strategy.agent_id,
+                        self.store.reconciliation_request_position()
+                    ))],
+                ));
+            }
+            Ok(false) => {}
+            Err(error) => report.retryable_errors.push(error.to_string()),
+        }
         crate::waiting::bind_waits(&mut report.waiting_on, self.store.resource_id());
         report.input_position = input_position;
         report.output_position = self.store.reconciliation_position();
@@ -669,12 +735,19 @@ impl AgentReconciliationActor {
         let target = binding
             .condition
             .target_for(self.strategy.subject.clone())?;
+        let requested_goals: std::collections::BTreeSet<_> = self
+            .store
+            .reconciliation_requests(&self.strategy.agent_id)?
+            .iter()
+            .map(|request| request.goal_id(&self.intent))
+            .collect();
         let mut pending = Vec::new();
         for record in self
             .store
             .reconciliation_goals_for_agent(&self.strategy.agent_id)?
         {
-            if record.goal.target != target
+            if requested_goals.contains(&record.goal.goal_id)
+                || record.goal.target != target
                 || !self
                     .authority
                     .same_preparation(&record.activation_generation, fence)?
@@ -711,6 +784,63 @@ impl AgentReconciliationActor {
             .into_iter()
             .next()
             .map_or(fresh, |record| record.goal.goal_id))
+    }
+
+    fn supports_request_intake(&self) -> Result<bool, StorageError> {
+        let crate::agent::AgentReconciliationIntent::MaintainedCondition(binding) = &self.intent
+        else {
+            return Ok(false);
+        };
+        if binding.condition.observation_scope
+            == crate::agent::AgentObservationScope::AdmissionEpoch
+        {
+            return Ok(false);
+        }
+        Ok(self
+            .store
+            .genesis_intent_for_agent(&self.strategy.agent_id)?
+            .is_some_and(|genesis| {
+                genesis.registration.maintained_condition.as_ref() == Some(binding)
+            }))
+    }
+
+    fn select_request(
+        &self,
+    ) -> Result<Option<crate::agent::AgentReconciliationRequest>, StorageError> {
+        let crate::agent::AgentReconciliationIntent::MaintainedCondition(binding) = &self.intent
+        else {
+            return Ok(None);
+        };
+        let mut candidates = vec![(String::new(), None)];
+        let requests = self
+            .store
+            .reconciliation_requests(&self.strategy.agent_id)?;
+        if !requests.is_empty()
+            && self
+                .store
+                .genesis_intent_for_agent(&self.strategy.agent_id)?
+                .is_none_or(|genesis| {
+                    genesis.registration.maintained_condition.as_ref() != Some(binding)
+                })
+        {
+            return Err(StorageError::InvalidPath(
+                "request intake names a different installed Agent intent".into(),
+            ));
+        }
+        for request in requests {
+            if !self.store.reconciliation_request_completed(&request)? {
+                candidates.push((request.request_id.clone(), Some(request)));
+            }
+        }
+        candidates.sort_by(|left, right| left.0.cmp(&right.0));
+        let mut previous = self.last_selected_request.lock();
+        let index = previous
+            .as_ref()
+            .and_then(|previous| candidates.iter().position(|entry| &entry.0 > previous))
+            .unwrap_or(0);
+        let (id, request) = candidates.swap_remove(index);
+        *previous = Some(id);
+        Ok(request)
     }
 
     fn historical_goal_matches(
@@ -910,7 +1040,18 @@ impl AgentReconciliationActor {
             }
             _ => self.frozen_authority.clone(),
         };
-        let goal_id = match self.reconciliation_goal_id(&frozen_authority) {
+        let request = match self.select_request() {
+            Ok(request) => request,
+            Err(error) => {
+                report.retryable_errors.push(error.to_string());
+                return report;
+            }
+        };
+        let goal_id = match request
+            .as_ref()
+            .map(|request| Ok(request.goal_id(&self.intent)))
+            .unwrap_or_else(|| self.reconciliation_goal_id(&frozen_authority))
+        {
             Ok(goal_id) => goal_id,
             Err(error) => {
                 report.retryable_errors.push(error.to_string());
@@ -920,13 +1061,14 @@ impl AgentReconciliationActor {
         let mut curation_authority = self.curation_authority.clone();
         curation_authority.activation_generation = frozen_authority.activation_generation.clone();
         curation_authority.admission_epoch = frozen_authority.admission_epoch.clone();
-        let products = match self.prepare_epoch(&curation_authority, &frozen_authority) {
-            Ok(products) => products,
-            Err(error) => {
-                report.retryable_errors.push(error.to_string());
-                return report;
-            }
-        };
+        let products =
+            match self.prepare_epoch(&curation_authority, &frozen_authority, request.as_ref()) {
+                Ok(products) => products,
+                Err(error) => {
+                    report.retryable_errors.push(error.to_string());
+                    return report;
+                }
+            };
         if let Some(products) = &products {
             match self.subscribe_epoch(products, &frozen_authority, max_items) {
                 Ok((_, consumed)) if consumed == max_items => {
@@ -1114,6 +1256,7 @@ impl ReconciliationEpoch<'_> {
                 .clone(),
         )?;
         let evaluation = meld_lang::evaluate(&cut.world_model_view.world_state, &target);
+        self.store.put_reconciliation_cut(cut)?;
         self.store.put_condition_judgment(&AgentConditionJudgment {
             judgment_id: stable_id(
                 "agent-condition-judgment-v1",

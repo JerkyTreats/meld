@@ -36,6 +36,14 @@ impl AgentEpochCurationSource {
 
 impl CurationRuleSelectionPort for AgentEpochCurationSource {
     fn select(&self, authority: &CurationAuthority) -> Result<CurationRuleSelection, StorageError> {
+        self.select_next(authority, None)
+    }
+
+    fn select_next(
+        &self,
+        authority: &CurationAuthority,
+        after: Option<&crate::belief::TheoryRevisionRef>,
+    ) -> Result<CurationRuleSelection, StorageError> {
         authority.validate()?;
         let genesis = self.genesis()?;
         let registration = &genesis.registration;
@@ -58,7 +66,15 @@ impl CurationRuleSelectionPort for AgentEpochCurationSource {
             &authority.activation_generation,
             authority.admission_epoch.as_deref(),
         );
-        if let Some(products) = self.store.epoch_products(&goal_id)? {
+        let mut rules = Vec::new();
+        for products in self.store.epoch_products_for_agent(&self.agent_id)? {
+            if let Some(request) = &products.specification.request {
+                if self.store.reconciliation_request_completed(request)? {
+                    continue;
+                }
+            } else if products.specification.goal_id != goal_id {
+                continue;
+            }
             if (!products.specification.is_prepared_request()
                 && products.specification.authority != *authority)
                 || products.specification.intent != intent
@@ -68,8 +84,21 @@ impl CurationRuleSelectionPort for AgentEpochCurationSource {
                     "retained Curation selection names another epoch lineage".into(),
                 ));
             }
+            rules.push(products.curation_rule);
+        }
+        rules.sort_by(|left, right| {
+            (&left.rule_id, &left.content_hash).cmp(&(&right.rule_id, &right.content_hash))
+        });
+        if !rules.is_empty() {
+            let index = after
+                .and_then(|after| {
+                    rules.iter().position(|rule| {
+                        (&rule.rule_id, &rule.content_hash) > (&after.id, &after.content_hash)
+                    })
+                })
+                .unwrap_or(0);
             return Ok(CurationRuleSelection::Selected(Box::new(
-                products.curation_rule,
+                rules.swap_remove(index),
             )));
         }
         Ok(CurationRuleSelection::Waiting(WaitingOnDeclaration::about(

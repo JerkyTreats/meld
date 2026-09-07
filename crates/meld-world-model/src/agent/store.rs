@@ -30,6 +30,7 @@ const TREE_LEGACY_DECISIONS: &str = "agent_curation_decisions";
 const TREE_LEGACY_SINK_RECEIPTS: &str = "agent_sink_receipts";
 const TREE_LEGACY_SINK_RECEIPTS_BY_COMMAND: &str = "agent_sink_receipts_by_command";
 const TREE_RECONCILIATION_GOALS: &str = "agent_reconciliation_goals";
+const TREE_RECONCILIATION_REQUESTS: &str = "agent_reconciliation_requests_v1";
 const TREE_RECONCILIATION_PLANS: &str = "agent_reconciliation_plans";
 const TREE_RECONCILIATION_JUDGMENTS: &str = "agent_reconciliation_plan_judgments";
 const TREE_RECONCILIATION_PROGRESS: &str = "agent_reconciliation_product_progress";
@@ -59,6 +60,7 @@ pub struct AgentStore {
     legacy_sink_receipts: Tree,
     legacy_sink_receipts_by_command: Tree,
     reconciliation_goals: Tree,
+    reconciliation_requests: Tree,
     reconciliation_plans: Tree,
     reconciliation_judgments: Tree,
     reconciliation_progress: Tree,
@@ -104,6 +106,9 @@ impl AgentStore {
                 .map_err(to_storage_io)?,
             reconciliation_goals: db
                 .open_tree(TREE_RECONCILIATION_GOALS)
+                .map_err(to_storage_io)?,
+            reconciliation_requests: db
+                .open_tree(TREE_RECONCILIATION_REQUESTS)
                 .map_err(to_storage_io)?,
             reconciliation_plans: db
                 .open_tree(TREE_RECONCILIATION_PLANS)
@@ -188,6 +193,101 @@ impl AgentStore {
             &format!("epoch-products::{}", products.specification.goal_id),
             products,
         )
+    }
+
+    /// Durably request another reconciliation of this Agent's installed intent.
+    /// Intake does not judge a Goal or confer current execution authority.
+    pub fn request_reconciliation(
+        &self,
+        agent_id: &str,
+        request_key: impl Into<String>,
+    ) -> Result<super::AgentReconciliationRequest, StorageError> {
+        let genesis = self.genesis_intent_for_agent(agent_id)?.ok_or_else(|| {
+            StorageError::InvalidPath("reconciliation request has no native Agent genesis".into())
+        })?;
+        let request = super::AgentReconciliationRequest::new(&genesis, request_key.into())?;
+        put_immutable(&self.reconciliation_requests, &request.request_id, &request)?;
+        Ok(request)
+    }
+
+    pub fn reconciliation_requests(
+        &self,
+        agent_id: &str,
+    ) -> Result<Vec<super::AgentReconciliationRequest>, StorageError> {
+        let Some(genesis) = self.genesis_intent_for_agent(agent_id)? else {
+            return Ok(Vec::new());
+        };
+        let mut requests = Vec::new();
+        for entry in self.reconciliation_requests.iter() {
+            let (_, bytes) = entry.map_err(to_storage_io)?;
+            let request: super::AgentReconciliationRequest =
+                serde_json::from_slice(&bytes).map_err(to_storage_data)?;
+            if request.agent_id == agent_id {
+                request.validate_for(&genesis)?;
+                requests.push(request);
+            }
+        }
+        Ok(requests)
+    }
+
+    /// Completion names a native condition or Goal judgment, never Task success.
+    pub fn reconciliation_request_completed(
+        &self,
+        request: &super::AgentReconciliationRequest,
+    ) -> Result<bool, StorageError> {
+        let genesis = self
+            .genesis_intent_for_agent(&request.agent_id)?
+            .ok_or_else(|| {
+                StorageError::InvalidPath("request completion has no native genesis".into())
+            })?;
+        request.validate_for(&genesis)?;
+        let intent = super::AgentReconciliationIntent::MaintainedCondition(
+            genesis.registration.maintained_condition.unwrap(),
+        );
+        let goal_id = request.goal_id(&intent);
+        if let Some(plan) = self.current_reconciliation_plan(&goal_id)? {
+            return Ok(self
+                .goal_disposition_for_plan(&plan.plan_revision_id)?
+                .is_some_and(|disposition| {
+                    matches!(
+                        disposition.lifecycle,
+                        meld_lang::GoalLifecycle::Satisfied { .. }
+                    )
+                }));
+        }
+        for judgment in self.condition_judgments()? {
+            if judgment.agent_id == request.agent_id
+                && judgment.evaluation == meld_lang::EvalResult::Satisfied
+                && self
+                    .reconciliation_cut(&judgment.planner_cut_id)?
+                    .is_some_and(|cut| cut.context.goal_id == goal_id)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    pub fn epoch_products_for_agent(
+        &self,
+        agent_id: &str,
+    ) -> Result<Vec<super::AgentEpochProducts>, StorageError> {
+        let mut products = Vec::new();
+        for entry in self.reconciliation_plans.scan_prefix("epoch-products::") {
+            let (_, bytes) = entry.map_err(to_storage_io)?;
+            let product: super::AgentEpochProducts =
+                serde_json::from_slice(&bytes).map_err(to_storage_data)?;
+            if product.specification.authority.agent_id == agent_id {
+                product.validate()?;
+                products.push(product);
+            }
+        }
+        Ok(products)
+    }
+
+    /// Intake source position advances independently of Goal and Plan progress.
+    pub fn reconciliation_request_position(&self) -> u64 {
+        self.reconciliation_requests.len() as u64
     }
 
     pub fn epoch_subscription_receipt(
@@ -719,6 +819,7 @@ impl AgentStore {
     pub fn reconciliation_position(&self) -> u64 {
         [
             &self.reconciliation_goals,
+            &self.reconciliation_requests,
             &self.reconciliation_plans,
             &self.reconciliation_judgments,
             &self.reconciliation_progress,

@@ -14,6 +14,14 @@ pub enum CurationRuleSelection {
 /// Read one exact rule, or identify the durable producer position still needed.
 pub trait CurationRuleSelectionPort: Send + Sync {
     fn select(&self, authority: &CurationAuthority) -> Result<CurationRuleSelection, StorageError>;
+    /// Rotate among independent standing observations without changing their products.
+    fn select_next(
+        &self,
+        authority: &CurationAuthority,
+        _after: Option<&crate::belief::TheoryRevisionRef>,
+    ) -> Result<CurationRuleSelection, StorageError> {
+        self.select(authority)
+    }
     fn binding_refs(&self) -> Result<Vec<String>, StorageError>;
     fn template_refs(&self) -> Result<Vec<crate::belief::TheoryRevisionRef>, StorageError>;
     fn resolves_wake(&self, wake: &StructuralWakeAddress) -> Result<bool, String>;
@@ -32,6 +40,17 @@ impl From<StandingCurationRuleRevision> for CurationRuleSource {
 }
 
 impl CurationRuleSource {
+    pub fn select_next(
+        &self,
+        authority: &CurationAuthority,
+        after: Option<&crate::belief::TheoryRevisionRef>,
+    ) -> Result<CurationRuleSelection, StorageError> {
+        match self {
+            Self::Installed(rule) => Ok(CurationRuleSelection::Selected(rule.clone())),
+            Self::Producer(port) => port.select_next(authority, after),
+        }
+    }
+
     pub fn select(
         &self,
         authority: &CurationAuthority,

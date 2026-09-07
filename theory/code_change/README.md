@@ -31,6 +31,14 @@ authority_policy_id = "code_change_local"
 
 From the repository root, `cargo run --bin meld -- world init --theory-source theory/code_change --format json` installs and prepares the product. The ordinary `runtime run` command activates it. It requires no model provider. The native file materializer currently requires Unix.
 
-Version 1.1.0 scopes observation to the exact prepared request. The Goal, frozen owner products and materialization account survive generation changes. A delayed Task callback or process restart can recover the retained proposal and materialization without repeating a write, even after the proposal disappears or the user edits the files. Confirmation and further authorization use the current generation's fence. Restarting an already satisfied request leaves it satisfied; another prepared intent is a separate request.
+Version 1.1.0 scopes observation to the exact prepared request. The Goal, frozen owner products and materialization account survive generation changes. A delayed Task callback or process restart can recover the retained proposal and materialization without repeating a write, even after the proposal disappears or the user edits the files. Confirmation and further authorization use the current generation's fence. Restarting an already satisfied request leaves it satisfied.
+
+To request another change under the same preparation, update the declared proposal and submit a new caller key:
+
+```sh
+meld runtime request --agent-id code-agent --request-key change-2 --format json
+```
+
+The live runtime accepts the request through its native Agent owner. With no foreground runtime, intake is retained for the next run. Repeating the key returns the same request and completion status. Each new key has its own Goal, observation and materialization account. Intake does not capture proposal bytes or grant mutation authority; the Task acquires the declared source when it executes. Once acquired, that exact proposal and any materialized effect remain recoverable under the original request. Lifecycle-scoped Startup observations cannot be duplicated through this command.
 
 Existing version 1.0.0 preparations retain their epoch semantics and original receipt identities. Selecting version 1.1.0 requires a new preparation; this change does not rewrite earlier Agent genesis. This standalone package confirms materialization. The [Security mitigation package](../dependency_security_mitigation/README.md) connects declared intervention selection to independent Security verification.

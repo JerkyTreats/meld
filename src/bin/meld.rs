@@ -56,14 +56,12 @@ fn main() {
         return;
     }
 
-    // Live-status bypass: when a running composition advertises its served
-    // surface, status answers from there without touching the store locks
-    // the live process holds. No advertisement falls through to the normal
-    // assembly path, which owns the no-live-process case.
-    if let Some(result) = try_execute_live_runtime_status(&cli) {
+    // Live commands use the existing owner without opening its locked stores.
+    // Without a live surface, the normal assembly owns the offline command.
+    if let Some(result) = try_execute_live_runtime_command(&cli) {
         match result {
             Ok(output) => {
-                info!("Live runtime status served from the running process");
+                info!("Runtime command served by the running process");
                 println!("{}", output);
             }
             Err(e) => {
@@ -132,23 +130,44 @@ fn try_execute_danger_command(cli: &Cli) -> Option<Result<String, meld::error::A
     }
 }
 
-fn try_execute_live_runtime_status(cli: &Cli) -> Option<Result<String, meld::error::ApiError>> {
-    let Commands::Runtime {
-        command:
-            meld::cli::RuntimeCommands::Status {
-                format,
-                runtime_ids,
-            },
-    } = &cli.command
-    else {
+fn try_execute_live_runtime_command(cli: &Cli) -> Option<Result<String, meld::error::ApiError>> {
+    let Commands::Runtime { command } = &cli.command else {
         return None;
     };
+    if !matches!(
+        command,
+        meld::cli::RuntimeCommands::Status { .. } | meld::cli::RuntimeCommands::Request { .. }
+    ) {
+        return None;
+    }
     // Configuration failures fall through so the normal path reports them.
     let config = match &cli.config {
         Some(path) => ConfigLoader::load_from_file(path).ok()?,
         None => ConfigLoader::load(&cli.workspace).ok()?,
     };
-    meld::runtime::tooling::try_live_runtime_status(&cli.workspace, &config, format, runtime_ids)
+    match command {
+        meld::cli::RuntimeCommands::Status {
+            format,
+            runtime_ids,
+        } => meld::runtime::tooling::try_live_runtime_status(
+            &cli.workspace,
+            &config,
+            format,
+            runtime_ids,
+        ),
+        meld::cli::RuntimeCommands::Request {
+            agent_id,
+            request_key,
+            format,
+        } => meld::runtime::tooling::try_live_runtime_request(
+            &cli.workspace,
+            &config,
+            agent_id,
+            request_key,
+            format,
+        ),
+        _ => None,
+    }
 }
 
 fn try_execute_branch_command(cli: &Cli) -> Option<Result<String, meld::error::ApiError>> {

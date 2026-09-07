@@ -5447,6 +5447,7 @@ fn validate_runtime_id(runtime_id: &str) -> Result<(), RuntimeRegistryError> {
 mod tests {
     #[cfg(unix)]
     mod code_change;
+    mod reconciliation_requests;
     #[cfg(unix)]
     mod security_mitigation;
     #[cfg(unix)]
@@ -10446,6 +10447,17 @@ mod tests {
             &assembly,
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/startup"),
         );
+        assert!(assembly
+            .stores()
+            .agent_store
+            .request_reconciliation(&harness.binding.agent_id, "extra-startup-nonce")
+            .is_err());
+        assert!(assembly
+            .stores()
+            .agent_store
+            .reconciliation_requests(&harness.binding.agent_id)
+            .unwrap()
+            .is_empty());
         let prepared = assembly
             .stores()
             .pds_products
@@ -11601,6 +11613,14 @@ mod tests {
             wake,
             crate::runtime::lifecycle::StructuralWakeRef::DurableOperation(_)
         )));
+        let agent_resource = assembly.stores().agent_store.resource_id();
+        assert!(wake_refs.iter().any(|wake| matches!(
+            wake,
+            StructuralWakeRef::OwnerRevision(address)
+                if address == &format!(
+                    "world-model::{agent_resource}::agent-requests::{STEWARD_AGENT_ID}::after::0"
+                )
+        )));
         let generation_id = current.generation_id.clone();
         let (participant_id, original_wait) = current.waits.iter().next().unwrap();
         for foreign in [
@@ -11615,6 +11635,16 @@ mod tests {
             StructuralWakeRef::OwnerRevision(format!(
                 "world-model::{}::belief-dirty-work::world_model.belief_assessment::after::0",
                 meld_events::LedgerIdentity::new()
+            )),
+            StructuralWakeRef::OwnerRevision(format!(
+                "world-model::{}::agent-requests::{STEWARD_AGENT_ID}::after::0",
+                meld_events::LedgerIdentity::new()
+            )),
+            StructuralWakeRef::OwnerRevision(format!(
+                "world-model::{agent_resource}::agent-requests::foreign-agent::after::0"
+            )),
+            StructuralWakeRef::OwnerRevision(format!(
+                "world-model::{agent_resource}::agent-requests::{STEWARD_AGENT_ID}::after::invalid"
             )),
         ] {
             lifecycle_store

@@ -13,6 +13,8 @@ use crate::error::StorageError;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentEpochSpecification {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request: Option<super::AgentReconciliationRequest>,
     pub specification_id: String,
     pub goal_id: String,
     pub intent: AgentReconciliationIntent,
@@ -58,21 +60,34 @@ impl AgentEpochSpecification {
         ]
     }
 
-    pub(crate) fn new(
+    pub(crate) fn for_request(
         intent: AgentReconciliationIntent,
         authority: CurationAuthority,
         fence: AgentAuthorizationFence,
         genesis: AgentGenesisIntentV1,
+        request: Option<super::AgentReconciliationRequest>,
     ) -> Result<Self, StorageError> {
-        let goal_id = Self::goal_identity(
+        let goal_id = request
+            .as_ref()
+            .map(|request| request.goal_id(&intent))
+            .unwrap_or_else(|| {
+                Self::goal_identity(
+                    &intent,
+                    &genesis,
+                    &fence.activation_generation,
+                    fence.admission_epoch.as_deref(),
+                )
+            });
+        let specification_id = specification_identity(
+            &goal_id,
             &intent,
+            &authority,
+            &fence,
             &genesis,
-            &fence.activation_generation,
-            fence.admission_epoch.as_deref(),
-        );
-        let specification_id =
-            specification_identity(&goal_id, &intent, &authority, &fence, &genesis)?;
+            request.as_ref(),
+        )?;
         let value = Self {
+            request,
             specification_id,
             goal_id,
             intent,
@@ -86,6 +101,9 @@ impl AgentEpochSpecification {
 
     pub fn validate(&self) -> Result<(), StorageError> {
         self.authority.validate()?;
+        if let Some(request) = &self.request {
+            request.validate_for(&self.genesis)?;
+        }
         let AgentReconciliationIntent::MaintainedCondition(condition) = &self.intent else {
             return Err(invalid(
                 "epoch specification requires a maintained condition",
@@ -124,12 +142,18 @@ impl AgentEpochSpecification {
                 .contains(&condition.revision)
             || self.genesis.registration.maintained_condition.as_ref() != Some(condition)
             || self.goal_id
-                != Self::goal_identity(
-                    &self.intent,
-                    &self.genesis,
-                    &self.fence.activation_generation,
-                    self.fence.admission_epoch.as_deref(),
-                )
+                != self
+                    .request
+                    .as_ref()
+                    .map(|request| request.goal_id(&self.intent))
+                    .unwrap_or_else(|| {
+                        Self::goal_identity(
+                            &self.intent,
+                            &self.genesis,
+                            &self.fence.activation_generation,
+                            self.fence.admission_epoch.as_deref(),
+                        )
+                    })
             || self.specification_id
                 != specification_identity(
                     &self.goal_id,
@@ -137,6 +161,7 @@ impl AgentEpochSpecification {
                     &self.authority,
                     &self.fence,
                     &self.genesis,
+                    self.request.as_ref(),
                 )?
         {
             return Err(invalid(
@@ -271,7 +296,16 @@ fn specification_identity(
     authority: &CurationAuthority,
     fence: &AgentAuthorizationFence,
     genesis: &AgentGenesisIntentV1,
+    request: Option<&super::AgentReconciliationRequest>,
 ) -> Result<String, StorageError> {
+    if let Some(request) = request {
+        let bytes = serde_json::to_vec(&(goal_id, intent, authority, fence, genesis, request))
+            .map_err(|error| StorageError::InvalidPath(error.to_string()))?;
+        return Ok(format!(
+            "agent-epoch-specification-v2::{}",
+            blake3::hash(&bytes).to_hex()
+        ));
+    }
     let bytes = serde_json::to_vec(&(goal_id, intent, authority, fence, genesis))
         .map_err(|error| StorageError::InvalidPath(error.to_string()))?;
     Ok(format!(
