@@ -78,7 +78,7 @@ fn apply_initial_expansion(
 fn docs_writer_task_compiles_bottom_up_dependencies() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
-        meld::init::initialize_workflows(false).unwrap();
+        crate::integration::install_legacy_workflow_fixture().unwrap();
 
         let workspace_root = temp_dir.path().join("workspace");
         fs::create_dir_all(workspace_root.join("src")).unwrap();
@@ -162,7 +162,7 @@ fn docs_writer_task_compiles_bottom_up_dependencies() {
 fn docs_writer_task_runs_to_completion() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
-        meld::init::initialize_workflows(false).unwrap();
+        crate::integration::install_legacy_workflow_fixture().unwrap();
 
         let workspace_root = temp_dir.path().join("workspace");
         fs::create_dir_all(workspace_root.join("src")).unwrap();
@@ -262,7 +262,7 @@ fn docs_writer_task_runs_to_completion() {
 fn docs_writer_task_accepts_wrapped_structured_output() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
-        meld::init::initialize_workflows(false).unwrap();
+        crate::integration::install_legacy_workflow_fixture().unwrap();
 
         let workspace_root = temp_dir.path().join("workspace");
         fs::create_dir_all(workspace_root.join("src")).unwrap();
@@ -355,7 +355,7 @@ fn docs_writer_task_accepts_wrapped_structured_output() {
 fn docs_writer_task_expansion_is_idempotent() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
-        meld::init::initialize_workflows(false).unwrap();
+        crate::integration::install_legacy_workflow_fixture().unwrap();
 
         let workspace_root = temp_dir.path().join("workspace");
         fs::create_dir_all(workspace_root.join("src")).unwrap();
@@ -493,7 +493,7 @@ fn docs_writer_task_expansion_is_idempotent() {
 fn docs_writer_task_reuses_existing_child_readme_outputs() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
-        meld::init::initialize_workflows(false).unwrap();
+        crate::integration::install_legacy_workflow_fixture().unwrap();
 
         let workspace_root = temp_dir.path().join("workspace");
         fs::create_dir_all(workspace_root.join("src").join("record_contracts")).unwrap();

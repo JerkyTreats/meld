@@ -17,7 +17,7 @@ use tempfile::TempDir;
 use crate::integration::with_xdg_env;
 
 fn initialize_default_workflows() {
-    meld::init::initialize_workflows(false).unwrap();
+    crate::integration::install_legacy_workflow_fixture().unwrap();
 }
 
 fn create_test_provider_with_endpoint(

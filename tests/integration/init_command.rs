@@ -9,6 +9,30 @@ use tempfile::TempDir;
 use crate::integration::with_xdg_env;
 
 #[test]
+fn init_does_not_install_or_replace_workflow_applications() {
+    let test_dir = TempDir::new().unwrap();
+    with_xdg_env(&test_dir, || {
+        let workflows = meld::config::WorkflowConfig::default()
+            .resolve_user_profile_dir()
+            .unwrap();
+        init::initialize_all(false).unwrap();
+        assert!(
+            !workflows.exists(),
+            "init must not provision a legacy application"
+        );
+
+        fs::create_dir_all(&workflows).unwrap();
+        let supplied = workflows.join("docs_writer_thread_v1.yaml");
+        let content = "# independently supplied profile; not owned by meld init\n";
+        fs::write(&supplied, content).unwrap();
+        init::initialize_all(true).unwrap();
+        assert_eq!(fs::read_to_string(supplied).unwrap(), content);
+        assert!(!workflows.join("packages").exists());
+        assert!(!workflows.join("prompts").exists());
+    });
+}
+
+#[test]
 fn test_init_creates_default_agents() {
     let test_dir = TempDir::new().unwrap();
     with_xdg_env(&test_dir, || {

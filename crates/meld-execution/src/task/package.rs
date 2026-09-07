@@ -33,9 +33,6 @@ pub use prepare::{
 };
 pub use prerequisite::PrerequisiteTemplateSpec;
 pub use region::{RepeatedRegionSpec, StageChainSpec, StageSpec, TurnSpec};
-pub use registry::{
-    load_builtin_task_package_spec, load_builtin_task_package_spec_for_workflow,
-    load_task_package_spec_for_workflow,
-};
+pub use registry::load_task_package_spec_for_workflow;
 pub use seed::{InitialSeedSpec, SeedArtifactSpec, SeedSourceSpec};
 pub use trigger::{TargetSelectorKind, TaskTriggerSpec};

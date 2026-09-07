@@ -153,10 +153,10 @@ mod tests {
     }
 
     #[test]
-    fn workflow_uses_task_package_path_detects_builtin_package_route() {
+    fn workflow_name_cannot_select_an_implicit_product_package() {
         let profile = registered_profile("docs_writer_thread_v1");
 
-        assert!(workflow_uses_task_package_path::<ApiError>(&profile, None).unwrap());
+        assert!(!workflow_uses_task_package_path::<ApiError>(&profile, None).unwrap());
     }
 
     #[test]

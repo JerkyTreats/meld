@@ -33,7 +33,7 @@ fn create_test_agent_with_workflow(
     workflow_id: Option<&str>,
 ) -> Result<PathBuf, ApiError> {
     if workflow_id.is_some() {
-        meld::init::initialize_workflows(false)?;
+        crate::integration::install_legacy_workflow_fixture()?;
     }
     let agents_dir = XdgAgentStorage::new().agents_dir()?;
     // Ensure directory exists

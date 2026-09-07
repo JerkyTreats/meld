@@ -218,7 +218,7 @@ fn product_event_records(run_context: &RunContext) -> Vec<EventRecord> {
 fn workflow_execute_routes_docs_writer_through_task_path() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
-        meld::init::initialize_workflows(false).unwrap();
+        crate::integration::install_legacy_workflow_fixture().unwrap();
 
         let workspace_root = temp_dir.path().join("workspace");
         fs::create_dir_all(workspace_root.join("src")).unwrap();
@@ -288,7 +288,7 @@ fn workflow_execute_routes_docs_writer_through_task_path() {
 fn workflow_task_path_fails_when_required_frame_ref_anchor_is_missing() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
-        meld::init::initialize_workflows(false).unwrap();
+        crate::integration::install_legacy_workflow_fixture().unwrap();
 
         let workspace_root = temp_dir.path().join("workspace");
         fs::create_dir_all(workspace_root.join("src")).unwrap();
@@ -351,7 +351,7 @@ fn workflow_task_path_fails_when_required_frame_ref_anchor_is_missing() {
 fn workflow_task_path_live_and_replay_artifact_resolution_match() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
-        meld::init::initialize_workflows(false).unwrap();
+        crate::integration::install_legacy_workflow_fixture().unwrap();
 
         let workspace_root = temp_dir.path().join("workspace");
         fs::create_dir_all(workspace_root.join("src")).unwrap();

@@ -44,3 +44,7 @@ pub mod views;
 pub mod workflow;
 pub mod workspace;
 pub mod world_state;
+
+#[cfg(test)]
+#[path = "../tests/fixtures/workflow_assets.rs"]
+mod workflow_assets;

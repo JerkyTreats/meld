@@ -3,11 +3,8 @@
 use crate::error::ApiError;
 use crate::task::package::TaskPackageSpec;
 use crate::workflow::registry::RegisteredWorkflowProfile;
-pub use meld_execution::task::package::{
-    load_builtin_task_package_spec, load_builtin_task_package_spec_for_workflow,
-};
 
-/// Loads the task package document bound to one workflow id, preferring external package docs.
+/// Loads the task package explicitly supplied beside a Workflow profile.
 pub fn load_task_package_spec_for_workflow(
     registered_profile: &RegisteredWorkflowProfile,
 ) -> Result<Option<TaskPackageSpec>, ApiError> {
@@ -29,33 +26,7 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn loads_docs_writer_package_spec_from_embedded_yaml() {
-        let spec = load_builtin_task_package_spec("docs_writer").unwrap();
-
-        assert_eq!(spec.package_id, "docs_writer");
-        assert_eq!(spec.workflow_id, "docs_writer_thread_v1");
-        assert_eq!(spec.trigger.accepted_targets.len(), 2);
-        assert_eq!(spec.seed.artifacts.len(), 4);
-        assert!(spec.seed.artifacts.iter().any(|artifact| {
-            matches!(
-                artifact.source,
-                crate::task::package::SeedSourceSpec::GoalBeliefHydration
-            )
-        }));
-        assert_eq!(spec.expansions.len(), 1);
-    }
-
-    #[test]
-    fn loads_builtin_package_by_workflow_id() {
-        let spec = load_builtin_task_package_spec_for_workflow("docs_writer_thread_v1")
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(spec.package_id, "docs_writer");
-    }
-
-    #[test]
-    fn prefers_external_package_document_from_workflow_directory() {
+    fn loads_explicit_package_document_from_workflow_directory() {
         let temp = TempDir::new().unwrap();
         let workflow_dir = temp.path().join("workflows");
         let package_dir = workflow_dir.join("packages");

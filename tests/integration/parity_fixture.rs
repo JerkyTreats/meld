@@ -696,7 +696,7 @@ pub fn try_run_workflow_route(
 ) -> Result<WorkflowRouteBaselineRun, String> {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
-        meld::init::initialize_workflows(false).unwrap();
+        crate::integration::install_legacy_workflow_fixture().unwrap();
 
         let workspace_root = temp_dir.path().join("workspace");
         spec.write_to(&workspace_root);
@@ -809,7 +809,7 @@ pub fn run_incremental_workflow_scenario(
 ) -> IncrementalScenarioOutcome {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
-        meld::init::initialize_workflows(false).unwrap();
+        crate::integration::install_legacy_workflow_fixture().unwrap();
 
         let workspace_root = temp_dir.path().join("workspace");
         spec.write_to(&workspace_root);

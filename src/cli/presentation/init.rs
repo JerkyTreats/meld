@@ -15,14 +15,6 @@ pub fn format_init_preview(preview: &InitPreview) -> String {
         output.push('\n');
     }
 
-    if !preview.workflows.is_empty() {
-        output.push_str("Would create workflows:\n");
-        for workflow in &preview.workflows {
-            output.push_str(&format!("  - {}\n", workflow));
-        }
-        output.push('\n');
-    }
-
     if !preview.agents.is_empty() {
         output.push_str("Would create agents:\n");
         for agent in &preview.agents {
@@ -31,8 +23,8 @@ pub fn format_init_preview(preview: &InitPreview) -> String {
         output.push('\n');
     }
 
-    if preview.prompts.is_empty() && preview.workflows.is_empty() && preview.agents.is_empty() {
-        output.push_str("All default agents, prompts, and workflows already exist.\n");
+    if preview.prompts.is_empty() && preview.agents.is_empty() {
+        output.push_str("All default agents and prompts already exist.\n");
     } else {
         output.push_str("Run 'meld init' to perform initialization.\n");
     }
@@ -56,25 +48,6 @@ pub fn format_init_summary(summary: &InitSummary, force: bool) -> String {
         }
         for prompt in &summary.prompts.skipped {
             output.push_str(&format!("  ⊘ {} (already exists, skipped)\n", prompt));
-        }
-        output.push('\n');
-    }
-
-    if !summary.workflows.created.is_empty() || !summary.workflows.skipped.is_empty() {
-        let workflows_dir = crate::config::WorkflowConfig::default()
-            .resolve_user_profile_dir()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| "~/.config/meld/workflows/".to_string());
-        output.push_str(&format!("Created workflows directory: {}\n", workflows_dir));
-        for workflow in &summary.workflows.created {
-            if force {
-                output.push_str(&format!("  ✓ {} (overwritten)\n", workflow));
-            } else {
-                output.push_str(&format!("  ✓ {}\n", workflow));
-            }
-        }
-        for workflow in &summary.workflows.skipped {
-            output.push_str(&format!("  ⊘ {} (already exists, skipped)\n", workflow));
         }
         output.push('\n');
     }
@@ -116,15 +89,9 @@ pub fn format_init_summary(summary: &InitSummary, force: bool) -> String {
         output.push('\n');
     }
 
-    if !summary.prompts.errors.is_empty()
-        || !summary.workflows.errors.is_empty()
-        || !summary.agents.errors.is_empty()
-    {
+    if !summary.prompts.errors.is_empty() || !summary.agents.errors.is_empty() {
         output.push_str("Errors:\n");
         for error in &summary.prompts.errors {
-            output.push_str(&format!("  ✗ {}\n", error));
-        }
-        for error in &summary.workflows.errors {
             output.push_str(&format!("  ✗ {}\n", error));
         }
         for error in &summary.agents.errors {
@@ -156,13 +123,9 @@ pub fn format_init_summary(summary: &InitSummary, force: bool) -> String {
         output.push('\n');
     }
 
-    if summary.prompts.created.is_empty()
-        && summary.workflows.created.is_empty()
-        && summary.agents.created.is_empty()
-        && !force
-    {
+    if summary.prompts.created.is_empty() && summary.agents.created.is_empty() && !force {
         output.push_str(
-            "All default agents, prompts, and workflows already exist. Use --force to re-initialize.\n",
+            "All default agents and prompts already exist. Use --force to re-initialize.\n",
         );
     } else {
         output.push_str("Initialization complete! You can now use:\n");

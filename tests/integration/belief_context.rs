@@ -187,7 +187,7 @@ struct DocsWriterRunOutput {
 /// with one belief seeded on the target subject, then extracts rendered
 /// prompts and lineage summaries from the task artifact repo.
 fn run_docs_writer_with_seeded_belief(temp_dir: &TempDir, repo_id: &str) -> DocsWriterRunOutput {
-    meld::init::initialize_workflows(false).unwrap();
+    crate::integration::install_legacy_workflow_fixture().unwrap();
 
     let workspace_root = temp_dir.path().join("workspace");
     fs::create_dir_all(workspace_root.join("src")).unwrap();
@@ -427,7 +427,7 @@ fn belief_context_ab_contract_flag_off_unchanged_flag_on_adds_brief_and_lineage(
 fn belief_context_bundle_and_selection_deterministic_across_reopen() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
-        meld::init::initialize_workflows(false).unwrap();
+        crate::integration::install_legacy_workflow_fixture().unwrap();
 
         let workspace_root = temp_dir.path().join("workspace");
         fs::create_dir_all(workspace_root.join("src")).unwrap();
@@ -673,7 +673,7 @@ fn belief_context_bundle_and_selection_deterministic_across_reopen() {
 fn belief_endorsed_selection_excludes_contradicted_child_while_recency_unchanged() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
-        meld::init::initialize_workflows(false).unwrap();
+        crate::integration::install_legacy_workflow_fixture().unwrap();
 
         let workspace_root = temp_dir.path().join("workspace");
         fs::create_dir_all(workspace_root.join("src")).unwrap();
@@ -855,7 +855,7 @@ fn belief_endorsed_selection_excludes_contradicted_child_while_recency_unchanged
 fn belief_empty_bundle_keeps_flag_on_prompt_byte_identical() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
-        meld::init::initialize_workflows(false).unwrap();
+        crate::integration::install_legacy_workflow_fixture().unwrap();
 
         let workspace_root = temp_dir.path().join("workspace");
         fs::create_dir_all(workspace_root.join("src")).unwrap();

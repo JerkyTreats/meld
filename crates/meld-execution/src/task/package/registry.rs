@@ -1,4 +1,4 @@
-//! Runtime loader for task package documents with embedded fallback.
+//! Load explicitly supplied Workflow task packages; product applications belong to PDS.
 
 use super::TaskPackageSpec;
 use crate::error::ApiError;
@@ -6,58 +6,10 @@ use crate::workflow::registry::RegisteredWorkflowProfile;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const BUILTIN_TASK_PACKAGE_IDS: [&str; 1] = ["docs_writer"];
-const BUILTIN_DOCS_WRITER_PACKAGE_SOURCE: &str = include_str!("docs_writer_v2.yaml");
-
-/// Loads one built-in task package document by package id.
-pub fn load_builtin_task_package_spec(package_id: &str) -> Result<TaskPackageSpec, ApiError> {
-    let source = match package_id {
-        "docs_writer" => BUILTIN_DOCS_WRITER_PACKAGE_SOURCE,
-        _ => {
-            return Err(ApiError::ConfigError(format!(
-                "Unknown built-in task package '{}'",
-                package_id
-            )));
-        }
-    };
-
-    serde_yaml::from_str(source).map_err(|err| {
-        ApiError::ConfigError(format!(
-            "Failed to parse built-in task package '{}': {}",
-            package_id, err
-        ))
-    })
-}
-
-/// Loads the built-in task package document bound to one workflow id, if any.
-pub fn load_builtin_task_package_spec_for_workflow(
-    workflow_id: &str,
-) -> Result<Option<TaskPackageSpec>, ApiError> {
-    for package_id in BUILTIN_TASK_PACKAGE_IDS {
-        let spec = load_builtin_task_package_spec(package_id)?;
-        if spec.workflow_id == workflow_id {
-            return Ok(Some(spec));
-        }
-    }
-
-    Ok(None)
-}
-
-/// Loads the task package document bound to one workflow id, preferring external package docs.
+/// Load the package explicitly associated with a Workflow profile directory.
+/// A missing package leaves an explicit turn profile on its existing generic route.
+/// It cannot select a bundled product application by Workflow name.
 pub fn load_task_package_spec_for_workflow(
-    registered_profile: &RegisteredWorkflowProfile,
-    default_package_dir: Option<&Path>,
-) -> Result<Option<TaskPackageSpec>, ApiError> {
-    if let Some(spec) =
-        load_external_task_package_spec_for_workflow(registered_profile, default_package_dir)?
-    {
-        return Ok(Some(spec));
-    }
-
-    load_builtin_task_package_spec_for_workflow(&registered_profile.profile.workflow_id)
-}
-
-fn load_external_task_package_spec_for_workflow(
     registered_profile: &RegisteredWorkflowProfile,
     default_package_dir: Option<&Path>,
 ) -> Result<Option<TaskPackageSpec>, ApiError> {
@@ -139,7 +91,6 @@ fn load_task_package_spec_from_path(path: &Path) -> Result<TaskPackageSpec, ApiE
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::package::SeedSourceSpec;
     use crate::workflow::profile::{
         WorkflowArtifactPolicy, WorkflowFailurePolicy, WorkflowProfile, WorkflowThreadPolicy,
     };
@@ -147,32 +98,7 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn loads_docs_writer_package_spec_from_embedded_yaml() {
-        let spec = load_builtin_task_package_spec("docs_writer").unwrap();
-
-        assert_eq!(spec.package_id, "docs_writer");
-        assert_eq!(spec.workflow_id, "docs_writer_thread_v1");
-        assert_eq!(spec.trigger.accepted_targets.len(), 2);
-        assert_eq!(spec.seed.artifacts.len(), 4);
-        assert!(spec
-            .seed
-            .artifacts
-            .iter()
-            .any(|artifact| matches!(artifact.source, SeedSourceSpec::GoalBeliefHydration)));
-        assert_eq!(spec.expansions.len(), 1);
-    }
-
-    #[test]
-    fn loads_builtin_package_by_workflow_id() {
-        let spec = load_builtin_task_package_spec_for_workflow("docs_writer_thread_v1")
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(spec.package_id, "docs_writer");
-    }
-
-    #[test]
-    fn prefers_external_package_document_from_workflow_directory() {
+    fn loads_explicit_package_document_from_workflow_directory() {
         let temp = TempDir::new().unwrap();
         let workflow_dir = temp.path().join("workflows");
         let package_dir = workflow_dir.join("packages");

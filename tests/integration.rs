@@ -73,3 +73,20 @@ pub use test_utils::{
     spawn_docs_writer_server, spawn_wrapped_docs_writer_server, with_env_lock, with_xdg_data_home,
     with_xdg_env,
 };
+
+#[path = "fixtures/workflow_assets.rs"]
+mod workflow_assets;
+
+pub(crate) fn install_legacy_workflow_fixture() -> Result<(), meld::error::ApiError> {
+    let root = meld::config::WorkflowConfig::default().resolve_user_profile_dir()?;
+    for (relative, content) in workflow_assets::FILES {
+        let path = root.join(relative);
+        if path.exists() {
+            continue;
+        }
+        std::fs::create_dir_all(path.parent().unwrap())
+            .and_then(|_| std::fs::write(path, content))
+            .map_err(|error| meld::error::ApiError::ConfigError(error.to_string()))?;
+    }
+    Ok(())
+}

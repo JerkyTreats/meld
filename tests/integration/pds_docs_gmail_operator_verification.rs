@@ -86,7 +86,7 @@ fn routed_docs_pds_generates_gmail_operator_and_reopens_without_work() {
     let gmail_root = required_directory(GMAIL_ROOT_ENV);
     let temp = TempDir::new().unwrap();
     with_xdg_env(&temp, || {
-        meld::init::initialize_workflows(false).unwrap();
+        crate::integration::install_legacy_workflow_fixture().unwrap();
         let workspace_root = temp.path().join("workspace");
         let subject_root = workspace_root.join(SUBJECT_PATH);
         copy_tracked_repository(&gmail_root, &subject_root);
@@ -215,7 +215,7 @@ fn routed_docs_pds_rejects_a_missing_required_capability_before_provider_work() 
     let gmail_root = required_directory(GMAIL_ROOT_ENV);
     let temp = TempDir::new().unwrap();
     with_xdg_env(&temp, || {
-        meld::init::initialize_workflows(false).unwrap();
+        crate::integration::install_legacy_workflow_fixture().unwrap();
         let workspace_root = temp.path().join("workspace");
         copy_tracked_repository(&gmail_root, &workspace_root.join(SUBJECT_PATH));
         create_test_agent(STEWARD_AGENT_ID, Some("docs_writer_thread_v1"));
@@ -279,7 +279,7 @@ fn routed_docs_pds_generates_gmail_operator_with_live_provider() {
     let evidence_root = required_directory(EVIDENCE_ROOT_ENV);
     let temp = TempDir::new_in(&evidence_root).unwrap();
     with_xdg_env(&temp, || {
-        meld::init::initialize_workflows(false).unwrap();
+        crate::integration::install_legacy_workflow_fixture().unwrap();
         let workspace_root = temp.path().join("workspace");
         copy_tracked_repository(&gmail_root, &workspace_root.join(SUBJECT_PATH));
 

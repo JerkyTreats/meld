@@ -139,7 +139,7 @@ struct NormalizedCompileShape {
 fn compiled_shape_for_case(case: &BottomUpCompileCase) -> NormalizedCompileShape {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
-        meld::init::initialize_workflows(false).unwrap();
+        crate::integration::install_legacy_workflow_fixture().unwrap();
 
         let workspace_root = temp_dir.path().join("workspace");
         fs::create_dir_all(&workspace_root).unwrap();

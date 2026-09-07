@@ -751,7 +751,7 @@ mod tests {
     }
 
     fn write_default_workflows(workflow_dir: &Path) {
-        for (relative_path, content) in crate::init::DEFAULT_WORKFLOW_FILES {
+        for (relative_path, content) in crate::workflow_assets::FILES {
             let output_path = workflow_dir.join(relative_path);
             if let Some(parent) = output_path.parent() {
                 std::fs::create_dir_all(parent).unwrap();

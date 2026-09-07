@@ -363,7 +363,7 @@ fn runtime_run_publishes_durable_lifecycle_snapshots() {
 fn prepared_product_activates_routes_and_ignores_loose_owner_heads() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
-        meld::init::initialize_workflows(false).unwrap();
+        crate::integration::install_legacy_workflow_fixture().unwrap();
         let workspace_root = workspace(&temp_dir);
         std::fs::create_dir_all(workspace_root.join("docs")).unwrap();
         std::fs::write(workspace_root.join("docs/guide.txt"), "guide\n").unwrap();
