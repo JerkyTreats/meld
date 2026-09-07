@@ -6,6 +6,8 @@
 //! Does not own: this module does not schedule background workers or map
 //! execution facts into world model evidence.
 
+pub mod observation;
+
 use meld_events::{
     AppendMode, AppendReceipt, DomainObjectRef, EventAppendCapability, EventEnvelope,
     EventRelation, LedgerIdentity,

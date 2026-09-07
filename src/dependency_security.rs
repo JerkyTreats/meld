@@ -12,6 +12,7 @@ pub mod inventory;
 pub mod observation;
 pub mod policy;
 pub mod publication;
+pub mod returns;
 pub mod runtime;
 pub mod theory;
 pub mod verification;

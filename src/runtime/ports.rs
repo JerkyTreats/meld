@@ -1360,7 +1360,7 @@ impl ClaimedTaskInvoker for CompiledTaskClaimInvoker {
         .await
         .map_err(|error| DispatchPortError::retryable(error.to_string()))?;
         Ok(Some(ClaimedInvocationOutcome::Completed(
-            executor.artifact_repo().record().artifacts.clone(),
+            meld_execution::task_network::dispatch::emitted_artifact_records(&executor),
         )))
     }
 
@@ -1391,7 +1391,7 @@ impl ClaimedTaskInvoker for CompiledTaskClaimInvoker {
         .await
         {
             Ok(_summary) => Ok(ClaimedInvocationOutcome::Completed(
-                executor.artifact_repo().record().artifacts.clone(),
+                meld_execution::task_network::dispatch::emitted_artifact_records(&executor),
             )),
             Err(error) => {
                 let message = error.to_string();

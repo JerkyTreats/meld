@@ -280,6 +280,7 @@ mod tests {
                 advisory: (!is_inventory).then(|| advisory.clone()),
                 inventory: is_inventory.then(|| inventory.clone()),
                 source_action: is_inventory.then(|| OBSERVE_INVENTORY.into()),
+                execution_causes: vec![],
                 failure: None,
             };
             let envelope = EventEnvelope::with_now_domain(

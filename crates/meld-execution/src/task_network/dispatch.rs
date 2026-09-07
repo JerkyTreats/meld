@@ -227,7 +227,8 @@ pub fn artifact_availability_for_outcome(outcome: &Outcome) -> Vec<ArtifactAvail
         .collect()
 }
 
-fn emitted_artifact_records(executor: &TaskExecutor) -> Vec<ArtifactRecord> {
+/// Outputs emitted by invocation completion, excluding the Task's initialization records.
+pub fn emitted_artifact_records(executor: &TaskExecutor) -> Vec<ArtifactRecord> {
     executor
         .artifact_repo()
         .record()

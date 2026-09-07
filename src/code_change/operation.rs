@@ -178,6 +178,87 @@ impl Operation<'_> {
     }
 }
 
+/// Verify this owner's durable materialization and exact artifact lineage.
+/// Observers receive evidence; this reader never mutates or re-reads the workspace.
+pub fn materialization_evidence(
+    events: &EventReplayCapability,
+    artifact: &crate::task::ArtifactRecord,
+) -> Result<MaterializationEvidence, String> {
+    let receipt: CodeChangeReceipt =
+        serde_json::from_value(artifact.content.clone()).map_err(|error| error.to_string())?;
+    let record = events
+        .committed_record(&receipt.operation_id)
+        .map_err(|error| error.to_string())?
+        .ok_or("materialization intent is not retained")?;
+    let intent: Intent =
+        serde_json::from_value(record.data.clone()).map_err(|error| error.to_string())?;
+    let workspace_root = std::path::PathBuf::from(
+        intent.binding["workspace"]
+            .as_str()
+            .ok_or("materialization workspace binding absent")?,
+    );
+    let operation = Operation {
+        binding: intent.binding.clone(),
+        change: intent.change.clone(),
+        root: &workspace_root,
+    };
+    if operation.recover(events)?.as_ref() != Some(&receipt) {
+        return Err("artifact has no exact durable materialization".into());
+    }
+    let runtime: crate::capability::CapabilityRuntimeInit =
+        serde_json::from_value(intent.binding["runtime"].clone())
+            .map_err(|error| error.to_string())?;
+    super::capability::validate_runtime(&runtime, &intent.change.subject.object_id)
+        .map_err(|error| error.to_string())?;
+    if !workspace_root.is_absolute()
+        || intent.binding["authority"]["subject"]
+            != serde_json::to_value(&intent.change.subject).map_err(|error| error.to_string())?
+        || ["issuer", "principal", "fence"].iter().any(|key| {
+            intent.binding["authority"][*key]
+                .as_str()
+                .is_none_or(str::is_empty)
+        })
+        || ["task_id", "task_run_id"].iter().any(|key| {
+            intent.binding["lineage"][*key]
+                .as_str()
+                .is_none_or(str::is_empty)
+        })
+    {
+        return Err(
+            "materialization has no exact original subject, authority or Task lineage".into(),
+        );
+    }
+    let invocation_id = intent.binding["invocation_id"]
+        .as_str()
+        .ok_or("materialization invocation absent")?;
+    let task_id = intent.binding["lineage"]["task_id"]
+        .as_str()
+        .ok_or("materialization Task lineage absent")?;
+    let expected =
+        super::capability::materialization_artifact(&runtime, invocation_id, task_id, receipt)
+            .map_err(|error| error.to_string())?;
+    if artifact != &expected {
+        return Err("materialization artifact differs from its original producer lineage".into());
+    }
+    let completed = events
+        .committed_record(&format!("{}::materialized", operation.id(events)?))
+        .map_err(|error| error.to_string())?
+        .ok_or("materialization completion is not retained")?;
+    Ok(MaterializationEvidence {
+        change: intent.change,
+        intent: meld_events::EventRecordRef {
+            ledger_id: events.ledger_identity(),
+            seq: record.seq,
+        },
+        materialization: meld_events::EventRecordRef {
+            ledger_id: events.ledger_identity(),
+            seq: completed.seq,
+        },
+        workspace_root,
+        workspace_identity: intent.workspace_identity,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

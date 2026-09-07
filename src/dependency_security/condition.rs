@@ -157,6 +157,7 @@ pub(crate) fn current_state(
                 if observed.subject != capability.subject || observed.policy != capability.policy {
                     continue;
                 }
+                super::returns::validate_retained(&observed, events).map_err(invalid)?;
                 reference_time = reference_time.max(observed.observed_at);
                 let kind = observed.kind().to_owned();
                 let unavailable = observed.unavailable_kind().to_owned();

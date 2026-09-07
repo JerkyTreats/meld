@@ -214,13 +214,9 @@ fn materialize(
         execution.network.lock().unwrap().state().admissions[&admitted.admission_id].decision,
         TaskAdmissionDecision::Admitted
     );
-    // Hold semantic consumers still until the independently complete Task returns.
+    // Let the source owner observe effects before the accepted outcome is published.
     for _ in 0..6 {
-        for owner in [
-            "execution.task_admission",
-            "execution.task_dispatch",
-            "execution.publication",
-        ] {
+        for owner in ["execution.task_admission", "execution.task_dispatch"] {
             let report = supervisor.step_owner_for_test(owner, WorkBudget { max_items: 8 });
             assert!(
                 report.fatal_errors.is_empty() && report.retryable_errors.is_empty(),
@@ -228,6 +224,60 @@ fn materialize(
             );
         }
     }
+    let unpublished = agent.execution.observe(&authorization).unwrap().unwrap();
+    assert!(unpublished.outcome_id.is_some());
+    assert!(unpublished.execution_publication_position_id.is_none());
+    for _ in 0..2 {
+        let report = supervisor.step_owner_for_test(
+            "dependency_security.observation",
+            WorkBudget { max_items: 1 },
+        );
+        assert!(
+            report.fatal_errors.is_empty() && report.retryable_errors.is_empty(),
+            "{report:?}"
+        );
+    }
+    let published =
+        supervisor.step_owner_for_test("execution.publication", WorkBudget { max_items: 8 });
+    assert!(
+        published.fatal_errors.is_empty() && published.retryable_errors.is_empty(),
+        "{published:?}"
+    );
+    let RuntimeSemanticHandleFactory::SecurityObservation(observer) = &assembly
+        .handle_factories()
+        .get("dependency_security.observation")
+        .unwrap()
+        .semantic
+    else {
+        unreachable!()
+    };
+    let inventory_source = observer
+        .sources
+        .iter()
+        .find(|source| source.id == crate::dependency_security::capability::OBSERVE_INVENTORY)
+        .unwrap();
+    let pending = crate::dependency_security::returns::pending(
+        inventory_source,
+        &harness.authority.replay_capability(),
+    )
+    .unwrap();
+    assert_eq!(
+        pending.len(),
+        1,
+        "late Execution publication still needs an explicit source acknowledgment"
+    );
+    let mut foreign = inventory_source.clone();
+    let other_workspace = tempfile::tempdir().unwrap();
+    foreign.workspace = Some(other_workspace.path().into());
+    assert!(
+        crate::dependency_security::returns::pending(
+            &foreign,
+            &harness.authority.replay_capability()
+        )
+        .unwrap()
+        .is_empty(),
+        "a recognized subject on another physical workspace cannot receive this outcome"
+    );
     let returned = agent.execution.observe(&authorization).unwrap().unwrap();
     assert!(returned.outcome_id.is_some(), "{returned:?}");
     assert!(
@@ -446,6 +496,44 @@ pub(super) fn verify_trace(harness: &StewardshipHarness) {
                 && event.event_type == "dependency_security.inventory_observed.v1"
         })
         .unwrap();
+    let acknowledgments: Vec<_> = events
+        .iter()
+        .filter(|event| {
+            event.event_type == "dependency_security.inventory_observed.v1"
+                && event.data["execution_causes"]
+                    .as_array()
+                    .is_some_and(|causes| !causes.is_empty())
+        })
+        .collect();
+    assert_eq!(acknowledgments.len(), 2);
+    for acknowledgment in &acknowledgments {
+        let causes: Vec<crate::dependency_security::returns::ExecutionObservationCause> =
+            serde_json::from_value(acknowledgment.data["execution_causes"].clone()).unwrap();
+        assert_eq!(causes.len(), 1);
+        let cause = &causes[0];
+        assert!(
+            cause.materialization.seq < cause.outcome.seq && cause.outcome.seq < acknowledgment.seq
+        );
+        assert_eq!(
+            acknowledgment.provenance.source_records,
+            vec![cause.materialization, cause.outcome]
+        );
+        let predecessor = events
+            .iter()
+            .find(|event| {
+                event.record_id.as_ref()
+                    == acknowledgment.data["predecessor_source_id"]
+                        .as_str()
+                        .map(String::from)
+                        .as_ref()
+            })
+            .unwrap();
+        assert_eq!(
+            acknowledgment.data["inventory"]["snapshot_id"],
+            predecessor.data["inventory"]["snapshot_id"],
+            "a late outcome is acknowledged even when source content was already observed"
+        );
+    }
     let (inventory_at, inventory) = latest_security_product(&events, INVENTORY);
     let (assessment_at, assessment) = latest_security_product(&events, ASSESSMENT);
     let (verified_at, verification) = latest_security_product(&events, VERIFICATION);
@@ -518,6 +606,7 @@ pub(super) fn restart(harness: &StewardshipHarness) {
         "code_change.intent.v1",
         "code_change.materialized.v1",
         "dependency_security.invocation_return.v1",
+        "dependency_security.inventory_observed.v1",
     ] {
         let prior: Vec<_> = before
             .iter()

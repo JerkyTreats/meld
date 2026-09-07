@@ -30,6 +30,8 @@ pub(super) struct SourceObservation {
     pub source_action: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inventory: Option<DependencyInventorySnapshotV1>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub execution_causes: Vec<super::returns::ExecutionObservationCause>,
 }
 
 pub(super) fn validate_permission(
@@ -111,6 +113,20 @@ impl SourceObservation {
     pub fn validate(&self) -> Result<(), String> {
         validate_permission(&self.authority, &self.subject.subject, self.action())?;
         self.policy.validate()?;
+        if self.execution_causes.len() > super::returns::MAX_CAUSES {
+            return Err("Security observation exceeds its bounded producer cause set".into());
+        }
+        if !self.execution_causes.is_empty() && self.action() != OBSERVE_INVENTORY {
+            return Err(
+                "Execution returns can request only the bound inventory observation".into(),
+            );
+        }
+        if self.execution_causes.windows(2).any(|pair| {
+            (pair[0].outcome.seq, pair[0].materialization.seq)
+                >= (pair[1].outcome.seq, pair[1].materialization.seq)
+        }) {
+            return Err("Security observation causes must be unique and ordered".into());
+        }
         if self.binding_id.is_empty()
             || self.generation_id.is_empty()
             || self.incarnation_id.is_empty()
@@ -152,6 +168,14 @@ impl SourceObservation {
     ) -> Result<Self, String> {
         let value: Self = serde_json::from_value(record.data.clone()).map_err(|e| e.to_string())?;
         value.validate()?;
+        for cause in &value.execution_causes {
+            cause.validate(ledger, record.seq)?;
+        }
+        if record.provenance.source_records != super::returns::positions(&value.execution_causes) {
+            return Err(
+                "Security observation provenance differs from its accepted Execution causes".into(),
+            );
+        }
         if record.event_type != value.event_type()
             || record.record_id.as_deref() != Some(value.record_id(ledger)?.as_str())
         {
@@ -170,7 +194,8 @@ impl SourceObservation {
             None,
             serde_json::to_value(self).map_err(|e| e.to_string())?,
         )
-        .with_record_id(self.record_id(ledger)?))
+        .with_record_id(self.record_id(ledger)?)
+        .with_source_records(super::returns::positions(&self.execution_causes)))
     }
 }
 
@@ -203,6 +228,7 @@ fn latest(
         }) {
             let observed = SourceObservation::from_record(&record, ledger_id)?;
             if observed.subject == capability.subject && observed.policy == capability.policy {
+                super::returns::validate_retained(&observed, events)?;
                 latest.insert(observed.kind().to_owned(), (record, observed));
             }
         }
@@ -304,6 +330,7 @@ pub(crate) fn poll(
         current,
         captured,
         resumed,
+        vec![],
     )
 }
 
@@ -320,6 +347,7 @@ pub(crate) async fn poll_inventory(
     let (current, bodies) =
         super::condition::current_state(capability, &events.replay_capability())
             .map_err(|e| e.to_string())?;
+    let execution_causes = super::returns::pending(capability, &events.replay_capability())?;
     let previous: Option<DependencyInventorySnapshotV1> = bodies
         .get(INVENTORY)
         .cloned()
@@ -367,6 +395,7 @@ pub(crate) async fn poll_inventory(
         current,
         captured,
         resumed,
+        execution_causes,
     )
 }
 
@@ -393,6 +422,7 @@ fn record_capture(
     current: Option<super::condition::CurrentSecurityCondition>,
     captured: Result<CapturedSource, String>,
     resumed: bool,
+    execution_causes: Vec<super::returns::ExecutionObservationCause>,
 ) -> Result<(bool, Option<String>), String> {
     let failure = captured.as_ref().err().cloned();
     let source_id = match &captured {
@@ -416,10 +446,11 @@ fn record_capture(
     } else {
         unavailable
     };
-    if current
-        .as_ref()
-        .and_then(|condition| condition.products.get(kind))
-        .is_some_and(|position| position.product_id == source_id)
+    if execution_causes.is_empty()
+        && current
+            .as_ref()
+            .and_then(|condition| condition.products.get(kind))
+            .is_some_and(|position| position.product_id == source_id)
     {
         return Ok((resumed, failure));
     }
@@ -450,6 +481,7 @@ fn record_capture(
         failure: failure.clone(),
         source_action: inventory_source.then(|| OBSERVE_INVENTORY.into()),
         inventory,
+        execution_causes,
     };
     events
         .append_durable_proven(
@@ -563,6 +595,7 @@ pub(super) mod tests {
             failure: None,
             source_action: None,
             inventory: None,
+            execution_causes: vec![],
         };
         #[derive(Serialize)]
         struct RetainedAdvisoryV1<'a> {
@@ -710,6 +743,93 @@ pub(super) mod tests {
         assert!(SourceObservation::from_record(&tampered, events.ledger_identity()).is_err());
     }
 
+    #[test]
+    fn observation_causes_require_exact_provenance_and_retained_owner_products() {
+        let root = tempfile::tempdir().unwrap();
+        let events = EventAuthority::open(
+            sled::open(root.path().join("events")).unwrap(),
+            EventAuthorityOpenOptions::default(),
+        )
+        .unwrap();
+        let (mut capability, authority, _) = fixture(&root.path().join("source"));
+        capability.id = OBSERVE_INVENTORY.into();
+        let mut policy = authority.policy;
+        policy.principal_granted_action_ids = vec![OBSERVE_INVENTORY.into()];
+        policy.runtime_allowed_action_ids = vec![OBSERVE_INVENTORY.into()];
+        let authority =
+            AuthorityPolicyBinding::new(policy.clone(), policy.content_hash().unwrap()).unwrap();
+        for index in 0..2 {
+            events
+                .append_capability()
+                .append_durable(
+                    EventEnvelope::with_now_domain(
+                        "fixture",
+                        "unrelated",
+                        "source",
+                        "unrelated.fact",
+                        None,
+                        serde_json::json!({"index":index}),
+                    ),
+                    AppendMode::Idempotent,
+                )
+                .unwrap();
+        }
+        let observed = SourceObservation {
+            subject: capability.subject.clone(),
+            policy: capability.policy.clone(),
+            authority,
+            binding_id: "inventory-binding".into(),
+            predecessor_source_id: None,
+            generation_id: "generation".into(),
+            incarnation_id: "incarnation".into(),
+            observed_at: 10,
+            advisory: None,
+            inventory: None,
+            failure: Some("source unavailable".into()),
+            source_action: Some(OBSERVE_INVENTORY.into()),
+            execution_causes: vec![super::super::returns::ExecutionObservationCause {
+                materialization: meld_events::EventRecordRef {
+                    ledger_id: events.ledger_identity(),
+                    seq: 1,
+                },
+                outcome: meld_events::EventRecordRef {
+                    ledger_id: events.ledger_identity(),
+                    seq: 2,
+                },
+            }],
+        };
+        let mut record = EventRecord {
+            seq: 3,
+            envelope: observed.envelope(events.ledger_identity()).unwrap(),
+        };
+        assert!(SourceObservation::from_record(&record, events.ledger_identity()).is_ok());
+        assert!(
+            super::super::returns::validate_retained(&observed, &events.replay_capability())
+                .is_err(),
+            "syntactically valid positions cannot borrow unrelated owner records"
+        );
+        record.envelope.provenance.source_records.clear();
+        assert!(SourceObservation::from_record(&record, events.ledger_identity()).is_err());
+        let mut unordered = observed.clone();
+        unordered.execution_causes[0].materialization.seq = 2;
+        let record = EventRecord {
+            seq: 3,
+            envelope: unordered.envelope(events.ledger_identity()).unwrap(),
+        };
+        assert!(SourceObservation::from_record(&record, events.ledger_identity()).is_err());
+        events
+            .append_capability()
+            .append_durable(
+                observed.envelope(events.ledger_identity()).unwrap(),
+                AppendMode::Idempotent,
+            )
+            .unwrap();
+        assert!(
+            super::super::condition::current(&capability, &events.replay_capability()).is_err(),
+            "current Security meaning refuses an unproved causal receipt"
+        );
+    }
+
     #[tokio::test]
     async fn inventory_observation_recovers_then_invalidates_unavailable_source_without_refreshing_unchanged_evidence(
     ) {
@@ -762,6 +882,7 @@ pub(super) mod tests {
             failure: None,
             source_action: Some(OBSERVE_INVENTORY.into()),
             inventory: Some(product.clone()),
+            execution_causes: vec![],
         };
         {
             let events = EventAuthority::open(

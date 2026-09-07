@@ -144,6 +144,17 @@ impl CodeChangeReceipt {
     }
 }
 
+/// Code-change-owned proof for an intact artifact returned through Execution.
+/// Physical identity names the directory bound when the intent was accepted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MaterializationEvidence {
+    pub change: CodeChangeSet,
+    pub intent: meld_events::EventRecordRef,
+    pub materialization: meld_events::EventRecordRef,
+    pub workspace_root: std::path::PathBuf,
+    pub workspace_identity: (u64, u64),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

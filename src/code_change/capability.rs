@@ -141,21 +141,7 @@ impl CodeChangeCapability {
         payload: &CapabilityInvocationPayload,
         context: Option<&ExecutionEventContext>,
     ) -> Result<Operation<'_>, ApiError> {
-        let expected = contract();
-        if runtime.capability_type_id != APPLY
-            || runtime.capability_version != 1
-            || runtime.scope_ref != self.subject
-            || !runtime.binding_values.is_empty()
-            || runtime.scope_kind != expected.scope_contract.scope_kind
-            || runtime.input_contract != expected.input_contract
-            || runtime.output_contract != expected.output_contract
-            || runtime.effect_contract != expected.effect_contract
-            || runtime.execution_contract != expected.execution_contract
-        {
-            return Err(invalid(
-                "code change invocation differs from its exact selected contract",
-            ));
-        }
+        validate_runtime(runtime, &self.subject)?;
         payload.validate_against(runtime)?;
         if payload
             .upstream_lineage
@@ -251,30 +237,67 @@ impl CapabilityInvoker for CodeChangeCapability {
     }
 }
 
+pub(super) fn validate_runtime(
+    runtime: &CapabilityRuntimeInit,
+    subject: &str,
+) -> Result<(), ApiError> {
+    let expected = contract();
+    if runtime.capability_type_id != APPLY
+        || runtime.capability_version != 1
+        || runtime.scope_ref != subject
+        || !runtime.binding_values.is_empty()
+        || runtime.scope_kind != expected.scope_contract.scope_kind
+        || runtime.input_contract != expected.input_contract
+        || runtime.output_contract != expected.output_contract
+        || runtime.effect_contract != expected.effect_contract
+        || runtime.execution_contract != expected.execution_contract
+    {
+        return Err(invalid(
+            "code change invocation differs from its exact selected contract",
+        ));
+    }
+    Ok(())
+}
+
 fn result(
     runtime: &CapabilityRuntimeInit,
     payload: &CapabilityInvocationPayload,
     receipt: CodeChangeReceipt,
 ) -> Result<CapabilityInvocationResult, ApiError> {
     Ok(CapabilityInvocationResult {
-        emitted_artifacts: vec![ArtifactRecord {
-            artifact_id: format!("{}::{RECEIPT}", payload.invocation_id),
-            artifact_type_id: RECEIPT.into(),
-            schema_version: 1,
-            content: serde_json::to_value(receipt).map_err(invalid)?,
-            producer: ArtifactProducerRef {
-                task_id: payload
-                    .upstream_lineage
-                    .as_ref()
-                    .map(|lineage| lineage.task_id.clone())
-                    .unwrap_or_default(),
-                capability_instance_id: runtime.capability_instance_id.clone(),
-                invocation_id: Some(payload.invocation_id.clone()),
-                output_slot_id: Some(RECEIPT.into()),
-            },
-        }],
+        emitted_artifacts: vec![materialization_artifact(
+            runtime,
+            &payload.invocation_id,
+            payload
+                .upstream_lineage
+                .as_ref()
+                .map(|lineage| lineage.task_id.as_str())
+                .unwrap_or_default(),
+            receipt,
+        )?],
     })
 }
+
+pub(super) fn materialization_artifact(
+    runtime: &CapabilityRuntimeInit,
+    invocation_id: &str,
+    task_id: &str,
+    receipt: CodeChangeReceipt,
+) -> Result<ArtifactRecord, ApiError> {
+    Ok(ArtifactRecord {
+        artifact_id: format!("{invocation_id}::{RECEIPT}"),
+        artifact_type_id: RECEIPT.into(),
+        schema_version: 1,
+        content: serde_json::to_value(receipt).map_err(invalid)?,
+        producer: ArtifactProducerRef {
+            task_id: task_id.into(),
+            capability_instance_id: runtime.capability_instance_id.clone(),
+            invocation_id: Some(invocation_id.into()),
+            output_slot_id: Some(RECEIPT.into()),
+        },
+    })
+}
+
 fn diagnostic(message: impl Into<String>) -> CapabilityContributionDiagnostic {
     CapabilityContributionDiagnostic::new("code_change_binding_invalid", message)
 }
@@ -436,6 +459,27 @@ mod tests {
             "new content"
         );
         assert_eq!(result.emitted_artifacts[0].producer.task_id, "code-task");
+        let evidence = crate::code_change::materialization_evidence(
+            &events.replay_capability(),
+            &result.emitted_artifacts[0],
+        )
+        .unwrap();
+        assert_eq!(evidence.change, change);
+        assert!(evidence.intent.seq < evidence.materialization.seq);
+        let mut foreign_artifact = result.emitted_artifacts[0].clone();
+        foreign_artifact.producer.invocation_id = Some("foreign-invocation".into());
+        assert!(crate::code_change::materialization_evidence(
+            &events.replay_capability(),
+            &foreign_artifact
+        )
+        .is_err());
+        let mut tampered = result.emitted_artifacts[0].clone();
+        tampered.content["materialized_files"][0]["after_hash"] = "foreign-content".into();
+        assert!(crate::code_change::materialization_evidence(
+            &events.replay_capability(),
+            &tampered
+        )
+        .is_err());
         assert_eq!(
             invoker
                 .recover(

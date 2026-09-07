@@ -5,3 +5,5 @@ pub mod capability;
 pub mod contracts;
 mod mutation;
 mod operation;
+
+pub use operation::materialization_evidence;
