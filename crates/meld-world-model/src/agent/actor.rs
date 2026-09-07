@@ -142,6 +142,9 @@ pub struct AgentReconciliationActor {
     preparation: crate::agent::AgentPreparation,
     lifecycle: crate::lifecycle::NativeLifecycle,
     work_lock: parking_lot::Mutex<()>,
+    // Scheduling position carries no authorization or completion meaning. Restart
+    // may reset the rotation; durable product history still governs eligibility.
+    last_selected_product: parking_lot::Mutex<Option<(String, String)>>,
 }
 
 impl AgentReconciliationActor {
@@ -220,6 +223,7 @@ impl AgentReconciliationActor {
         Ok(Self {
             lifecycle: crate::lifecycle::NativeLifecycle::new(actor_id.clone()),
             work_lock: parking_lot::Mutex::new(()),
+            last_selected_product: parking_lot::Mutex::new(None),
             actor_id,
             intent,
             store,
@@ -1231,7 +1235,34 @@ impl GoalReconciliation<'_, '_> {
             report.budget_exhausted = true;
             return report;
         }
+        let products: Vec<_> = plan
+            .epistemic_operations
+            .iter()
+            .map(|operation| operation.product_id.as_str())
+            .chain(plan.tasks.iter().map(|task| task.task_id.as_str()))
+            .collect();
+        let selected = {
+            let mut previous = self.last_selected_product.lock();
+            let start = previous
+                .as_ref()
+                .filter(|(revision, _)| revision == &plan.plan_revision_id)
+                .and_then(|(_, product)| products.iter().position(|id| *id == product))
+                .map_or(0, |position| position + 1);
+            let selected = (0..products.len())
+                .map(|offset| products[(start + offset) % products.len()])
+                .find(|id| {
+                    !product_completed(&plan, id, &history)
+                        && dependencies_satisfied(&plan, id, &history)
+                });
+            if let Some(product) = selected {
+                *previous = Some((plan.plan_revision_id.clone(), product.to_string()));
+            }
+            selected
+        };
         for authorization in &current_authorizations {
+            if selected != Some(authorization.product_id.as_str()) {
+                continue;
+            }
             if product_completed(&plan, &authorization.product_id, &history) {
                 continue;
             }
@@ -1288,6 +1319,9 @@ impl GoalReconciliation<'_, '_> {
             return report;
         }
         for epistemic in &plan.epistemic_operations {
+            if selected != Some(epistemic.product_id.as_str()) {
+                continue;
+            }
             if product_completed(&plan, &epistemic.product_id, &history)
                 || !dependencies_satisfied(&plan, &epistemic.product_id, &history)
             {
@@ -1313,6 +1347,9 @@ impl GoalReconciliation<'_, '_> {
             return report;
         }
         for task in &plan.tasks {
+            if selected != Some(task.task_id.as_str()) {
+                continue;
+            }
             if product_completed(&plan, &task.task_id, &history)
                 || !dependencies_satisfied(&plan, &task.task_id, &history)
             {
@@ -2825,6 +2862,49 @@ mod tests {
         }
     }
 
+    struct SelectedTerminalExecution {
+        completed: Mutex<Vec<String>>,
+        submissions: Mutex<Vec<String>>,
+    }
+
+    impl AgentExecutionPort for SelectedTerminalExecution {
+        fn submit(
+            &self,
+            authorization: &AgentProductAuthorization,
+        ) -> Result<AgentExecutionPosition, StorageError> {
+            self.submissions
+                .lock()
+                .unwrap()
+                .push(authorization.authorization_id.clone());
+            PendingExecution::position(authorization)
+        }
+
+        fn observe(
+            &self,
+            authorization: &AgentProductAuthorization,
+        ) -> Result<Option<AgentExecutionPosition>, StorageError> {
+            self.advance(authorization).map(Some)
+        }
+
+        fn advance(
+            &self,
+            authorization: &AgentProductAuthorization,
+        ) -> Result<AgentExecutionPosition, StorageError> {
+            let mut position = PendingExecution::position(authorization)?;
+            if self
+                .completed
+                .lock()
+                .unwrap()
+                .contains(&authorization.product_id)
+            {
+                position.outcome_id = Some(format!("outcome::{}", authorization.authorization_id));
+                position.execution_publication_position_id =
+                    Some(format!("published::{}", authorization.authorization_id));
+            }
+            Ok(position)
+        }
+    }
+
     struct TerminalExecution {
         submissions: Mutex<Vec<String>>,
     }
@@ -3159,6 +3239,123 @@ mod tests {
             .recommendation
             .unwrap()
         }
+    }
+
+    #[test]
+    fn waiting_task_does_not_block_an_independently_eligible_task() {
+        prove_independent_task_progression(8);
+    }
+
+    #[test]
+    fn single_item_ticks_admit_and_accept_independent_tasks_without_starvation() {
+        prove_independent_task_progression(1);
+    }
+
+    fn prove_independent_task_progression(budget: usize) {
+        let mut fixture = Fixture::new();
+        let package = &mut fixture.strategy.package;
+        let mut capability = package.capabilities[0].clone();
+        capability.contract_id = "independent-index-contract".into();
+        capability.outcome_contract_id = "independent-index-outcome".into();
+        capability.operator.operator_id = "independent-index".into();
+        capability
+            .operator
+            .resolution
+            .specific
+            .as_mut()
+            .unwrap()
+            .capability_type_id = "test.index".into();
+        capability.operator.resolution.requires_outputs[0].artifact_type =
+            Term::ArtifactType("index_evidence".into());
+        let effect = Proposition::Exists {
+            scope: Term::Variable("?subject".into()),
+            artifact_type: Term::ArtifactType("index_evidence".into()),
+        };
+        capability.operator.effects = vec![meld_lang::Effect::Assert(effect.clone())];
+        package.capabilities.push(capability);
+        package.requested_authority.push("test.index".into());
+        let rule = &mut package.snapshot.settlement_rules[0];
+        rule.settlement_obligation =
+            Proposition::All(vec![rule.settlement_obligation.clone(), effect]);
+        package.search_bounds.max_expansions = 128;
+        let plan = fixture.expected_plan();
+        assert_eq!(plan.tasks.len(), 2);
+        let execution = Arc::new(SelectedTerminalExecution {
+            completed: Mutex::new(Vec::new()),
+            submissions: Mutex::new(Vec::new()),
+        });
+        let (mut actor, _) = fixture.actor(
+            vec![PlannerAssemblyOutcome::Complete(Box::new(
+                fixture.cut.clone(),
+            ))],
+            true,
+        );
+        actor.execution = execution.clone();
+        for _ in 0..32 {
+            let report = actor.bounded_step(budget);
+            assert!(report.products_authorized <= budget, "{report:?}");
+            assert!(report.fatal_errors.is_empty(), "{report:?}");
+            assert!(report.retryable_errors.is_empty(), "{report:?}");
+        }
+        let authorizations = fixture
+            .store
+            .product_authorizations_for_goal(&fixture.goal.goal_id)
+            .unwrap();
+        let tasks: Vec<_> = authorizations
+            .iter()
+            .filter(|record| matches!(record.product, AgentAuthorizedProduct::Task(_)))
+            .collect();
+        assert_eq!(
+            tasks.len(),
+            2,
+            "waiting work must not become an implicit dependency"
+        );
+        assert_ne!(tasks[0].authorization_id, tasks[1].authorization_id);
+        assert_ne!(tasks[0].product_id, tasks[1].product_id);
+        assert!(fixture
+            .store
+            .completed_history_for_goal(&fixture.goal.goal_id)
+            .unwrap()
+            .iter()
+            .all(|entry| !matches!(
+                entry.product,
+                Some(crate::strategy::StrategyProduct::Task(_))
+            )));
+        execution
+            .completed
+            .lock()
+            .unwrap()
+            .push(plan.tasks[1].task_id.clone());
+        for _ in 0..4 {
+            let report = actor.bounded_step(budget);
+            assert!(
+                report.fatal_errors.is_empty() && report.retryable_errors.is_empty(),
+                "{report:?}"
+            );
+        }
+        let history = fixture
+            .store
+            .completed_history_for_goal(&fixture.goal.goal_id)
+            .unwrap();
+        let returned: Vec<_> = history
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    entry.product,
+                    Some(crate::strategy::StrategyProduct::Task(_))
+                )
+            })
+            .collect();
+        assert_eq!(returned.len(), 1);
+        assert_eq!(returned[0].product_id, plan.tasks[1].task_id);
+        assert_eq!(execution.submissions.lock().unwrap().len(), 2);
+        assert_eq!(
+            fixture
+                .store
+                .product_authorizations_for_goal(&fixture.goal.goal_id)
+                .unwrap(),
+            authorizations
+        );
     }
 
     #[test]

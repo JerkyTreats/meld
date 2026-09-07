@@ -2,9 +2,12 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use meld_lang::{evaluate, EdgeKind, Effect, EvalResult, Proposition, StepKind};
+use meld_lang::{evaluate, EdgeKind, EvalResult, StepKind};
 
-use super::search::{candidate_evaluation, plan_family_identity, plan_revision_identity};
+use super::search::{
+    candidate_evaluation, composition_contributes, plan_family_identity, plan_revision_identity,
+    terminal_outcome_contract,
+};
 use super::{
     PlanMilestoneRequirement, PlanVerification, StrategyPlan, StrategyProblem,
     StrategyRejectionGround, StrategySuccessorPlan, StrategySuccessorRequest,
@@ -43,16 +46,15 @@ fn verify_with_history(
                     .map(|bindings| (rule, bindings))
             })
             .filter(|(rule, _)| rule.epistemic_placement.is_confirmation())
-            .and_then(|(rule, bindings)| {
-                super::search::ground_proposition(&rule.settlement_obligation, &bindings).ok()
-            })
-            .is_some_and(|settlement| {
-                history.iter().any(|entry| {
-                    matches!(&entry.product,
-                Some(super::StrategyProduct::Task(task)) if task.task_id == entry.product_id
-                    && task.confirmation_milestone() == entry.accepted_milestone
-                    && composition_contributes(&task.composition, &settlement))
-                })
+            .is_some_and(|(rule, bindings)| {
+                super::search::ground_proposition(&rule.settlement_obligation, &bindings).is_ok_and(
+                    |settlement| {
+                        super::search::history_contributes(
+                            &super::search::completed_task_history(history),
+                            &settlement,
+                        )
+                    },
+                )
             });
         if confirmation_required {
             let operations = super::search::epistemic_products(problem);
@@ -130,18 +132,17 @@ fn verify_with_history(
             || candidate.bindings != meld_lang::Bindings::empty()
             || !candidate.capability_contract_ids.is_empty()
             || !candidate.epistemic_operations.iter().all(|operation| {
-                candidate.dependencies.iter().any(|dependency| {
-                    dependency.consumer_product_id == operation.product_id
-                        && history.iter().any(|entry| {
-                            entry.product_id == dependency.producer_product_id
-                                && entry.accepted_milestone == dependency.required_milestone
-                                && matches!(&entry.product, Some(super::StrategyProduct::Task(task))
-                                    if task.task_id == entry.product_id
-                                    && super::search::confirmation_expectation_matches(problem, rule, task)
-                                    && task.confirmation_milestone() == entry.accepted_milestone
-                                    && composition_contributes(&task.composition, &candidate.settlement_obligation))
+                let linked: Vec<_> = super::search::confirmation_history(problem, rule, history)
+                    .into_iter()
+                    .filter(|entry| {
+                        candidate.dependencies.iter().any(|dependency| {
+                            dependency.consumer_product_id == operation.product_id
+                                && dependency.producer_product_id == entry.product_id
+                                && dependency.required_milestone == entry.accepted_milestone
                         })
-                })
+                    })
+                    .collect();
+                super::search::history_contributes(&linked, &candidate.settlement_obligation)
             })
         {
             grounds.push(StrategyRejectionGround::InvalidComposition);
@@ -192,7 +193,7 @@ fn verify_with_history(
             grounds.push(StrategyRejectionGround::InvalidComposition);
         }
         for operation in &candidate.epistemic_operations {
-            let linked = candidate.tasks.iter().any(|task| {
+            let linked = candidate.tasks.iter().all(|task| {
                 candidate
                     .dependencies
                     .iter()
@@ -346,7 +347,8 @@ fn verify_with_history(
         }
         if task_contracts != task.capability_contract_ids.iter().cloned().collect()
             || task_authority != task.authority_requirements.iter().cloned().collect()
-            || task.expected_outcome_contract_id != rule.evidence_route.outcome_contract_id
+            || terminal_outcome_contract(problem, &task.composition)
+                != Some(task.expected_outcome_contract_id.as_str())
         {
             grounds.push(StrategyRejectionGround::IdentityMismatch);
         }
@@ -414,6 +416,16 @@ pub fn verify_successor_plan(
         || successor.plan.plan_family_id != predecessor.plan_family_id
         || successor.plan.predecessor_plan_revision_id.as_ref()
             != Some(&predecessor.plan_revision_id)
+        || successor.plan.origin == super::StrategyPlanOrigin::Confirmation
+            && predecessor.tasks.iter().any(|task| {
+                !successor.plan.epistemic_operations.iter().all(|operation| {
+                    successor.plan.dependencies.iter().any(|dependency| {
+                        dependency.producer_product_id == task.task_id
+                            && dependency.consumer_product_id == operation.product_id
+                            && dependency.required_milestone == task.confirmation_milestone()
+                    })
+                })
+            })
         || successor.completed_history != request.completed_history
         || request.completed_history.iter().any(|entry| {
             if entry.source_plan_revision_id != predecessor.plan_revision_id {
@@ -509,13 +521,4 @@ fn dependencies_valid(
         }
     }
     true
-}
-
-fn composition_contributes(composition: &meld_lang::Composition, obligation: &Proposition) -> bool {
-    composition.steps.iter().any(|step| match &step.kind {
-        StepKind::Op(operator) => operator.effects.iter().any(
-            |effect| matches!(effect, Effect::Assert(proposition) if proposition == obligation),
-        ),
-        StepKind::Goal(_) => false,
-    })
 }
