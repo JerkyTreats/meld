@@ -239,6 +239,7 @@ fn native_epoch_specification_drives_curation_and_preserves_distinct_observation
             fence.clone(),
             Arc::new(crate::runtime::ports::ProductPlannedCurationPort::new(
                 curation.clone(),
+                traversal.clone(),
             )),
             Arc::new(NoExecution),
             runtime_strategy.clone(),

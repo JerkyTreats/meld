@@ -206,6 +206,29 @@ pub fn search_successor(request: &StrategySuccessorRequest) -> StrategySuccessor
             plan.dependencies.extend(ordering);
         }
 
+        if !plan.epistemic_operations.is_empty() {
+            let retained = epistemic_products_with_history(
+                &request.search.problem,
+                &request.completed_history,
+            );
+            for (operation, prior) in plan.epistemic_operations.iter().zip(&retained) {
+                if operation.product_id == prior.product_id {
+                    continue;
+                }
+                for edge in &mut plan.dependencies {
+                    if edge.producer_product_id == operation.product_id {
+                        *edge = dependency(
+                            &prior.product_id,
+                            &edge.consumer_product_id,
+                            PlanMilestoneRequirement::CurationVisible {
+                                operation_id: prior.operation.operation_id.clone(),
+                            },
+                        );
+                    }
+                }
+            }
+            plan.epistemic_operations = retained;
+        }
         plan.plan_family_id = predecessor.plan_family_id.clone();
         plan.predecessor_plan_revision_id = Some(predecessor.plan_revision_id.clone());
         plan.plan_revision_id = plan_revision_identity(&plan);
@@ -393,6 +416,46 @@ pub(crate) fn confirmation_expectation_matches(
         StrategyEpistemicPlacement::Confirmation => task.effect_visibility.is_none(),
         StrategyEpistemicPlacement::Prerequisite => false,
     }
+}
+
+/// A prerequisite's own publication changes the cut, but does not create a new obligation
+/// when the new cut still selects the exact accepted result over unchanged source evidence.
+pub(crate) fn epistemic_products_with_history(
+    problem: &StrategyProblem,
+    history: &[StrategyCompletedHistoryEntry],
+) -> Vec<StrategyEpistemicOperation> {
+    epistemic_products(problem)
+        .into_iter()
+        .map(|operation| {
+            if operation.return_evidence.is_some() {
+                return operation;
+            }
+            history
+                .iter()
+                .find_map(|entry| {
+                    let Some(StrategyProduct::Epistemic(prior)) = &entry.product else {
+                        return None;
+                    };
+                    (entry.product_id == prior.product_id
+                        && prior.accepts_return(&entry.accepted_milestone)
+                        && prior.operation.authority == operation.operation.authority
+                        && prior.operation.request_id == operation.operation.request_id
+                        && prior.same_source_as(&operation)
+                        && problem
+                            .planner_cut
+                            .traversal_cut
+                            .receipts
+                            .iter()
+                            .any(|receipt| {
+                                receipt.owner_id == crate::curation::CURATION_OWNER_ID
+                                    && receipt.scope == operation.operation.source_cut.scope
+                                    && receipt.revision_id == entry.owner_position_id
+                            }))
+                    .then(|| prior.as_ref().clone())
+                })
+                .unwrap_or(operation)
+        })
+        .collect()
 }
 
 pub(crate) fn epistemic_products(problem: &StrategyProblem) -> Vec<StrategyEpistemicOperation> {
@@ -1001,7 +1064,7 @@ fn finish_bodies(
                     StrategyEpistemicPlacement::Prerequisite => dependency(
                         &operation.product_id,
                         &task.task_id,
-                        PlanMilestoneRequirement::CurationTerminal {
+                        PlanMilestoneRequirement::CurationVisible {
                             operation_id: operation.operation.operation_id.clone(),
                         },
                     ),

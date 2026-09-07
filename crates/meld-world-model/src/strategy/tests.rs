@@ -317,13 +317,28 @@ fn constructs_a_mixed_plan_with_typed_curation_dependency() {
     assert_eq!(plan.dependencies.len(), 1);
     assert!(matches!(
         plan.dependencies[0].required_milestone,
-        PlanMilestoneRequirement::CurationTerminal { .. }
+        PlanMilestoneRequirement::CurationVisible { .. }
     ));
     assert_eq!(
         verify_plan(&problem, &plan),
         PlanVerification::Valid {
             evaluation: plan.evaluation.clone()
         }
+    );
+    let mut narrowed = plan.clone();
+    narrowed.dependencies[0].required_milestone = PlanMilestoneRequirement::CurationTerminal {
+        operation_id: narrowed.epistemic_operations[0]
+            .operation
+            .operation_id
+            .clone(),
+    };
+    narrowed.plan_revision_id = super::search::plan_revision_identity(&narrowed);
+    assert!(
+        matches!(
+            verify_plan(&problem, &narrowed),
+            PlanVerification::Invalid { .. }
+        ),
+        "terminal persistence cannot replace the prerequisite return"
     );
 }
 

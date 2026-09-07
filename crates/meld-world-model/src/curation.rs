@@ -14,6 +14,7 @@ mod store;
 #[cfg(test)]
 mod tests;
 mod theory;
+mod visibility;
 
 pub use actor::*;
 pub use contracts::*;
@@ -23,3 +24,4 @@ pub use query::*;
 pub use selection::*;
 pub use store::*;
 pub use theory::*;
+pub use visibility::*;

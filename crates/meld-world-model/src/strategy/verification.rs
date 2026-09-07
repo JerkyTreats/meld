@@ -118,7 +118,8 @@ fn verify_with_history(
     if candidate.conditions != vec![problem.goal.target.clone()]
         || candidate.explanation.trim().is_empty()
         || candidate.frozen_context_id != problem.planner_cut.context.context_id
-        || candidate.epistemic_operations != super::search::epistemic_products(problem)
+        || candidate.epistemic_operations
+            != super::search::epistemic_products_with_history(problem, history)
         || !dependencies_valid(candidate, history)
     {
         grounds.push(StrategyRejectionGround::InvalidComposition);
@@ -258,7 +259,7 @@ fn verify_with_history(
                             dependency.producer_product_id == operation.product_id
                                 && dependency.consumer_product_id == task.task_id
                                 && dependency.required_milestone
-                                    == PlanMilestoneRequirement::CurationTerminal {
+                                    == PlanMilestoneRequirement::CurationVisible {
                                         operation_id: operation.operation.operation_id.clone(),
                                     }
                         }
@@ -528,7 +529,7 @@ pub(crate) fn dependencies_valid(
         if products
             .insert(
                 operation.product_id.as_str(),
-                vec![PlanMilestoneRequirement::CurationTerminal {
+                vec![PlanMilestoneRequirement::CurationVisible {
                     operation_id: operation.operation.operation_id.clone(),
                 }],
             )

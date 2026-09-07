@@ -99,6 +99,23 @@ pub trait AgentCurationPort: Send + Sync {
         operation_id: &str,
     ) -> Result<Option<CurationAcceptanceRecord>, StorageError>;
     fn result(&self, operation_id: &str) -> Result<Option<CurationResult>, StorageError>;
+
+    /// Existing returns remain consumable after the authorization epoch closes.
+    fn historical_prerequisite_visibility(
+        &self,
+        _operation_id: &str,
+    ) -> Result<Option<crate::curation::CurationVisibilityProof>, StorageError> {
+        Ok(None)
+    }
+
+    /// Native Curation and Graph proof for prerequisite completion. Old adapters cannot infer it.
+    fn prerequisite_visibility(
+        &self,
+        _operation_id: &str,
+        _cut: &crate::world_state::graph::contracts::TraversalCut,
+    ) -> Result<Option<crate::curation::CurationVisibilityProof>, StorageError> {
+        Ok(None)
+    }
 }
 
 /// Execution consumer and owner-return boundary used by Agent progression.
@@ -1575,7 +1592,13 @@ impl GoalReconciliation<'_, '_> {
                         && plan.epistemic_operations.iter().all(|operation| {
                             product_completed(plan, &operation.product_id, &history)
                         });
-                if !confirmation_returned {
+                let terminal_only_prerequisite = plan.dependencies.iter().any(|dependency| {
+                    matches!(
+                        dependency.required_milestone,
+                        PlanMilestoneRequirement::CurationTerminal { .. }
+                    )
+                });
+                if !confirmation_returned && !terminal_only_prerequisite {
                     return Ok(Some((plan.clone(), false)));
                 }
                 // A completed negative confirmation is a reason to seek a
@@ -1699,6 +1722,32 @@ impl GoalReconciliation<'_, '_> {
             };
             vec![self.curation.resolve_operation(operation)?]
         };
+        // A transport-only successor cannot grant a second authorization for the
+        // same unsettled operation. Changed semantic input may produce new work.
+        let history = self.store.completed_history_for_goal(&self.goal.goal_id)?;
+        if !matches!(
+            meld_lang::evaluate(&cut.world_model_view.world_state, &self.goal.target),
+            meld_lang::EvalResult::Satisfied
+        ) && operations.iter().any(|operation| {
+            authorizations.iter().any(|authorization| {
+                authorization.activation_generation == cut.context.activation_generation
+                    && authorization.admission_epoch == cut.context.admission_epoch
+                    && matches!(&authorization.product, AgentAuthorizedProduct::Epistemic(prior)
+                    if prior.operation.operation_id == operation.operation_id)
+                    && !history.iter().any(|entry| {
+                        entry.source_plan_revision_id == authorization.plan_revision_id
+                            && entry.product_id == authorization.product_id
+                            && matches!(&authorization.product, AgentAuthorizedProduct::Epistemic(prior)
+                                if prior.accepts_return(&entry.accepted_milestone))
+                    })
+            })
+        }) {
+            report.waiting_on.push(waiting(
+                "planner_cut_changed", &self.goal.goal_id,
+                "the authorized prerequisite still owes successful visibility or changed semantic input",
+            ));
+            return Ok(None);
+        }
         let mut problem = self
             .strategy
             .problem(self.goal.clone(), cut.clone(), operations);
@@ -2165,8 +2214,17 @@ impl GoalReconciliation<'_, '_> {
             report.budget_exhausted = true;
             return Ok(());
         }
+        let successful = matches!(
+            result.disposition,
+            crate::curation::CurationTerminalDisposition::Applied
+                | crate::curation::CurationTerminalDisposition::Unchanged
+        );
         let milestone_id = stable_id(
-            "agent-milestone-acceptance-v1",
+            if successful {
+                "agent-milestone-acceptance-v1"
+            } else {
+                "agent-curation-unsuccessful-v1"
+            },
             &(
                 &cut.context.agent_id,
                 &self.goal.goal_id,
@@ -2177,8 +2235,14 @@ impl GoalReconciliation<'_, '_> {
                 &cut.context.activation_generation,
             ),
         );
-        let requirement = PlanMilestoneRequirement::CurationTerminal {
-            operation_id: epistemic.operation.operation_id.clone(),
+        let requirement = if successful {
+            PlanMilestoneRequirement::CurationTerminal {
+                operation_id: epistemic.operation.operation_id.clone(),
+            }
+        } else {
+            PlanMilestoneRequirement::CurationUnsuccessful {
+                operation_id: epistemic.operation.operation_id.clone(),
+            }
         };
         let milestone_inserted = self.store.put_milestone(&AgentMilestoneAcceptance {
             milestone_id: milestone_id.clone(),
@@ -2207,6 +2271,19 @@ impl GoalReconciliation<'_, '_> {
         used += usize::from(milestone_advanced);
         if used == budget {
             report.budget_exhausted = true;
+            return Ok(());
+        }
+        if !successful {
+            if advance_products {
+                report.waiting_on.push(waiting(
+                    "planner_cut_changed",
+                    &self.goal.goal_id,
+                    format!(
+                        "Curation returned {:?}; dependent work remains ineligible",
+                        result.disposition
+                    ),
+                ));
+            }
             return Ok(());
         }
         if let Some(route) = &epistemic.return_evidence {
@@ -2317,6 +2394,75 @@ impl GoalReconciliation<'_, '_> {
             )?;
             report.milestones_accepted += usize::from(inserted);
         }
+        let requirement = if epistemic.return_evidence.is_none() {
+            let visible = if self.historical_return {
+                self.curation
+                    .historical_prerequisite_visibility(&epistemic.operation.operation_id)?
+            } else {
+                self.curation.prerequisite_visibility(
+                    &epistemic.operation.operation_id,
+                    &cut.traversal_cut,
+                )?
+            };
+            let Some(visible) = visible else {
+                report.waiting_on.push(waiting(
+                    "planner_cut_changed",
+                    &plan.plan_revision_id,
+                    "awaiting successful prerequisite publication and exact Graph visibility",
+                ));
+                return Ok(());
+            };
+            if visible.result_id() != result.result_id
+                || !self.historical_return && visible.cut_id() != cut.traversal_cut.cut_id
+            {
+                return Err(StorageError::InvalidPath(
+                    "Curation returned visibility for a foreign result or cut".into(),
+                ));
+            }
+            let requirement = PlanMilestoneRequirement::CurationVisible {
+                operation_id: epistemic.operation.operation_id.clone(),
+            };
+            let milestone_id = stable_id(
+                "agent-curation-visibility-v1",
+                &(
+                    &self.goal.goal_id,
+                    &plan.plan_revision_id,
+                    &epistemic.product_id,
+                    &result.result_id,
+                ),
+            );
+            let inserted = self.store.put_milestone(&AgentMilestoneAcceptance {
+                milestone_id: milestone_id.clone(),
+                agent_id: cut.context.agent_id.clone(),
+                goal_id: self.goal.goal_id.clone(),
+                plan_revision_id: plan.plan_revision_id.clone(),
+                product_id: epistemic.product_id.clone(),
+                requirement: requirement.clone(),
+                owner_position_id: visible.graph_revision_id().to_string(),
+                context_id: cut.context.context_id.clone(),
+                activation_generation: cut.context.activation_generation.clone(),
+            })?;
+            let (progress_inserted, _) = self.put_progress(
+                cut,
+                plan,
+                &epistemic.product_id,
+                AgentCurrentnessCheck {
+                    frozen_cut_id: plan.planner_cut_id.clone(),
+                    observed_cut_id: (!self.historical_return).then(|| cut.cut_id.clone()),
+                    refusal: None,
+                },
+                AgentProductState::MilestoneAccepted { milestone_id },
+            )?;
+            report.milestones_accepted += usize::from(inserted);
+            used += usize::from(inserted || progress_inserted);
+            if used == budget {
+                report.budget_exhausted = true;
+                return Ok(());
+            }
+            requirement
+        } else {
+            requirement
+        };
         if advance_products {
             self.advance_after_curation(cut, plan, epistemic, &requirement, report)
         } else {
@@ -2823,7 +2969,7 @@ fn authorization_completed(
                     task.return_milestone.as_ref() == Some(&entry.accepted_milestone)
                 }
                 AgentAuthorizedProduct::Epistemic(operation) => {
-                    operation.accepts_return(&entry.accepted_milestone)
+                    operation.accounts_for_return(&entry.accepted_milestone)
                 }
             }
     })
@@ -2841,7 +2987,7 @@ fn product_completed(
                     && task.return_milestone.as_ref() == Some(&entry.accepted_milestone)
             }) || plan.epistemic_operations.iter().any(|operation| {
                 operation.product_id == product_id
-                    && operation.accepts_return(&entry.accepted_milestone)
+                    && operation.accounts_for_return(&entry.accepted_milestone)
             }))
     })
 }
@@ -2854,6 +3000,7 @@ fn dependencies_satisfied(
     plan.dependencies.iter().filter(|dependency| dependency.consumer_product_id == product_id)
         .all(|dependency| history.iter().any(|entry|
             entry.product_id == dependency.producer_product_id
+                && !matches!(dependency.required_milestone, PlanMilestoneRequirement::CurationTerminal { .. })
                 && entry.accepted_milestone == dependency.required_milestone
                 // A confirmation must be reconstructed from a successor cut,
                 // never authorized against the pre-execution frozen selection.
@@ -3229,6 +3376,18 @@ mod tests {
     }
 
     impl AgentCurationPort for ImmediateCuration {
+        fn prerequisite_visibility(
+            &self,
+            operation_id: &str,
+            cut: &TraversalCut,
+        ) -> Result<Option<crate::curation::CurationVisibilityProof>, StorageError> {
+            // These Agent boundary fixtures model a completed native visibility query.
+            // Native lag and exact-resource validation are exercised by composed owner tests.
+            Ok(self
+                .result(operation_id)?
+                .map(|result| crate::curation::CurationVisibilityProof::fixture(&result, cut)))
+        }
+
         fn resolve_operation(
             &self,
             candidate: CurationOperation,
@@ -3282,10 +3441,10 @@ mod tests {
                 .map(|operation| {
                     CurationResult::new(
                         operation,
-                        CurationTerminalDisposition::Abstained,
-                        "canonical Curation declined semantic authorship",
+                        CurationTerminalDisposition::Unchanged,
+                        "previously visible Curation state is unchanged",
                         None,
-                        Vec::new(),
+                        vec!["fixture-curation-publication".into()],
                         Vec::new(),
                         Vec::new(),
                         Vec::new(),
@@ -3300,6 +3459,18 @@ mod tests {
     }
 
     impl AgentCurationPort for DurableCuration {
+        fn prerequisite_visibility(
+            &self,
+            operation_id: &str,
+            cut: &TraversalCut,
+        ) -> Result<Option<crate::curation::CurationVisibilityProof>, StorageError> {
+            // These Agent boundary fixtures model a completed native visibility query.
+            // Native lag and exact-resource validation are exercised by composed owner tests.
+            Ok(self
+                .result(operation_id)?
+                .map(|result| crate::curation::CurationVisibilityProof::fixture(&result, cut)))
+        }
+
         fn resolve_operation(
             &self,
             candidate: CurationOperation,
@@ -3565,6 +3736,85 @@ mod tests {
     }
 
     #[test]
+    fn accepted_terminal_only_plan_is_reconstructed_before_new_task_authorization() {
+        let fixture = Fixture::new();
+        let mut legacy = fixture.expected_plan();
+        let operation_id = legacy.epistemic_operations[0]
+            .operation
+            .operation_id
+            .clone();
+        for edge in &mut legacy.dependencies {
+            edge.required_milestone = PlanMilestoneRequirement::CurationTerminal {
+                operation_id: operation_id.clone(),
+            };
+            edge.dependency_id = stable_id(
+                "strategy-dependency-v1",
+                &(
+                    &edge.producer_product_id,
+                    &edge.consumer_product_id,
+                    &operation_id,
+                ),
+            );
+        }
+        legacy.plan_revision_id.clear();
+        legacy.plan_revision_id = stable_id("strategy-plan-v1", &legacy);
+        fixture.store.put_reconciliation_cut(&fixture.cut).unwrap();
+        fixture.store.put_reconciliation_plan(&legacy).unwrap();
+        fixture
+            .store
+            .put_plan_judgment(&AgentPlanJudgment {
+                judgment_id: "historically-accepted-terminal-only-plan".into(),
+                agent_id: fixture.goal.agent_id.clone(),
+                goal_id: fixture.goal.goal_id.clone(),
+                plan_revision_id: legacy.plan_revision_id.clone(),
+                context_id: fixture.cut.context.context_id.clone(),
+                authority_scope_id: fixture.cut.context.authority_scope_id.clone(),
+                activation_generation: fixture.cut.context.activation_generation.clone(),
+                kind: AgentPlanJudgmentKind::Admitted,
+            })
+            .unwrap();
+        let (actor, _) = fixture.actor(
+            vec![PlannerAssemblyOutcome::Complete(Box::new(
+                fixture.cut.clone(),
+            ))],
+            true,
+        );
+        let report = actor.bounded_step(8);
+        assert!(report.fatal_errors.is_empty(), "{report:?}");
+        assert!(report.retryable_errors.is_empty(), "{report:?}");
+        let successor = fixture
+            .store
+            .current_reconciliation_plan(&fixture.goal.goal_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            successor.predecessor_plan_revision_id.as_ref(),
+            Some(&legacy.plan_revision_id)
+        );
+        assert!(successor.dependencies.iter().all(|edge| matches!(
+            edge.required_milestone,
+            PlanMilestoneRequirement::CurationVisible { .. }
+        )));
+        let grants = fixture
+            .store
+            .product_authorizations_for_goal(&fixture.goal.goal_id)
+            .unwrap();
+        assert!(grants
+            .iter()
+            .any(|grant| matches!(grant.product, AgentAuthorizedProduct::Task(_))));
+        assert!(grants
+            .iter()
+            .all(|grant| grant.plan_revision_id == successor.plan_revision_id));
+        assert_eq!(
+            fixture
+                .store
+                .reconciliation_plan(&legacy.plan_revision_id)
+                .unwrap(),
+            Some(legacy)
+        );
+    }
+
+    #[test]
     fn reconciliation_authorizes_task_and_persists_execution_admission() {
         let fixture = Fixture::new();
         let plan = fixture.expected_plan();
@@ -3580,7 +3830,7 @@ mod tests {
 
         assert!(report.fatal_errors.is_empty(), "{:?}", report.fatal_errors);
         assert_eq!(report.products_authorized, 2);
-        assert_eq!(report.milestones_accepted, 1, "{report:?}");
+        assert_eq!(report.milestones_accepted, 2, "{report:?}");
         assert_eq!(
             report.eligible_task_ids,
             vec![plan.tasks[0].task_id.clone()]
@@ -3638,10 +3888,10 @@ mod tests {
         assert_ne!(judgment.judgment_id, authorization.authorization_id);
         let result = CurationResult::new(
             &epistemic.operation,
-            CurationTerminalDisposition::Abstained,
+            CurationTerminalDisposition::Unchanged,
             "terminal",
             None,
-            Vec::new(),
+            vec!["fixture-curation-publication".into()],
             Vec::new(),
             Vec::new(),
             Vec::new(),
@@ -3804,6 +4054,18 @@ mod tests {
     }
 
     impl AgentCurationPort for MultiCuration {
+        fn prerequisite_visibility(
+            &self,
+            operation_id: &str,
+            cut: &TraversalCut,
+        ) -> Result<Option<crate::curation::CurationVisibilityProof>, StorageError> {
+            // These Agent boundary fixtures model a completed native visibility query.
+            // Native lag and exact-resource validation are exercised by composed owner tests.
+            Ok(self
+                .result(operation_id)?
+                .map(|result| crate::curation::CurationVisibilityProof::fixture(&result, cut)))
+        }
+
         fn resolve_operation(
             &self,
             candidate: CurationOperation,
@@ -3843,10 +4105,10 @@ mod tests {
                 .map(|operation| {
                     CurationResult::new(
                         operation,
-                        CurationTerminalDisposition::Abstained,
-                        "bounded terminal observation",
+                        CurationTerminalDisposition::Unchanged,
+                        "previously visible Curation state is unchanged",
                         None,
-                        Vec::new(),
+                        vec!["fixture-curation-publication".into()],
                         Vec::new(),
                         Vec::new(),
                         Vec::new(),
@@ -3913,13 +4175,17 @@ mod tests {
             Some(&predecessor.plan_revision_id)
         );
         assert_eq!(successor.planner_cut_id, changed.cut_id);
-        assert_eq!(
-            fixture
-                .store
-                .reconciliation_plan_history(&successor.plan_revision_id)
-                .unwrap(),
-            history
-        );
+        let successor_history = fixture
+            .store
+            .reconciliation_plan_history(&successor.plan_revision_id)
+            .unwrap();
+        assert!(history
+            .iter()
+            .all(|entry| successor_history.contains(entry)));
+        assert!(successor_history.iter().any(|entry| matches!(
+            entry.accepted_milestone,
+            PlanMilestoneRequirement::CurationVisible { .. }
+        )));
         assert_eq!(
             fixture
                 .store
@@ -3963,7 +4229,7 @@ mod tests {
             reopened
                 .reconciliation_plan_history(&successor.plan_revision_id)
                 .unwrap(),
-            history
+            successor_history
         );
     }
 
@@ -4878,17 +5144,17 @@ mod tests {
         let acceptance = CurationAcceptanceRecord::for_operation(&operation, &rule).unwrap();
         let result = CurationResult::new(
             &operation,
-            CurationTerminalDisposition::Abstained,
-            "canonical Curation declined semantic authorship",
+            CurationTerminalDisposition::Unchanged,
+            "previously visible Curation state is unchanged",
             None,
-            Vec::new(),
+            vec!["fixture-curation-publication".into()],
             Vec::new(),
             Vec::new(),
             Vec::new(),
         )
         .unwrap();
         let mut last = 0;
-        for boundary in 0..6 {
+        for boundary in 0..7 {
             let report = {
                 let db = sled::open(&store_path).unwrap();
                 let store = Arc::new(AgentStore::new(db.clone()).unwrap());

@@ -285,6 +285,7 @@ impl meld_world_model::curation::CurationAuthorityPort for ProductCurationAuthor
 #[derive(Clone)]
 pub struct ProductPlannedCurationPort {
     store: Arc<CurationStore>,
+    graph: Arc<TraversalStore>,
 }
 
 /// Root adapter from exact Agent Task authority to Execution positions.
@@ -814,8 +815,8 @@ impl ProductAgentPlannerPort {
 }
 
 impl ProductPlannedCurationPort {
-    pub fn new(store: Arc<CurationStore>) -> Self {
-        Self { store }
+    pub fn new(store: Arc<CurationStore>, graph: Arc<TraversalStore>) -> Self {
+        Self { store, graph }
     }
 }
 
@@ -1158,6 +1159,32 @@ impl AgentAuthorityPort for ProductAgentAuthorityPort {
 }
 
 impl AgentCurationPort for ProductPlannedCurationPort {
+    fn historical_prerequisite_visibility(
+        &self,
+        operation_id: &str,
+    ) -> Result<
+        Option<meld_world_model::curation::CurationVisibilityProof>,
+        meld_world_model::error::StorageError,
+    > {
+        meld_world_model::CurationQuery::new(&self.store)
+            .historical_prerequisite_visibility(operation_id, &TraversalQuery::new(&self.graph))
+    }
+
+    fn prerequisite_visibility(
+        &self,
+        operation_id: &str,
+        cut: &TraversalCut,
+    ) -> Result<
+        Option<meld_world_model::curation::CurationVisibilityProof>,
+        meld_world_model::error::StorageError,
+    > {
+        meld_world_model::CurationQuery::new(&self.store).prerequisite_visibility(
+            operation_id,
+            cut,
+            &TraversalQuery::new(&self.graph),
+        )
+    }
+
     fn resolve_operation(
         &self,
         candidate: CurationOperation,

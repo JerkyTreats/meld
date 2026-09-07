@@ -206,6 +206,14 @@ pub enum PlanMilestoneRequirement {
     ExecutionTerminal {
         task_id: String,
     },
+    /// Successful Curation publication consumed by the declared Graph selection.
+    CurationVisible {
+        operation_id: String,
+    },
+    /// The operation returned unsuccessfully; it discharges no positive dependency.
+    CurationUnsuccessful {
+        operation_id: String,
+    },
 }
 
 /// One independently complete executable product retained by Agent only.
@@ -254,7 +262,7 @@ fn empty_bindings() -> Bindings {
 /// One bounded epistemic product grounded from the Curation catalog.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StrategyEpistemicOperation {
-    /// Required evidence return beyond Curation terminality.
+    /// Configured Belief return; absence requires the native Curation Graph visibility return.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub return_evidence: Option<ProspectiveEvidenceRoute>,
     pub product_id: String,
@@ -299,6 +307,13 @@ impl StrategyEpistemicOperation {
             .collect()
     }
 
+    /// A returned failure ends the operation's debt without establishing its required evidence.
+    pub(crate) fn accounts_for_return(&self, milestone: &PlanMilestoneRequirement) -> bool {
+        self.accepts_return(milestone)
+            || matches!(milestone, PlanMilestoneRequirement::CurationUnsuccessful { operation_id }
+                if operation_id == &self.operation.operation_id)
+    }
+
     pub fn accepts_return(&self, milestone: &PlanMilestoneRequirement) -> bool {
         match (&self.return_evidence, milestone) {
             (
@@ -308,7 +323,7 @@ impl StrategyEpistemicOperation {
                     revision_id,
                 },
             ) => !belief_key.is_empty() && !revision_id.is_empty(),
-            (None, PlanMilestoneRequirement::CurationTerminal { operation_id }) => {
+            (None, PlanMilestoneRequirement::CurationVisible { operation_id }) => {
                 operation_id == &self.operation.operation_id
             }
             _ => false,

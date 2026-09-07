@@ -3162,7 +3162,10 @@ impl RuntimeSemanticHandleFactory {
                     planner,
                     authority_port: Arc::clone(&authority_port),
                     frozen_authority: frozen_authority.clone(),
-                    curation: Arc::new(ProductPlannedCurationPort::new(Arc::clone(curation_store))),
+                    curation: Arc::new(ProductPlannedCurationPort::new(
+                        Arc::clone(curation_store),
+                        Arc::clone(traversal),
+                    )),
                     execution: Arc::new(ProductAgentExecutionPort::new(
                         Arc::clone(network),
                         capability_runtime.catalog.clone(),
@@ -5596,6 +5599,7 @@ fn validate_runtime_id(runtime_id: &str) -> Result<(), RuntimeRegistryError> {
 mod tests {
     #[cfg(unix)]
     mod code_change;
+    mod prerequisite;
     mod reconciliation_requests;
     mod replacement;
     #[cfg(unix)]
