@@ -1,0 +1,8 @@
+{
+  "maintained_condition_id": "code_materialization",
+  "dimension_id": "code_materialization",
+  "threshold": 0.7,
+  "priority_urgency": 50,
+  "desired_summary": "the declared code change has a confirmed materialization account in this epoch",
+  "source_kind": "belief_divergence"
+}

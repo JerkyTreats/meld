@@ -1,0 +1,7 @@
+{
+  "complete_event_source": true,
+  "route_id": "code-change-materialization",
+  "owner_id": "code-change",
+  "event_type": "code_change.account_published.v1",
+  "enumeration_rule_revision": "code_change.materialization_account.v1"
+}

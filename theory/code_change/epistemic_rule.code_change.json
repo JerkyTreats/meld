@@ -1,0 +1,23 @@
+{
+  "rule_id": "code_change-confirmation",
+  "source_owner_id": "code-change",
+  "traversal_direction": "Incoming",
+  "bounds": {
+    "max_depth": 4,
+    "max_objects": 32,
+    "max_occurrences": 32,
+    "max_paths": 32
+  },
+  "expected_object_kind": "expected_materialization",
+  "expected_object_key": "required_materialization",
+  "relation_type": "expects",
+  "output_policy_revision": "code_change-observation-v1",
+  "realization": {
+    "observed_object": "source_root",
+    "required_qualifications": {
+      "materialized": "true"
+    },
+    "realized_relation_type": "realizes",
+    "not_realized_relation_type": "not_realized"
+  }
+}

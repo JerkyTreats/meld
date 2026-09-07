@@ -1,0 +1,225 @@
+{
+  "schema_version": 1,
+  "package_id": "meld.code-change",
+  "package_version": "1.0.0",
+  "description": "Declared code changes constructed and separately authorized by Agent, materialized by their native owner, and confirmed through Graph, Curation and Belief",
+  "imports": [],
+  "components": [
+    {
+      "component_id": "code_change-belief-family",
+      "owner_component_id": "code_materialization",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "belief-family",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "belief_family.code_materialization.json",
+        "content_hash": "fc4d6af49c8eb0af10d9abd744c01df450a63c79efda98bea55dab198d362b77"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "code_change-evidence-mapping",
+      "owner_component_id": "code_materialization_v1",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "outcome-mapping",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "evidence_mapping.code_materialization.json",
+        "content_hash": "e19e7c84e0e0f03de1435594f66ef291898150f8f4f5ae519466be448f5fe4ed"
+      },
+      "requires": [
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "code_change-belief-family",
+          "required_route": null
+        }
+      ]
+    },
+    {
+      "component_id": "code_change-maintained-condition",
+      "owner_component_id": "code_materialization",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "agent-maintained-condition",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "maintained_condition.code_change.json",
+        "content_hash": "0afa85b26cd41cc7c8461e85fbd434f6774443d344cda7e9b3b2a5f3792678c6"
+      },
+      "requires": [
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "code_change-belief-family",
+          "required_route": null
+        }
+      ]
+    },
+    {
+      "component_id": "code_change-curation-rule",
+      "owner_component_id": "code_materialization",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "agent-curation-rule",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "curation_rule.code_change.json",
+        "content_hash": "3985ab77653199bf3987a9dd5b8e23605a743e90e314b4e8a590d2acafce6f64"
+      },
+      "requires": [
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "code_change-maintained-condition",
+          "required_route": null
+        }
+      ]
+    },
+    {
+      "component_id": "code_change-epistemic-rule",
+      "owner_component_id": "code_change-confirmation",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "epistemic-curation-rule",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "epistemic_rule.code_change.json",
+        "content_hash": "edf74ea0359d1e835290b6ca61002bda23a67ffab01e89cbc9afe4ab259a1069"
+      },
+      "requires": [
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "code-change-graph-event-route",
+          "required_route": null
+        }
+      ]
+    },
+    {
+      "component_id": "code_change-strategy",
+      "owner_component_id": "code_materialization",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "strategy-theory",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "strategy_theory.code_change.json",
+        "content_hash": "aa0df7e1654dd56d68c88c93145027931ea7e75304a53aaa806c98e11b1fdb04"
+      },
+      "requires": [
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "code_change-belief-family",
+          "required_route": null
+        },
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "code-change-capability-apply",
+          "required_route": null
+        },
+        {
+          "package": {
+            "kind": "self_package"
+          },
+          "component_id": "code-change-capability-read",
+          "required_route": null
+        }
+      ]
+    },
+    {
+      "component_id": "code_change-authority",
+      "owner_component_id": "code_change_local",
+      "route": {
+        "owner_domain": "execution",
+        "component_kind": "authority-policy",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "authority_policy.code_change.json",
+        "content_hash": "3bb47112d1a3e02fc3177fb928d7473a6378552f2520e8f45c507fff055b8f67"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "code-change-capability-apply",
+      "owner_component_id": "code_change.apply_existing_files.v1",
+      "route": {
+        "owner_domain": "execution",
+        "component_kind": "capability-contract",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "published_exact",
+        "publisher": "execution.capability-contract.v1",
+        "id": "code_change.apply_existing_files.v1",
+        "content_identity": "capability-contract-165d0b8840429f28803918f8b2b413c707971b7e1e4eb8c45f2d77037a19d2df"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "code-change-graph-event-route",
+      "owner_component_id": "code-change-materialization",
+      "route": {
+        "owner_domain": "world-model",
+        "component_kind": "graph-owner-event-route",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "graph_owner_event_route.code_change.json",
+        "content_hash": "7c4d5b8e26ca93596326c17bb0bf9f23b300b46ebecbf02cd173a6d5578e5f43"
+      },
+      "requires": []
+    },
+    {
+      "component_id": "code-change-capability-read",
+      "owner_component_id": "code_change.read_proposal.v1",
+      "route": {
+        "owner_domain": "execution",
+        "component_kind": "capability-contract",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "published_exact",
+        "publisher": "execution.capability-contract.v1",
+        "id": "code_change.read_proposal.v1",
+        "content_identity": "capability-contract-d50c1c2a36495aea31ccdd0958b262370f7fe5a22c26ef262804743dfba45b8f"
+      },
+      "requires": []
+    }
+  ]
+}

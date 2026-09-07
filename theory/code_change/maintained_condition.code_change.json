@@ -1,0 +1,17 @@
+{
+  "condition_id": "code_materialization",
+  "dimension_id": "code_materialization",
+  "desired": {
+    "Above": {
+      "Literal": {
+        "Number": 0.7
+      }
+    }
+  },
+  "goal_priority": {
+    "urgency": 50,
+    "cost_ceiling": null
+  },
+  "desired_summary": "the declared code change has a confirmed materialization account in this epoch",
+  "observation_scope": "AdmissionEpoch"
+}

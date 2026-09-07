@@ -216,7 +216,22 @@ impl CapabilityInvoker for CodeChangeCapability {
         let events = api
             .durable_event_append()
             .ok_or_else(|| invalid("code change requires durable Event authority"))?;
-        result(runtime, payload, operation.apply(&events).map_err(invalid)?)
+        let result = result(runtime, payload, operation.apply(&events).map_err(invalid)?)?;
+        let authority = context
+            .and_then(|context| context.effect_authority.as_ref())
+            .ok_or_else(|| invalid("code account requires admitted authority"))?;
+        events
+            .append_durable_proven(
+                super::publication::envelope(
+                    &events.replay_capability(),
+                    authority,
+                    &result.emitted_artifacts[0],
+                )
+                .map_err(invalid)?,
+                meld_events::AppendMode::Idempotent,
+            )
+            .map_err(invalid)?;
+        Ok(result)
     }
     async fn recover(
         &self,
@@ -229,11 +244,26 @@ impl CapabilityInvoker for CodeChangeCapability {
         let Some(events) = events else {
             return Ok(None);
         };
-        operation
+        let result = operation
             .recover(events)
             .map_err(invalid)?
             .map(|receipt| result(runtime, payload, receipt))
-            .transpose()
+            .transpose()?;
+        let Some(result) = result else {
+            return Ok(None);
+        };
+        let authority = context
+            .and_then(|context| context.effect_authority.as_ref())
+            .ok_or_else(|| invalid("code account requires admitted authority"))?;
+        let envelope =
+            super::publication::envelope(events, authority, &result.emitted_artifacts[0])
+                .map_err(invalid)?;
+        // A retained mutation with an interrupted publication resumes through invoke,
+        // whose native operation recovers the receipt without touching source files.
+        Ok(events
+            .prove_existing(&envelope)
+            .map_err(invalid)?
+            .map(|_| result))
     }
 }
 
@@ -450,14 +480,61 @@ mod tests {
             std::fs::read_to_string(target.join("Cargo.toml")).unwrap(),
             "old content"
         );
+        let owner = CodeChangeCapability {
+            root: target.clone(),
+            subject: "repo".into(),
+            gate: Default::default(),
+        };
+        owner
+            .operation(&runtime, &payload, Some(&context))
+            .unwrap()
+            .apply(&events.append_capability())
+            .unwrap();
+        assert!(
+            invoker
+                .recover(
+                    Some(&events.replay_capability()),
+                    &runtime,
+                    &payload,
+                    Some(&context)
+                )
+                .await
+                .unwrap()
+                .is_none(),
+            "materialization alone cannot stand in for its missing owner publication"
+        );
+        std::fs::write(
+            target.join("Cargo.toml"),
+            "edit after materialization before publication",
+        )
+        .unwrap();
         let result = invoker
             .invoke(&api, &runtime, &payload, Some(&context))
             .await
             .unwrap();
         assert_eq!(
             std::fs::read_to_string(target.join("Cargo.toml")).unwrap(),
-            "new content"
+            "edit after materialization before publication"
         );
+        let published = super::super::publication::envelope(
+            &events.replay_capability(),
+            context.effect_authority.as_ref().unwrap(),
+            &result.emitted_artifacts[0],
+        )
+        .unwrap();
+        assert!(events
+            .replay_capability()
+            .prove_existing(&published)
+            .unwrap()
+            .is_some());
+        let mut foreign_authority = context.effect_authority.clone().unwrap();
+        foreign_authority.fence_ref = "foreign-epoch".into();
+        assert!(super::super::publication::envelope(
+            &events.replay_capability(),
+            &foreign_authority,
+            &result.emitted_artifacts[0]
+        )
+        .is_err());
         assert_eq!(result.emitted_artifacts[0].producer.task_id, "code-task");
         let evidence = crate::code_change::materialization_evidence(
             &events.replay_capability(),

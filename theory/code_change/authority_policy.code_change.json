@@ -1,0 +1,18 @@
+{
+  "policy_id": "code_change_local",
+  "principal_id": "workspace-owner",
+  "subject": {
+    "domain_id": "workspace_fs",
+    "object_kind": "node",
+    "object_id": "repo"
+  },
+  "principal_granted_action_ids": [
+    "code_change.apply_existing_files",
+    "code_change.read_proposal"
+  ],
+  "runtime_allowed_action_ids": [
+    "code_change.apply_existing_files",
+    "code_change.read_proposal"
+  ],
+  "restricted_action_ids": []
+}

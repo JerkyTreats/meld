@@ -1,0 +1,75 @@
+{
+  "mapping_id": "code_materialization_v1",
+  "rules": [
+    {
+      "mapping_id": "code_change-realized",
+      "source_kind": "curation_realization",
+      "match_domain_id": "curation",
+      "match_event_type": "world_model.curation.result.v1",
+      "match_content": [
+        {
+          "rule": "field_equals",
+          "pointer": "/disposition",
+          "equals": "applied"
+        },
+        {
+          "rule": "field_equals",
+          "pointer": "/semantic_publication/batch/objects/0/qualifications/realization",
+          "equals": "realized"
+        }
+      ],
+      "subject": {
+        "object_kind": "expected_materialization",
+        "domain_id": "curation",
+        "from": {
+          "source": "payload_object",
+          "pointer": "/semantic_publication/batch/objects/0/object_ref"
+        }
+      },
+      "evidence_fields": [
+        {
+          "field": "realization_probability",
+          "source": {
+            "source": "constant",
+            "value": 1.0
+          }
+        }
+      ]
+    },
+    {
+      "mapping_id": "code_change-not_realized",
+      "source_kind": "curation_realization",
+      "match_domain_id": "curation",
+      "match_event_type": "world_model.curation.result.v1",
+      "match_content": [
+        {
+          "rule": "field_equals",
+          "pointer": "/disposition",
+          "equals": "applied"
+        },
+        {
+          "rule": "field_equals",
+          "pointer": "/semantic_publication/batch/objects/0/qualifications/realization",
+          "equals": "not_realized"
+        }
+      ],
+      "subject": {
+        "object_kind": "expected_materialization",
+        "domain_id": "curation",
+        "from": {
+          "source": "payload_object",
+          "pointer": "/semantic_publication/batch/objects/0/object_ref"
+        }
+      },
+      "evidence_fields": [
+        {
+          "field": "realization_probability",
+          "source": {
+            "source": "constant",
+            "value": 0.0
+          }
+        }
+      ]
+    }
+  ]
+}

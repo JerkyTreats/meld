@@ -17,6 +17,9 @@ use meld_world_model::world_state::graph::store::TraversalStore;
 #[cfg(test)]
 mod tests;
 
+#[cfg(unix)]
+pub mod code_change;
+
 /// Bind an exact installed nonce Capability and Curation template. All semantic
 /// products are constructed by their native owners; this port only passes refs.
 pub struct ProductNonceEpochPreparation {

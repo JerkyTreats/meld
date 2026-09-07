@@ -2887,26 +2887,49 @@ impl RuntimeSemanticHandleFactory {
                         )
                     }
                     crate::runtime::theory::PreparedCurationSelection::Epoch(template) => {
-                        if template.template.source_owner_id != crate::nonce::OWNER_ID {
-                            return unresolved(
-                                diagnostics,
-                                "epoch_source_unresolved",
-                                format!(
-                                    "no epoch preparation adapter for source owner '{}'",
-                                    template.template.source_owner_id
-                                ),
-                            );
-                        }
-                        let products = crate::runtime::epoch::ProductNonceEpochPreparation::new(
-                            Arc::clone(curation_store),
-                            Arc::clone(traversal),
-                            template.revision_ref(),
-                            &strategy.package,
-                            ports.event_append().watermark_capability(),
-                        )
-                        .map_err(|error| {
-                            RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
-                        })?;
+                        let products: Arc<dyn meld_world_model::agent::AgentEpochPreparationPort> =
+                            match template.template.source_owner_id.as_str() {
+                                crate::nonce::OWNER_ID => {
+                                    let port =
+                                        crate::runtime::epoch::ProductNonceEpochPreparation::new(
+                                            Arc::clone(curation_store),
+                                            Arc::clone(traversal),
+                                            template.revision_ref(),
+                                            &strategy.package,
+                                            ports.event_append().watermark_capability(),
+                                        )
+                                        .map_err(
+                                            |error| {
+                                                RuntimeAssemblyError::RuntimeHandleConstruction(
+                                                    error.to_string(),
+                                                )
+                                            },
+                                        )?;
+                                    Arc::new(port)
+                                }
+                                #[cfg(unix)]
+                                crate::code_change::publication::OWNER => {
+                                    let port = crate::runtime::epoch::code_change::ProductCodeChangeEpochPreparation::new(
+                                        Arc::clone(curation_store),
+                                        Arc::clone(traversal),
+                                        template.revision_ref(),
+                                        &strategy.package,
+                                        ports.event_append().watermark_capability(),
+                                    ).map_err(|error| {
+                                        RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
+                                    })?;
+                                    Arc::new(port)
+                                }
+                                owner => {
+                                    return unresolved(
+                                        diagnostics,
+                                        "epoch_source_unresolved",
+                                        format!(
+                                        "no epoch preparation adapter for source owner '{owner}'"
+                                    ),
+                                    )
+                                }
+                            };
                         let planner = crate::runtime::ports::ProductEpochAgentPlannerPort::new(
                             Arc::clone(belief),
                             Arc::clone(traversal),
@@ -2926,7 +2949,7 @@ impl RuntimeSemanticHandleFactory {
                         (
                             Arc::new(planner),
                             meld_world_model::agent::AgentPreparation::Epoch {
-                                products: Arc::new(products),
+                                products,
                                 subscriptions: Arc::new(
                                     meld_world_model::belief::BeliefSubscriptionSource::new(
                                         Arc::clone(belief),
@@ -5400,6 +5423,8 @@ fn validate_runtime_id(runtime_id: &str) -> Result<(), RuntimeRegistryError> {
 }
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    mod code_change;
     #[cfg(unix)]
     mod security_mitigation;
     use std::sync::Mutex;
