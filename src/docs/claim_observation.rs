@@ -18,6 +18,8 @@ pub struct ObservedDocsClaimReport {
     pub observation_revision_id: String,
     pub source_fingerprint: String,
     pub policy_identity: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acceptance_evaluator: Option<super::claim_validation::DocsAcceptanceEvaluator>,
     pub complete: bool,
     pub readmes: Vec<ObservedReadmeJudgment>,
 }
@@ -121,7 +123,10 @@ pub(crate) async fn advance_observed_claims(
             ) = (&judgment.disposition, *state)
             {
                 if report.accepted {
-                    accepted_children.insert(directory.path.clone(), content.clone());
+                    accepted_children.insert(
+                        directory.path.clone(),
+                        super::claim_validation::supported_readme_evidence(report, content),
+                    );
                 }
             }
             judgments.insert(path, judgment);
@@ -155,7 +160,10 @@ pub(crate) async fn advance_observed_claims(
                 let report =
                     assess_captured_readme(judge, policy, directory, &evidence, &patch).await?;
                 if report.accepted {
-                    accepted_children.insert(directory.path.clone(), content.clone());
+                    accepted_children.insert(
+                        directory.path.clone(),
+                        super::claim_validation::supported_readme_evidence(&report, content),
+                    );
                 }
                 ObservedClaimDisposition::Assessed { report }
             }
@@ -178,6 +186,7 @@ pub(crate) async fn advance_observed_claims(
         observation_revision_id: observed.revision_id.clone(),
         source_fingerprint: bundle.source_fingerprint.clone(),
         policy_identity: policy.content_identity(),
+        acceptance_evaluator: policy.acceptance_evaluator,
         complete: judgments.len() == expected_readmes,
         readmes: judgments.into_values().collect(),
     };
@@ -187,13 +196,19 @@ pub(crate) async fn advance_observed_claims(
 
 impl ObservedDocsClaimReport {
     fn identity(&self) -> Result<String, ApiError> {
-        let bytes = serde_json::to_vec(&(
+        let legacy_basis = (
             &self.observation_revision_id,
             &self.source_fingerprint,
             &self.policy_identity,
             self.complete,
             &self.readmes,
-        ))
+        );
+        // Historical report identities keep their original tuple. New reports
+        // name the admitted evaluator in both their body and hashed lineage.
+        let bytes = match self.acceptance_evaluator {
+            Some(evaluator) => serde_json::to_vec(&(legacy_basis, evaluator)),
+            None => serde_json::to_vec(&legacy_basis),
+        }
         .map_err(|error| invalid(&error.to_string()))?;
         Ok(format!(
             "docs-observed-claims::{}",
@@ -219,7 +234,9 @@ impl ObservedDocsClaimReport {
         bundle: &DocsEvidenceBundle,
     ) -> Result<bool, ApiError> {
         policy.validate()?;
-        Ok(self.matches_capture(bundle)? && self.policy_identity == policy.content_identity())
+        Ok(self.matches_capture(bundle)?
+            && self.policy_identity == policy.content_identity()
+            && self.acceptance_evaluator == policy.acceptance_evaluator)
     }
 }
 
@@ -351,7 +368,8 @@ pub(crate) mod test_support {
                 .claims
                 .iter()
                 .map(|claim| {
-                    let supported = !claim.statement.contains("invented");
+                    let supported = !claim.statement.contains("invented")
+                        && request.evidence.direct.contains("pub fn run");
                     ProviderClaimAssessment {
                         claim_id: claim.claim_id.clone(),
                         verdict: if supported {
@@ -387,6 +405,59 @@ mod tests {
     use super::test_support::*;
     use super::*;
     use std::sync::atomic::Ordering;
+
+    #[tokio::test]
+    async fn acceptance_revision_invalidates_reuse_and_historical_report_identity_is_preserved() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("lib.rs"), "pub fn run() {}\n").unwrap();
+        std::fs::write(
+            root.path().join("README.md"),
+            "`run` exists.\n\nAn invented assertion.\n",
+        )
+        .unwrap();
+        let bundle = super::super::observation::inspect_scope(root.path()).unwrap();
+        let strict = policy();
+        let report = assess_observed_claims(&FixtureJudge::default(), &strict, &bundle)
+            .await
+            .unwrap();
+        let mut permissive = strict.clone();
+        permissive.minimum_groundedness = 0.4;
+        permissive.maximum_unsupported_claim_mass = 0.6;
+        assert!(!report.matches_observation(&permissive, &bundle).unwrap());
+        assert!(advance_observed_claims(
+            &FixtureJudge::default(),
+            &permissive,
+            &bundle,
+            Some(&report),
+            1
+        )
+        .await
+        .is_err());
+        let next = assess_observed_claims(&FixtureJudge::default(), &permissive, &bundle)
+            .await
+            .unwrap();
+        assert_ne!(next.report_id, report.report_id);
+        let mut historical = report.clone();
+        historical.acceptance_evaluator = None;
+        let bytes = serde_json::to_vec(&(
+            &historical.observation_revision_id,
+            &historical.source_fingerprint,
+            &historical.policy_identity,
+            historical.complete,
+            &historical.readmes,
+        ))
+        .unwrap();
+        historical.report_id = format!("docs-observed-claims::{}", blake3::hash(&bytes).to_hex());
+        let historical_bytes = serde_json::to_vec(&historical).unwrap();
+        assert!(!String::from_utf8_lossy(&historical_bytes).contains("acceptance_evaluator"));
+        let decoded: ObservedDocsClaimReport = serde_json::from_slice(&historical_bytes).unwrap();
+        assert!(decoded.matches_capture(&bundle).unwrap());
+        assert!(!decoded.matches_observation(&strict, &bundle).unwrap());
+        assert_eq!(decoded.identity().unwrap(), historical.report_id);
+        let mut tampered = report;
+        tampered.acceptance_evaluator = None;
+        assert!(!tampered.matches_capture(&bundle).unwrap());
+    }
 
     #[tokio::test]
     async fn captured_claim_judgment_preserves_incorrect_text_and_binds_exact_observation() {

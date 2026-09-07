@@ -74,7 +74,10 @@ impl ProductCapabilityContributor for DocsCapabilityContributor {
                 if matches!(type_id.as_str(), DRAFT_PATCH_SET | VALIDATE_PATCH_SET) {
                     required_binding_ids.insert(PROVIDER_BINDING.to_string());
                 }
-                if matches!(type_id.as_str(), VALIDATE_PATCH_SET | PUBLISH_PATCH_SET) {
+                if matches!(
+                    type_id.as_str(),
+                    VALIDATE_PATCH_SET | PUBLISH_PATCH_SET | ASSESS_PUBLISHED_SCOPE
+                ) {
                     required_binding_ids.insert(CLAIM_POLICY_BINDING.to_string());
                 }
                 CapabilityImplementationOffer {
@@ -168,7 +171,10 @@ impl CapabilityInvokerFactory for DocsInvokerFactory {
                 config,
                 selected_claim_policy(bindings)?,
             )),
-            ASSESS_PUBLISHED_SCOPE => Arc::new(AssessPublishedScopeCapability::new(config)),
+            ASSESS_PUBLISHED_SCOPE => Arc::new(AssessPublishedScopeCapability::new(
+                config,
+                selected_claim_policy(bindings)?,
+            )),
             other => {
                 return Err(diagnostic(
                     "selected_implementation_missing",
@@ -304,7 +310,11 @@ mod tests {
             (AGENT_BINDING.into(), "agent".into()),
             (PROVIDER_BINDING.into(), "provider".into()),
         ]));
-        for capability in [VALIDATE_PATCH_SET, PUBLISH_PATCH_SET] {
+        for capability in [
+            VALIDATE_PATCH_SET,
+            PUBLISH_PATCH_SET,
+            ASSESS_PUBLISHED_SCOPE,
+        ] {
             let contract = inventory
                 .contracts()
                 .find(|revision| revision.contract.capability_type_id == capability)

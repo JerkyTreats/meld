@@ -9,5 +9,6 @@
   "prose_weight": 1.0,
   "list_item_weight": 0.8,
   "code_line_weight": 1.25,
-  "table_row_weight": 0.8
+  "table_row_weight": 0.8,
+  "acceptance_evaluator": "weighted_claim_mass_v1"
 }

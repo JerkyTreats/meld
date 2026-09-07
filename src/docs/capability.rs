@@ -136,6 +136,7 @@ pub struct PublishPatchSetCapability {
 #[derive(Debug, Clone)]
 pub struct AssessPublishedScopeCapability {
     config: DocsCapabilityConfig,
+    policy: DocsClaimPolicy,
 }
 
 impl InspectScopeCapability {
@@ -163,8 +164,8 @@ impl PublishPatchSetCapability {
 }
 
 impl AssessPublishedScopeCapability {
-    pub fn new(config: DocsCapabilityConfig) -> Self {
-        Self { config }
+    pub fn new(config: DocsCapabilityConfig, policy: DocsClaimPolicy) -> Self {
+        Self { config, policy }
     }
 }
 
@@ -330,9 +331,13 @@ impl CapabilityInvoker for AssessPublishedScopeCapability {
     ) -> Result<CapabilityInvocationResult, ApiError> {
         payload.validate_against(runtime_init)?;
         let receipt: DocsPublicationReceipt = decode_input(payload, PUBLICATION_RECEIPT)?;
-        let assessment =
-            assess_published_scope(&self.config.target_root, &self.config.subject_id, &receipt)
-                .map_err(terminalize_docs_error)?;
+        let assessment = assess_published_scope(
+            &self.config.target_root,
+            &self.config.subject_id,
+            &self.policy,
+            &receipt,
+        )
+        .map_err(terminalize_docs_error)?;
         Ok(single_artifact(
             payload,
             runtime_init,
@@ -461,13 +466,13 @@ pub fn register_exact_contracts(
         registry,
     )? as usize;
     registered += register_exact(
-        PublishPatchSetCapability::new(config.clone(), claim_policy),
+        PublishPatchSetCapability::new(config.clone(), claim_policy.clone()),
         exact_contracts,
         catalog,
         registry,
     )? as usize;
     registered += register_exact(
-        AssessPublishedScopeCapability::new(config),
+        AssessPublishedScopeCapability::new(config, claim_policy),
         exact_contracts,
         catalog,
         registry,
@@ -764,11 +769,13 @@ pub fn publish_patch_set(
 ) -> Result<DocsPublicationReceipt, ApiError> {
     verify_validated_patch_set(policy, patches)?;
     let root = root.canonicalize().map_err(io_error)?;
-    if inspect_scope(&root)?.source_fingerprint != patches.source_fingerprint {
+    let bundle = inspect_scope(&root)?;
+    if bundle.source_fingerprint != patches.source_fingerprint {
         return Err(ApiError::ConfigError(
             "docs source changed after claim validation".into(),
         ));
     }
+    super::claim_validation::verify_publication_evidence(policy, &bundle, patches)?;
     let mut published = Vec::new();
     for patch in &patches.patches {
         let relative = safe_readme_path(&patch.path)?;
@@ -871,8 +878,15 @@ fn replace_readme(
 pub fn assess_published_scope(
     root: &Path,
     subject_id: &str,
+    policy: &DocsClaimPolicy,
     receipt: &DocsPublicationReceipt,
 ) -> Result<DocsFreshnessAssessment, ApiError> {
+    policy.validate()?;
+    if receipt.policy_identity != policy.content_identity() {
+        return Err(ApiError::ConfigError(
+            "Docs publication receipt belongs to another policy".into(),
+        ));
+    }
     let current = inspect_scope(root)?;
     let observation = current
         .observation
@@ -914,10 +928,11 @@ pub fn assess_published_scope(
         && !receipt.published.is_empty()
         && !receipt.policy_identity.is_empty()
         && !receipt.validation_fingerprint.is_empty()
-        && receipt.weighted_groundedness.is_finite()
-        && receipt.weighted_groundedness > 0.0
-        && receipt.unsupported_claim_mass == 0.0
-        && receipt.contradiction_claim_mass == 0.0;
+        && policy.accepts_metrics((
+            receipt.weighted_groundedness,
+            receipt.unsupported_claim_mass,
+            receipt.contradiction_claim_mass,
+        ))?;
     Ok(DocsFreshnessAssessment {
         subject_id: subject_id.to_string(),
         source_fingerprint: current.source_fingerprint,
@@ -990,6 +1005,9 @@ mod tests {
     fn claim_policy() -> DocsClaimPolicy {
         DocsClaimPolicy {
             policy_id: "test-policy".to_string(),
+            acceptance_evaluator: Some(
+                crate::docs::claim_validation::DocsAcceptanceEvaluator::WeightedClaimMassV1,
+            ),
             minimum_claim_confidence: 0.8,
             minimum_groundedness: 0.8,
             maximum_unsupported_claim_mass: 0.0,
@@ -1183,36 +1201,42 @@ mod tests {
         let content = "# Example\n\nGenerated documentation.\n".to_string();
         let patches = validated_patch_set(inspection.source_fingerprint, content);
         let receipt = publish_patch_set(root.path(), &claim_policy(), &patches).unwrap();
-        let fresh = assess_published_scope(root.path(), "subject", &receipt).unwrap();
+        let fresh =
+            assess_published_scope(root.path(), "subject", &claim_policy(), &receipt).unwrap();
         assert_eq!(fresh.stale_probability, 0.0);
         std::fs::write(root.path().join("README.md"), "# Drifted\n").unwrap();
-        let stale = assess_published_scope(root.path(), "subject", &receipt).unwrap();
+        let stale =
+            assess_published_scope(root.path(), "subject", &claim_policy(), &receipt).unwrap();
         assert_eq!(stale.stale_probability, 1.0);
     }
 
     #[test]
     fn reobservation_rejects_partial_duplicated_and_missing_readme_returns() {
         let root = tempfile::tempdir().unwrap();
-        std::fs::write(root.path().join("lib.rs"), "source\n").unwrap();
-        std::fs::create_dir(root.path().join("child")).unwrap();
-        std::fs::write(root.path().join("child/lib.rs"), "child source\n").unwrap();
+        std::fs::write(root.path().join("lib.rs"), "pub fn run() {}\n").unwrap();
         let inspection = inspect_scope(root.path()).unwrap();
         let patches = validated_patch_set(inspection.source_fingerprint, "# Tool\n".into());
-        let receipt = publish_patch_set(root.path(), &claim_policy(), &patches).unwrap();
-        let partial = assess_published_scope(root.path(), "subject", &receipt).unwrap();
+        let mut receipt = publish_patch_set(root.path(), &claim_policy(), &patches).unwrap();
+        std::fs::create_dir(root.path().join("child")).unwrap();
+        std::fs::write(root.path().join("child/lib.rs"), "child source\n").unwrap();
+        // Exercise an incomplete receipt even when its claimed source position is current.
+        receipt.source_fingerprint = inspect_scope(root.path()).unwrap().source_fingerprint;
+        let partial =
+            assess_published_scope(root.path(), "subject", &claim_policy(), &receipt).unwrap();
         assert_eq!(partial.expected_readmes, 2);
         assert_eq!(partial.verified_readmes, 1);
         assert_eq!(partial.stale_probability, 1.0);
         let mut duplicated = receipt.clone();
         duplicated.published.push(receipt.published[0].clone());
         assert_eq!(
-            assess_published_scope(root.path(), "subject", &duplicated)
+            assess_published_scope(root.path(), "subject", &claim_policy(), &duplicated)
                 .unwrap()
                 .verified_readmes,
             1
         );
         std::fs::remove_file(root.path().join("README.md")).unwrap();
-        let absent = assess_published_scope(root.path(), "subject", &receipt).unwrap();
+        let absent =
+            assess_published_scope(root.path(), "subject", &claim_policy(), &receipt).unwrap();
         assert_eq!(absent.verified_readmes, 0);
         assert_eq!(absent.stale_probability, 1.0);
     }
@@ -1220,14 +1244,17 @@ mod tests {
     #[test]
     fn incomplete_source_evidence_cannot_be_projected_as_fresh_or_stale() {
         let root = tempfile::tempdir().unwrap();
-        std::fs::write(root.path().join("lib.rs"), "source\n".repeat(2048)).unwrap();
+        std::fs::write(root.path().join("lib.rs"), "pub fn run() {}\n").unwrap();
         let inspection = inspect_scope(root.path()).unwrap();
         let patches = validated_patch_set(inspection.source_fingerprint, "# Tool\n".into());
         let receipt = publish_patch_set(root.path(), &claim_policy(), &patches).unwrap();
-        assert!(assess_published_scope(root.path(), "subject", &receipt)
-            .unwrap_err()
-            .to_string()
-            .contains("incomplete observation"));
+        std::fs::write(root.path().join("lib.rs"), "source\n".repeat(2048)).unwrap();
+        assert!(
+            assess_published_scope(root.path(), "subject", &claim_policy(), &receipt)
+                .unwrap_err()
+                .to_string()
+                .contains("incomplete observation")
+        );
     }
 
     #[test]
@@ -1271,7 +1298,8 @@ mod tests {
         let mut receipt = publish_patch_set(root.path(), &claim_policy(), &patches).unwrap();
         receipt.unsupported_claim_mass = 0.1;
 
-        let assessment = assess_published_scope(root.path(), "subject", &receipt).unwrap();
+        let assessment =
+            assess_published_scope(root.path(), "subject", &claim_policy(), &receipt).unwrap();
         assert_eq!(assessment.stale_probability, 1.0);
     }
 

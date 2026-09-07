@@ -19,7 +19,7 @@
     "target_kind": "readme_observation",
     "target_required_qualifications": {
       "content_available": "true",
-      "assertions_supported": "true"
+      "accepted_by_policy": "true"
     },
     "item_kind": "source_readme_correspondence",
     "item_target_relation": "docs_correspondence_readme",

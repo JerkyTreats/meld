@@ -357,6 +357,25 @@ impl DocsObservationRevision {
                             ("claim_policy".to_string(), report.policy_identity.clone()),
                         ]),
                     );
+                    if report.acceptance_evaluator.is_some() {
+                        semantic_qualifications
+                            .entry(readme_judgment.clone())
+                            .or_default()
+                            .extend(BTreeMap::from([
+                                ("accepted_by_policy".into(), readme.accepted.to_string()),
+                                (
+                                    "assertions_supported".into(),
+                                    readme
+                                        .assessments
+                                        .iter()
+                                        .all(|assessment| {
+                                            assessment.verdict
+                                                == super::claim_validation::ClaimVerdict::Supported
+                                        })
+                                        .to_string(),
+                                ),
+                            ]));
+                    }
                     for assessment in &readme.assessments {
                         let key = format!("{key}::{}", assessment.claim.claim_id);
                         let claim_judgment = add(
@@ -491,6 +510,50 @@ impl DocsObservationRevision {
                         ),
                         ("assertions_supported".into(), supported.to_string()),
                     ]));
+            }
+            if let Some(claims) = self
+                .claim_report
+                .as_ref()
+                .filter(|claims| claims.acceptance_evaluator.is_some())
+            {
+                for readme in &observed.readmes {
+                    let judgment = claims
+                        .readmes
+                        .iter()
+                        .find(|judgment| judgment.path == readme.path)
+                        .and_then(|judgment| match &judgment.disposition {
+                            super::claim_observation::ObservedClaimDisposition::Assessed {
+                                report,
+                            } => Some(report),
+                            _ => None,
+                        });
+                    let object = DomainObjectRef::new(
+                        OWNER_ID,
+                        "readme_observation",
+                        format!("{}::{}", self.scope.scope_id, readme.path),
+                    )
+                    .map_err(|error| error.to_string())?;
+                    semantic_qualifications
+                        .entry(object)
+                        .or_default()
+                        .extend(BTreeMap::from([
+                            (
+                                "accepted_by_policy".into(),
+                                judgment.is_some_and(|report| report.accepted).to_string(),
+                            ),
+                            (
+                                "assertions_supported".into(),
+                                judgment
+                                    .is_some_and(|report| {
+                                        report.assessments.iter().all(|assessment| {
+                                            assessment.verdict
+                                                == super::claim_validation::ClaimVerdict::Supported
+                                        })
+                                    })
+                                    .to_string(),
+                            ),
+                        ]));
+                }
             }
             let report = self
                 .correspondence

@@ -28,8 +28,12 @@ pub use registry::{
 
 /// PDS-owned policy for accepting a generated documentation artifact.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DocsClaimPolicy {
     pub policy_id: String,
+    /// Absent only in historical revisions, which cannot author new judgments.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acceptance_evaluator: Option<DocsAcceptanceEvaluator>,
     pub minimum_claim_confidence: f64,
     pub minimum_groundedness: f64,
     pub maximum_unsupported_claim_mass: f64,
@@ -42,8 +46,26 @@ pub struct DocsClaimPolicy {
     pub table_row_weight: f64,
 }
 
+/// Versioned owner evaluator selected by installed theory, with the policy's
+/// confidence, groundedness, mass limits, and kind weights as its parameters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocsAcceptanceEvaluator {
+    WeightedClaimMassV1,
+}
+
 impl DocsClaimPolicy {
     pub fn validate(&self) -> Result<(), ApiError> {
+        self.validate_historical()?;
+        if self.acceptance_evaluator.is_none() {
+            return Err(ApiError::ConfigError(
+                "Docs policy requires an explicit acceptance evaluator".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_historical(&self) -> Result<(), ApiError> {
         if self.policy_id.trim().is_empty() {
             return Err(ApiError::ConfigError(
                 "docs claim policy id must not be empty".to_string(),
@@ -86,6 +108,31 @@ impl DocsClaimPolicy {
     pub fn content_identity(&self) -> String {
         let bytes = serde_json::to_vec(self).expect("claim policy serialization is infallible");
         format!("docs-claim-policy-{}", blake3::hash(&bytes).to_hex())
+    }
+
+    fn accepts(&self, assessments: &[ClaimAssessment]) -> Result<bool, ApiError> {
+        validate_assessment_integrity(self, assessments, None)?;
+        Ok(!assessments.is_empty()
+            && self.accepts_metrics(aggregate_assessments(self, assessments))?)
+    }
+
+    pub(crate) fn accepts_metrics(&self, metrics: (f64, f64, f64)) -> Result<bool, ApiError> {
+        self.validate()?;
+        let (groundedness, unsupported, contradiction) = metrics;
+        if [groundedness, unsupported, contradiction]
+            .iter()
+            .any(|value| !value.is_finite() || !(0.0..=1.0).contains(value))
+        {
+            return Err(ApiError::ConfigError(
+                "Docs acceptance metrics are invalid".into(),
+            ));
+        }
+        match self.acceptance_evaluator.expect("validated evaluator") {
+            DocsAcceptanceEvaluator::WeightedClaimMassV1 => Ok(groundedness
+                >= self.minimum_groundedness
+                && unsupported <= self.maximum_unsupported_claim_mass
+                && contradiction <= self.maximum_contradiction_claim_mass),
+        }
     }
 
     fn weight(&self, kind: ClaimKind) -> f64 {
@@ -239,13 +286,20 @@ pub fn verify_validated_patch_set(
                 report.path
             )));
         }
-        if !report.accepted
-            || report.assessments.iter().any(|assessment| {
-                assessment.verdict != ClaimVerdict::Supported
-                    || assessment.confidence < policy.minimum_claim_confidence
-                    || assessment.citations.is_empty()
-            })
-        {
+        let mut actual = report
+            .assessments
+            .iter()
+            .map(|assessment| assessment.claim.clone())
+            .collect::<Vec<_>>();
+        let mut expected = extract_claims(&patch.path, &patch.content);
+        actual.sort_by(|a, b| a.claim_id.cmp(&b.claim_id));
+        expected.sort_by(|a, b| a.claim_id.cmp(&b.claim_id));
+        if actual != expected {
+            return Err(ApiError::ConfigError(
+                "docs validation assessments do not cover the exact README claims".into(),
+            ));
+        }
+        if !report.accepted || !policy.accepts(&report.assessments)? {
             return Err(ApiError::ConfigError(format!(
                 "docs validation report is not accepted for '{}'",
                 report.path
@@ -489,7 +543,10 @@ pub async fn validate_patch_set(
             .await?;
         }
         let report = accepted_report.expect("accepted report is set before loop exit");
-        accepted_by_directory.insert(directory.path.clone(), patch.content.clone());
+        accepted_by_directory.insert(
+            directory.path.clone(),
+            supported_readme_evidence(&report, &patch.content),
+        );
         accepted_patches.push(patch);
         reports.push(report);
     }
@@ -556,6 +613,7 @@ async fn assess_readme(
     patch: &ReadmePatch,
     revision_attempt: usize,
 ) -> Result<ReadmeClaimReport, ApiError> {
+    context.policy.validate()?;
     let claims = extract_claims(&patch.path, &patch.content);
     if claims.is_empty() {
         return Err(ApiError::ConfigError(format!(
@@ -596,16 +654,11 @@ async fn assess_readme(
         batch_attempt += 1;
     }
     assessments.sort_by(|left, right| left.claim.claim_id.cmp(&right.claim.claim_id));
-    apply_deterministic_guards(context.policy, context.evidence, &mut assessments);
+    validate_assessment_integrity(context.policy, &assessments, Some(context.evidence))?;
+    apply_deterministic_guards(context.evidence, &mut assessments);
     let (groundedness, unsupported, contradiction) =
         aggregate_assessments(context.policy, &assessments);
-    let accepted = groundedness >= context.policy.minimum_groundedness
-        && unsupported <= context.policy.maximum_unsupported_claim_mass
-        && contradiction <= context.policy.maximum_contradiction_claim_mass
-        && assessments.iter().all(|assessment| {
-            assessment.verdict == ClaimVerdict::Supported
-                && assessment.confidence >= context.policy.minimum_claim_confidence
-        });
+    let accepted = context.policy.accepts(&assessments)?;
     Ok(ReadmeClaimReport {
         path: patch.path.clone(),
         content_hash: patch.content_hash.clone(),
@@ -726,36 +779,56 @@ fn reconcile_provider_assessments(
     Ok(assessments)
 }
 
-fn apply_deterministic_guards(
+fn validate_assessment_integrity(
     policy: &DocsClaimPolicy,
-    evidence: &EvidencePartitions,
-    assessments: &mut [ClaimAssessment],
-) {
+    assessments: &[ClaimAssessment],
+    evidence: Option<&EvidencePartitions>,
+) -> Result<(), ApiError> {
     for assessment in assessments {
-        let mut failures = Vec::new();
-        if assessment.verdict == ClaimVerdict::Supported && assessment.citations.is_empty() {
-            failures.push("supported verdict has no evidence citation".to_string());
+        if !assessment.confidence.is_finite()
+            || !(0.0..=1.0).contains(&assessment.confidence)
+            || assessment.confidence < policy.minimum_claim_confidence
+        {
+            return Err(ApiError::ConfigError(
+                "claim verdict confidence is unresolved or invalid".into(),
+            ));
+        }
+        if assessment.verdict != ClaimVerdict::Unsupported && assessment.citations.is_empty() {
+            return Err(ApiError::ConfigError(
+                "supported or contradicted verdict has no evidence citation".into(),
+            ));
         }
         for citation in &assessment.citations {
-            if citation.quote.trim().is_empty() {
-                failures.push("evidence citation is empty".to_string());
-                continue;
-            }
-            if citation.quote.chars().count() > MAX_EVIDENCE_QUOTE_CHARS {
-                failures.push("evidence citation exceeds the quote bound".to_string());
-            }
-            let partition = match citation.scope {
-                CitationScope::Inventory => &evidence.inventory,
-                CitationScope::Direct => &evidence.direct,
-                CitationScope::Descendant => &evidence.descendant,
-            };
-            if !partition.contains(&citation.quote) {
-                failures.push(format!(
-                    "citation is absent from the {:?} evidence partition",
-                    citation.scope
+            if citation.quote.trim().is_empty()
+                || citation.quote.chars().count() > MAX_EVIDENCE_QUOTE_CHARS
+            {
+                return Err(ApiError::ConfigError(
+                    "claim citation is empty or exceeds the quote bound".into(),
                 ));
             }
+            if let Some(evidence) = evidence {
+                let partition = match citation.scope {
+                    CitationScope::Inventory => &evidence.inventory,
+                    CitationScope::Direct => &evidence.direct,
+                    CitationScope::Descendant => &evidence.descendant,
+                };
+                if !partition.contains(&citation.quote) {
+                    return Err(ApiError::ConfigError(
+                        "claim citation is absent from its exact evidence partition".into(),
+                    ));
+                }
+            }
         }
+    }
+    Ok(())
+}
+
+fn apply_deterministic_guards(evidence: &EvidencePartitions, assessments: &mut [ClaimAssessment]) {
+    for assessment in assessments {
+        if assessment.verdict != ClaimVerdict::Supported {
+            continue;
+        }
+        let mut failures = Vec::new();
         let literal_evidence = format!(
             "{}\n{}\n{}",
             evidence.inventory, evidence.direct, evidence.descendant
@@ -776,12 +849,6 @@ fn apply_deterministic_guards(
             && !citations_cover_each_clause(&assessment.claim.statement, &assessment.citations)
         {
             failures.push("citations do not cover every independent claim clause".to_string());
-        }
-        if assessment.confidence < policy.minimum_claim_confidence {
-            failures.push(format!(
-                "verifier confidence {} is below {}",
-                assessment.confidence, policy.minimum_claim_confidence
-            ));
         }
         if !failures.is_empty() {
             assessment.verdict = ClaimVerdict::Unsupported;
@@ -952,13 +1019,7 @@ fn prune_rejected_claims(
         )));
     }
     let (groundedness, unsupported, contradiction) = aggregate_assessments(policy, &assessments);
-    let accepted = groundedness >= policy.minimum_groundedness
-        && unsupported <= policy.maximum_unsupported_claim_mass
-        && contradiction <= policy.maximum_contradiction_claim_mass
-        && assessments.iter().all(|assessment| {
-            assessment.verdict == ClaimVerdict::Supported
-                && assessment.confidence >= policy.minimum_claim_confidence
-        });
+    let accepted = policy.accepts(&assessments)?;
     if !accepted {
         return Err(ApiError::ConfigError(format!(
             "deterministic README pruning did not satisfy policy for '{}'",
@@ -1136,6 +1197,62 @@ fn strip_unordered_list_marker(line: &str) -> Option<&str> {
     ["- ", "* ", "+ "]
         .into_iter()
         .find_map(|marker| line.strip_prefix(marker).map(str::trim))
+}
+
+pub(crate) fn supported_readme_evidence(report: &ReadmeClaimReport, content: &str) -> String {
+    let supported_lines = report
+        .assessments
+        .iter()
+        .filter(|assessment| assessment.verdict == ClaimVerdict::Supported)
+        .flat_map(|assessment| {
+            assessment.claim.source_line_start..=assessment.claim.source_line_end
+        })
+        .collect::<BTreeSet<_>>();
+    content
+        .lines()
+        .enumerate()
+        .filter(|(index, _)| supported_lines.contains(&(index + 1)))
+        .map(|(_, line)| line)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Recheck citation provenance for the entire proposed publication before any write.
+pub(crate) fn verify_publication_evidence(
+    policy: &DocsClaimPolicy,
+    bundle: &DocsEvidenceBundle,
+    validated: &ValidatedDocsPatchSet,
+) -> Result<(), ApiError> {
+    let mut descendants = BTreeMap::new();
+    for directory in &bundle.directories {
+        let path = readme_path(&directory.path);
+        let report = validated
+            .reports
+            .iter()
+            .find(|report| report.path == path)
+            .ok_or_else(|| {
+                ApiError::ConfigError("docs publication is missing a managed README report".into())
+            })?;
+        let patch = validated
+            .patches
+            .iter()
+            .find(|patch| patch.path == path)
+            .ok_or_else(|| {
+                ApiError::ConfigError("docs publication is missing a managed README patch".into())
+            })?;
+        let evidence = evidence_partitions(directory, &descendants);
+        validate_assessment_integrity(policy, &report.assessments, Some(&evidence))?;
+        descendants.insert(
+            directory.path.clone(),
+            supported_readme_evidence(report, &patch.content),
+        );
+    }
+    if bundle.directories.len() != validated.patches.len() {
+        return Err(ApiError::ConfigError(
+            "docs publication contains an unmanaged README".into(),
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn evidence_partitions(
@@ -1500,6 +1617,7 @@ mod tests {
 
     fn policy() -> DocsClaimPolicy {
         DocsClaimPolicy {
+            acceptance_evaluator: Some(DocsAcceptanceEvaluator::WeightedClaimMassV1),
             policy_id: "test".to_string(),
             minimum_claim_confidence: 0.8,
             minimum_groundedness: 0.8,
@@ -1550,7 +1668,6 @@ mod tests {
             rationale: "supported".to_string(),
         }];
         apply_deterministic_guards(
-            &policy(),
             &EvidencePartitions {
                 inventory: String::new(),
                 direct: "config.example.yaml".to_string(),
@@ -1582,18 +1699,16 @@ mod tests {
             }],
             rationale: "supported".to_string(),
         }];
-        let mut assessments = reconcile_provider_assessments(&claims, provider).unwrap();
-        apply_deterministic_guards(
-            &policy(),
-            &EvidencePartitions {
-                inventory: String::new(),
-                direct: "@app.get(\"/healthz\")".to_string(),
-                descendant: String::new(),
-            },
-            &mut assessments,
-        );
-        assert_eq!(assessments[0].verdict, ClaimVerdict::Unsupported);
-        assert!(assessments[0].rationale.contains("absent"));
+        let assessments = reconcile_provider_assessments(&claims, provider).unwrap();
+        let evidence = EvidencePartitions {
+            inventory: String::new(),
+            direct: "@app.get(\"/healthz\")".to_string(),
+            descendant: String::new(),
+        };
+        let error =
+            validate_assessment_integrity(&policy(), &assessments, Some(&evidence)).unwrap_err();
+        assert!(error.to_string().contains("absent"));
+        assert_eq!(assessments[0].verdict, ClaimVerdict::Supported);
     }
 
     #[test]
@@ -1618,7 +1733,6 @@ mod tests {
             rationale: "supported".to_string(),
         }];
         apply_deterministic_guards(
-            &policy(),
             &EvidencePartitions {
                 inventory: String::new(),
                 direct: "Assumed that it is being run from the root\nset -e\nset +e\nwait"
@@ -1736,6 +1850,208 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    struct MixedVerdicts;
+    #[async_trait::async_trait]
+    impl DocsClaimJudge for MixedVerdicts {
+        async fn assess(
+            &self,
+            request: &DocsClaimJudgmentRequest<'_>,
+        ) -> Result<Vec<ProviderClaimAssessment>, ApiError> {
+            Ok(request
+                .claims
+                .iter()
+                .map(|claim| {
+                    let verdict = if claim.statement.starts_with("Unknown") {
+                        ClaimVerdict::Unsupported
+                    } else if claim.statement.starts_with("Contradicted") {
+                        ClaimVerdict::Contradicted
+                    } else {
+                        ClaimVerdict::Supported
+                    };
+                    ProviderClaimAssessment {
+                        claim_id: claim.claim_id.clone(),
+                        verdict,
+                        confidence: 1.0,
+                        citations: if verdict == ClaimVerdict::Unsupported {
+                            vec![]
+                        } else {
+                            vec![ClaimCitation {
+                                scope: CitationScope::Direct,
+                                quote: if verdict == ClaimVerdict::Supported {
+                                    "Supported fact."
+                                } else {
+                                    "Contradicting fact."
+                                }
+                                .into(),
+                            }]
+                        },
+                        rationale: "controlled evidence judgment".into(),
+                    }
+                })
+                .collect())
+        }
+    }
+
+    #[tokio::test]
+    async fn installed_mass_policy_controls_assessment_and_publication_without_hiding_verdicts() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("source.txt"),
+            "Supported fact.\nContradicting fact.\n",
+        )
+        .unwrap();
+        let bundle = crate::docs::capability::inspect_scope(root.path()).unwrap();
+        let directory = &bundle.directories[0];
+        let evidence = evidence_partitions(directory, &BTreeMap::new());
+        let content = "# Supported fact\n\nUnknown fact.\n\nContradicted fact.\n".to_string();
+        let patch = ReadmePatch {
+            path: "README.md".into(),
+            content_hash: blake3::hash(content.as_bytes()).to_hex().to_string(),
+            content,
+        };
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        let store = DocsClaimPolicyRegistryStore::new(db).unwrap();
+        let (_, strict) = store.install(policy(), 1).unwrap();
+        let mut permissive = strict.policy.clone();
+        permissive.minimum_groundedness = 0.3;
+        permissive.maximum_unsupported_claim_mass = 0.34;
+        permissive.maximum_contradiction_claim_mass = 0.34;
+        let (_, permissive) = store.install(permissive, 2).unwrap();
+        let rejected =
+            assess_captured_readme(&MixedVerdicts, &strict.policy, directory, &evidence, &patch)
+                .await
+                .unwrap();
+        let accepted = assess_captured_readme(
+            &MixedVerdicts,
+            &permissive.policy,
+            directory,
+            &evidence,
+            &patch,
+        )
+        .await
+        .unwrap();
+        assert!(!rejected.accepted);
+        assert!(accepted.accepted);
+        assert_eq!(rejected.assessments, accepted.assessments);
+        assert!(accepted
+            .assessments
+            .iter()
+            .any(|assessment| assessment.verdict == ClaimVerdict::Contradicted));
+        let child_evidence = supported_readme_evidence(&accepted, &patch.content);
+        assert!(child_evidence.contains("Supported fact"));
+        assert!(!child_evidence.contains("Unknown"));
+        assert!(!child_evidence.contains("Contradicted"));
+        let reports = vec![accepted];
+        let patches = vec![patch.clone()];
+        let (weighted_groundedness, unsupported_claim_mass, contradiction_claim_mass) =
+            aggregate_reports(&permissive.policy, &reports);
+        let policy_identity = permissive.policy.content_identity();
+        let validation_fingerprint = blake3::hash(
+            &serde_json::to_vec(&(
+                &bundle.source_fingerprint,
+                &policy_identity,
+                &patches,
+                &reports,
+            ))
+            .unwrap(),
+        )
+        .to_hex()
+        .to_string();
+        let validated = ValidatedDocsPatchSet {
+            source_fingerprint: bundle.source_fingerprint.clone(),
+            policy_id: permissive.policy.policy_id.clone(),
+            policy_identity,
+            validation_fingerprint,
+            patches,
+            reports,
+            weighted_groundedness,
+            unsupported_claim_mass,
+            contradiction_claim_mass,
+        };
+        assert!(crate::docs::capability::publish_patch_set(
+            root.path(),
+            &strict.policy,
+            &validated
+        )
+        .is_err());
+        let receipt =
+            crate::docs::capability::publish_patch_set(root.path(), &permissive.policy, &validated)
+                .unwrap();
+        assert_eq!(
+            crate::docs::capability::assess_published_scope(
+                root.path(),
+                "subject",
+                &permissive.policy,
+                &receipt
+            )
+            .unwrap()
+            .stale_probability,
+            0.0
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.path().join("README.md")).unwrap(),
+            patch.content
+        );
+        let mut corrupt = validated.clone();
+        corrupt.reports[0].assessments[0].claim.claim_id = "foreign-claim".into();
+        assert!(verify_validated_patch_set(&permissive.policy, &corrupt).is_err());
+        for confidence in [0.1, f64::NAN, f64::INFINITY] {
+            let mut uncertain = validated.reports[0].assessments.clone();
+            uncertain[0].confidence = confidence;
+            assert!(permissive.policy.accepts(&uncertain).is_err());
+        }
+        let mut false_quote = validated.reports[0].assessments.clone();
+        false_quote
+            .iter_mut()
+            .find(|assessment| !assessment.citations.is_empty())
+            .unwrap()
+            .citations[0]
+            .quote = "foreign evidence".into();
+        assert!(
+            validate_assessment_integrity(&permissive.policy, &false_quote, Some(&evidence))
+                .is_err()
+        );
+        let mut forged = validated.clone();
+        forged.reports[0].assessments = false_quote;
+        forged.validation_fingerprint = blake3::hash(
+            &serde_json::to_vec(&(
+                &forged.source_fingerprint,
+                &forged.policy_identity,
+                &forged.patches,
+                &forged.reports,
+            ))
+            .unwrap(),
+        )
+        .to_hex()
+        .to_string();
+        assert!(crate::docs::capability::publish_patch_set(
+            root.path(),
+            &permissive.policy,
+            &forged
+        )
+        .unwrap_err()
+        .to_string()
+        .contains("absent"));
+        let mut missing_evaluator = permissive.policy.clone();
+        missing_evaluator.acceptance_evaluator = None;
+        assert!(store.install(missing_evaluator.clone(), 3).is_err());
+        assert!(assess_captured_readme(
+            &MixedVerdicts,
+            &missing_evaluator,
+            directory,
+            &evidence,
+            &patch
+        )
+        .await
+        .is_err());
+        let mut unknown_directive = serde_json::to_value(&permissive.policy).unwrap();
+        unknown_directive["acceptance_override"] = true.into();
+        assert!(serde_json::from_value::<DocsClaimPolicy>(unknown_directive).is_err());
+        let mut unknown_evaluator = serde_json::to_value(&permissive.policy).unwrap();
+        unknown_evaluator["acceptance_evaluator"] = "unknown_evaluator".into();
+        assert!(serde_json::from_value::<DocsClaimPolicy>(unknown_evaluator).is_err());
     }
 
     #[test]

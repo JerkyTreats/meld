@@ -7173,6 +7173,40 @@ mod tests {
             self.run_world_genesis_from(assembly, package.path());
         }
 
+        fn run_world_genesis_with_claim_policy(
+            &self,
+            assembly: &ProductRuntimeAssembly,
+            policy: &crate::docs::claim_validation::DocsClaimPolicy,
+        ) {
+            let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/docs_freshness");
+            let package = tempfile::tempdir().unwrap();
+            for entry in std::fs::read_dir(&source).unwrap() {
+                let entry = entry.unwrap();
+                if entry.file_type().unwrap().is_file() {
+                    std::fs::copy(entry.path(), package.path().join(entry.file_name())).unwrap();
+                }
+            }
+            let policy_path = "claim_policy.docs-claims-strict-v1.json";
+            let bytes = serde_json::to_vec(policy).unwrap();
+            std::fs::write(package.path().join(policy_path), &bytes).unwrap();
+            let mut manifest: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(package.path().join("pds-package.json")).unwrap(),
+            )
+            .unwrap();
+            for component in manifest["components"].as_array_mut().unwrap() {
+                if component["content"]["path"] == policy_path {
+                    component["content"]["content_hash"] =
+                        blake3::hash(&bytes).to_hex().to_string().into();
+                }
+            }
+            std::fs::write(
+                package.path().join("pds-package.json"),
+                serde_json::to_vec(&manifest).unwrap(),
+            )
+            .unwrap();
+            self.run_world_genesis_from(assembly, package.path());
+        }
+
         fn run_world_genesis(&self, assembly: &ProductRuntimeAssembly) {
             self.run_world_genesis_from(
                 assembly,
@@ -7245,40 +7279,12 @@ mod tests {
     #[test]
     fn docs_capabilities_reopen_with_prepared_policy_and_reject_substitution() {
         let harness = StewardshipHarness::new();
-        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/docs_freshness");
-        let package = tempfile::tempdir().unwrap();
-        for entry in std::fs::read_dir(&source).unwrap() {
-            let entry = entry.unwrap();
-            if entry.file_type().unwrap().is_file() {
-                std::fs::copy(entry.path(), package.path().join(entry.file_name())).unwrap();
-            }
-        }
-        let policy_path = "claim_policy.docs-claims-strict-v1.json";
-        let mut policy: crate::docs::claim_validation::DocsClaimPolicy =
-            serde_json::from_slice(&std::fs::read(package.path().join(policy_path)).unwrap())
-                .unwrap();
+        let mut policy = crate::docs::claim_observation::test_support::policy();
         policy.minimum_claim_confidence = 0.93;
-        let bytes = serde_json::to_vec(&policy).unwrap();
-        std::fs::write(package.path().join(policy_path), &bytes).unwrap();
-        let mut manifest: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(package.path().join("pds-package.json")).unwrap(),
-        )
-        .unwrap();
-        for component in manifest["components"].as_array_mut().unwrap() {
-            if component["content"]["path"] == policy_path {
-                component["content"]["content_hash"] =
-                    blake3::hash(&bytes).to_hex().to_string().into();
-            }
-        }
-        std::fs::write(
-            package.path().join("pds-package.json"),
-            serde_json::to_vec(&manifest).unwrap(),
-        )
-        .unwrap();
         let newer;
         {
             let assembly = harness.assembly();
-            harness.run_world_genesis_from(&assembly, package.path());
+            harness.run_world_genesis_with_claim_policy(&assembly, &policy);
             let mut other = policy.clone();
             other.minimum_claim_confidence = 0.97;
             newer = assembly
@@ -7523,20 +7529,49 @@ mod tests {
 
     #[test]
     fn native_docs_correct_readme_requires_no_goal_or_task() {
+        assert_native_docs_acceptance("`run` exists.\n", None, true);
+    }
+
+    #[test]
+    fn native_docs_no_action_obeys_installed_acceptance_with_an_unsupported_extra_assertion() {
+        let mut policy = crate::docs::claim_observation::test_support::policy();
+        policy.minimum_groundedness = 0.4;
+        policy.maximum_unsupported_claim_mass = 0.6;
+        assert_native_docs_acceptance(
+            "`run` exists.\n\nAn invented extra assertion.\n",
+            Some(&policy),
+            true,
+        );
+    }
+
+    #[test]
+    fn native_docs_strict_policy_requires_work_for_the_same_unsupported_extra_assertion() {
+        assert_native_docs_acceptance(
+            "`run` exists.\n\nAn invented extra assertion.\n",
+            None,
+            false,
+        );
+    }
+
+    fn assert_native_docs_acceptance(
+        content: &str,
+        policy: Option<&crate::docs::claim_validation::DocsClaimPolicy>,
+        expect_no_action: bool,
+    ) {
         let harness = StewardshipHarness::new();
         std::fs::write(
             harness._workspace.path().join("lib.rs"),
             "pub fn run() {}\n",
         )
         .unwrap();
-        std::fs::write(
-            harness._workspace.path().join("README.md"),
-            "`run` exists.\n",
-        )
-        .unwrap();
+        std::fs::write(harness._workspace.path().join("README.md"), content).unwrap();
         {
             let assembly = harness.assembly();
-            harness.run_world_genesis(&assembly);
+            if let Some(policy) = policy {
+                harness.run_world_genesis_with_claim_policy(&assembly, policy);
+            } else {
+                harness.run_world_genesis(&assembly);
+            }
         }
         let assembly = harness.assembly();
         harness.bind_production_routes(&assembly);
@@ -7555,6 +7590,28 @@ mod tests {
         else {
             panic!("Execution absent")
         };
+        if !expect_no_action {
+            let judgments = assembly.stores().agent_store.condition_judgments().unwrap();
+            assert!(judgments.iter().any(|judgment| matches!(
+                judgment.evaluation,
+                meld_lang::EvalResult::Unsatisfied { .. }
+            )));
+            assert!(!assembly
+                .stores()
+                .agent_store
+                .reconciliation_goals_for_agent(STEWARD_AGENT_ID)
+                .unwrap()
+                .is_empty());
+            assert!(!execution
+                .network
+                .lock()
+                .unwrap()
+                .state()
+                .admissions
+                .is_empty());
+            supervisor.request_shutdown(1_400).unwrap();
+            return;
+        }
         assert!(execution
             .network
             .lock()
@@ -7578,7 +7635,7 @@ mod tests {
         );
         assert_eq!(
             std::fs::read_to_string(harness._workspace.path().join("README.md")).unwrap(),
-            "`run` exists.\n"
+            content
         );
         supervisor.request_shutdown(1_400).unwrap();
         drop(supervisor);

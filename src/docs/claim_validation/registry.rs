@@ -77,7 +77,7 @@ impl DocsClaimPolicyRegistryStore {
             return Ok(None);
         };
         let revision: DocsClaimPolicyRevision = decode(&raw)?;
-        revision.policy.validate()?;
+        revision.policy.validate_historical()?;
         if revision.policy.policy_id != reference.policy_id
             || revision.content_identity != reference.content_identity
             || revision.policy.content_identity() != revision.content_identity
@@ -118,6 +118,37 @@ mod tests {
             "../../../theory/docs_freshness/claim_policy.docs-claims-strict-v1.json"
         ))
         .unwrap()
+    }
+
+    #[test]
+    fn historical_policy_without_evaluator_reopens_but_cannot_be_installed_for_new_work() {
+        let root = tempfile::tempdir().unwrap();
+        let reference;
+        {
+            let db = sled::open(root.path()).unwrap();
+            let mut old = policy();
+            old.acceptance_evaluator = None;
+            let revision = DocsClaimPolicyRevision {
+                content_identity: old.content_identity(),
+                policy: old,
+                installed_at_seq: 1,
+            };
+            reference = revision.revision_ref();
+            let raw = encode(&revision).unwrap();
+            assert!(!String::from_utf8_lossy(&raw).contains("acceptance_evaluator"));
+            db.open_tree(TREE_REVISIONS)
+                .unwrap()
+                .insert(key(&reference).unwrap(), raw)
+                .unwrap();
+            db.flush().unwrap();
+        }
+        let store = DocsClaimPolicyRegistryStore::new(sled::open(root.path()).unwrap()).unwrap();
+        let historical = store.resolve(&reference).unwrap().unwrap();
+        assert_eq!(historical.revision_ref(), reference);
+        assert!(store.install(historical.policy.clone(), 2).is_err());
+        let (_, current) = store.install(policy(), 3).unwrap();
+        assert_ne!(current.revision_ref(), reference);
+        assert_eq!(store.resolve(&reference).unwrap(), Some(historical));
     }
 
     #[test]
