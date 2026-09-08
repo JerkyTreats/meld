@@ -370,66 +370,6 @@ fn test_context_get_path_uses_stale_scan_data_with_warning() {
 }
 
 #[test]
-fn test_context_generate_path_uses_stale_scan_data() {
-    let temp_dir = TempDir::new().unwrap();
-    with_xdg_env(&temp_dir, || {
-        let workspace_root = temp_dir.path().join("workspace");
-        let src_dir = workspace_root.join("src");
-        fs::create_dir_all(&src_dir).unwrap();
-        fs::write(src_dir.join("lib.rs"), "pub fn sample() {}\n").unwrap();
-
-        let prompts_dir = xdg::prompts_dir().unwrap();
-        let prompt_path = prompts_dir.join("test.md");
-        fs::write(&prompt_path, "Test prompt").unwrap();
-        create_test_agent("test-agent", AgentRole::Writer, Some("prompts/test.md")).unwrap();
-        create_test_provider("test-provider", ProviderType::Ollama).unwrap();
-
-        let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
-        run_context
-            .execute(&Commands::Scan { force: true })
-            .unwrap();
-
-        let root_hash = TreeBuilder::new(workspace_root.clone())
-            .compute_root()
-            .unwrap();
-        drop(run_context);
-        let config = MerkleConfig::default();
-        let (store_path, _, _) = config
-            .system
-            .storage
-            .resolve_paths(&workspace_root)
-            .unwrap();
-        let db = retry_open_sled_db(&store_path, 10).unwrap();
-        db.remove(root_hash.as_slice()).unwrap();
-        db.flush().unwrap();
-        drop(db);
-
-        let stale_context = RunContext::new(workspace_root.clone(), None).unwrap();
-        let result = stale_context.execute(&Commands::Context {
-            command: ContextCommands::Generate {
-                node: None,
-                path: Some(src_dir),
-                path_positional: None,
-                agent: Some("test-agent".to_string()),
-                provider: Some("test-provider".to_string()),
-                workflow_id: None,
-                provider_model: None,
-                provider_additional_json_file: None,
-                frame_type: None,
-                force: false,
-                no_recursive: false,
-            },
-        });
-
-        assert!(result.is_err());
-        assert!(
-            !matches!(result, Err(ApiError::PathNotInTree(_))),
-            "stale scans should remain usable for generation"
-        );
-    });
-}
-
-#[test]
 fn test_context_get_with_workflow_agent_prefers_final_result_frame() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
@@ -674,7 +614,7 @@ fn test_context_get_combine() {
 }
 
 #[test]
-fn test_context_generate_requires_provider() {
+fn retired_context_generate_returns_migration_guidance() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
         // Create workspace and agent
@@ -712,110 +652,10 @@ fn test_context_generate_requires_provider() {
             },
         });
 
-        assert!(result.is_err());
-        match result {
-            Err(ApiError::ProviderNotConfigured(_)) => {}
-            _ => panic!("Expected ProviderNotConfigured error"),
-        }
-    });
-}
-
-#[test]
-fn test_context_generate_requires_agent_or_default() {
-    let temp_dir = TempDir::new().unwrap();
-    with_xdg_env(&temp_dir, || {
-        let workspace_root = temp_dir.path().join("workspace");
-        fs::create_dir_all(&workspace_root).unwrap();
-
-        let prompts_dir = xdg::prompts_dir().unwrap();
-        let prompt_path = prompts_dir.join("test.md");
-        fs::write(&prompt_path, "Test prompt").unwrap();
-
-        // Create a single Writer agent (should be used as default)
-        create_test_agent("test-agent", AgentRole::Writer, Some("prompts/test.md")).unwrap();
-        create_test_provider("test-provider", ProviderType::Ollama).unwrap();
-
-        let test_file = workspace_root.join("test.txt");
-        fs::write(&test_file, "test content").unwrap();
-
-        let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
-        run_context
-            .execute(&Commands::Scan { force: true })
-            .unwrap();
-
-        // Should work without --agent (uses default)
-        // Note: This will fail at generation time if provider is not actually available,
-        // but the agent resolution should work
-        let result = run_context.execute(&Commands::Context {
-            command: ContextCommands::Generate {
-                node: None,
-                path: Some(test_file),
-                path_positional: None,
-                agent: None,
-                provider: Some("test-provider".to_string()),
-                workflow_id: None,
-                provider_model: None,
-                provider_additional_json_file: None,
-                frame_type: None,
-                force: false,
-                no_recursive: false,
-            },
-        });
-
-        // May fail at provider connection, but should not fail at agent resolution
-        if let Err(e) = result {
-            // Should not be a "no agent" error
-            assert!(!e.to_string().contains("No Writer agents found"));
-        }
-    });
-}
-
-#[test]
-fn test_context_generate_multiple_agents_requires_flag() {
-    let temp_dir = TempDir::new().unwrap();
-    with_xdg_env(&temp_dir, || {
-        let workspace_root = temp_dir.path().join("workspace");
-        fs::create_dir_all(&workspace_root).unwrap();
-
-        let prompts_dir = xdg::prompts_dir().unwrap();
-        let prompt_path = prompts_dir.join("test.md");
-        fs::write(&prompt_path, "Test prompt").unwrap();
-
-        // Create multiple Writer agents
-        create_test_agent("agent1", AgentRole::Writer, Some("prompts/test.md")).unwrap();
-        create_test_agent("agent2", AgentRole::Writer, Some("prompts/test.md")).unwrap();
-        create_test_provider("test-provider", ProviderType::Ollama).unwrap();
-
-        let test_file = workspace_root.join("test.txt");
-        fs::write(&test_file, "test content").unwrap();
-
-        let run_context = RunContext::new(workspace_root.clone(), None).unwrap();
-        run_context
-            .execute(&Commands::Scan { force: true })
-            .unwrap();
-
-        // Should fail without --agent when multiple agents exist
-        let result = run_context.execute(&Commands::Context {
-            command: ContextCommands::Generate {
-                node: None,
-                path: Some(test_file),
-                path_positional: None,
-                agent: None,
-                provider: Some("test-provider".to_string()),
-                workflow_id: None,
-                provider_model: None,
-                provider_additional_json_file: None,
-                frame_type: None,
-                force: false,
-                no_recursive: false,
-            },
-        });
-
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Multiple Writer agents found"));
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("Direct Context generation is retired"));
+        assert!(error.contains("authorized Context generation capabilities"));
+        assert!(run_context.api().heads().entries().is_empty());
     });
 }
 

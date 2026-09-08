@@ -4,11 +4,9 @@
 //! coordination. Reads call `catch_up` before querying so graph indexes observe
 //! all durable events exposed by the supplied replay capability.
 //!
-//! Product composition supplies all three authority-derived ports to
+//! Product composition supplies replay and cursor-reporting ports to
 //! [`GraphRuntime::from_ports`].
 
-#[cfg(test)]
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -17,15 +15,9 @@ use crate::error::StorageError;
 use meld_events::error::EventAuthorityError;
 
 use crate::events::observability::CoverageTruncation;
-use crate::events::{
-    AppendDisposition, AppendReceipt, EventPage, LedgerCursor, LedgerIdentity, ReplayRequest,
-    MAX_REPLAY_LIMIT,
-};
+use crate::events::{EventPage, LedgerCursor, LedgerIdentity, ReplayRequest, MAX_REPLAY_LIMIT};
 use crate::world_state::graph::cursor::GraphProjectionCursor;
-use crate::world_state::graph::outbox::GraphDerivedOutbox;
-use crate::world_state::graph::ports::{
-    GraphConsumerCursorReporter, GraphDerivedEventSink, GraphEventReplaySource,
-};
+use crate::world_state::graph::ports::{GraphConsumerCursorReporter, GraphEventReplaySource};
 use crate::world_state::graph::reducer::TraversalReducer;
 use crate::world_state::graph::store::TraversalStore;
 
@@ -64,8 +56,6 @@ pub struct GraphCatchUpReport {
     pub events_attempted: usize,
     /// Source events that produced graph facts.
     pub traversal_events_applied: usize,
-    /// Derived graph events appended idempotently to the ledger.
-    pub derived_events_appended: usize,
     /// Retryable diagnostics observed during the tick.
     pub retryable_errors: Vec<GraphWorkerIssue>,
     /// Fatal diagnostics observed during the tick.
@@ -88,12 +78,10 @@ pub struct OwnerEventReplayTick {
 /// Event-backed graph projection runtime.
 pub struct GraphRuntime {
     replay: Arc<dyn GraphEventReplaySource>,
-    derived_sink: Arc<dyn GraphDerivedEventSink>,
     cursor_reporter: Arc<dyn GraphConsumerCursorReporter>,
     ledger_id: LedgerIdentity,
     traversal: Arc<TraversalStore>,
     cursor: GraphProjectionCursor,
-    derived_outbox: GraphDerivedOutbox,
     catch_up_lock: Mutex<()>,
     lifecycle: crate::lifecycle::NativeLifecycle,
 }
@@ -102,15 +90,11 @@ impl GraphRuntime {
     /// Builds a graph projection from product-owned event authority ports.
     pub fn from_ports(
         replay: Arc<dyn GraphEventReplaySource>,
-        derived_sink: Arc<dyn GraphDerivedEventSink>,
         cursor_reporter: Arc<dyn GraphConsumerCursorReporter>,
         traversal: Arc<TraversalStore>,
     ) -> Result<Self, StorageError> {
         let ledger_id = replay.ledger_identity();
-        for actual in [
-            derived_sink.ledger_identity(),
-            cursor_reporter.ledger_identity(),
-        ] {
+        for actual in [cursor_reporter.ledger_identity()] {
             if actual != ledger_id {
                 return Err(StorageError::IdentityMismatch {
                     expected: ledger_id,
@@ -119,15 +103,12 @@ impl GraphRuntime {
             }
         }
         let cursor = GraphProjectionCursor::open(traversal.as_ref(), ledger_id)?;
-        let derived_outbox = GraphDerivedOutbox::open(traversal.db())?;
         Ok(Self {
             replay,
-            derived_sink,
             cursor_reporter,
             ledger_id,
             traversal,
             cursor,
-            derived_outbox,
             catch_up_lock: Mutex::new(()),
             lifecycle: crate::lifecycle::NativeLifecycle::new("world_state.graph_replay"),
         })
@@ -163,10 +144,6 @@ impl GraphRuntime {
         let cursor = self
             .durable_event_cursor()
             .map_err(|error| error.to_string())?;
-        let pending = self
-            .derived_outbox
-            .pending()
-            .map_err(|error| error.to_string())?;
         let source_replays = self
             .traversal
             .owner_event_replay_states(cursor.ledger_id)
@@ -200,13 +177,10 @@ impl GraphRuntime {
             proof_position_ref: checkpoint_ref,
             unresolved_operation_summary_ref: crate::lifecycle::evidence_ref(
                 "graph-native-work",
-                &(
-                    &pending,
-                    source_replays
-                        .iter()
-                        .filter(|state| !state.covered)
-                        .collect::<Vec<_>>(),
-                ),
+                &(source_replays
+                    .iter()
+                    .filter(|state| !state.covered)
+                    .collect::<Vec<_>>(),),
             )?,
         })
     }
@@ -339,7 +313,6 @@ impl GraphRuntime {
             combined.output_event_seq = next.output_event_seq;
             combined.events_attempted += next.events_attempted;
             combined.traversal_events_applied += next.traversal_events_applied;
-            combined.derived_events_appended += next.derived_events_appended;
             combined.retryable_errors.extend(next.retryable_errors);
             combined.fatal_errors.extend(next.fatal_errors);
             combined.budget_exhausted = next.budget_exhausted;
@@ -359,13 +332,12 @@ impl GraphRuntime {
             && combined.retryable_errors.is_empty()
             && combined.fatal_errors.is_empty()
         {
-            // Newly derived records consume the remainder of this same work budget.
+            // Consume the remaining replay budget without exceeding the caller bound.
             // Historical source scans retain their independent reporting boundary.
             let next = self.catch_up_page(max_items - combined.events_attempted, false)?;
             combined.output_event_seq = next.output_event_seq;
             combined.events_attempted += next.events_attempted;
             combined.traversal_events_applied += next.traversal_events_applied;
-            combined.derived_events_appended += next.derived_events_appended;
             combined.retryable_errors.extend(next.retryable_errors);
             combined.fatal_errors.extend(next.fatal_errors);
             combined.budget_exhausted = next.budget_exhausted;
@@ -382,18 +354,16 @@ impl GraphRuntime {
         max_items: usize,
         allow_source_replay: bool,
     ) -> Result<GraphCatchUpReport, StorageError> {
-        let (mut derived_events_appended, mut derived_through) = self.drain_derived_outbox()?;
         let cursor = self.cursor.get()?;
         let after_seq = cursor.after_seq;
         if allow_source_replay && after_seq > 0 {
-            if let Some(mut report) = super::source_replay::replay_pending_source(
+            if let Some(report) = super::source_replay::replay_pending_source(
                 self.traversal.as_ref(),
                 self.replay.as_ref(),
                 self.cursor_reporter.as_ref(),
                 cursor,
                 max_items,
             )? {
-                report.derived_events_appended += derived_events_appended;
                 return Ok(report);
             }
         }
@@ -466,7 +436,6 @@ impl GraphRuntime {
                     output_event_seq: after_seq,
                     events_attempted: 0,
                     traversal_events_applied: 0,
-                    derived_events_appended: 0,
                     retryable_errors: Vec::new(),
                     fatal_errors: vec![GraphWorkerIssue {
                         item_id: Some(format!("event_spine_seq::{gap_cursor}")),
@@ -485,11 +454,8 @@ impl GraphRuntime {
         let events_attempted = events.len();
         let mut traversal_events_applied = 0;
         let mut durable_cursor = cursor;
-        // Apply one source record at a time. This makes a replay after a crash
-        // observe projection state from exactly that source record, allowing
-        // the reducer to reconstruct the same derived envelopes before the
-        // cursor advances. Processing a whole page before publication would
-        // let later projection mutations alter an earlier envelope's payload.
+        // Publication contents are immutable and idempotent. Flush the projection
+        // before advancing its cursor so restart can safely repeat the last record.
         for event in events {
             let event_seq = event.seq;
             let reducer = TraversalReducer::replay_records(
@@ -499,11 +465,6 @@ impl GraphRuntime {
                 std::iter::once(event),
             )?;
             traversal_events_applied += reducer.applied_events;
-            fail_after_projection_before_outbox()?;
-            self.derived_outbox.replace(&reducer.emitted_envelopes)?;
-            let (appended, through) = self.drain_derived_outbox()?;
-            derived_events_appended += appended;
-            derived_through = derived_through.max(through);
             self.traversal.flush()?;
             durable_cursor = self.cursor.advance(event_seq)?;
         }
@@ -523,7 +484,6 @@ impl GraphRuntime {
                 .report_owner_source_cursor(&state.source, durable_cursor)
                 .map_err(authority_error_to_storage)?;
         }
-        let budget_exhausted = budget_exhausted || derived_through > durable_cursor.after_seq;
         let waiting_on = if events_attempted == 0 && !budget_exhausted {
             vec![crate::waiting::WaitingOnDeclaration::broad(
                 "ledger_quiet_past_graph_cursor",
@@ -548,32 +508,11 @@ impl GraphRuntime {
             output_event_seq: durable_cursor.after_seq,
             events_attempted,
             traversal_events_applied,
-            derived_events_appended,
             retryable_errors: Vec::new(),
             fatal_errors: Vec::new(),
             budget_exhausted,
             waiting_on,
         })
-    }
-
-    fn drain_derived_outbox(&self) -> Result<(usize, u64), StorageError> {
-        let mut pending = self.derived_outbox.pending()?;
-        let mut inserted = 0;
-        let mut through = 0;
-        while let Some(envelope) = pending.first().cloned() {
-            let receipt = self
-                .derived_sink
-                .append_derived(envelope)
-                .map_err(authority_error_to_storage)?;
-            validate_receipt_identity(self.ledger_id, receipt)?;
-            through = through.max(receipt.seq);
-            if receipt.disposition == AppendDisposition::Inserted {
-                inserted += 1;
-            }
-            pending.remove(0);
-            self.derived_outbox.replace(&pending)?;
-        }
-        Ok((inserted, through))
     }
 
     /// Clone the shared traversal store.
@@ -589,20 +528,6 @@ impl GraphRuntime {
     /// Returns the identity-bearing graph cursor durably persisted locally.
     pub fn durable_event_cursor(&self) -> Result<LedgerCursor, StorageError> {
         self.cursor.get()
-    }
-}
-
-fn validate_receipt_identity(
-    expected: LedgerIdentity,
-    receipt: AppendReceipt,
-) -> Result<(), StorageError> {
-    if receipt.ledger_id == expected {
-        Ok(())
-    } else {
-        Err(StorageError::IdentityMismatch {
-            expected,
-            actual: receipt.ledger_id,
-        })
     }
 }
 
@@ -665,293 +590,5 @@ fn authority_error_to_storage(error: EventAuthorityError) -> StorageError {
         EventAuthorityError::DuplicateAuthorityBinding { ledger_id } => StorageError::IoError(
             std::io::Error::other(format!("duplicate authority binding for {ledger_id}")),
         ),
-    }
-}
-
-#[cfg(test)]
-static FAIL_AFTER_PROJECTION_BEFORE_OUTBOX: AtomicBool = AtomicBool::new(false);
-#[cfg(test)]
-static FAILPOINT_TEST_LOCK: Mutex<()> = Mutex::new(());
-
-#[cfg(test)]
-fn fail_after_projection_before_outbox() -> Result<(), StorageError> {
-    if FAIL_AFTER_PROJECTION_BEFORE_OUTBOX.swap(false, Ordering::SeqCst) {
-        return Err(StorageError::Unavailable(
-            "injected crash after projection flush and before outbox persistence".to_string(),
-        ));
-    }
-    Ok(())
-}
-
-#[cfg(not(test))]
-fn fail_after_projection_before_outbox() -> Result<(), StorageError> {
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::*;
-    use crate::events::{DomainObjectRef, EventEnvelope};
-    use crate::world_state::graph::test_support::GraphRuntimeTestFixture; // boundary-allow: event-test
-
-    #[test]
-    fn lifecycle_evidence_accounts_for_the_actual_durable_outbox() {
-        let db = sled::Config::new().temporary(true).open().unwrap();
-        let fixture = GraphRuntimeTestFixture::open(db).unwrap();
-        let runtime = fixture.runtime();
-        let valid = crate::waiting::StructuralWakeAddress::EventPosition(format!(
-            "event-ledger::{}::after::0",
-            runtime.ledger_id
-        ));
-        assert!(runtime.resolves_wake(&valid).unwrap());
-        for invalid in [
-            format!("event-ledger::{}::after::0", LedgerIdentity::new()),
-            format!("event-ledger::{}::after::not-a-position", runtime.ledger_id),
-            format!("event-ledger::{}::after::0::extra", runtime.ledger_id),
-        ] {
-            assert!(!runtime
-                .resolves_wake(&crate::waiting::StructuralWakeAddress::EventPosition(
-                    invalid
-                ))
-                .unwrap());
-        }
-        let identity =
-            crate::lifecycle::NativeLifecycleIdentity::new("generation-a".into(), "graph-a".into())
-                .unwrap();
-        let (ready, transition) = runtime.lifecycle_start(identity.clone()).unwrap();
-        assert_eq!(transition.checkpoint_ref, ready.proof_position_ref);
-        let envelope = EventEnvelope::with_now_domain(
-            "session",
-            "graph",
-            "pending",
-            "test.pending",
-            None,
-            json!({}),
-        );
-        runtime.derived_outbox.replace(&[envelope]).unwrap();
-        let (safe, transition) = runtime.lifecycle_safe_point(identity).unwrap();
-        assert_eq!(safe.checkpoint_ref, ready.checkpoint_ref);
-        assert_eq!(transition.checkpoint_ref, safe.proof_position_ref);
-        assert_ne!(
-            safe.unresolved_operation_summary_ref,
-            ready.unresolved_operation_summary_ref
-        );
-        assert_eq!(runtime.derived_outbox.pending().unwrap().len(), 1);
-    }
-
-    #[test]
-    fn derived_event_replay_uses_remaining_budget_and_reports_exhaustion_exactly() {
-        for budget in [1, 16] {
-            let temp = tempfile::tempdir().unwrap();
-            let fixture = GraphRuntimeTestFixture::open(sled::open(temp.path()).unwrap()).unwrap();
-            let runtime = fixture.runtime();
-            fixture
-                .append(
-                    EventEnvelope::with_now_domain(
-                        "session-a",
-                        "context",
-                        "stream-a",
-                        "context.head_selected",
-                        None,
-                        json!({"ok":true}),
-                    )
-                    .with_graph(
-                        vec![
-                            DomainObjectRef::new("context", "head", "node-a::analysis").unwrap(),
-                            DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap(),
-                            DomainObjectRef::new("context", "frame", "frame-a").unwrap(),
-                        ],
-                        Vec::new(),
-                    ),
-                )
-                .unwrap();
-            let first = runtime
-                .catch_up_bounded(GraphCatchUpBudget { max_items: budget })
-                .unwrap();
-            assert!(first.events_attempted <= budget);
-            assert_eq!(first.derived_events_appended, 1);
-            let records = fixture.records().unwrap();
-            assert_eq!(records.len(), 2);
-            if budget == 1 {
-                assert_eq!(first.events_attempted, 1);
-                assert_eq!(first.output_event_seq, records[0].seq);
-                assert!(first.budget_exhausted);
-                let second = runtime
-                    .catch_up_bounded(GraphCatchUpBudget { max_items: 1 })
-                    .unwrap();
-                assert_eq!(second.events_attempted, 1);
-                assert_eq!(second.derived_events_appended, 0);
-                assert_eq!(second.output_event_seq, records[1].seq);
-                assert!(!second.budget_exhausted);
-            } else {
-                assert_eq!(first.events_attempted, 2);
-                assert_eq!(first.output_event_seq, records[1].seq);
-                assert!(!first.budget_exhausted);
-            }
-            assert_eq!(
-                runtime.durable_event_cursor().unwrap().after_seq,
-                records[1].seq
-            );
-            assert_eq!(fixture.records().unwrap().len(), 2);
-        }
-    }
-
-    #[test]
-    fn reopen_recovers_crash_between_projection_flush_and_outbox_persistence() {
-        let _failpoint_guard = FAILPOINT_TEST_LOCK.lock();
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("graph-runtime");
-        let db = sled::open(&path).unwrap();
-        let fixture = GraphRuntimeTestFixture::open(db.clone()).unwrap();
-        let runtime = fixture.runtime();
-        let head = DomainObjectRef::new("context", "head", "node-a::analysis").unwrap();
-        let node = DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap();
-        let frame = DomainObjectRef::new("context", "frame", "frame-a").unwrap();
-        fixture
-            .append(
-                EventEnvelope::with_now_domain(
-                    "session-a",
-                    "context",
-                    "stream-a",
-                    "context.head_selected",
-                    None,
-                    json!({ "ok": true }),
-                )
-                .with_graph(vec![head, node, frame], Vec::new()),
-            )
-            .unwrap();
-        FAIL_AFTER_PROJECTION_BEFORE_OUTBOX.store(true, Ordering::SeqCst);
-
-        assert!(matches!(
-            runtime.catch_up(),
-            Err(StorageError::Unavailable(message))
-                if message.contains("before outbox persistence")
-        ));
-        assert_eq!(runtime.durable_event_cursor().unwrap().after_seq, 0);
-        drop(runtime);
-        drop(fixture);
-        drop(db);
-
-        let reopened_db = sled::open(&path).unwrap();
-        let reopened_fixture = GraphRuntimeTestFixture::open(reopened_db.clone()).unwrap();
-        let reopened = reopened_fixture.runtime();
-        reopened.catch_up().unwrap();
-        let derived: Vec<_> = reopened_fixture
-            .records()
-            .unwrap()
-            .into_iter()
-            .filter(|record| record.event_type == "world_state.anchor_selected")
-            .collect();
-
-        assert_eq!(derived.len(), 1);
-        assert!(reopened.durable_event_cursor().unwrap().after_seq >= 1);
-    }
-
-    #[test]
-    fn reopen_recovers_one_selected_and_one_superseded_fact_after_projection_crash() {
-        let _failpoint_guard = FAILPOINT_TEST_LOCK.lock();
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("graph-runtime-supersession");
-        let db = sled::open(&path).unwrap();
-        let fixture = GraphRuntimeTestFixture::open(db.clone()).unwrap();
-        let runtime = fixture.runtime();
-        let ledger_id = runtime.ledger_identity();
-        let head = DomainObjectRef::new("context", "head", "node-a::analysis").unwrap();
-        let node = DomainObjectRef::new("workspace_fs", "node", "node-a").unwrap();
-        let first_frame = DomainObjectRef::new("context", "frame", "frame-a").unwrap();
-        let second_frame = DomainObjectRef::new("context", "frame", "frame-b").unwrap();
-        fixture
-            .append(
-                EventEnvelope::with_now_domain(
-                    "session-a",
-                    "context",
-                    "stream-a",
-                    "context.head_selected",
-                    None,
-                    json!({ "generation": 1 }),
-                )
-                .with_graph(
-                    vec![head.clone(), node.clone(), first_frame.clone()],
-                    Vec::new(),
-                ),
-            )
-            .unwrap();
-        runtime.catch_up().unwrap();
-        let second_source_seq = fixture
-            .append(
-                EventEnvelope::with_now_domain(
-                    "session-a",
-                    "context",
-                    "stream-a",
-                    "context.head_selected",
-                    None,
-                    json!({ "generation": 2 }),
-                )
-                .with_graph(vec![head.clone(), node, second_frame.clone()], Vec::new()),
-            )
-            .unwrap()
-            .seq;
-        FAIL_AFTER_PROJECTION_BEFORE_OUTBOX.store(true, Ordering::SeqCst);
-
-        assert!(matches!(
-            runtime.catch_up(),
-            Err(StorageError::Unavailable(message))
-                if message.contains("before outbox persistence")
-        ));
-        assert!(runtime.durable_event_cursor().unwrap().after_seq < second_source_seq);
-        drop(runtime);
-        drop(fixture);
-        drop(db);
-
-        let reopened_db = sled::open(&path).unwrap();
-        let reopened_fixture = GraphRuntimeTestFixture::open(reopened_db.clone()).unwrap();
-        let reopened = reopened_fixture.runtime();
-        reopened.catch_up().unwrap();
-        let recovered: Vec<_> = reopened_fixture
-            .records()
-            .unwrap()
-            .into_iter()
-            .filter(|record| {
-                record.envelope.provenance.source_records
-                    == vec![crate::events::EventRecordRef {
-                        ledger_id,
-                        seq: second_source_seq,
-                    }]
-            })
-            .collect();
-        let selected: Vec<_> = recovered
-            .iter()
-            .filter(|record| record.event_type == "world_state.anchor_selected")
-            .collect();
-        let superseded: Vec<_> = recovered
-            .iter()
-            .filter(|record| record.event_type == "world_state.anchor_superseded")
-            .collect();
-
-        assert_eq!(selected.len(), 1);
-        assert_eq!(superseded.len(), 1);
-        assert_eq!(
-            selected[0].data["anchor"]["target"]["object_id"],
-            second_frame.object_id
-        );
-        assert_eq!(
-            selected[0].data["anchor"]["selected_at_seq"],
-            second_source_seq
-        );
-        assert_eq!(
-            superseded[0].data["anchor"]["target"]["object_id"],
-            first_frame.object_id
-        );
-        assert_eq!(
-            superseded[0].data["anchor"]["ended_at_seq"],
-            second_source_seq
-        );
-        assert_eq!(
-            superseded[0].data["anchor"]["ended_by_anchor_id"],
-            format!("anchor::{}::{second_source_seq}", head.index_key())
-        );
-        assert!(reopened.durable_event_cursor().unwrap().after_seq >= second_source_seq);
     }
 }

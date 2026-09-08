@@ -186,9 +186,98 @@ mod tests {
     use crate::world_state::graph::PerspectiveKey;
 
     #[test]
+    fn question_state_distinguishes_unassessed_pending_and_stale_interpretation() {
+        use crate::belief::{
+            BeliefAssessmentActor, BeliefAssessmentRequest, BeliefQuery, BeliefQuestionState,
+        };
+        use std::sync::Arc;
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        let store = Arc::new(BeliefStore::new(db.clone()).unwrap());
+        let mut registry = BeliefFamilyRegistryStore::new(db).unwrap();
+        let config: BeliefFamilyConfig = serde_json::from_str(include_str!(
+            "../../../../theory/startup/belief_family.startup_realization.json"
+        ))
+        .unwrap();
+        let family = registry.install(config.clone(), 1).unwrap().1;
+        let perspective = PerspectiveKey::new("agent", "observer").unwrap();
+        let branch = BranchScope::main();
+        let key = configured_belief_key(
+            &family,
+            &DomainObjectRef::new("nonce", "question", "one").unwrap(),
+            &perspective,
+            &branch,
+        );
+        let query = BeliefQuery::new(&store);
+        assert!(query.question_state(&key, &family.revision_ref()).is_err());
+        let request = AgentSubscriptionRequestV1::new(
+            "observer".into(),
+            "belief".into(),
+            family.revision_ref(),
+            key.clone(),
+            "from_genesis".into(),
+        )
+        .unwrap();
+        BeliefSubscriptionAuthority::new(&store)
+            .accept(&request, &family)
+            .unwrap();
+        assert!(
+            matches!(query.question_state(&key, &family.revision_ref()).unwrap(), BeliefQuestionState::NoCommittedRevision(answer) if answer.subscription_request_id == request.request_id)
+        );
+        store.mark_dirty(&key, 2).unwrap();
+        assert_eq!(
+            query.question_state(&key, &family.revision_ref()).unwrap(),
+            BeliefQuestionState::AssessmentPending
+        );
+        store.clear_dirty(&key).unwrap();
+        let mut actor = BeliefAssessmentActor::new(
+            "assessment",
+            store.clone(),
+            Arc::new(registry.clone()),
+            vec![family.family_id.clone()],
+            vec![],
+            perspective,
+            branch,
+        )
+        .with_pinned_families(vec![family.clone()]);
+        let report = actor.bounded_step(&BeliefAssessmentRequest {
+            sequence: 3,
+            max_items: 1,
+        });
+        assert_eq!(report.items_committed, 1, "{report:?}");
+        assert!(matches!(
+            query.question_state(&key, &family.revision_ref()).unwrap(),
+            BeliefQuestionState::Committed(_)
+        ));
+        let mut changed = config;
+        changed.default_prior = 0.2;
+        let next_family = registry.install(changed, 4).unwrap().1;
+        let next_request = AgentSubscriptionRequestV1::new(
+            "observer".into(),
+            "belief".into(),
+            next_family.revision_ref(),
+            key.clone(),
+            "from_genesis".into(),
+        )
+        .unwrap();
+        BeliefSubscriptionAuthority::new(&store)
+            .accept(&next_request, &next_family)
+            .unwrap();
+        assert!(matches!(
+            query
+                .question_state(&key, &next_family.revision_ref())
+                .unwrap(),
+            BeliefQuestionState::StaleRevision { .. }
+        ));
+        store.mark_dirty(&key, 5).unwrap();
+        assert!(matches!(
+            query.question_state(&key, &family.revision_ref()).unwrap(),
+            BeliefQuestionState::StaleRevision { .. } | BeliefQuestionState::AssessmentPending
+        ));
+    }
+
+    #[test]
     fn accepted_observations_drive_bounded_assessment_without_configured_subjects() {
         use crate::belief::{BeliefAssessmentActor, BeliefAssessmentRequest, BeliefWorkSelector};
-        use crate::world_state::graph::store::TraversalStore;
         use std::sync::Arc;
         let root = tempfile::tempdir().unwrap();
         let db = sled::open(root.path()).unwrap();
@@ -244,7 +333,6 @@ mod tests {
         let mut actor = BeliefAssessmentActor::new(
             "assessment",
             store.clone(),
-            Arc::new(TraversalStore::new(db.clone()).unwrap()),
             Arc::new(registry),
             vec![family.family_id.clone()],
             vec![],
@@ -300,7 +388,6 @@ mod tests {
         let mut actor = BeliefAssessmentActor::new(
             "assessment",
             store.clone(),
-            Arc::new(TraversalStore::new(db.clone()).unwrap()),
             Arc::new(BeliefFamilyRegistryStore::new(db).unwrap()),
             vec![family.family_id.clone()],
             vec![],

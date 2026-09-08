@@ -15,7 +15,6 @@ use meld_world_model::belief::{
 };
 use meld_world_model::strategy::StrategyTheoryRegistryStore;
 use meld_world_model::world_state::graph::store::TraversalStore;
-use meld_world_model::world_state::store::WorldStateStore;
 use meld_world_model::CurationStore;
 use thiserror::Error;
 
@@ -189,8 +188,6 @@ pub struct OpenProductStores {
     pub strategy_theory_registry: ScopedResource<Arc<StrategyTheoryRegistryStore>>,
     /// World model agent state.
     pub agent_store: ScopedResource<Arc<AgentStore>>,
-    /// Compatibility store for legacy world state claims while migration remains active.
-    pub legacy_world_state_store: ScopedResource<Arc<WorldStateStore>>,
     /// Execution-owned factory for per-network task network stores.
     pub task_networks: ScopedResource<TaskNetworkStoreFactory>,
     /// Execution-owned factory for task-scoped artifact repositories.
@@ -342,7 +339,6 @@ impl OpenProductStores {
             outcome_registry,
             strategy_registry,
             agent,
-            legacy,
         ) = if scope.world_model {
             let world_model_db = open_db(&layout.world_model_db)?;
             (
@@ -397,10 +393,6 @@ impl OpenProductStores {
                     "agent_store",
                     Arc::new(AgentStore::new(world_model_db.clone()).map_err(to_world_model)?),
                 ),
-                ScopedResource::open(
-                    "legacy_world_state_store",
-                    Arc::new(WorldStateStore::new(world_model_db).map_err(to_world_model)?),
-                ),
             )
         } else {
             (
@@ -413,7 +405,6 @@ impl OpenProductStores {
                 ScopedResource::closed("outcome_mapping_registry"),
                 ScopedResource::closed("strategy_theory_registry"),
                 ScopedResource::closed("agent_store"),
-                ScopedResource::closed("legacy_world_state_store"),
             )
         };
 
@@ -541,7 +532,6 @@ impl OpenProductStores {
             outcome_mapping_registry: outcome_registry,
             strategy_theory_registry: strategy_registry,
             agent_store: agent,
-            legacy_world_state_store: legacy,
             task_networks,
             task_artifacts,
             execution_db,
@@ -579,9 +569,6 @@ impl OpenProductStores {
             store.flush().map_err(to_world_model)?;
         }
         if let Some(store) = self.agent_store.opened() {
-            store.flush().map_err(to_world_model)?;
-        }
-        if let Some(store) = self.legacy_world_state_store.opened() {
             store.flush().map_err(to_world_model)?;
         }
         if let Some(db) = self.theory_db.opened() {
@@ -707,7 +694,6 @@ mod tests {
 
         assert!(stores.node_store.is_open());
         assert!(stores.execution_db.is_open());
-        assert!(stores.legacy_world_state_store.is_open());
         assert!(stores.theory_receipts.is_open());
         stores.flush_boundary().unwrap();
     }

@@ -67,6 +67,7 @@ fn native_epoch_specification_drives_curation_and_preserves_distinct_observation
     let template = curation
         .install_template(
             CurationRuleTemplate {
+                selection_posture: Default::default(),
                 coverage: None,
                 rule_id: "confirm-nonce".into(),
                 source_owner_id: crate::nonce::OWNER_ID.into(),
@@ -310,7 +311,6 @@ fn native_epoch_specification_drives_curation_and_preserves_distinct_observation
     use meld_world_model::world_state::graph::runtime::{GraphCatchUpBudget, GraphRuntime};
     let graph = GraphRuntime::from_ports(
         Arc::new(ProductEventReplayPort::new(events.replay_capability())),
-        Arc::new(ProductEventAppendPort::new(&events)),
         Arc::new(ProductGraphCursorPort::new(
             events.consumer_registry_capability(),
         )),
@@ -347,6 +347,7 @@ fn native_epoch_specification_drives_curation_and_preserves_distinct_observation
             admission_epoch: None,
         },
         policy: PlannerAssemblyPolicy {
+            acquisition_question: None,
             policy_revision_id: "observation-port-test".into(),
             required_sources: vec![PlannerSourceKind::Graph],
             explicitly_not_required: vec![PlannerSourceKind::Causation, PlannerSourceKind::Regime],
@@ -369,7 +370,6 @@ fn native_epoch_specification_drives_curation_and_preserves_distinct_observation
             branch_scope: authority.branch_scope.clone(),
             evidence_policy_id: "startup-realization".into(),
         },
-        unanchored_belief: true,
         source_positions: vec![],
     };
     let planner = build_planner(planner_request.clone());
@@ -403,6 +403,34 @@ fn native_epoch_specification_drives_curation_and_preserves_distinct_observation
             .unwrap(),
         before
     );
+    // An exact unassessed subscription follows the native epoch observation,
+    // independently of the runtime subject used at product composition.
+    let mut acquisition = planner_request.clone();
+    acquisition.belief_key = meld_world_model::configured_belief_key(
+        &family,
+        &subject,
+        &authority.perspective,
+        &authority.branch_scope,
+    );
+    acquisition
+        .policy
+        .required_sources
+        .push(PlannerSourceKind::Belief);
+    acquisition.policy.acquisition_question = Some(PlannerBeliefSelection {
+        key: acquisition.belief_key.clone(),
+        family: family.revision_ref(),
+    });
+    for selected in [&products, &next] {
+        let outcome = build_planner(acquisition.clone())
+            .assemble_epoch(selected, &selected.specification.fence);
+        let PlannerAssemblyOutcome::Complete(cut) = outcome else {
+            panic!("unassessed epoch must be admitted: {outcome:?}");
+        };
+        assert_eq!(
+            cut.world_model_view.unassessed_belief.unwrap().key.subject,
+            selected.observation_subject
+        );
+    }
     use meld_world_model::belief::{
         configured_belief_key, BeliefAssessmentActor, BeliefAssessmentRequest, BeliefStatus,
         ConfiguredOutcomeMappingSet, EvidenceIngestionActor, EvidenceIngestionRequest,
@@ -424,7 +452,6 @@ fn native_epoch_specification_drives_curation_and_preserves_distinct_observation
     let mut assessment = BeliefAssessmentActor::new(
         "startup-belief",
         belief_store.clone(),
-        traversal.clone(),
         belief_registry.clone(),
         vec![family.family_id.clone()],
         vec![],
@@ -488,7 +515,6 @@ fn native_epoch_specification_drives_curation_and_preserves_distinct_observation
     let mut ingestion = EvidenceIngestionActor::new(
         "startup-evidence",
         belief_store.clone(),
-        traversal.clone(),
         belief_registry.clone(),
         family.family_id.clone(),
         Arc::new(ProductEventReplayPort::new(events.replay_capability())),

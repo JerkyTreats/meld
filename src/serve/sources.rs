@@ -114,10 +114,6 @@ impl ServeSources {
     }
 
     pub(crate) fn eligibility_walker(&self) -> EligibilityWalker<'_> {
-        let walker = EligibilityWalker::new(&self.reports).with_floor(self.action_floor);
-        match self.traversal.as_deref() {
-            Some(traversal) => walker.with_traversal(traversal),
-            None => walker,
-        }
+        EligibilityWalker::new(&self.reports).with_floor(self.action_floor)
     }
 }

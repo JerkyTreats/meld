@@ -19,7 +19,6 @@ pub use contracts::{
 };
 pub use query::{
     BranchGraphStatusOutput, BranchGraphStatusRow, BranchQueryRuntime, BranchQueryScope,
-    BranchReadFailure, FederatedGraphWalkResult, FederatedNeighborsOutput, FederatedObjectPresence,
-    FederatedReadMetadata, FederatedRelationRecord, FederatedTraversalFact, FederatedWalkOutput,
+    BranchReadFailure, FederatedReadMetadata,
 };
 pub use runtime::BranchRuntime;

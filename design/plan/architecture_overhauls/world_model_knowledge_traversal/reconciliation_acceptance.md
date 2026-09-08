@@ -1,5 +1,7 @@
 # Minimum reconciliation flywheel acceptance
 
+> Superseded for current reconciliation direction. [Canonical Flywheel Alignment And Runtime Soft Freeze](flywheel_remediation.md) alone owns the issue register, priorities, next work, and branch acceptance. This document retains historical design or evidence; its prior status and authorization statements do not govern current delivery.
+
 Scope corrected by the user on 2026-09-07.
 
 The mission is a working world-model reconciliation flywheel for CVE, Docs freshness and Startup nonce, with no domain theory embedded in Rust runtime code. It is not implementation of the full cognitive architecture. The previous assessment incorrectly made Causation and Regime prerequisites and expanded acceptance beyond this mission. This record replaces that assessment.

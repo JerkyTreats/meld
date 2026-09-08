@@ -4,9 +4,7 @@ use meld::config::ConfigLoader;
 use meld::events::binding::{ProductEventBinding, ProductEventBindingState};
 use meld::session::SessionStore;
 use meld_events::events::test_support::{EventStore, EventStoreTestSupport as _};
-use meld_events::{
-    DomainObjectRef, EventEnvelope, LedgerCursor, LegacyEventMigrationSource, ReplayRequest,
-};
+use meld_events::{EventEnvelope, LedgerCursor, LegacyEventMigrationSource, ReplayRequest};
 use serde_json::{json, Value};
 use std::process::Command;
 
@@ -62,35 +60,41 @@ fn real_cli_migrates_and_reuses_one_authority_for_event_and_runtime_routes() {
             record["envelope"]["record_id"] == "legacy-node-a"
                 && record["envelope"]["type"] == "workspace.node.observed"
         }));
-        let snapshot_record = tail["records"]
+        use meld_world_model::graph::contracts::*;
+        let owner_record = tail["records"]
             .as_array()
             .unwrap()
             .iter()
-            .find(|record| record["envelope"]["type"] == "workspace_fs.snapshot_selected")
+            .find(|record| {
+                record["envelope"]["type"] == OWNER_PUBLICATION_EVENT_TYPE
+                    && record["envelope"]["domain_id"] == "workspace_fs"
+            })
             .unwrap();
-        let snapshot_seq = snapshot_record["seq"].as_u64().unwrap();
-        let source = snapshot_record["envelope"]["objects"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|object| object["object_kind"] == "source")
-            .unwrap();
-        let source = DomainObjectRef::new(
-            source["domain_id"].as_str().unwrap(),
-            source["object_kind"].as_str().unwrap(),
-            source["object_id"].as_str().unwrap(),
-        )
-        .unwrap();
-        let anchor = context
+        let operation: OwnerPublicationOperation =
+            serde_json::from_value(owner_record["envelope"]["data"].clone()).unwrap();
+        let source_seq = owner_record["seq"].as_u64().unwrap();
+        let cut = context
             .api()
             .world_model_queries()
             .unwrap()
-            .current_snapshot_for_source(&source)
-            .unwrap()
+            .cut(&TraversalCutRequest {
+                owners: vec![TraversalOwnerRequirement {
+                    owner_id: "workspace_fs".into(),
+                    scope: operation.batch.scope.clone(),
+                    required: true,
+                    event_source: None,
+                }],
+                scope: operation.batch.scope.clone(),
+                currentness: OwnerCurrentnessPolicy::LatestComplete,
+                event_position: LedgerCursor {
+                    ledger_id: ledger_id.parse().unwrap(),
+                    after_seq: source_seq,
+                },
+            })
             .unwrap();
-        assert!(anchor
-            .source_fact_ids
-            .contains(&format!("spine::{snapshot_seq}")));
+        assert_eq!(cut.status, TraversalCutStatus::Complete);
+        assert_eq!(cut.receipts[0].source_event.unwrap().seq, source_seq);
+        assert_eq!(cut.receipts[0].revision_id, operation.batch.revision_id);
 
         context
             .execute(&runtime_run_json())

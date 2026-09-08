@@ -13,8 +13,6 @@
 
 use std::collections::BTreeSet;
 
-use meld_events::DomainObjectRef;
-use meld_world_model::world_state::graph::store::TraversalStore;
 use serde::{Deserialize, Serialize};
 
 use meld_execution::waiting::conditions as execution_conditions;
@@ -78,7 +76,6 @@ pub struct EligibilityChain {
 /// Reader-side eligibility derivation over one run's preserved reports.
 pub struct EligibilityWalker<'a> {
     reports: &'a SupervisorReportStore,
-    traversal: Option<&'a TraversalStore>,
     /// Sequence floor fencing reads to one session; zero reads everything.
     floor: u64,
 }
@@ -86,23 +83,13 @@ pub struct EligibilityWalker<'a> {
 impl<'a> EligibilityWalker<'a> {
     /// Bind the walker to a run's preserved per-tick reports.
     pub fn new(reports: &'a SupervisorReportStore) -> Self {
-        Self {
-            reports,
-            traversal: None,
-            floor: 0,
-        }
+        Self { reports, floor: 0 }
     }
 
     /// Fence reads to actions at or after a session's sequence floor, so
     /// a reused root's earlier boots cannot answer for this session.
     pub fn with_floor(mut self, floor: u64) -> Self {
         self.floor = floor;
-        self
-    }
-
-    /// Deepen anchor divergences through the graph read surface.
-    pub fn with_traversal(mut self, traversal: &'a TraversalStore) -> Self {
-        self.traversal = Some(traversal);
         self
     }
 
@@ -196,40 +183,9 @@ impl<'a> EligibilityWalker<'a> {
         Ok(chain)
     }
 
-    /// Render one terminal declaration as a nameable divergence.
-    ///
-    /// The anchor condition deepens through the graph read surface when it
-    /// is available: the survey's stall is not just a missing perspective
-    /// but a subject key the anchor vocabulary has never contained.
+    /// Preserve the emitting owner's explanation without deriving domain meaning.
     fn divergence_for(&self, declaration: &WaitingOnDeclaration) -> Result<String, HarnessError> {
-        if declaration.condition != world_model_conditions::GRAPH_ANCHOR_ABSENT {
-            return Ok(format!("{}: {}", declaration.condition, declaration.detail));
-        }
-        let Some((traversal, subject_key)) = self.traversal.zip(declaration.subject_key.as_deref())
-        else {
-            return Ok(format!("{}: {}", declaration.condition, declaration.detail));
-        };
-        let Some(subject) = parse_index_key(subject_key) else {
-            return Ok(format!("{}: {}", declaration.condition, declaration.detail));
-        };
-        let anywhere = traversal
-            .current_anchors_for_subject(&subject)
-            .map_err(|error| HarnessError::Storage(error.to_string()))?;
-        if anywhere.is_empty() {
-            Ok(format!(
-                "graph_anchor_absent: {}; the subject key {subject_key} appears in no anchor \
-                 record — the selection subject vocabulary does not intersect the anchor \
-                 vocabulary",
-                declaration.detail
-            ))
-        } else {
-            Ok(format!(
-                "graph_anchor_absent: {}; {} anchors exist for {subject_key} under other \
-                 perspectives",
-                declaration.detail,
-                anywhere.len()
-            ))
-        }
+        Ok(format!("{}: {}", declaration.condition, declaration.detail))
     }
 }
 
@@ -279,15 +235,6 @@ fn relevant_declarations<'d>(
             },
         )
         .collect()
-}
-
-/// Parse a `domain::kind::id` index key back into a domain object ref.
-fn parse_index_key(index_key: &str) -> Option<DomainObjectRef> {
-    let mut parts = index_key.splitn(3, "::");
-    let domain_id = parts.next()?;
-    let object_kind = parts.next()?;
-    let object_id = parts.next()?;
-    DomainObjectRef::new(domain_id, object_kind, object_id).ok()
 }
 
 #[cfg(test)]

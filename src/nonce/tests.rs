@@ -72,9 +72,7 @@ fn closed_request_schema_rejects_forged_identity_and_diagnostics() {
 
 #[test]
 fn nonce_owner_event_reaches_graph_only_through_its_exact_installed_route() {
-    use crate::runtime::ports::{
-        ProductEventAppendPort, ProductEventReplayPort, ProductGraphCursorPort,
-    };
+    use crate::runtime::ports::{ProductEventReplayPort, ProductGraphCursorPort};
     use meld_world_model::world_state::graph::contracts::*;
     use meld_world_model::world_state::graph::runtime::{GraphCatchUpBudget, GraphRuntime};
     use meld_world_model::world_state::graph::store::TraversalStore;
@@ -103,7 +101,6 @@ fn nonce_owner_event_reaches_graph_only_through_its_exact_installed_route() {
         .is_none());
     let graph = GraphRuntime::from_ports(
         Arc::new(ProductEventReplayPort::new(authority.replay_capability())),
-        Arc::new(ProductEventAppendPort::new(&authority)),
         Arc::new(ProductGraphCursorPort::new(
             authority.consumer_registry_capability(),
         )),
@@ -169,7 +166,7 @@ fn context_api(root: &std::path::Path) -> crate::api::ContextApi {
     crate::api::ContextApi::new(
         Arc::new(crate::store::SledNodeRecordStore::new(root.join("nodes")).unwrap()),
         Arc::new(crate::context::frame::FrameStorage::new(root.join("frames")).unwrap()),
-        Arc::new(parking_lot::RwLock::new(crate::heads::HeadIndex::new())),
+        crate::heads::HeadIndex::new(),
         Arc::new(
             crate::prompt_context::PromptContextArtifactStorage::new(root.join("prompts")).unwrap(),
         ),
@@ -344,8 +341,7 @@ async fn capability_requires_exact_effect_authority_and_returns_a_proven_append_
 #[tokio::test]
 async fn admitted_nonce_task_reaches_graph_before_outcome_and_recovers_one_durable_emission() {
     use crate::runtime::ports::{
-        ProductEventAppendPort, ProductEventReplayPort, ProductGraphCursorPort,
-        ProductionDispatchRouteContext,
+        ProductEventReplayPort, ProductGraphCursorPort, ProductionDispatchRouteContext,
     };
     use meld_execution::task::TaskCompiler;
     use meld_execution::task_admission::*;
@@ -559,7 +555,6 @@ async fn admitted_nonce_task_reaches_graph_before_outcome_and_recovers_one_durab
     world.install_owner_event_route(&graph_route()).unwrap();
     GraphRuntime::from_ports(
         Arc::new(ProductEventReplayPort::new(authority.replay_capability())),
-        Arc::new(ProductEventAppendPort::new(&authority)),
         Arc::new(ProductGraphCursorPort::new(
             authority.consumer_registry_capability(),
         )),
@@ -676,7 +671,6 @@ fn curation_assesses_nonce_source_under_a_distinct_exact_agent_judgment_scope() 
         .unwrap();
     let graph = GraphRuntime::from_ports(
         Arc::new(ProductEventReplayPort::new(authority.replay_capability())),
-        Arc::new(ProductEventAppendPort::new(&authority)),
         Arc::new(ProductGraphCursorPort::new(
             authority.consumer_registry_capability(),
         )),
@@ -709,6 +703,7 @@ fn curation_assesses_nonce_source_under_a_distinct_exact_agent_judgment_scope() 
         roots: vec![nonce.object_ref().unwrap()],
     };
     let template = CurationRuleTemplate {
+        selection_posture: Default::default(),
         coverage: None,
         rule_id: "confirm-requested-nonce".into(),
         source_owner_id: OWNER_ID.into(),
@@ -908,7 +903,6 @@ fn complete_event_source_proves_absence_then_realization_without_fabricated_even
         .unwrap();
     let graph = GraphRuntime::from_ports(
         Arc::new(ProductEventReplayPort::new(authority.replay_capability())),
-        Arc::new(ProductEventAppendPort::new(&authority)),
         Arc::new(ProductGraphCursorPort::new(
             authority.consumer_registry_capability(),
         )),
@@ -988,6 +982,7 @@ fn complete_event_source_proves_absence_then_realization_without_fabricated_even
     let rule = store
         .install_rule(
             StandingCurationRule {
+                selection_posture: Default::default(),
                 coverage: None,
                 source_event_route: Some(source_ref.clone()),
                 judgment_scope: Some(judgment.clone()),
@@ -1149,9 +1144,7 @@ fn complete_event_source_proves_absence_then_realization_without_fabricated_even
 
 #[test]
 fn late_owner_route_gains_coverage_only_after_bounded_durable_historical_replay() {
-    use crate::runtime::ports::{
-        ProductEventAppendPort, ProductEventReplayPort, ProductGraphCursorPort,
-    };
+    use crate::runtime::ports::{ProductEventReplayPort, ProductGraphCursorPort};
     use meld_world_model::world_state::graph::contracts::*;
     use meld_world_model::world_state::graph::runtime::{GraphCatchUpBudget, GraphRuntime};
     use meld_world_model::world_state::graph::store::TraversalStore;
@@ -1188,7 +1181,6 @@ fn late_owner_route_gains_coverage_only_after_bounded_durable_historical_replay(
     let make_graph = |store: Arc<TraversalStore>| {
         GraphRuntime::from_ports(
             Arc::new(ProductEventReplayPort::new(authority.replay_capability())),
-            Arc::new(ProductEventAppendPort::new(&authority)),
             Arc::new(ProductGraphCursorPort::new(
                 authority.consumer_registry_capability(),
             )),

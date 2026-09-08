@@ -1,5 +1,7 @@
 # Cognitive Architecture Alignment Assessment
 
+> Superseded for current reconciliation direction. [Canonical Flywheel Alignment And Runtime Soft Freeze](flywheel_remediation.md) alone owns the issue register, priorities, next work, and branch acceptance. This document retains historical design or evidence; its prior status and authorization statements do not govern current delivery.
+
 Scope: alignment of the complete evergreen cognitive architecture with the approved World Model Reconciliation architecture
 
 ## Authority

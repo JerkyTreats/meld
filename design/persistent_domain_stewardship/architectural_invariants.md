@@ -1,5 +1,7 @@
 # Persistent Domain Stewardship Architectural Invariants
 
+> Historical PDS proposal assessment. Its implementation-status claims and proposed restrictions are not current reconciliation authority. Follow [canonical PDS ownership](../cognitive_architecture/persistent_domain_stewardship.md) for intended semantics and [Canonical Flywheel Alignment And Runtime Soft Freeze](../plan/architecture_overhauls/world_model_knowledge_traversal/flywheel_remediation.md) for current violations, scope, and delivery.
+
 Date: 2026-08-18
 Status: active constraints aligned to canonical PDS architecture
 Scope: cross-expression architectural concerns that should remain stable while PDS declarations, packages, and application-specific facets evolve

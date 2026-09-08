@@ -178,6 +178,15 @@ fn assert_draft_recovery(status: u16) {
 
 #[test]
 fn docs_changed_knowledge_during_confirmation_can_repeat_the_repair() {
+    assert_changed_input_repair(true);
+}
+
+#[test]
+fn docs_target_deleted_during_confirmation_can_repeat_the_repair() {
+    assert_changed_input_repair(false);
+}
+
+fn assert_changed_input_repair(change_source: bool) {
     let provider = super::super::docs_fixture::ProviderServer::new();
     let harness = StewardshipHarness::new();
     let source = harness._workspace.path().join("lib.rs");
@@ -217,11 +226,13 @@ fn docs_changed_knowledge_during_confirmation_can_repeat_the_repair() {
         .unwrap()
         .is_none());
     // The owner has new source and the repaired document is gone before confirmation.
-    std::fs::write(
-        &source,
-        "pub fn run() {}\n// changed while the first repair awaited confirmation\n",
-    )
-    .unwrap();
+    if change_source {
+        std::fs::write(
+            &source,
+            "pub fn run() {}\n// changed while the first repair awaited confirmation\n",
+        )
+        .unwrap();
+    }
     std::fs::remove_file(&readme).unwrap();
     for pass in 0..100 {
         supervisor.tick(2_000 + pass * 10).unwrap();

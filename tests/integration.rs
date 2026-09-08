@@ -2,7 +2,6 @@
 
 mod agent_authorization;
 mod agent_cli;
-mod belief_context;
 mod blake3_verification;
 mod branches_query;
 mod branches_runtime;
@@ -18,8 +17,6 @@ mod docs_freshness_fixture_contract;
 pub(crate) mod docs_provider;
 mod event_ledger;
 mod execution_projection;
-mod frame_queue;
-mod generation_parity;
 mod harness_run;
 mod harness_served_surface;
 mod harness_stall_specimen;
@@ -59,7 +56,6 @@ mod workspace_isolation;
 mod workspace_scan_capability;
 mod workspace_traversal;
 mod world_model_reconciliation;
-mod world_state_graph;
 mod xdg_config;
 
 pub use test_utils::{create_test_agent, with_env_lock, with_xdg_data_home, with_xdg_env};

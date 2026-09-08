@@ -394,6 +394,7 @@ pub fn owner_publication_operation(
     OwnerPublicationOperation::reconstruct(
         RULE_REVISION,
         OwnerPublicationBatch {
+            work_input_basis_id: None,
             owner_id: OWNER_ID.to_string(),
             revision_id: revision_id.clone(),
             scope: scope.clone(),

@@ -96,6 +96,13 @@ impl StandingCurationActor {
             }
         }
         match wake {
+            StructuralWakeAddress::OwnerRevision(value) => Ok(crate::waiting::after_position(
+                value,
+                &format!(
+                    "world-model::{}::curation-planned",
+                    self.store.resource_id()
+                ),
+            )),
             StructuralWakeAddress::EventPosition(value) => Ok(crate::waiting::after_position(
                 value,
                 &format!("event-ledger::{}", self.events.watermark()?.ledger_id),
@@ -392,6 +399,18 @@ impl StandingCurationActor {
             }
         };
         if resumed.is_none() && queued.is_none() {
+            if !selected_rule.rule.selection_posture.is_standing() {
+                report.waiting_on.push(WaitingOnDeclaration::broad(
+                    "curation_planned_authorization_pending",
+                    "this Curation rule requires an Agent-authorized epistemic product",
+                    vec![StructuralWakeAddress::OwnerRevision(format!(
+                        "world-model::{}::curation-planned::after::{}",
+                        self.store.resource_id(),
+                        self.store.inspection_position(),
+                    ))],
+                ));
+                return report;
+            }
             *self.last_standing_rule.lock() = Some(selected_rule.revision_ref());
         }
         let watermark = match self.events.watermark() {
@@ -738,6 +757,7 @@ impl StandingCurationActor {
         };
         let base_qualifications = qualifications(operation, installed_rule);
         let mut batch = OwnerPublicationBatch {
+            work_input_basis_id: None,
             owner_id: CURATION_OWNER_ID.to_string(),
             revision_id: result_id,
             scope: installed_rule.rule.scope.clone(),

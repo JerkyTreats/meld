@@ -20,7 +20,7 @@ use crate::events::observability::{
     EventFlowReport, EventHealthReport, EventTraceReport, FlowWindow, SessionTimelineReport,
     TraceSubject,
 };
-use crate::events::{EventEnvelope, LedgerIdentity};
+use crate::events::{EventEnvelope, EventRecord, LedgerIdentity};
 
 /// Reusable adapter-conformance assertions for future transports.
 #[cfg(feature = "test-support")]
@@ -35,6 +35,53 @@ pub struct DurableAppendRequest {
     pub envelope: EventEnvelope,
     /// Plain or idempotent append behavior.
     pub mode: AppendMode,
+}
+
+/// Identity-bearing batch handled by one native group commit.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DurableAppendBatchRequest {
+    /// Selected canonical ledger.
+    pub ledger_id: LedgerIdentity,
+    /// Ordered envelopes supplied to the native batch writer.
+    pub envelopes: Vec<EventEnvelope>,
+    /// Native append disposition policy.
+    pub mode: AppendMode,
+}
+
+/// Exact producer identity lookup against committed retained records.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommittedRecordRequest {
+    /// Selected canonical ledger.
+    pub ledger_id: LedgerIdentity,
+    /// Exact producer-assigned record identity.
+    pub record_id: String,
+}
+
+/// Committed lookup result, bound to its authority and durable watermark.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CommittedRecordResponse {
+    /// Authority that performed the lookup.
+    pub ledger_id: LedgerIdentity,
+    /// Committed watermark observed after the lookup.
+    pub committed_seq: u64,
+    /// Exact retained record, absent when no committed record is available.
+    pub record: Option<EventRecord>,
+}
+
+/// Bounded newest-record query against the native retained ledger.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NewestPageRequest {
+    /// Selected canonical ledger.
+    pub ledger_id: LedgerIdentity,
+    /// Maximum record count.
+    pub limit: usize,
+}
+
+/// Flush barrier for previously accepted best-effort appends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BarrierRequest {
+    /// Selected canonical ledger.
+    pub ledger_id: LedgerIdentity,
 }
 
 /// Identity-bearing best-effort append request.
@@ -96,6 +143,24 @@ pub trait EventAuthorityContract: Send + Sync {
         &self,
         request: DurableAppendRequest,
     ) -> Result<AppendReceipt, EventAuthorityError>;
+
+    /// Appends a native durable batch without splitting its group commit.
+    fn durable_append_batch(
+        &self,
+        request: DurableAppendBatchRequest,
+    ) -> Result<Vec<AppendReceipt>, EventAuthorityError>;
+
+    /// Resolves one exact committed record without writing or flushing.
+    fn committed_record(
+        &self,
+        request: CommittedRecordRequest,
+    ) -> Result<CommittedRecordResponse, EventAuthorityError>;
+
+    /// Reads the newest retained page using the native bounded query.
+    fn newest_page(&self, request: NewestPageRequest) -> Result<EventPage, EventAuthorityError>;
+
+    /// Waits for prior best-effort appends through the native writer barrier.
+    fn barrier(&self, request: BarrierRequest) -> Result<(), EventAuthorityError>;
 
     /// Accepts a best-effort append without claiming durability or sequence.
     fn best_effort_append(
@@ -173,6 +238,38 @@ impl LocalEventAuthorityClient {
 }
 
 impl EventAuthorityContract for LocalEventAuthorityClient {
+    fn durable_append_batch(
+        &self,
+        request: DurableAppendBatchRequest,
+    ) -> Result<Vec<AppendReceipt>, EventAuthorityError> {
+        self.validate_identity(request.ledger_id)?;
+        self.append
+            .append_durable_batch(request.envelopes, request.mode)
+    }
+
+    fn committed_record(
+        &self,
+        request: CommittedRecordRequest,
+    ) -> Result<CommittedRecordResponse, EventAuthorityError> {
+        self.validate_identity(request.ledger_id)?;
+        let record = self.replay.committed_record(&request.record_id)?;
+        Ok(CommittedRecordResponse {
+            ledger_id: self.ledger_id,
+            committed_seq: self.watermark.snapshot()?.committed_seq,
+            record,
+        })
+    }
+
+    fn newest_page(&self, request: NewestPageRequest) -> Result<EventPage, EventAuthorityError> {
+        self.validate_identity(request.ledger_id)?;
+        self.replay.newest_page(request.limit)
+    }
+
+    fn barrier(&self, request: BarrierRequest) -> Result<(), EventAuthorityError> {
+        self.validate_identity(request.ledger_id)?;
+        self.append.barrier()
+    }
+
     fn durable_append(
         &self,
         request: DurableAppendRequest,
@@ -280,6 +377,28 @@ impl<C> EventAuthorityContract for SerdeLoopbackEventAuthorityClient<C>
 where
     C: EventAuthorityContract,
 {
+    fn durable_append_batch(
+        &self,
+        request: DurableAppendBatchRequest,
+    ) -> Result<Vec<AppendReceipt>, EventAuthorityError> {
+        self.call(request, EventAuthorityContract::durable_append_batch)
+    }
+
+    fn committed_record(
+        &self,
+        request: CommittedRecordRequest,
+    ) -> Result<CommittedRecordResponse, EventAuthorityError> {
+        self.call(request, EventAuthorityContract::committed_record)
+    }
+
+    fn newest_page(&self, request: NewestPageRequest) -> Result<EventPage, EventAuthorityError> {
+        self.call(request, EventAuthorityContract::newest_page)
+    }
+
+    fn barrier(&self, request: BarrierRequest) -> Result<(), EventAuthorityError> {
+        self.call(request, EventAuthorityContract::barrier)
+    }
+
     fn durable_append(
         &self,
         request: DurableAppendRequest,

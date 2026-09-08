@@ -1,4 +1,4 @@
-//! The authoritative harness gate: one real stall presented at all three
+//! Required evidence waiting presented at all three
 //! customer altitudes from one session record, with every projection
 //! citing shared record identities, and the presentation made by a
 //! separate process consuming the served surface.
@@ -13,9 +13,7 @@ use std::process::Command;
 
 use super::harness_survey_fixture::{survey_binding, survey_boot_request, SUBJECT_ID};
 use meld::harness::boot::HarnessRun;
-use meld::harness::projections::{
-    ParentProjection, SubagentProjection, TrajectoryKind, UserProjection,
-};
+use meld::harness::projections::{ParentProjection, SubagentProjection, UserProjection};
 use meld::serve::listener::serve_with_discovery;
 use meld::serve::sources::ServeSources;
 use serde_json::json;
@@ -58,7 +56,7 @@ fn child_consumer() {
 }
 
 #[test]
-fn the_stall_presents_at_three_altitudes_to_a_separate_process() {
+fn required_evidence_wait_presents_at_three_altitudes_to_a_separate_process() {
     let session = tempfile::tempdir().unwrap();
     let workspace_root = session.path().join("workspace");
     let product_root = session.path().join("root");
@@ -111,59 +109,37 @@ fn the_stall_presents_at_three_altitudes_to_a_separate_process() {
         .expect("child printed its gate result");
     let result: serde_json::Value = serde_json::from_str(line).unwrap();
 
-    // Subagent altitude: the per-tick waiting-on naming the absent anchor
-    // for its exact subject key.
+    // All views use the same durable actor report. A missing required
+    // observation leaves assessment idle and does not manufacture failures.
     let subagent: SubagentProjection = serde_json::from_value(result["subagent"].clone()).unwrap();
     let report = subagent
         .actor_reports
         .iter()
         .find(|report| report.runtime_id == "world_model.belief_assessment")
-        .expect("subagent sees its owned actor");
-    let declaration = report
+        .unwrap();
+    assert_eq!(report.items_attempted, 0);
+    assert_eq!(report.items_committed, 0);
+    assert!(report
         .waiting_on
         .iter()
-        .find(|declaration| declaration.condition == "graph_anchor_absent")
-        .expect("subagent reads the absent anchor");
-    assert_eq!(
-        declaration.subject_key.as_deref(),
-        Some(subject_key.as_str())
-    );
-    let cited_action_id = report.action_id.clone();
-
-    // Parent altitude: one repeating failure signature over the same
-    // durable records, silent about everything else in scope.
+        .any(|wait| wait.condition == "belief_work_ineligible"));
     let parent: ParentProjection = serde_json::from_value(result["parent"].clone()).unwrap();
-    let signature = parent
-        .trajectory_signatures
-        .iter()
-        .find(|signature| signature.kind == TrajectoryKind::RepeatingIssue)
-        .expect("parent sees the repeating failure signature");
-    assert!(signature.signature.contains("assessment_failed"));
-    assert!(signature.consecutive_ticks >= 2);
-    assert!(
-        signature.action_ids.contains(&cited_action_id),
-        "parent cites the same durable action the subagent cites"
-    );
-
-    // User altitude: the coupling that never flowed, waiting on the same
-    // absence, citing the same latest record.
+    assert!(parent.trajectory_signatures.is_empty());
     let user: UserProjection = serde_json::from_value(result["user"].clone()).unwrap();
     let coupling = user
         .couplings
         .iter()
         .find(|coupling| coupling.runtime_id == "world_model.belief_assessment")
-        .expect("user sees the assessment coupling");
-    assert!(coupling.attempted > 0);
-    assert_eq!(coupling.committed, 0, "the coupling never flowed");
+        .unwrap();
+    assert_eq!(coupling.attempted, 0);
+    assert_eq!(coupling.committed, 0);
     assert!(coupling
         .waiting_on
         .iter()
-        .any(|declaration| declaration.condition == "graph_anchor_absent"
-            && declaration.subject_key.as_deref() == Some(subject_key.as_str())));
+        .any(|wait| wait.condition == "belief_work_ineligible"));
     assert_eq!(
         coupling.latest_action_id.as_deref(),
-        Some(cited_action_id.as_str()),
-        "user cites the same durable action the other altitudes cite"
+        Some(report.action_id.as_str())
     );
 
     let outcome = driver.finish(1_400).unwrap();

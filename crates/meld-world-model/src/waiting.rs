@@ -14,8 +14,6 @@
 /// debugger surface): both sides compile against the same string, so a
 /// rename cannot silently diverge the substrate's answer.
 pub mod conditions {
-    /// Assessment waits on a current graph anchor for its subject.
-    pub const GRAPH_ANCHOR_ABSENT: &str = "graph_anchor_absent";
     /// Assessment waits on an installed belief family revision.
     pub const BELIEF_FAMILY_ABSENT: &str = "belief_family_absent";
     /// The assessment selector found no dirty key and no unassessed

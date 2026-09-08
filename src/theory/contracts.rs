@@ -107,7 +107,7 @@ pub struct PackageLinkView {
 }
 
 /// Exact installed package view available during semantic-link validation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstalledPackageLinkView {
     pub package_id: String,
     pub package_content_hash: String,

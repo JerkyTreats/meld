@@ -2,14 +2,14 @@
 
 use super::observation_store::DocsObservationStore;
 use super::publication::OBSERVATION_SCHEMA;
-use crate::runtime::assembly::{
+use crate::runtime::contracts::*;
+use crate::runtime::error::RuntimeAssemblyError;
+use crate::runtime::lifecycle::*;
+use crate::runtime::lifecycle::{
     owner_readiness_receipt, owner_release_receipt, owner_safe_point_receipt, owner_stop_receipt,
     owner_wait_receipt, verified_native_transition, NativeOwnerLifecycle,
     NativeOwnerLifecycleSnapshot,
 };
-use crate::runtime::contracts::*;
-use crate::runtime::error::RuntimeAssemblyError;
-use crate::runtime::lifecycle::*;
 use meld_events::{AppendMode, DomainObjectRef, EventAppendCapability};
 use meld_world_model::lifecycle::{NativeLifecycle, NativeLifecycleEvidence};
 use meld_world_model::world_state::graph::contracts::OwnerPublicationScope;
@@ -187,6 +187,14 @@ impl DocsObservationActor {
                         )
                     }
                 };
+                let effects = super::publication_return::observed_publication_effects(
+                    &self.binding.events.replay_capability(),
+                    previous
+                        .as_ref()
+                        .and_then(|head| head.observed_effects_through),
+                    self.binding.claim_config.as_ref(),
+                )
+                .map_err(|error| error.to_string())?;
                 (
                     self.binding.store.prepare(
                         &self.binding_id,
@@ -194,6 +202,13 @@ impl DocsObservationActor {
                         &self.binding.subject,
                         &self.binding.scope,
                         evidence,
+                        &self
+                            .binding
+                            .claim_policy
+                            .as_ref()
+                            .ok_or("Docs observation policy absent")?
+                            .content_identity,
+                        &effects,
                     )?,
                     error,
                 )
@@ -1434,6 +1449,13 @@ mod tests {
                 &first.binding.subject,
                 &first.binding.scope,
                 super::super::observation::inspect_scope(source.path()).unwrap(),
+                &super::super::claim_observation::test_support::policy().content_identity(),
+                &super::super::publication_return::observed_publication_effects(
+                    &authority.replay_capability(),
+                    None,
+                    None,
+                )
+                .unwrap(),
             )
             .unwrap();
         authority
@@ -1505,6 +1527,13 @@ mod tests {
                 &owner.binding.subject,
                 &owner.binding.scope,
                 super::super::observation::inspect_scope(source.path()).unwrap(),
+                &super::super::claim_observation::test_support::policy().content_identity(),
+                &super::super::publication_return::observed_publication_effects(
+                    &authority.replay_capability(),
+                    None,
+                    None,
+                )
+                .unwrap(),
             )
             .unwrap();
         let proof = foreign
@@ -1532,7 +1561,14 @@ mod tests {
                 foreign.ledger_identity(),
                 &owner.binding.subject,
                 &owner.binding.scope,
-                first.evidence.clone()
+                first.evidence.clone(),
+                &super::super::claim_observation::test_support::policy().content_identity(),
+                &super::super::publication_return::observed_publication_effects(
+                    &foreign.replay_capability(),
+                    None,
+                    None
+                )
+                .unwrap(),
             )
             .is_err());
         owner.tick(WorkBudget { max_items: 1 });

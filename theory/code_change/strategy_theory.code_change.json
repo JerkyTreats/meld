@@ -34,7 +34,24 @@
           "outcome_contract_id": "code_change.materialized.v1",
           "evidence_schema_id": "curation_realization_v1"
         },
-        "epistemic_placement": "confirmation"
+        "epistemic_selections": [
+          {
+            "rule_revision": null,
+            "evidence_return": true
+          }
+        ],
+        "product_ordering": [
+          {
+            "before": {
+              "kind": "all_tasks"
+            },
+            "after": {
+              "kind": "all_epistemic"
+            },
+            "milestone": "execution_terminal"
+          }
+        ],
+        "construction": "executable"
       }
     ]
   },

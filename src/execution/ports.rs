@@ -3,10 +3,9 @@ use crate::agent::AgentIdentity;
 use crate::api::ContextApi;
 use crate::context::frame::Frame;
 use crate::context::query::view::{ContextView, NodeContext};
-use crate::context::queue::QueueEventContext;
 use crate::context::CurrentFrameHeadRead;
 use crate::error::ApiError;
-use crate::events::{DomainObjectRef, EventEnvelope};
+use crate::events::EventEnvelope;
 use crate::execution::contracts::ProviderExecutionBinding;
 use crate::metadata::frame_types::FrameMetadata;
 use crate::metadata::frame_write_contract::{
@@ -21,19 +20,17 @@ use crate::provider::executor::ProviderPreparation;
 use crate::provider::{ChatMessage, CompletionResponse};
 use crate::store::{NodeRecord, NodeType};
 use crate::types::{FrameID, NodeID};
-use crate::world_state::belief::{BeliefQuery, BeliefStatus, BranchScope};
-use crate::world_state::PerspectiveKey;
 use async_trait::async_trait;
 use serde_json::Value;
 use std::path::Path;
 
 pub use meld_execution::{
-    BeliefStatusLabel, BeliefSubjectSignal, ExecutionEventContext, ExecutionFrame,
-    ExecutionNodeContext, ExecutionNodeKind, ExecutionNodeRecord,
-    FrameMetadataValidationProgressEventData, PreparedPromptLineage, PreviousMetadataSnapshotView,
-    PromptContextLineageProgressEventData, PromptLineageRequest, PromptLinkContractView,
-    ProviderPreparationView, TaskRunArtifactAnchor, WorkflowForceResetProgressEventData,
-    WorkflowTargetProgressEventData, WorkflowTurnProgressEventData,
+    BeliefStatusLabel, ExecutionEventContext, ExecutionFrame, ExecutionNodeContext,
+    ExecutionNodeKind, ExecutionNodeRecord, FrameMetadataValidationProgressEventData,
+    PreparedPromptLineage, PreviousMetadataSnapshotView, PromptContextLineageProgressEventData,
+    PromptLineageRequest, PromptLinkContractView, ProviderPreparationView,
+    WorkflowForceResetProgressEventData, WorkflowTargetProgressEventData,
+    WorkflowTurnProgressEventData,
 };
 
 pub trait ContextReadPort:
@@ -230,14 +227,6 @@ impl<T> WorkspaceScanPort for T where
 {
 }
 
-pub trait WorldModelQueryPort: meld_execution::WorldModelQueryPort<Error = ApiError> {}
-
-impl<T> WorldModelQueryPort for T where T: meld_execution::WorldModelQueryPort<Error = ApiError> {}
-
-pub trait BeliefContextReadPort: meld_execution::BeliefContextReadPort<Error = ApiError> {}
-
-impl<T> BeliefContextReadPort for T where T: meld_execution::BeliefContextReadPort<Error = ApiError> {}
-
 pub trait ExecutionContext:
     ContextReadPort
     + ContextWritePort
@@ -272,15 +261,6 @@ impl<T> ExecutionRuntimeContext for T where
 {
 }
 
-impl From<&QueueEventContext> for meld_execution::ExecutionEventContext {
-    fn from(value: &QueueEventContext) -> Self {
-        Self {
-            effect_authority: None,
-            session_id: value.session_id.clone(),
-        }
-    }
-}
-
 impl meld_execution::ContextReadPort for ContextApi {
     type AgentIdentity = AgentIdentity;
     type ContextView = ContextView;
@@ -306,7 +286,7 @@ impl meld_execution::ContextReadPort for ContextApi {
         include_tombstoned: bool,
     ) -> Result<Option<FrameID>, ApiError> {
         if include_tombstoned {
-            let head_index = self.head_index().read();
+            let head_index = self.heads();
             return Ok(head_index
                 .entries_for_node(node_id)
                 .into_iter()
@@ -682,88 +662,6 @@ impl meld_execution::ExecutionProgressPort for ContextApi {
     ) -> Result<(), ApiError> {
         self.emit_progress_event_best_effort(&event_context.session_id, event_type, payload);
         Ok(())
-    }
-}
-
-impl meld_execution::BeliefContextReadPort for ContextApi {
-    type Error = ApiError;
-
-    // Reads through the world model's belief query facade. Views are
-    // filtered to the requested family on the default perspective and main
-    // branch, then picked by lowest index key so repeated reads over the
-    // same store state return the same signal.
-    fn current_belief_signal(
-        &self,
-        node_id_hex: &str,
-        family_id: &str,
-    ) -> Result<Option<BeliefSubjectSignal>, ApiError> {
-        let Some(store) = self.belief_store() else {
-            return Ok(None);
-        };
-        let subject =
-            DomainObjectRef::new("workspace_fs", "node", node_id_hex).map_err(ApiError::from)?;
-        let perspective = PerspectiveKey::new("default", "default").map_err(ApiError::from)?;
-        let query = BeliefQuery::new(&store);
-        let mut views: Vec<_> = query
-            .current_views_for_subject(&subject, &perspective)
-            .map_err(ApiError::from)?
-            .into_iter()
-            .filter(|view| {
-                view.key.dimension_id == family_id && view.key.branch_scope == BranchScope::main()
-            })
-            .collect();
-        views.sort_by_key(|view| view.key.index_key());
-
-        // Borrowed and Copy fields are read first so the owned collections
-        // can be moved out of the consumed view instead of cloned.
-        Ok(views.into_iter().next().map(|view| BeliefSubjectSignal {
-            status: belief_status_label(&view.status),
-            confidence: view.planner_projection.confidence,
-            stale: view.freshness.stale,
-            contradicted: view.contradiction.contradicted,
-            as_of_seq: view.freshness.high_water_seq,
-            revision_id: view.current_revision_id,
-            contradicted_evidence_ids: view.contradiction.contradicted_evidence_ids,
-            evidence_ids: view.hydration.evidence_ids,
-            source_fact_ids: view.hydration.source_fact_ids,
-        }))
-    }
-}
-
-// Exhaustive on the world model side so a new `BeliefStatus` variant forces
-// an explicit mapping into the port label instead of a silent default.
-fn belief_status_label(status: &BeliefStatus) -> BeliefStatusLabel {
-    match status {
-        BeliefStatus::Settled => BeliefStatusLabel::Settled,
-        BeliefStatus::Stale => BeliefStatusLabel::Stale,
-        BeliefStatus::NeedsObservation => BeliefStatusLabel::NeedsObservation,
-        BeliefStatus::NeedsAssessment => BeliefStatusLabel::NeedsAssessment,
-        BeliefStatus::AssessmentPending => BeliefStatusLabel::AssessmentPending,
-        BeliefStatus::Invalid => BeliefStatusLabel::Invalid,
-    }
-}
-
-impl meld_execution::WorldModelQueryPort for ContextApi {
-    type Error = ApiError;
-
-    fn current_artifact_for_task_run(
-        &self,
-        task_run_id: &str,
-        artifact_type_id: &str,
-    ) -> Result<Option<TaskRunArtifactAnchor>, ApiError> {
-        let Some(world_model) = ContextApi::world_model_queries(self) else {
-            return Ok(None);
-        };
-        let task_run =
-            DomainObjectRef::new("execution", "task_run", task_run_id).map_err(ApiError::from)?;
-        let anchor = world_model
-            .current_artifact_for_task_run(&task_run, artifact_type_id)
-            .map_err(ApiError::from)?;
-        Ok(anchor.map(|record| TaskRunArtifactAnchor {
-            target_domain_id: record.target.domain_id,
-            target_object_kind: record.target.object_kind,
-            target_object_id: record.target.object_id,
-        }))
     }
 }
 

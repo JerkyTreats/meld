@@ -15,7 +15,6 @@ pub mod compat;
 pub mod concurrency;
 pub mod config;
 pub mod context;
-pub mod control;
 pub mod dependency_security;
 pub mod docs;
 pub mod error;

@@ -89,6 +89,7 @@ impl NonceRequest {
                 .map(|relation| relation.occurrence_id.clone()),
         );
         let batch = OwnerPublicationBatch {
+            work_input_basis_id: None,
             owner_id: OWNER_ID.into(),
             revision_id: self.nonce_id.clone(),
             scope: scope.clone(),

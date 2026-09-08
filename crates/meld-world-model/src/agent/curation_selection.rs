@@ -84,7 +84,9 @@ impl CurationRuleSelectionPort for AgentEpochCurationSource {
                     "retained Curation selection names another epoch lineage".into(),
                 ));
             }
-            rules.push(products.curation_rule);
+            if products.curation_rule.rule.selection_posture.is_standing() {
+                rules.push(products.curation_rule);
+            }
         }
         rules.sort_by(|left, right| {
             (&left.rule_id, &left.content_hash).cmp(&(&right.rule_id, &right.content_hash))

@@ -356,7 +356,7 @@ mod tests {
         crate::api::ContextApi::new(
             Arc::new(crate::store::SledNodeRecordStore::new(root.join("nodes")).unwrap()),
             Arc::new(crate::context::frame::FrameStorage::new(root.join("frames")).unwrap()),
-            Arc::new(parking_lot::RwLock::new(crate::heads::HeadIndex::new())),
+            crate::heads::HeadIndex::new(),
             Arc::new(
                 crate::prompt_context::PromptContextArtifactStorage::new(root.join("prompts"))
                     .unwrap(),

@@ -99,6 +99,7 @@ fn traversal() -> (TraversalCut, BoundedTraversalRequest, TraversalResult) {
             required: true,
         }],
         receipts: vec![OwnerGraphRevisionReceipt {
+            work_input_basis_id: Some("source-input-v1".into()),
             event_coverage: None,
             owner_id: "workspace_fs".into(),
             revision_id: "workspace-v1".into(),
@@ -187,6 +188,7 @@ fn planner_cut_at(revision: &str) -> PlannerCut {
     match PlannerCut::assemble(PlannerAssemblyRequest {
         context: context.clone(),
         policy: PlannerAssemblyPolicy {
+            acquisition_question: None,
             policy_revision_id: "planner-policy-v1".into(),
             required_sources: kinds.to_vec(),
             explicitly_not_required: vec![PlannerSourceKind::Causation, PlannerSourceKind::Regime],
@@ -210,6 +212,7 @@ fn planner_cut_at(revision: &str) -> PlannerCut {
             })
             .collect(),
         view_input: PlannerProjectionInput {
+            unassessed_belief: None,
             additional_beliefs: Vec::new(),
             context: PlannerProjectionContext {
                 subject: subject_ref(),
@@ -218,11 +221,7 @@ fn planner_cut_at(revision: &str) -> PlannerCut {
                 projection_version: PLANNER_PROJECTION_VERSION.into(),
             },
             belief_view: None,
-            graph_scope: Some(PlannerGraphScope {
-                accessible: true,
-                anchor_ids: Vec::new(),
-                source_fact_ids: Vec::new(),
-            }),
+            graph_scope: Some(PlannerGraphScope { accessible: true }),
             field_config: PlannerFieldProjectionConfig::default(),
         },
     }) {
@@ -231,7 +230,7 @@ fn planner_cut_at(revision: &str) -> PlannerCut {
     }
 }
 
-fn problem() -> StrategyProblem {
+pub(super) fn problem() -> StrategyProblem {
     let cut = planner_cut();
     let operation = CurationOperation::reconstruct(
         CurationAuthority {
@@ -252,6 +251,7 @@ fn problem() -> StrategyProblem {
     )
     .unwrap();
     StrategyProblem {
+        unavailable_curation_operation_ids: Vec::new(),
         effect_visibility: None,
         task_inputs: Vec::new(),
         problem_id: "problem-docs-v1".into(),
@@ -261,8 +261,18 @@ fn problem() -> StrategyProblem {
             theory_id: "theory-docs-v1".into(),
             settlement_rules: vec![StrategySettlementRule {
                 repeat_on_changed_owners: Vec::new(),
-                task_ordering: Vec::new(),
-                epistemic_placement: StrategyEpistemicPlacement::Prerequisite,
+                historical_wire: None,
+                construction: StrategyConstruction::Executable,
+                epistemic_selections: vec![StrategyEpistemicSelection {
+                    rule_revision: None,
+                    evidence_return: false,
+                }],
+                product_ordering: vec![StrategyProductOrdering {
+                    condition: crate::strategy::StrategyOrderingCondition::ConsumerSelected,
+                    before: StrategyProductSelector::AllEpistemic,
+                    after: StrategyProductSelector::AllTasks,
+                    milestone: StrategyDependencyMilestone::CurationVisible,
+                }],
                 goal_pattern: goal_pattern(),
                 settlement_obligation: Proposition::Exists {
                     scope: Term::Variable("?subject".into()),
@@ -532,32 +542,32 @@ fn pure_verification_rejects_missing_milestone_dependency() {
 
 #[test]
 fn confirmation_successor_keeps_completed_task_and_verifies_remaining_epistemic_work() {
-    prove_confirmation_successor(StrategyEpistemicPlacement::Confirmation, false);
+    prove_confirmation_successor(DependencyFixture::OperationalConfirmation, false);
 }
 
 #[test]
 fn graph_confirmation_successor_requires_visibility_instead_of_execution_terminality() {
-    prove_confirmation_successor(StrategyEpistemicPlacement::GraphConfirmation, false);
+    prove_confirmation_successor(DependencyFixture::VisibleConfirmation, false);
 }
 
 #[test]
 fn compound_confirmation_requires_all_task_returns() {
-    prove_confirmation_successor(StrategyEpistemicPlacement::Confirmation, true);
+    prove_confirmation_successor(DependencyFixture::OperationalConfirmation, true);
 }
 
 #[test]
 fn compound_graph_confirmation_requires_all_task_visibility() {
-    prove_confirmation_successor(StrategyEpistemicPlacement::GraphConfirmation, true);
+    prove_confirmation_successor(DependencyFixture::VisibleConfirmation, true);
 }
 
-fn prove_confirmation_successor(placement: StrategyEpistemicPlacement, compound: bool) {
+fn prove_confirmation_successor(placement: DependencyFixture, compound: bool) {
     let mut problem = if compound {
         compound_problem()
     } else {
         problem()
     };
-    problem.theory.settlement_rules[0].epistemic_placement = placement;
-    if placement == StrategyEpistemicPlacement::GraphConfirmation {
+    placement.apply(&mut problem.theory.settlement_rules[0]);
+    if placement == DependencyFixture::VisibleConfirmation {
         problem.effect_visibility = Some(
             crate::world_state::graph::contracts::OwnerPublicationExpectation {
                 owner_id: "test-owner".into(),
@@ -580,14 +590,11 @@ fn prove_confirmation_successor(placement: StrategyEpistemicPlacement, compound:
         PlanVerification::Valid { .. }
     ));
     let task = predecessor.tasks[0].clone();
-    assert_eq!(
-        predecessor.dependencies[0].producer_product_id,
-        task.task_id
-    );
-    assert_eq!(
-        predecessor.dependencies[0].consumer_product_id,
-        predecessor.epistemic_operations[0].product_id
-    );
+    assert!(predecessor
+        .dependencies
+        .iter()
+        .any(|dependency| dependency.producer_product_id == task.task_id
+            && dependency.consumer_product_id == predecessor.epistemic_operations[0].product_id));
     search_request.problem.planner_cut = planner_cut_at("after-task");
     let request = StrategySuccessorRequest {
         search: search_request,
@@ -620,7 +627,7 @@ fn prove_confirmation_successor(placement: StrategyEpistemicPlacement, compound:
         search_successor(&request).recommendation,
         Some(successor.clone())
     );
-    if placement == StrategyEpistemicPlacement::Confirmation {
+    if placement == DependencyFixture::OperationalConfirmation {
         let mut interrupted = request.clone();
         let mut return_history = interrupted.completed_history.clone();
         for entry in &mut return_history {
@@ -639,7 +646,7 @@ fn prove_confirmation_successor(placement: StrategyEpistemicPlacement, compound:
             PlanVerification::Valid { .. }
         ));
     }
-    if placement == StrategyEpistemicPlacement::GraphConfirmation {
+    if placement == DependencyFixture::VisibleConfirmation {
         let mut terminal_only = request.clone();
         terminal_only.completed_history[0].accepted_milestone =
             task.return_milestone.clone().unwrap();
@@ -726,8 +733,11 @@ fn prove_confirmation_successor(placement: StrategyEpistemicPlacement, compound:
 #[test]
 fn unsuccessful_confirmation_stops_unchanged_work_but_allows_source_advance_and_alternatives() {
     let mut problem = problem();
-    problem.theory.settlement_rules[0].epistemic_placement =
-        StrategyEpistemicPlacement::Confirmation;
+    DependencyFixture::OperationalConfirmation.apply(&mut problem.theory.settlement_rules[0]);
+    problem.theory.settlement_rules[0].repeat_on_changed_owners =
+        vec![problem.planner_cut.traversal_cut.receipts[0]
+            .owner_id
+            .clone()];
     problem.curation_operations[0] = problem.curation_operations[0]
         .clone()
         .for_request("confirm-current-source".into())
@@ -774,7 +784,68 @@ fn unsuccessful_confirmation_stops_unchanged_work_but_allows_source_advance_and_
     request.predecessor_plan = Box::new(confirmation);
     assert!(super::search::confirmation_is_current(
         &request.search.problem,
+        &request.search.problem.theory.settlement_rules[0],
         &request.completed_history
+    ));
+    let mut satisfied_alternative = request.clone();
+    satisfied_alternative
+        .search
+        .problem
+        .planner_cut
+        .world_model_view
+        .world_state = meld_lang::WorldState::new(vec![satisfied_alternative
+        .search
+        .problem
+        .goal
+        .target
+        .clone()])
+    .unwrap();
+    let first_operation = &satisfied_alternative.search.problem.curation_operations[0];
+    let mut other_revision = first_operation.rule_revision.clone();
+    other_revision.id = "unselected-confirmation".into();
+    let other_operation = CurationOperation::reconstruct(
+        first_operation.authority.clone(),
+        other_revision.clone(),
+        first_operation.source_cut.clone(),
+        first_operation.traversal_request.clone(),
+    )
+    .unwrap();
+    let mut other_rule = satisfied_alternative.search.problem.theory.settlement_rules[0].clone();
+    other_rule.epistemic_selections = vec![StrategyEpistemicSelection {
+        rule_revision: Some(other_revision),
+        evidence_return: true,
+    }];
+    // The selected route must also name its own operation rather than select the whole catalog.
+    let selected_revision = first_operation.rule_revision.clone();
+    satisfied_alternative.search.problem.theory.settlement_rules[0].epistemic_selections =
+        vec![StrategyEpistemicSelection {
+            rule_revision: Some(selected_revision),
+            evidence_return: true,
+        }];
+    satisfied_alternative.predecessor_plan.settlement_rule_id =
+        super::search::settlement_rule_identity(
+            &satisfied_alternative.search.problem.theory.settlement_rules[0],
+        );
+    satisfied_alternative.predecessor_plan.plan_revision_id =
+        super::search::plan_revision_identity(&satisfied_alternative.predecessor_plan);
+    satisfied_alternative
+        .search
+        .problem
+        .curation_operations
+        .push(other_operation);
+    satisfied_alternative
+        .search
+        .problem
+        .theory
+        .settlement_rules
+        .push(other_rule);
+    let satisfied = search_successor(&satisfied_alternative)
+        .recommendation
+        .unwrap();
+    assert_eq!(satisfied.plan.origin, StrategyPlanOrigin::Satisfied);
+    assert!(matches!(
+        verify_successor_plan(&satisfied_alternative, &satisfied),
+        PlanVerification::Valid { .. }
     ));
     let blocked = search_successor(&request);
     assert!(blocked.recommendation.is_none(), "{blocked:?}");
@@ -840,7 +911,9 @@ fn unsuccessful_confirmation_stops_unchanged_work_but_allows_source_advance_and_
     let operation = &advanced.search.problem.curation_operations[0];
     let mut cut = operation.source_cut.clone();
     cut.receipts[0].revision_id = "new-owner-source".into();
+    cut.receipts[0].work_input_basis_id = Some("new-owner-input".into());
     cut.cut_id = traversal_cut_identity(&cut).unwrap();
+    advanced.search.problem.planner_cut.traversal_cut = cut.clone();
     advanced.search.problem.curation_operations[0] = CurationOperation::reconstruct(
         operation.authority.clone(),
         operation.rule_revision.clone(),
@@ -892,7 +965,8 @@ fn named_confirmation_tracks_owner_evidence_beyond_its_own_curation_return() {
         .clone()
         .for_request("confirmation".into())
         .unwrap();
-    let original = super::search::epistemic_products(&problem).remove(0);
+    let original =
+        super::search::epistemic_products(&problem, &problem.theory.settlement_rules[0]).remove(0);
     let mut advanced = original.clone();
     let mut own = advanced.operation.source_cut.receipts[0].clone();
     own.owner_id = crate::curation::CURATION_OWNER_ID.into();
@@ -1089,11 +1163,11 @@ fn compound_settlement_constructs_independently_complete_tasks() {
 #[test]
 fn compound_plan_rejects_a_missing_prerequisite_or_confirmation_edge() {
     for placement in [
-        StrategyEpistemicPlacement::Prerequisite,
-        StrategyEpistemicPlacement::Confirmation,
+        DependencyFixture::Preparation,
+        DependencyFixture::OperationalConfirmation,
     ] {
         let mut problem = compound_problem();
-        problem.theory.settlement_rules[0].epistemic_placement = placement;
+        placement.apply(&mut problem.theory.settlement_rules[0]);
         let mut plan = search(&StrategySearchRequest {
             problem: problem.clone(),
             bounds: StrategySearchBounds {
@@ -1126,7 +1200,7 @@ fn method_components_preserve_explicit_operational_dependencies() {
         method_id: "compound-method".into(),
         trigger: request.problem.goal.target.clone(),
         preconditions: Vec::new(),
-        composition: direct.composition.clone(),
+        composition: method_body(&direct),
         net_effects: Vec::new(),
         cost: meld_lang::CostEstimate::zero(),
         preference: 0,
@@ -1161,7 +1235,7 @@ fn method_components_preserve_explicit_operational_dependencies() {
     let connected = search(&request).recommendation.unwrap();
     assert_eq!(connected.tasks.len(), 1);
     assert_eq!(
-        connected.composition,
+        connected.tasks[0].composition,
         request.problem.methods[0].composition
     );
     assert_eq!(
@@ -1190,7 +1264,7 @@ fn method_guards_require_ground_current_evidence_in_search_and_verification() {
         preconditions: vec![Proposition::Accessible {
             scope: Term::Variable("?subject".into()),
         }],
-        composition: direct.composition,
+        composition: method_body(&direct),
         net_effects: Vec::new(),
         cost: CostEstimate::zero(),
         preference: 0,
@@ -1232,7 +1306,7 @@ fn method_cannot_remove_a_canonical_capability_guard() {
         },
     };
     let direct = search(&request).recommendation.unwrap();
-    let mut composition = direct.composition;
+    let mut composition = method_body(&direct);
     for step in &mut composition.steps {
         let meld_lang::StepKind::Op(operator) = &mut step.kind else {
             unreachable!()
@@ -1271,10 +1345,18 @@ fn installed_task_ordering_requires_distinct_tasks_and_cannot_be_dropped() {
             max_depth: 8,
         },
     };
-    request.problem.theory.settlement_rules[0].task_ordering = vec![StrategyTaskOrdering {
-        before_contract_id: "contract-index-v1".into(),
-        after_contract_id: "contract-evaluate-v1".into(),
-    }];
+    request.problem.theory.settlement_rules[0]
+        .product_ordering
+        .push(StrategyProductOrdering {
+            condition: crate::strategy::StrategyOrderingCondition::ConsumerSelected,
+            before: StrategyProductSelector::Task {
+                contract_id: "contract-index-v1".into(),
+            },
+            after: StrategyProductSelector::Task {
+                contract_id: "contract-evaluate-v1".into(),
+            },
+            milestone: StrategyDependencyMilestone::ExecutionTerminal,
+        });
     let plan = search(&request).recommendation.unwrap();
     assert_eq!(plan.tasks.len(), 2);
     assert_eq!(plan.dependencies.len(), 3);
@@ -1295,16 +1377,31 @@ fn installed_task_ordering_requires_distinct_tasks_and_cannot_be_dropped() {
         PlanVerification::Invalid { .. }
     ));
     request.problem.theory.settlement_rules[0]
-        .task_ordering
-        .push(StrategyTaskOrdering {
-            before_contract_id: "contract-evaluate-v1".into(),
-            after_contract_id: "contract-index-v1".into(),
+        .product_ordering
+        .push(StrategyProductOrdering {
+            condition: crate::strategy::StrategyOrderingCondition::ConsumerSelected,
+            before: StrategyProductSelector::Task {
+                contract_id: "contract-evaluate-v1".into(),
+            },
+            after: StrategyProductSelector::Task {
+                contract_id: "contract-index-v1".into(),
+            },
+            milestone: StrategyDependencyMilestone::ExecutionTerminal,
         });
     assert!(search(&request).recommendation.is_none());
 }
 
 #[test]
 fn successor_verification_retains_completed_task_as_its_causal_predecessor() {
+    assert_completed_task_successor(false);
+}
+
+#[test]
+fn successor_retains_evidence_route_from_completed_task() {
+    assert_completed_task_successor(true);
+}
+
+fn assert_completed_task_successor(route_from_completed: bool) {
     let mut request = StrategySearchRequest {
         problem: compound_problem(),
         bounds: StrategySearchBounds {
@@ -1312,20 +1409,33 @@ fn successor_verification_retains_completed_task_as_its_causal_predecessor() {
             max_depth: 8,
         },
     };
+    if route_from_completed {
+        request.problem.theory.settlement_rules[0]
+            .evidence_route
+            .outcome_contract_id = "docs-indexed".into();
+    }
     let seed = search(&request).recommendation.unwrap();
     request.problem.theory.settlement_rules[0].settlement_obligation =
         problem().theory.settlement_rules[0]
             .settlement_obligation
             .clone();
-    request.problem.theory.settlement_rules[0].task_ordering = vec![StrategyTaskOrdering {
-        before_contract_id: "contract-index-v1".into(),
-        after_contract_id: "contract-evaluate-v1".into(),
-    }];
+    request.problem.theory.settlement_rules[0]
+        .product_ordering
+        .push(StrategyProductOrdering {
+            condition: crate::strategy::StrategyOrderingCondition::ConsumerSelected,
+            before: StrategyProductSelector::Task {
+                contract_id: "contract-index-v1".into(),
+            },
+            after: StrategyProductSelector::Task {
+                contract_id: "contract-evaluate-v1".into(),
+            },
+            milestone: StrategyDependencyMilestone::ExecutionTerminal,
+        });
     request.problem.methods.push(meld_lang::Method {
         method_id: "prepare-then-evaluate".into(),
         trigger: request.problem.goal.target.clone(),
         preconditions: Vec::new(),
-        composition: seed.composition,
+        composition: method_body(&seed),
         net_effects: Vec::new(),
         cost: CostEstimate::zero(),
         preference: 0,
@@ -1367,6 +1477,27 @@ fn successor_verification_retains_completed_task_as_its_causal_predecessor() {
         verify_successor_plan(&successor_request, &successor),
         PlanVerification::Valid { .. }
     ));
+    if route_from_completed {
+        for foreign_subject in [false, true] {
+            let mut stale_request = successor_request.clone();
+            let Some(StrategyProduct::Task(task)) = &mut stale_request.completed_history[0].product
+            else {
+                panic!("completed Task history required");
+            };
+            if foreign_subject {
+                task.execution_subject =
+                    Some(meld_events::DomainObjectRef::new("other", "subject", "foreign").unwrap());
+            } else {
+                task.source_basis_id = Some("different-input-basis".into());
+            }
+            let mut stale_successor = successor.clone();
+            stale_successor.completed_history = stale_request.completed_history.clone();
+            assert!(matches!(
+                verify_successor_plan(&stale_request, &stale_successor),
+                PlanVerification::Invalid { grounds } if grounds.contains(&StrategyRejectionGround::InvalidEvidenceRoute)
+            ));
+        }
+    }
     successor
         .plan
         .dependencies
@@ -1381,29 +1512,615 @@ fn successor_verification_retains_completed_task_as_its_causal_predecessor() {
 #[test]
 fn completed_work_repetition_uses_only_the_installed_owner_selection() {
     let mut problem = problem();
-    assert!(super::search::task_source_basis(&problem).is_none());
+    assert!(
+        super::search::task_source_basis(&problem, &problem.theory.settlement_rules[0]).is_none()
+    );
     assert!(!problem.planner_cut.traversal_cut.receipts.is_empty());
     let owner = problem.planner_cut.traversal_cut.receipts[0]
         .owner_id
         .clone();
     assert_ne!(owner, crate::curation::CURATION_OWNER_ID);
     problem.theory.settlement_rules[0].repeat_on_changed_owners = vec![owner];
-    let selected = super::search::task_source_basis(&problem).unwrap();
+    let selected =
+        super::search::task_source_basis(&problem, &problem.theory.settlement_rules[0]).unwrap();
     let mut unrelated = problem.planner_cut.traversal_cut.receipts[0].clone();
     unrelated.owner_id = "unselected-owner".into();
     unrelated.revision_id = "unrelated-result".into();
     problem.planner_cut.traversal_cut.receipts.push(unrelated);
     assert_eq!(
-        super::search::task_source_basis(&problem).as_ref(),
+        super::search::task_source_basis(&problem, &problem.theory.settlement_rules[0]).as_ref(),
         Some(&selected)
     );
     problem.planner_cut.traversal_cut.receipts[0].revision_id = "changed-owner-evidence".into();
+    problem.planner_cut.traversal_cut.receipts[0].work_input_basis_id =
+        Some("changed-input".into());
     assert_ne!(
-        super::search::task_source_basis(&problem).as_ref(),
+        super::search::task_source_basis(&problem, &problem.theory.settlement_rules[0]).as_ref(),
         Some(&selected)
     );
     problem.theory.settlement_rules[0]
         .repeat_on_changed_owners
         .clear();
-    assert!(super::search::task_source_basis(&problem).is_none());
+    assert!(
+        super::search::task_source_basis(&problem, &problem.theory.settlement_rules[0]).is_none()
+    );
+}
+
+#[test]
+fn repetition_requires_complete_comparable_owner_inputs() {
+    let mut problem = problem();
+    let owner = problem.planner_cut.traversal_cut.receipts[0]
+        .owner_id
+        .clone();
+    problem.theory.settlement_rules[0].repeat_on_changed_owners = vec![owner];
+    let basis =
+        super::search::task_source_basis(&problem, &problem.theory.settlement_rules[0]).unwrap();
+    let request = StrategySearchRequest {
+        problem: problem.clone(),
+        bounds: StrategySearchBounds {
+            max_expansions: 64,
+            max_depth: 8,
+        },
+    };
+    let task = search(&request).recommendation.unwrap().tasks.remove(0);
+    assert_eq!(task.source_basis_id.as_ref(), Some(&basis));
+    for incomparable in [None, Some("strategy-task-input-v1::old".into())] {
+        let mut prior = task.clone();
+        prior.source_basis_id = incomparable;
+        assert!(super::search::same_work(&task, &prior));
+        assert!(super::search::same_work(&prior, &task));
+    }
+    let mut changed = task.clone();
+    changed.source_basis_id = Some("strategy-task-input-v2::changed".into());
+    assert!(!super::search::same_work(&task, &changed));
+
+    let mut missing = problem.planner_cut.traversal_cut.receipts[0].clone();
+    missing.owner_id = "another-selected-owner".into();
+    missing.work_input_basis_id = None;
+    problem.theory.settlement_rules[0]
+        .repeat_on_changed_owners
+        .push(missing.owner_id.clone());
+    assert!(
+        super::search::task_source_basis(&problem, &problem.theory.settlement_rules[0]).is_none()
+    );
+    problem.planner_cut.traversal_cut.receipts.push(missing);
+    assert!(
+        super::search::task_source_basis(&problem, &problem.theory.settlement_rules[0]).is_none()
+    );
+}
+
+// Method inputs may describe several Tasks; finished Plans store only those Tasks.
+fn method_body(plan: &StrategyPlan) -> meld_lang::Composition {
+    meld_lang::Composition {
+        steps: plan
+            .tasks
+            .iter()
+            .flat_map(|task| task.composition.steps.clone())
+            .collect(),
+        edges: plan
+            .tasks
+            .iter()
+            .flat_map(|task| task.composition.edges.clone())
+            .collect(),
+    }
+}
+
+#[test]
+fn applicable_rule_alternatives_use_the_same_ranking_and_exact_rule_verification() {
+    let mut request = StrategySearchRequest {
+        problem: problem(),
+        bounds: StrategySearchBounds {
+            max_expansions: 64,
+            max_depth: 8,
+        },
+    };
+    let valid = request.problem.theory.settlement_rules[0].clone();
+    let mut impossible = valid.clone();
+    impossible.evidence_route.outcome_contract_id = "unavailable-outcome".into();
+    request.problem.theory.settlement_rules = vec![impossible.clone(), valid.clone()];
+    let plan = search(&request)
+        .recommendation
+        .expect("later valid rule remains applicable");
+    assert_eq!(
+        plan.settlement_rule_id,
+        super::search::settlement_rule_identity(&valid)
+    );
+    assert!(matches!(
+        verify_plan(&request.problem, &plan),
+        PlanVerification::Valid { .. }
+    ));
+    request.problem.theory.settlement_rules.reverse();
+    assert_eq!(search(&request).recommendation.unwrap(), plan);
+    let mut forged = plan.clone();
+    forged.settlement_rule_id = super::search::settlement_rule_identity(&impossible);
+    forged.plan_revision_id = super::search::plan_revision_identity(&forged);
+    assert!(matches!(
+        verify_plan(&request.problem, &forged),
+        PlanVerification::Invalid { .. }
+    ));
+    let wire = serde_json::to_value(&plan).unwrap();
+    assert!(wire.get("composition").is_none());
+    assert!(wire.get("capability_contract_ids").is_none());
+    assert!(wire["tasks"][0].get("composition").is_some());
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DependencyFixture {
+    Preparation,
+    OperationalConfirmation,
+    VisibleConfirmation,
+}
+impl DependencyFixture {
+    pub(crate) fn apply(self, rule: &mut StrategySettlementRule) {
+        rule.epistemic_selections = vec![StrategyEpistemicSelection {
+            rule_revision: None,
+            evidence_return: self != Self::Preparation,
+        }];
+        rule.product_ordering = vec![match self {
+            Self::Preparation => StrategyProductOrdering {
+                condition: crate::strategy::StrategyOrderingCondition::ConsumerSelected,
+                before: StrategyProductSelector::AllEpistemic,
+                after: StrategyProductSelector::AllTasks,
+                milestone: StrategyDependencyMilestone::CurationVisible,
+            },
+            Self::OperationalConfirmation => StrategyProductOrdering {
+                condition: crate::strategy::StrategyOrderingCondition::ConsumerSelected,
+                before: StrategyProductSelector::AllTasks,
+                after: StrategyProductSelector::AllEpistemic,
+                milestone: StrategyDependencyMilestone::ExecutionTerminal,
+            },
+            Self::VisibleConfirmation => StrategyProductOrdering {
+                condition: crate::strategy::StrategyOrderingCondition::ConsumerSelected,
+                before: StrategyProductSelector::AllTasks,
+                after: StrategyProductSelector::AllEpistemic,
+                milestone: StrategyDependencyMilestone::EffectVisible,
+            },
+        }];
+    }
+}
+
+#[test]
+fn unknown_goal_selects_only_authorized_epistemic_products_without_dummy_tasks() {
+    let mut request = StrategySearchRequest {
+        problem: problem(),
+        bounds: StrategySearchBounds {
+            max_expansions: 32,
+            max_depth: 8,
+        },
+    };
+    request.problem.planner_cut.world_model_view.world_state = meld_lang::WorldState::empty();
+    let rule = &mut request.problem.theory.settlement_rules[0];
+    rule.construction = StrategyConstruction::ObserveUnknown;
+    rule.epistemic_selections[0].evidence_return = true;
+    rule.product_ordering.clear();
+    request.problem.capabilities.clear();
+    let plan = search(&request)
+        .recommendation
+        .expect("bounded epistemic response");
+    assert_eq!(plan.origin, StrategyPlanOrigin::Epistemic);
+    assert!(plan.tasks.is_empty());
+    assert_eq!(plan.epistemic_operations.len(), 1);
+    assert!(plan.epistemic_operations[0].return_evidence.is_some());
+    assert!(matches!(
+        verify_plan(&request.problem, &plan),
+        PlanVerification::Valid { .. }
+    ));
+    request.problem.curation_operations.clear();
+    assert!(search(&request).recommendation.is_none());
+    assert!(matches!(
+        verify_plan(&request.problem, &plan),
+        PlanVerification::Invalid { .. }
+    ));
+}
+
+pub(super) fn mixed_problem() -> StrategyProblem {
+    let mut problem = compound_problem();
+    let first = problem.curation_operations[0].clone();
+    let mut next_rule = first.rule_revision.clone();
+    next_rule.id = "rule-after-index".into();
+    next_rule.content_hash = "after-index-hash".into();
+    let second = CurationOperation::reconstruct(
+        first.authority.clone(),
+        next_rule,
+        first.source_cut.clone(),
+        first.traversal_request.clone(),
+    )
+    .unwrap();
+    problem.curation_operations.push(second);
+    let rule = &mut problem.theory.settlement_rules[0];
+    rule.product_ordering = vec![
+        StrategyProductOrdering {
+            condition: crate::strategy::StrategyOrderingCondition::ConsumerSelected,
+            before: StrategyProductSelector::Epistemic {
+                rule_id: "rule-docs".into(),
+            },
+            after: StrategyProductSelector::Task {
+                contract_id: "contract-index-v1".into(),
+            },
+            milestone: StrategyDependencyMilestone::CurationVisible,
+        },
+        StrategyProductOrdering {
+            condition: crate::strategy::StrategyOrderingCondition::ConsumerSelected,
+            before: StrategyProductSelector::Task {
+                contract_id: "contract-index-v1".into(),
+            },
+            after: StrategyProductSelector::Epistemic {
+                rule_id: "rule-after-index".into(),
+            },
+            milestone: StrategyDependencyMilestone::ExecutionTerminal,
+        },
+        StrategyProductOrdering {
+            condition: crate::strategy::StrategyOrderingCondition::ConsumerSelected,
+            before: StrategyProductSelector::Epistemic {
+                rule_id: "rule-after-index".into(),
+            },
+            after: StrategyProductSelector::Task {
+                contract_id: "contract-evaluate-v1".into(),
+            },
+            milestone: StrategyDependencyMilestone::CurationVisible,
+        },
+    ];
+    problem
+}
+
+#[test]
+fn heterogeneous_products_have_local_dependencies_and_no_unrelated_serialization() {
+    let request = StrategySearchRequest {
+        problem: mixed_problem(),
+        bounds: StrategySearchBounds {
+            max_expansions: 64,
+            max_depth: 8,
+        },
+    };
+    let plan = search(&request).recommendation.expect("mixed Plan");
+    assert_eq!(plan.tasks.len(), 2);
+    assert_eq!(plan.epistemic_operations.len(), 2);
+    assert_eq!(plan.dependencies.len(), 3);
+    assert!(matches!(
+        verify_plan(&request.problem, &plan),
+        PlanVerification::Valid { .. }
+    ));
+    let first = &plan.epistemic_operations[0];
+    let second = &plan.epistemic_operations[1];
+    let index = plan
+        .tasks
+        .iter()
+        .find(|task| {
+            task.capability_contract_ids
+                .contains(&"contract-index-v1".into())
+        })
+        .unwrap();
+    let evaluate = plan
+        .tasks
+        .iter()
+        .find(|task| {
+            task.capability_contract_ids
+                .contains(&"contract-evaluate-v1".into())
+        })
+        .unwrap();
+    for (before, after) in [
+        (&first.product_id, &index.task_id),
+        (&index.task_id, &second.product_id),
+        (&second.product_id, &evaluate.task_id),
+    ] {
+        assert!(plan
+            .dependencies
+            .iter()
+            .any(|edge| &edge.producer_product_id == before && &edge.consumer_product_id == after));
+    }
+    assert!(!plan
+        .dependencies
+        .iter()
+        .any(|edge| edge.producer_product_id == first.product_id
+            && edge.consumer_product_id == evaluate.task_id));
+    assert!(!plan
+        .dependencies
+        .iter()
+        .any(|edge| edge.producer_product_id == second.product_id
+            && edge.consumer_product_id == index.task_id));
+    let mut missing = plan.clone();
+    missing.dependencies.remove(1);
+    missing.plan_revision_id = super::search::plan_revision_identity(&missing);
+    assert!(matches!(
+        verify_plan(&request.problem, &missing),
+        PlanVerification::Invalid { .. }
+    ));
+}
+
+#[test]
+fn observation_construction_prunes_unused_preparation_and_respects_unavailable_alternatives() {
+    let mut problem = mixed_problem();
+    problem.planner_cut.world_model_view.world_state = meld_lang::WorldState::empty();
+    problem.capabilities.clear();
+    let rule = &mut problem.theory.settlement_rules[0];
+    rule.construction = StrategyConstruction::ObserveUnknown;
+    rule.product_ordering.clear();
+    rule.epistemic_selections = problem
+        .curation_operations
+        .iter()
+        .enumerate()
+        .map(|(index, operation)| StrategyEpistemicSelection {
+            rule_revision: Some(operation.rule_revision.clone()),
+            evidence_return: index == 0,
+        })
+        .collect();
+    let mut request = StrategySearchRequest {
+        problem,
+        bounds: StrategySearchBounds {
+            max_expansions: 32,
+            max_depth: 8,
+        },
+    };
+    let first = search(&request).recommendation.unwrap();
+    assert_eq!(first.epistemic_operations.len(), 1);
+    assert!(matches!(
+        verify_plan(&request.problem, &first),
+        PlanVerification::Valid { .. }
+    ));
+    request
+        .problem
+        .unavailable_curation_operation_ids
+        .push(first.epistemic_operations[0].operation.operation_id.clone());
+    assert!(search(&request).recommendation.is_none());
+    assert!(matches!(
+        verify_plan(&request.problem, &first),
+        PlanVerification::Invalid { .. }
+    ));
+    let mut alternative = request.problem.theory.settlement_rules[0].clone();
+    alternative.epistemic_selections.remove(0);
+    alternative.epistemic_selections[0].evidence_return = true;
+    request.problem.theory.settlement_rules.push(alternative);
+    let next = search_successor(&StrategySuccessorRequest {
+        search: request.clone(),
+        predecessor_plan: Box::new(first),
+        completed_history: Vec::new(),
+    })
+    .recommendation
+    .unwrap();
+    assert_eq!(
+        next.plan.epistemic_operations[0].operation.rule_revision,
+        request.problem.curation_operations[1].rule_revision
+    );
+    assert!(matches!(
+        verify_plan(&request.problem, &next.plan),
+        PlanVerification::Valid { .. }
+    ));
+}
+
+#[test]
+fn confirmation_uses_only_the_required_return_closure() {
+    let mut problem = problem();
+    let first = problem.curation_operations[0].clone();
+    let mut extra_revision = first.rule_revision.clone();
+    extra_revision.id = "unused-preparation".into();
+    let extra = CurationOperation::reconstruct(
+        first.authority.clone(),
+        extra_revision.clone(),
+        first.source_cut.clone(),
+        first.traversal_request.clone(),
+    )
+    .unwrap();
+    problem.curation_operations.push(extra.clone());
+    problem
+        .unavailable_curation_operation_ids
+        .push(extra.operation_id.clone());
+    let rule = &mut problem.theory.settlement_rules[0];
+    rule.epistemic_selections = vec![
+        StrategyEpistemicSelection {
+            rule_revision: Some(first.rule_revision.clone()),
+            evidence_return: true,
+        },
+        StrategyEpistemicSelection {
+            rule_revision: Some(extra_revision),
+            evidence_return: false,
+        },
+    ];
+    rule.product_ordering = vec![StrategyProductOrdering {
+        condition: crate::strategy::StrategyOrderingCondition::ConsumerSelected,
+        before: StrategyProductSelector::AllTasks,
+        after: StrategyProductSelector::Epistemic {
+            rule_id: first.rule_revision.id.clone(),
+        },
+        milestone: StrategyDependencyMilestone::ExecutionTerminal,
+    }];
+    rule.product_ordering.push(StrategyProductOrdering {
+        condition: crate::strategy::StrategyOrderingCondition::ConsumerSelected,
+        before: StrategyProductSelector::Task {
+            contract_id: "unused-contract".into(),
+        },
+        after: StrategyProductSelector::Epistemic {
+            rule_id: "unused-preparation".into(),
+        },
+        milestone: StrategyDependencyMilestone::ExecutionTerminal,
+    });
+    let mut unused_capability = problem.capabilities[0].clone();
+    unused_capability.contract_id = "unused-contract".into();
+    unused_capability.operator.effects.clear();
+    unused_capability.operator.operator_id = "unused-operator".into();
+    unused_capability
+        .operator
+        .resolution
+        .specific
+        .as_mut()
+        .unwrap()
+        .capability_type_id = "unused-mechanism".into();
+    problem.capabilities.push(unused_capability);
+    let search_request = StrategySearchRequest {
+        problem,
+        bounds: StrategySearchBounds {
+            max_expansions: 64,
+            max_depth: 8,
+        },
+    };
+    let plan = search(&search_request).recommendation.unwrap();
+    assert_eq!(plan.epistemic_operations.len(), 1);
+    let mut request = StrategySuccessorRequest {
+        search: search_request,
+        completed_history: plan
+            .tasks
+            .iter()
+            .map(|task| StrategyCompletedHistoryEntry {
+                source_plan_revision_id: plan.plan_revision_id.clone(),
+                product_id: task.task_id.clone(),
+                accepted_milestone: task.confirmation_milestone(),
+                owner_position_id: "execution-return".into(),
+                product: Some(StrategyProduct::Task(Box::new(task.clone()))),
+            })
+            .collect(),
+        predecessor_plan: Box::new(plan),
+    };
+    let confirmation = search_successor(&request).recommendation.unwrap();
+    assert_eq!(confirmation.plan.origin, StrategyPlanOrigin::Confirmation);
+    assert_eq!(confirmation.plan.epistemic_operations.len(), 1);
+    assert!(matches!(
+        verify_successor_plan(&request, &confirmation),
+        PlanVerification::Valid { .. }
+    ));
+    let operation = &confirmation.plan.epistemic_operations[0];
+    request
+        .completed_history
+        .push(StrategyCompletedHistoryEntry {
+            source_plan_revision_id: confirmation.plan.plan_revision_id.clone(),
+            product_id: operation.product_id.clone(),
+            accepted_milestone: PlanMilestoneRequirement::BeliefRevision {
+                belief_key: "confirmed".into(),
+                revision_id: "positive".into(),
+            },
+            owner_position_id: "belief-return".into(),
+            product: Some(StrategyProduct::Epistemic(Box::new(operation.clone()))),
+        });
+    *request.predecessor_plan = confirmation.plan;
+    request
+        .search
+        .problem
+        .planner_cut
+        .world_model_view
+        .world_state =
+        meld_lang::WorldState::new(vec![request.search.problem.goal.target.clone()]).unwrap();
+    let satisfied = search_successor(&request).recommendation.unwrap();
+    assert_eq!(satisfied.plan.origin, StrategyPlanOrigin::Satisfied);
+    assert!(matches!(
+        verify_successor_plan(&request, &satisfied),
+        PlanVerification::Valid { .. }
+    ));
+}
+
+#[test]
+fn conditional_ordering_does_not_require_an_unselected_task() {
+    let mut problem = problem();
+    let consumer = problem.capabilities[0].contract_id.clone();
+    let mut unused = problem.capabilities[0].clone();
+    unused.contract_id = "optional-producer".into();
+    unused.operator.operator_id = "optional-producer".into();
+    unused.operator.effects.clear();
+    unused
+        .operator
+        .resolution
+        .specific
+        .as_mut()
+        .unwrap()
+        .capability_type_id = "optional-producer".into();
+    problem.capabilities.push(unused);
+    problem.theory.settlement_rules[0]
+        .product_ordering
+        .push(StrategyProductOrdering {
+            condition: StrategyOrderingCondition::ConsumerSelected,
+            before: StrategyProductSelector::Task {
+                contract_id: "optional-producer".into(),
+            },
+            after: StrategyProductSelector::Task {
+                contract_id: consumer,
+            },
+            milestone: StrategyDependencyMilestone::ExecutionTerminal,
+        });
+    let mut request = StrategySearchRequest {
+        problem,
+        bounds: StrategySearchBounds {
+            max_expansions: 64,
+            max_depth: 8,
+        },
+    };
+    assert!(search(&request).recommendation.is_none());
+    request.problem.theory.settlement_rules[0]
+        .product_ordering
+        .last_mut()
+        .unwrap()
+        .condition = StrategyOrderingCondition::BothSelected;
+    let plan = search(&request).recommendation.unwrap();
+    assert_eq!(plan.tasks.len(), 1);
+    assert!(matches!(
+        verify_plan(&request.problem, &plan),
+        PlanVerification::Valid { .. }
+    ));
+}
+
+#[test]
+fn current_negative_confirmation_does_not_repeat_its_own_effect_publication() {
+    let mut problem = problem();
+    DependencyFixture::OperationalConfirmation.apply(&mut problem.theory.settlement_rules[0]);
+    problem.theory.settlement_rules[0].repeat_on_changed_owners =
+        vec![problem.planner_cut.traversal_cut.receipts[0]
+            .owner_id
+            .clone()];
+    let search_request = StrategySearchRequest {
+        problem,
+        bounds: StrategySearchBounds {
+            max_expansions: 64,
+            max_depth: 8,
+        },
+    };
+    let plan = search(&search_request).recommendation.unwrap();
+    let mut request = StrategySuccessorRequest {
+        search: search_request,
+        completed_history: plan
+            .tasks
+            .iter()
+            .map(|task| StrategyCompletedHistoryEntry {
+                source_plan_revision_id: plan.plan_revision_id.clone(),
+                product_id: task.task_id.clone(),
+                accepted_milestone: task.confirmation_milestone(),
+                owner_position_id: "effect-completed".into(),
+                product: Some(StrategyProduct::Task(Box::new(task.clone()))),
+            })
+            .collect(),
+        predecessor_plan: Box::new(plan),
+    };
+    let prior_operation = &request.search.problem.curation_operations[0];
+    let mut effect_cut = prior_operation.source_cut.clone();
+    effect_cut.receipts[0].revision_id = "task-own-effect".into();
+    effect_cut.cut_id =
+        crate::world_state::graph::contracts::traversal_cut_identity(&effect_cut).unwrap();
+    request.search.problem.planner_cut.traversal_cut = effect_cut.clone();
+    request.search.problem.curation_operations = vec![CurationOperation::reconstruct(
+        prior_operation.authority.clone(),
+        prior_operation.rule_revision.clone(),
+        effect_cut,
+        prior_operation.traversal_request.clone(),
+    )
+    .unwrap()];
+    let confirmation = search_successor(&request).recommendation.unwrap();
+    assert_eq!(confirmation.plan.origin, StrategyPlanOrigin::Confirmation);
+    let operation = &confirmation.plan.epistemic_operations[0];
+    request
+        .completed_history
+        .push(StrategyCompletedHistoryEntry {
+            source_plan_revision_id: confirmation.plan.plan_revision_id.clone(),
+            product_id: operation.product_id.clone(),
+            accepted_milestone: PlanMilestoneRequirement::BeliefRevision {
+                belief_key: "negative".into(),
+                revision_id: "negative-current".into(),
+            },
+            owner_position_id: "negative-current".into(),
+            product: Some(StrategyProduct::Epistemic(Box::new(operation.clone()))),
+        });
+    *request.predecessor_plan = confirmation.plan;
+    let standalone = search(&request.search).recommendation.unwrap();
+    assert_eq!(
+        standalone.tasks[0].source_basis_id,
+        match &request.completed_history[0].product {
+            Some(StrategyProduct::Task(task)) => task.source_basis_id.clone(),
+            _ => unreachable!(),
+        }
+    );
+    assert!(search_successor(&request).recommendation.is_none());
 }

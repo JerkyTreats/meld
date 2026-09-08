@@ -51,6 +51,7 @@ impl AgentStrategyRuntimeConfig {
         curation_operations: Vec<crate::CurationOperation>,
     ) -> StrategyProblem {
         StrategyProblem {
+            unavailable_curation_operation_ids: Vec::new(),
             effect_visibility: None,
             task_inputs: Vec::new(),
             problem_id: format!(

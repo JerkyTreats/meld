@@ -1,4 +1,4 @@
-use meld::control::projection::ExecutionProjection;
+use meld::execution::projection::ExecutionProjection;
 use meld::task::ExecutionTaskEventData;
 use meld::telemetry::ProgressRuntime;
 use serde_json::json;

@@ -17,6 +17,8 @@ pub struct DocsObservationHead {
     pub revision_id: String,
     pub ledger_id: meld_events::LedgerIdentity,
     pub publication: Option<LedgerCursor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_effects_through: Option<LedgerCursor>,
 }
 
 enum DocsReportUpdate {
@@ -54,13 +56,17 @@ impl DocsObservationStore {
         Ok(revision)
     }
 
-    pub(crate) fn prepare(
+    // Keep the capture and its independently proven effect window explicit.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn prepare(
         &self,
         binding_id: &str,
         ledger_id: meld_events::LedgerIdentity,
         subject: &DomainObjectRef,
         scope: &OwnerPublicationScope,
         evidence: DocsEvidenceBundle,
+        policy_identity: &str,
+        effects: &super::publication_return::ObservedPublicationEffects,
     ) -> Result<DocsObservationRevision, String> {
         let _guard = self
             .mutation
@@ -73,6 +79,19 @@ impl DocsObservationStore {
         {
             return Err("Docs scope is bound to another Event ledger".into());
         }
+        let expected_after = head
+            .as_ref()
+            .and_then(|head| head.observed_effects_through)
+            .unwrap_or(LedgerCursor {
+                ledger_id,
+                after_seq: 0,
+            });
+        if effects.after != expected_after
+            || effects.through.ledger_id != ledger_id
+            || effects.through.after_seq < expected_after.after_seq
+        {
+            return Err("Docs effect observation belongs to another capture position".into());
+        }
         let prior = match &head {
             Some(head) => Some(
                 self.revision(&head.revision_id)?
@@ -80,13 +99,26 @@ impl DocsObservationStore {
             ),
             None => None,
         };
+        let basis = super::input_basis::observe_work_inputs(
+            prior.as_ref(),
+            &evidence,
+            policy_identity,
+            effects,
+        )?;
         if let Some(prior) = &prior {
             if &prior.subject != subject || &prior.scope != scope {
                 return Err("Docs binding changed semantic scope".into());
             }
-            if head.as_ref().is_some_and(|head| head.publication.is_none())
-                || prior.evidence == evidence
-            {
+            if head.as_ref().is_some_and(|head| head.publication.is_none()) {
+                return Ok(prior.clone());
+            }
+            if prior.evidence == evidence && prior.work_input_basis.as_ref() == Some(&basis) {
+                let mut next = head.clone().expect("prior revision has a head");
+                next.observed_effects_through = Some(effects.through);
+                if head.as_ref() != Some(&next) {
+                    self.commit_head(binding_id, head.as_ref(), &next, None)?;
+                    self.flush()?;
+                }
                 return Ok(prior.clone());
             }
         }
@@ -102,11 +134,13 @@ impl DocsObservationStore {
             subject.clone(),
             scope.clone(),
             evidence,
+            Some(basis),
         )?;
         let next = DocsObservationHead {
             revision_id: revision.revision_id.clone(),
             ledger_id,
             publication: None,
+            observed_effects_through: Some(effects.through),
         };
         self.commit_head(binding_id, head.as_ref(), &next, Some(&revision))?;
         self.flush()?;
@@ -390,6 +424,7 @@ impl DocsObservationStore {
             prior.subject,
             prior.scope,
             prior.evidence,
+            prior.work_input_basis,
         )?;
         if let Some(report) = source_claims {
             revision = revision.with_source_claims(report)?;
@@ -404,6 +439,7 @@ impl DocsObservationStore {
             revision_id: revision.revision_id.clone(),
             ledger_id: head.ledger_id,
             publication: None,
+            observed_effects_through: head.observed_effects_through,
         };
         self.commit_head(binding_id, Some(&head), &next, Some(&revision))?;
         self.flush()?;

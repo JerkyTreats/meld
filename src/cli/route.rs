@@ -96,14 +96,6 @@ impl RunContext {
             warn!("dispatch route composition skipped: capability runtime unavailable");
             return;
         };
-        if let Err(error) = self
-            .assembly
-            .api()
-            .bind_event_append(product.event_authority().append_capability())
-        {
-            warn!("dispatch route composition refused an inconsistent Event binding: {error}");
-            return;
-        }
         let routes = DispatchRouteBindings::production(ProductionDispatchRouteContext {
             api: Arc::clone(self.assembly.api()),
             session_id: Some(seed.session_id.clone()),

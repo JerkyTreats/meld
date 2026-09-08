@@ -145,24 +145,34 @@ fn test_workspace_isolation_head_index_isolation() {
         let ctx2 = RunContext::new(workspace2.path().to_path_buf(), None).unwrap();
 
         let node_id: NodeID = [1u8; 32];
-        let frame_id = meld::types::FrameID::from([2u8; 32]);
-
-        // Add head entry in workspace 1
-        {
-            let mut head_index = ctx1.api().head_index().write();
-            head_index.update_head(&node_id, "test", &frame_id).unwrap();
-        }
+        let frame_id = write_head(&ctx1, node_id, b"first");
+        // Ordinary CLI assembly has no dispatch seed or telemetry session here.
+        // Its Context write must still enter the bound product Event spine.
+        assert!(ctx1.product_runtime().dispatch_route_seed().is_none());
+        let operation = meld::context::publication::head_publication(
+            &ctx1.api().heads(),
+            ctx1.api().frame_storage(),
+        )
+        .unwrap();
+        assert!(ctx1
+            .event_replay_capability()
+            .newest_page(32)
+            .unwrap()
+            .records
+            .iter()
+            .any(|record| record.envelope.record_id.as_deref()
+                == Some(operation.event_record_id().as_str())));
 
         // Verify head exists in workspace 1
         {
-            let head_index = ctx1.api().head_index().read();
+            let head_index = ctx1.api().heads();
             let head = head_index.get_head(&node_id, "test").unwrap();
             assert_eq!(head, Some(frame_id), "Head should exist in workspace 1");
         }
 
         // Verify head does NOT exist in workspace 2
         {
-            let head_index = ctx2.api().head_index().read();
+            let head_index = ctx2.api().heads();
             let head = head_index.get_head(&node_id, "test").unwrap();
             assert_eq!(head, None, "Head should NOT exist in workspace 2");
         }
@@ -182,32 +192,8 @@ fn test_workspace_isolation_persistence_isolation() {
         let ctx2 = RunContext::new(workspace2.path().to_path_buf(), None).unwrap();
 
         let node_id: NodeID = [1u8; 32];
-        let frame_id = meld::types::FrameID::from([2u8; 32]);
-
-        // Add head entry in workspace 1 and save
-        {
-            let mut head_index = ctx1.api().head_index().write();
-            head_index.update_head(&node_id, "test", &frame_id).unwrap();
-        }
-        {
-            let head_index = ctx1.api().head_index().read();
-            let head_index_path = HeadIndex::persistence_path(workspace1.path());
-            head_index.save_to_disk(&head_index_path).unwrap();
-        }
-
-        // Add different head entry in workspace 2 and save
-        let frame_id2 = meld::types::FrameID::from([3u8; 32]);
-        {
-            let mut head_index = ctx2.api().head_index().write();
-            head_index
-                .update_head(&node_id, "test", &frame_id2)
-                .unwrap();
-        }
-        {
-            let head_index = ctx2.api().head_index().read();
-            let head_index_path = HeadIndex::persistence_path(workspace2.path());
-            head_index.save_to_disk(&head_index_path).unwrap();
-        }
+        let frame_id = write_head(&ctx1, node_id, b"first");
+        let frame_id2 = write_head(&ctx2, node_id, b"second");
 
         // Verify persistence files are in different locations
         let persistence_path1 = HeadIndex::persistence_path(workspace1.path());
@@ -235,7 +221,7 @@ fn test_workspace_isolation_persistence_isolation() {
 
         // Verify workspace 1 still has its data
         {
-            let head_index = ctx1_reload.api().head_index().read();
+            let head_index = ctx1_reload.api().heads();
             let head = head_index.get_head(&node_id, "test").unwrap();
             assert_eq!(
                 head,
@@ -246,7 +232,7 @@ fn test_workspace_isolation_persistence_isolation() {
 
         // Verify workspace 2 still has its data
         {
-            let head_index = ctx2_reload.api().head_index().read();
+            let head_index = ctx2_reload.api().heads();
             let head = head_index.get_head(&node_id, "test").unwrap();
             assert_eq!(
                 head,
@@ -298,4 +284,50 @@ fn test_workspace_isolation_same_structure() {
             "Workspaces should have different data directories even with same content"
         );
     });
+}
+
+fn write_head(context: &RunContext, node_id: NodeID, content: &[u8]) -> meld::types::FrameID {
+    let api = context.api();
+    api.agent_registry()
+        .write()
+        .register(meld::agent::AgentIdentity::new(
+            "writer".into(),
+            meld::agent::AgentRole::Writer,
+        ));
+    api.node_store()
+        .put(&NodeRecord {
+            node_id,
+            path: PathBuf::from("test.txt"),
+            node_type: NodeType::File {
+                size: content.len() as u64,
+                content_hash: [0; 32],
+            },
+            children: vec![],
+            parent: None,
+            frame_set_root: None,
+            metadata: Default::default(),
+            tombstoned_at: None,
+        })
+        .unwrap();
+    let metadata: std::collections::HashMap<String, String> = [
+        ("agent_id", "writer"),
+        ("provider", "provider-a"),
+        ("model", "model-a"),
+        ("provider_type", "local"),
+        ("prompt_digest", "prompt-a"),
+        ("context_digest", "context-a"),
+        ("prompt_link_id", "link-a"),
+    ]
+    .into_iter()
+    .map(|(key, value)| (key.to_string(), value.to_string()))
+    .collect();
+    let frame = Frame::new(
+        Basis::Node(node_id),
+        content.to_vec(),
+        "test".into(),
+        "writer".into(),
+        metadata,
+    )
+    .unwrap();
+    api.put_frame(node_id, frame, "writer".into()).unwrap()
 }

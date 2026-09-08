@@ -4,6 +4,7 @@
 //! bounded selection, the bounded assessment actor (budget, reopen resume,
 //! quiescence), and theory-revision lineage through to planner projection.
 
+mod support;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -15,13 +16,9 @@ use meld_world_model::belief::{
     BeliefFamilyRevision, BeliefKey, BeliefQuery, BeliefRuntime, BeliefStore, BeliefSubjectBinding,
     BranchScope, LeaseStatus, PromotedEvidenceRecord, TheoryInstallDisposition,
 };
-use meld_world_model::events::{DomainObjectRef, EventRelation};
-use meld_world_model::planner::PlannerQuery;
+use meld_world_model::events::DomainObjectRef;
 use meld_world_model::world_state::graph::store::TraversalStore;
-use meld_world_model::{
-    AnchorSelectionRecord, EvidenceValue, PerspectiveKey, PlannerSourceRef, TraversalFactRecord,
-    TraversalQuery,
-};
+use meld_world_model::{EvidenceValue, PerspectiveKey, PlannerSourceRef};
 
 const FAMILY_ID: &str = "artifact_currency";
 
@@ -78,9 +75,9 @@ fn family_json(config_version: &str) -> String {
         "source_mappings": [
             {{
                 "mapping_id": "anchor_to_signal",
-                "source_kind": "graph_anchor",
+                "source_kind": "initial_observation",
                 "evidence_schema_id": "graph_anchor_signal",
-                "subject_from": "anchor.subject",
+                "subject_from": "record.subject",
                 "value_field": "ended",
                 "factor_id": "anchor_signal"
             }},
@@ -141,43 +138,30 @@ fn family_config(config_version: &str) -> meld_world_model::belief::BeliefFamily
     serde_json::from_str(&family_json(config_version)).unwrap()
 }
 
-fn seed_subject(store: &TraversalStore, object_id: &str, seq: u64) -> DomainObjectRef {
+fn seed_subject(store: &BeliefStore, object_id: &str, seq: u64) -> DomainObjectRef {
     let node = object("workspace_fs", "node", object_id);
-    let frame = object("context", "frame", &format!("frame-{object_id}"));
-    let anchor_ref = object("context", "head", &format!("{object_id}::analysis"));
-    let relation = EventRelation::new("selected", node.clone(), frame.clone()).unwrap();
-    let fact = TraversalFactRecord {
-        fact_id: format!("fact-{object_id}"),
-        source_spine_fact_id: format!("ledger-{object_id}"),
-        seq,
-        event_type: "context.head.selected".to_string(),
-        objects: vec![node.clone(), frame.clone()],
-        relations: vec![relation],
-    };
-    let anchor = AnchorSelectionRecord {
-        anchor_id: format!("anchor-{object_id}"),
-        anchor_ref,
-        subject: node.clone(),
-        perspective: PerspectiveKey::new("frame_type", "analysis").unwrap(),
-        target: frame,
-        source_fact_ids: vec![format!("ledger-{object_id}")],
-        created_by_fact_id: format!("fact-{object_id}"),
-        selected_at_seq: seq,
-        ended_at_seq: None,
-        ended_by_anchor_id: None,
-        ended_by_fact_id: None,
-    };
-    store.put_fact(&fact).unwrap();
-    store.put_anchor(&anchor).unwrap();
-    store.set_current_anchor(&anchor).unwrap();
+    let normalizer = BeliefEvidenceNormalizer::new(
+        family_config("1"),
+        default_perspective(),
+        BranchScope::main(),
+    );
+    let mut record = promoted_record(node.clone(), seq);
+    record.source_kind = "initial_observation".into();
+    record
+        .fields
+        .insert("ended".into(), EvidenceValue::Scalar(0.0));
+    for item in normalizer.normalize_promoted(&record).unwrap() {
+        store.put_evidence_once(&item).unwrap();
+        store
+            .put_assignment_once(&normalizer.assign(&item).unwrap())
+            .unwrap();
+    }
     node
 }
 
 fn binding(node: &DomainObjectRef) -> BeliefSubjectBinding {
     BeliefSubjectBinding {
         subject: node.clone(),
-        anchor_perspective_kind: "frame_type".to_string(),
-        anchor_perspective_id: "analysis".to_string(),
     }
 }
 
@@ -230,7 +214,7 @@ fn fixture(subject_ids: &[&str]) -> Fixture {
     let subjects = subject_ids
         .iter()
         .enumerate()
-        .map(|(index, id)| seed_subject(graph.as_ref(), id, index as u64 + 1))
+        .map(|(index, id)| seed_subject(belief.as_ref(), id, index as u64 + 1))
         .collect();
     Fixture {
         _graph_dir: graph_dir,
@@ -247,7 +231,6 @@ fn actor(fixture: &Fixture) -> BeliefAssessmentActor {
     BeliefAssessmentActor::new(
         "belief.assessment.test",
         Arc::clone(&fixture.belief),
-        Arc::clone(&fixture.graph),
         Arc::new(fixture.registry.clone()),
         vec![FAMILY_ID.to_string()],
         fixture.subjects.iter().map(binding).collect(),
@@ -336,13 +319,12 @@ fn exact_key_query_returns_the_revision_identity_the_store_holds() {
     let fixture = fixture(&["node-a"]);
     let runtime = BeliefRuntime::from_family_revision(
         Arc::clone(&fixture.belief),
-        Arc::clone(&fixture.graph),
         &fixture.revision,
         default_perspective(),
         BranchScope::main(),
     );
     let result = runtime
-        .assess_subject(&fixture.subjects[0], "frame_type", "analysis", "worker-a")
+        .assess_subject(&fixture.subjects[0], "worker-a")
         .unwrap();
 
     let key = configured_belief_key(
@@ -474,14 +456,11 @@ fn actor_processes_exactly_budget_items_then_reaches_quiescence() {
 
 #[test]
 fn actor_resumes_after_reopen_without_double_assessment() {
-    let graph_dir = tempfile::tempdir().unwrap();
     let belief_dir = tempfile::tempdir().unwrap();
-    let graph_path = graph_dir.path().join("graph");
     let belief_path = belief_dir.path().join("belief");
     let subjects: Vec<DomainObjectRef>;
     let revision: BeliefFamilyRevision;
     {
-        let graph = Arc::new(TraversalStore::new(sled::open(&graph_path).unwrap()).unwrap());
         let belief_db = sled::open(&belief_path).unwrap();
         let belief = Arc::new(BeliefStore::new(belief_db.clone()).unwrap());
         let mut registry = BeliefFamilyRegistryStore::new(belief_db).unwrap();
@@ -490,12 +469,11 @@ fn actor_resumes_after_reopen_without_double_assessment() {
         subjects = ["node-a", "node-b", "node-c"]
             .iter()
             .enumerate()
-            .map(|(index, id)| seed_subject(graph.as_ref(), id, index as u64 + 1))
+            .map(|(index, id)| seed_subject(belief.as_ref(), id, index as u64 + 1))
             .collect();
         let mut actor = BeliefAssessmentActor::new(
             "belief.assessment.test",
             Arc::clone(&belief),
-            graph,
             Arc::new(registry),
             vec![FAMILY_ID.to_string()],
             subjects.iter().map(binding).collect(),
@@ -511,15 +489,12 @@ fn actor_resumes_after_reopen_without_double_assessment() {
         assert!(report.budget_exhausted);
     }
 
-    let graph =
-        Arc::new(TraversalStore::new(reopen_sled_after_close(&graph_path).unwrap()).unwrap());
     let belief_db = reopen_sled_after_close(&belief_path).unwrap();
     let belief = Arc::new(BeliefStore::new(belief_db.clone()).unwrap());
     let registry = BeliefFamilyRegistryStore::new(belief_db).unwrap();
     let mut actor = BeliefAssessmentActor::new(
         "belief.assessment.test",
         Arc::clone(&belief),
-        graph,
         Arc::new(registry),
         vec![FAMILY_ID.to_string()],
         subjects.iter().map(binding).collect(),
@@ -589,12 +564,8 @@ fn second_evidence_revision_flows_to_planner_projection_with_theory_ref() {
     assert_eq!(initial.items_committed, 1);
     let query = BeliefQuery::new(fixture.belief.as_ref());
     let (first_revision, first_view) = query.current_revision_and_view(&key).unwrap().unwrap();
-    let first_projection = PlannerQuery::new(
-        BeliefQuery::new(fixture.belief.as_ref()),
-        TraversalQuery::new(fixture.graph.as_ref()),
-    )
-    .project_world_state_for_key(&key)
-    .unwrap();
+    let first_projection =
+        support::project_belief(fixture.belief.as_ref(), fixture.graph.as_ref(), &key);
 
     // Second distinct evidence arrives through the durable assignment path
     // and marks the exact key dirty.
@@ -624,12 +595,8 @@ fn second_evidence_revision_flows_to_planner_projection_with_theory_ref() {
         fixture.belief.current_view(&key).unwrap().unwrap(),
         first_view
     );
-    let pending_projection = PlannerQuery::new(
-        BeliefQuery::new(fixture.belief.as_ref()),
-        TraversalQuery::new(fixture.graph.as_ref()),
-    )
-    .project_world_state_for_key(&key)
-    .unwrap();
+    let pending_projection =
+        support::project_belief(fixture.belief.as_ref(), fixture.graph.as_ref(), &key);
     assert!(!pending_projection.world_state.propositions().iter().any(|proposition|
         matches!(proposition, meld_lang::Proposition::Holds { dimension: meld_lang::Term::Dimension(dimension), .. }
             if dimension == &key.dimension_id)
@@ -643,12 +610,8 @@ fn second_evidence_revision_flows_to_planner_projection_with_theory_ref() {
     assert_eq!(reassessed.items_committed, 1);
 
     let (second_revision, second_view) = query.current_revision_and_view(&key).unwrap().unwrap();
-    let second_projection = PlannerQuery::new(
-        BeliefQuery::new(fixture.belief.as_ref()),
-        TraversalQuery::new(fixture.graph.as_ref()),
-    )
-    .project_world_state_for_key(&key)
-    .unwrap();
+    let second_projection =
+        support::project_belief(fixture.belief.as_ref(), fixture.graph.as_ref(), &key);
 
     // Distinct evidence produced a distinct revision linked to the first.
     assert_ne!(second_revision.revision_id, first_revision.revision_id);
@@ -873,12 +836,7 @@ fn stored_records_without_theory_revision_still_load() {
 
     // Planner projection outputs recorded before the lineage field existed
     // must also load, with the field defaulting to None.
-    let projection = PlannerQuery::new(
-        BeliefQuery::new(fixture.belief.as_ref()),
-        TraversalQuery::new(fixture.graph.as_ref()),
-    )
-    .project_world_state_for_key(&key)
-    .unwrap();
+    let projection = support::project_belief(fixture.belief.as_ref(), fixture.graph.as_ref(), &key);
     let mut projection_json = serde_json::to_value(&projection).unwrap();
     projection_json
         .as_object_mut()
@@ -896,15 +854,12 @@ fn stored_records_without_theory_revision_still_load() {
 /// promoted evidence re-dirties the key.
 #[test]
 fn unanchored_family_assesses_unobserved_subject_to_prior_revision() {
-    let graph_dir = tempfile::tempdir().unwrap();
     let belief_dir = tempfile::tempdir().unwrap();
-    let graph =
-        Arc::new(TraversalStore::new(sled::open(graph_dir.path().join("graph")).unwrap()).unwrap());
     let belief_db = sled::open(belief_dir.path().join("belief")).unwrap();
     let belief = Arc::new(BeliefStore::new(belief_db.clone()).unwrap());
     let mut registry = BeliefFamilyRegistryStore::new(belief_db).unwrap();
     let mut config = family_config("1");
-    config.anchor_requirement = meld_world_model::belief::AnchorRequirement::Unanchored;
+    config.initial_assessment = meld_world_model::belief::InitialAssessmentPolicy::PriorAllowed;
     let (_, revision) = registry.install(config, 1).unwrap();
     // The subject is never seeded: no fact, no anchor, nothing observed.
     let subject = object("workspace_fs", "node", "unobserved-node");
@@ -912,7 +867,6 @@ fn unanchored_family_assesses_unobserved_subject_to_prior_revision() {
     let mut actor = BeliefAssessmentActor::new(
         "belief.assessment.test",
         Arc::clone(&belief),
-        Arc::clone(&graph),
         Arc::new(registry.clone()),
         vec![FAMILY_ID.to_string()],
         vec![binding(&subject)],
@@ -972,7 +926,7 @@ fn unanchored_family_assesses_unobserved_subject_to_prior_revision() {
 /// unanchored family's maintained scope is declared accessible, so the
 /// projection carries the Accessible proposition without any anchor.
 #[test]
-fn unanchored_projection_declares_the_maintained_scope_accessible() {
+fn prior_only_belief_does_not_fabricate_graph_accessibility() {
     let graph_dir = tempfile::tempdir().unwrap();
     let belief_dir = tempfile::tempdir().unwrap();
     let graph =
@@ -981,7 +935,7 @@ fn unanchored_projection_declares_the_maintained_scope_accessible() {
     let belief = Arc::new(BeliefStore::new(belief_db.clone()).unwrap());
     let mut registry = BeliefFamilyRegistryStore::new(belief_db).unwrap();
     let mut config = family_config("1");
-    config.anchor_requirement = meld_world_model::belief::AnchorRequirement::Unanchored;
+    config.initial_assessment = meld_world_model::belief::InitialAssessmentPolicy::PriorAllowed;
     let (_, revision) = registry.install(config, 1).unwrap();
     let subject = object("workspace_fs", "node", "unobserved-node");
     let key = configured_belief_key(
@@ -995,7 +949,6 @@ fn unanchored_projection_declares_the_maintained_scope_accessible() {
     let mut actor = BeliefAssessmentActor::new(
         "belief.assessment.test",
         Arc::clone(&belief),
-        Arc::clone(&graph),
         Arc::new(registry.clone()),
         vec![FAMILY_ID.to_string()],
         vec![binding(&subject)],
@@ -1007,24 +960,74 @@ fn unanchored_projection_declares_the_maintained_scope_accessible() {
         max_items: 4,
     });
 
-    let planner = PlannerQuery::new(
-        BeliefQuery::new(belief.as_ref()),
-        TraversalQuery::new(graph.as_ref()),
-    );
-    let anchored_reading = planner.project_world_state_for_key(&key).unwrap();
-    let declared_reading = planner
-        .project_world_state_for_unanchored_key(&key)
-        .unwrap();
+    let projected = support::project_belief(belief.as_ref(), graph.as_ref(), &key);
+    assert!(!projected
+        .world_state
+        .propositions()
+        .iter()
+        .any(|proposition| matches!(proposition, meld_lang::Proposition::Accessible { .. })));
+}
 
-    let accessible = |output: &meld_world_model::WorldModelView| {
-        output
-            .world_state
-            .propositions()
-            .iter()
-            .any(|proposition| matches!(proposition, meld_lang::Proposition::Accessible { .. }))
-    };
-    // No anchor exists, so the anchored reading is inaccessible while the
-    // declared reading carries the maintained scope.
-    assert!(!accessible(&anchored_reading));
-    assert!(accessible(&declared_reading));
+#[test]
+fn evidence_required_waiters_do_not_starve_admitted_evidence_at_budget_one() {
+    use meld_world_model::agent::AgentSubscriptionRequestV1;
+    use meld_world_model::belief::BeliefSubscriptionAuthority;
+    for subscriptions_only in [false, true] {
+        let mut fixture = fixture(&["z-ready"]);
+        let ready = fixture.subjects[0].clone();
+        let empty = object("workspace_fs", "node", "a-empty");
+        fixture.subjects.insert(0, empty.clone());
+        if subscriptions_only {
+            for subject in &fixture.subjects {
+                let request = AgentSubscriptionRequestV1::new(
+                    "observer".into(),
+                    "belief".into(),
+                    fixture.revision.revision_ref(),
+                    configured_belief_key(
+                        &fixture.revision,
+                        subject,
+                        &default_perspective(),
+                        &BranchScope::main(),
+                    ),
+                    "from_genesis".into(),
+                )
+                .unwrap();
+                BeliefSubscriptionAuthority::new(&fixture.belief)
+                    .accept(&request, &fixture.revision)
+                    .unwrap();
+            }
+            fixture.subjects.clear();
+        }
+        let mut actor = actor(&fixture);
+        let first = actor.bounded_step(&BeliefAssessmentRequest {
+            sequence: 10,
+            max_items: 1,
+        });
+        assert_eq!(first.items_committed, 1, "{first:?}");
+        let query = BeliefQuery::new(&fixture.belief);
+        assert!(query
+            .current_revision(&configured_belief_key(
+                &fixture.revision,
+                &ready,
+                &default_perspective(),
+                &BranchScope::main()
+            ))
+            .unwrap()
+            .is_some());
+        assert!(query
+            .current_revision(&configured_belief_key(
+                &fixture.revision,
+                &empty,
+                &default_perspective(),
+                &BranchScope::main()
+            ))
+            .unwrap()
+            .is_none());
+        let quiet = actor.bounded_step(&BeliefAssessmentRequest {
+            sequence: 11,
+            max_items: 1,
+        });
+        assert_eq!(quiet.items_attempted, 0);
+        assert!(!quiet.budget_exhausted);
+    }
 }

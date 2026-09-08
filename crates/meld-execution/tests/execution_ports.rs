@@ -7,7 +7,6 @@ use meld_execution::{
     PreviousMetadataSnapshotView, PromptArtifactReadPort, PromptLineagePort, PromptLineageRequest,
     PromptLinkContractView, ProviderExecutionBinding, ProviderExecutionPort,
     ProviderPreparationView, ProviderRuntimeOverrides, ProviderValidationPort, SystemPromptPort,
-    TaskRunArtifactAnchor, WorldModelQueryPort,
 };
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -364,25 +363,8 @@ impl ExecutionProgressPort for FakeExecutionContext {
     }
 }
 
-impl WorldModelQueryPort for FakeExecutionContext {
-    type Error = String;
-
-    fn current_artifact_for_task_run(
-        &self,
-        task_run_id: &str,
-        artifact_type_id: &str,
-    ) -> Result<Option<TaskRunArtifactAnchor>, Self::Error> {
-        Ok(Some(TaskRunArtifactAnchor {
-            target_domain_id: "execution".to_string(),
-            target_object_kind: artifact_type_id.to_string(),
-            target_object_id: task_run_id.to_string(),
-        }))
-    }
-}
-
 fn assert_execution_context<T: ExecutionContext>(_context: &T) {}
 fn assert_execution_runtime_context<T: ExecutionRuntimeContext>(_context: &T) {}
-fn assert_world_model_query_port<T: WorldModelQueryPort>(_context: &T) {}
 
 #[test]
 fn blanket_execution_context_impl_accepts_port_bundle() {
@@ -403,19 +385,10 @@ fn runtime_and_query_port_contracts_compile_against_port_bundle() {
     };
 
     assert_execution_runtime_context(&context);
-    assert_world_model_query_port(&context);
     context
         .publish_execution_envelope(&event_context, "envelope".to_string())
         .unwrap();
     context
         .emit_progress_event(&event_context, "execution.progress", serde_json::json!({}))
         .unwrap();
-    assert_eq!(
-        context
-            .current_artifact_for_task_run("taskrun-1", "summary")
-            .unwrap()
-            .unwrap()
-            .target_object_kind,
-        "summary"
-    );
 }

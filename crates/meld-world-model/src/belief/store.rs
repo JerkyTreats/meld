@@ -29,7 +29,7 @@ use crate::belief::contracts::{
 use crate::belief::subscription::SourceSubscriptionAcceptanceV1;
 use crate::error::StorageError;
 use crate::events::DomainObjectRef;
-use crate::world_state::graph::{PerspectiveKey, TraversalQuery};
+use crate::world_state::graph::PerspectiveKey;
 
 const TREE_EVIDENCE: &str = "belief_evidence";
 const TREE_ASSIGNMENTS: &str = "belief_assignments";
@@ -871,13 +871,12 @@ impl BeliefStore {
         Ok(Some(view))
     }
 
-    /// Recompute current view freshness from evidence, graph, config, and policy state.
+    /// Recompute current view freshness from admitted evidence, config, and policy state.
     pub fn refresh_view_freshness(
         &self,
         key: &BeliefKey,
         active_config_hash: &str,
         active_policy_id: &str,
-        graph_query: Option<&TraversalQuery<'_>>,
     ) -> Result<Option<BeliefView>, StorageError> {
         let Some(mut view) = self.mark_stale_if_newer_evidence(key)? else {
             return Ok(None);
@@ -900,18 +899,6 @@ impl BeliefStore {
                     FreshnessReason::EvidencePolicyChanged,
                     "active evidence policy changed",
                 );
-            }
-            if let Some(query) = graph_query {
-                for anchor_id in &revision.provenance.graph_anchor_ids {
-                    if query.supersession_for_anchor(anchor_id)?.is_some() {
-                        mark_view_stale(
-                            &mut view,
-                            FreshnessReason::SupersededAnchor,
-                            "graph anchor was superseded",
-                        );
-                        break;
-                    }
-                }
             }
         }
         if view.freshness.stale {

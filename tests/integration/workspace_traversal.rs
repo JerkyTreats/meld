@@ -33,7 +33,7 @@ fn create_test_api(
     let frame_storage = Arc::new(meld::context::frame::open_storage(&frame_storage_path).unwrap());
     let prompt_context_storage =
         Arc::new(PromptContextArtifactStorage::new(&artifact_storage_path).unwrap());
-    let head_index = Arc::new(parking_lot::RwLock::new(HeadIndex::new()));
+    let head_index = HeadIndex::new();
     let agent_registry = Arc::new(parking_lot::RwLock::new(AgentRegistry::new()));
     let provider_registry = Arc::new(parking_lot::RwLock::new(
         meld::provider::ProviderRegistry::new(),

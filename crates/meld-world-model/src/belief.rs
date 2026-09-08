@@ -105,7 +105,7 @@ pub use outcome::mapping::{
     OutcomeMappingDisposition, OutcomeMappingInput, EVIDENCE_CONSUMER_ID,
 };
 pub use outcome_registry::{OutcomeMappingRegistryStore, OutcomeMappingRevision};
-pub use query::BeliefQuery;
+pub use query::{BeliefQuery, BeliefQuestionState, UnassessedBeliefQuestion};
 pub use registry::{
     BeliefFamilyRegistry, BeliefFamilyRevision, TheoryInstallDisposition, TheoryRevisionRef,
 };

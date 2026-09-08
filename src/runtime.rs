@@ -10,6 +10,8 @@ pub mod epoch;
 pub mod error;
 /// Canonical assignment generation and structural lifecycle authority.
 pub mod lifecycle;
+/// Serialized host connections for external package owners.
+pub mod owners;
 /// Thin direct handoff ports built by product assembly.
 pub mod ports;
 /// Runtime CLI presentation helpers.

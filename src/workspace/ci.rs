@@ -166,7 +166,7 @@ mod tests {
         );
         let prompt_context_storage =
             Arc::new(PromptContextArtifactStorage::new(&artifact_storage_path).unwrap());
-        let head_index = Arc::new(parking_lot::RwLock::new(HeadIndex::new()));
+        let head_index = HeadIndex::new();
         let agent_registry = Arc::new(parking_lot::RwLock::new(crate::agent::AgentRegistry::new()));
         let provider_registry = Arc::new(parking_lot::RwLock::new(
             crate::provider::ProviderRegistry::new(),

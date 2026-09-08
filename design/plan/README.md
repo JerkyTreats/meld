@@ -4,7 +4,7 @@ This directory contains active delivery evidence and requirements work. It does 
 
 ## Active Architecture Overhaul
 
-[World Model Reconciliation](architecture_overhauls/world_model_knowledge_traversal/README.md) is the approved architecture program. Its assessments ground implementation scope, lifecycle connectivity, PDS framing, and requirements derivation against the canonical design.
+[Canonical Flywheel Alignment And Runtime Soft Freeze](architecture_overhauls/world_model_knowledge_traversal/flywheel_remediation.md) is the sole current reconciliation issue register and remediation plan. It prioritizes the canonical end-to-end loop, then runtime hosting boundaries and dedicated correctness work. Earlier reconciliation programs and acceptance records are historical evidence. Full PDS and use-case design follows runtime soft freeze; Causation and Regime remain deferred.
 
 Superseded and refused plans are removed rather than retained as live navigation. Git history preserves their provenance.
 

@@ -1,14 +1,14 @@
 # Persistent Domain Stewardship
 
 Date: 2026-08-18
-Status: active proposal corpus under canonical PDS architecture
+Status: proposal corpus deferred from reconciliation delivery until runtime soft freeze
 Scope: design options for a declarative application layer configuring persistent, evidence-grounded stewardship over bounded domains
 
 > This directory is a proposal corpus rather than an accepted implementation contract. Read [Proposal Status And Decision Semantics](proposal_status.md) and [Proposal Index](proposal_index.md) before interpreting concrete schemas or requirements as final.
 
 > The semantic boundary between PDS and Meld cognition is canonical in [Persistent Domain Stewardship](../cognitive_architecture/persistent_domain_stewardship.md). Proposals in this directory may explore upper-layer syntax and mechanics but may not broaden that boundary.
 
-> PDS remains an active concept, but its relationship to native Meld architecture is under renewed discovery. Package schemas that embed Capability catalogs, action classes, Strategy operators, task topology, or epistemic curation mechanics are pressure artifacts rather than implementation direction. Current reconciliation is organized by the [three architecture overhauls](../plan/README.md).
+> Current branch work is governed by [Canonical Flywheel Alignment And Runtime Soft Freeze](../plan/architecture_overhauls/world_model_knowledge_traversal/flywheel_remediation.md). This proposal corpus and its recorded use cases are preserved for subsequent PDS design. They do not select reconciliation work or override the canonical runtime hosting boundary. Concrete proposal schemas remain exploratory.
 
 ## Thesis
 

@@ -118,9 +118,9 @@ pub fn validate_strategy_theory_package(
         "strategy evaluation policy id",
         &package.evaluation_policy.policy_id,
     )?;
-    if package.snapshot.settlement_rules.is_empty() || package.capabilities.is_empty() {
+    if package.snapshot.settlement_rules.is_empty() {
         return Err(StorageError::InvalidPath(
-            "strategy theory requires settlement rules and capabilities".to_string(),
+            "strategy theory requires settlement rules".to_string(),
         ));
     }
     if package.search_bounds.max_expansions == 0 || package.search_bounds.max_depth == 0 {
@@ -187,14 +187,59 @@ pub fn validate_strategy_theory_package(
             ));
         }
         let mut ordering = BTreeSet::new();
-        for constraint in &rule.task_ordering {
-            if constraint.before_contract_id == constraint.after_contract_id
-                || !contracts.contains(constraint.before_contract_id.as_str())
-                || !contracts.contains(constraint.after_contract_id.as_str())
-                || !ordering.insert(constraint)
+        for constraint in &rule.product_ordering {
+            if constraint.before == constraint.after || !ordering.insert(constraint) {
+                return Err(StorageError::InvalidPath(
+                    "Product ordering requires distinct products without duplicate edges".into(),
+                ));
+            }
+            for selector in [&constraint.before, &constraint.after] {
+                match selector {
+                    super::StrategyProductSelector::Task { contract_id }
+                        if !contracts.contains(contract_id.as_str()) =>
+                    {
+                        return Err(StorageError::InvalidPath(
+                            "Product ordering names an unavailable Task contract".into(),
+                        ))
+                    }
+                    super::StrategyProductSelector::Epistemic { rule_id }
+                        if rule_id.trim().is_empty() =>
+                    {
+                        return Err(StorageError::InvalidPath(
+                            "Product ordering requires a nonempty Curation rule identity".into(),
+                        ))
+                    }
+                    _ => {}
+                }
+            }
+            let producer_is_task = matches!(
+                constraint.before,
+                super::StrategyProductSelector::Task { .. }
+                    | super::StrategyProductSelector::AllTasks
+            );
+            if producer_is_task
+                == (constraint.milestone == super::StrategyDependencyMilestone::CurationVisible)
             {
                 return Err(StorageError::InvalidPath(
-                    "Task ordering requires distinct exact selected contracts without duplicates"
+                    "Product milestone does not belong to its selected producer".into(),
+                ));
+            }
+        }
+        let mut epistemic = BTreeSet::new();
+        for selection in &rule.epistemic_selections {
+            if selection.rule_revision.as_ref().is_some_and(|reference| {
+                reference
+                    .validate_for_registry(crate::curation::CURATION_RULE_REGISTRY_ID)
+                    .is_err()
+            }) || !epistemic.insert(
+                selection
+                    .rule_revision
+                    .as_ref()
+                    .map(|reference| &reference.id),
+            ) || selection.rule_revision.is_none() && rule.epistemic_selections.len() != 1
+            {
+                return Err(StorageError::InvalidPath(
+                    "Epistemic selection requires distinct exact rules or one all-rules selector"
                         .into(),
                 ));
             }
@@ -216,9 +261,18 @@ pub fn validate_strategy_theory_package(
             "prospective evidence schema",
             &rule.evidence_route.evidence_schema_id,
         )?;
-        if !package.capabilities.iter().any(|capability| {
-            capability.outcome_contract_id == rule.evidence_route.outcome_contract_id
-        }) {
+        if rule.construction == super::StrategyConstruction::ObserveUnknown
+            && !rule.has_evidence_returns()
+        {
+            return Err(StorageError::InvalidPath(
+                "Observation construction requires a Curation evidence return".into(),
+            ));
+        }
+        if rule.construction == super::StrategyConstruction::Executable
+            && !package.capabilities.iter().any(|capability| {
+                capability.outcome_contract_id == rule.evidence_route.outcome_contract_id
+            })
+        {
             return Err(StorageError::InvalidPath(format!(
                 "strategy evidence route '{}' has no capability outcome binding",
                 rule.evidence_route.route_id
@@ -277,7 +331,9 @@ mod tests {
 
     #[test]
     fn empty_construction_extensions_preserve_historical_package_identity() {
-        let package = package();
+        let package: StrategyTheoryPackage =
+            serde_json::from_str(include_str!("../../tests/fixtures/strategy_theory_v1.json"))
+                .unwrap();
         let body = serde_json::to_value(&package).unwrap();
         assert!(body.get("methods").is_none());
         let mut with_empty = body.clone();
@@ -288,6 +344,32 @@ mod tests {
         with_empty["snapshot"]["settlement_rules"][0]["task_ordering"] = serde_json::json!([]);
         let decoded: StrategyTheoryPackage = serde_json::from_value(with_empty).unwrap();
         assert_eq!(hash_body(&decoded).unwrap(), hash_body(&package).unwrap());
+    }
+
+    #[test]
+    fn observation_only_package_installs_without_executable_capabilities() {
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        let store = StrategyTheoryRegistryStore::new(db).unwrap();
+        let mut package = package();
+        package.capabilities.clear();
+        package.methods.clear();
+        for rule in &mut package.snapshot.settlement_rules {
+            rule.construction = super::super::StrategyConstruction::ObserveUnknown;
+            rule.product_ordering.clear();
+        }
+        let (_, revision) = store.install(package.clone(), 1).unwrap();
+        assert_eq!(
+            store
+                .resolve(&revision.theory_id, &revision.content_hash)
+                .unwrap()
+                .unwrap()
+                .package,
+            package
+        );
+        package.snapshot.settlement_rules[0]
+            .epistemic_selections
+            .clear();
+        assert!(store.install(package, 2).is_err());
     }
 
     #[test]

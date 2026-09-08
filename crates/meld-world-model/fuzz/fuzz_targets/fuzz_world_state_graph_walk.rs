@@ -3,18 +3,16 @@
 use std::collections::BTreeMap;
 
 use libfuzzer_sys::fuzz_target;
-use meld_world_model::events::{
-    DomainObjectRef, EventRecordRef, EventRelation, LedgerCursor, LedgerIdentity,
-};
+use meld_world_model::events::{DomainObjectRef, LedgerCursor};
+use meld_world_model::graph::events::owner_publication_envelope;
+use meld_world_model::graph::test_support::GraphRuntimeTestFixture;
 use meld_world_model::world_state::graph::contracts::{
-    BoundedTraversalRequest, HydrationReference, OwnerCompletenessReceipt,
-    OwnerCompletenessStatus, OwnerCurrentnessPolicy, OwnerObjectPublication,
-    OwnerPublicationBatch, OwnerPublicationOperation, OwnerPublicationScope,
-    OwnerPublicationState, OwnerRelationOccurrence, ProjectedOwnerPublication, TraversalBounds,
-    TraversalCutRequest, TraversalOwnerRequirement,
+    BoundedTraversalRequest, HydrationReference, OwnerCompletenessReceipt, OwnerCompletenessStatus,
+    OwnerCurrentnessPolicy, OwnerObjectPublication, OwnerPublicationBatch,
+    OwnerPublicationOperation, OwnerPublicationScope, OwnerPublicationState,
+    OwnerRelationOccurrence, TraversalBounds, TraversalCutRequest, TraversalOwnerRequirement,
 };
-use meld_world_model::world_state::graph::store::TraversalStore;
-use meld_world_model::{GraphWalkSpec, TraversalDirection, TraversalFactRecord, TraversalQuery};
+use meld_world_model::{TraversalDirection, TraversalQuery};
 
 fuzz_target!(|data: &[u8]| {
     if let Ok(operation) = serde_json::from_slice::<OwnerPublicationOperation>(data) {
@@ -29,43 +27,11 @@ fuzz_target!(|data: &[u8]| {
         1 => TraversalDirection::Incoming,
         _ => TraversalDirection::Both,
     };
-    let max_depth = usize::from(data[1] % 4);
-    let current_only = data[2] & 1 == 1;
-    let include_facts = data[3] & 1 == 1;
-    let relation_types = if data.get(4).copied().unwrap_or_default() & 1 == 1 {
-        Some(vec!["next".to_string()])
-    } else {
-        None
-    };
-
     let temp = tempfile::tempdir().expect("tempdir");
-    let store = TraversalStore::new(sled::open(temp.path()).expect("sled")).expect("store");
-    let a = DomainObjectRef::new("workspace_fs", "node", "a").expect("object");
-    let b = DomainObjectRef::new("workspace_fs", "node", "b").expect("object");
-    store
-        .put_fact(&TraversalFactRecord {
-            fact_id: "fact-a".to_string(),
-            source_spine_fact_id: "spine::1".to_string(),
-            seq: 1,
-            event_type: "fuzz".to_string(),
-            objects: vec![a.clone(), b.clone()],
-            relations: vec![EventRelation::new("next", a.clone(), b).expect("relation")],
-        })
-        .expect("fact");
-
-    let spec = GraphWalkSpec {
-        direction,
-        relation_types,
-        max_depth,
-        current_only,
-        include_facts,
-    };
-    let result = TraversalQuery::new(&store).walk(&a, &spec);
-    if max_depth == 0 {
-        assert!(result.is_err());
-    } else {
-        assert!(result.is_ok());
-    }
+    let fixture =
+        GraphRuntimeTestFixture::open(sled::open(temp.path()).expect("sled")).expect("fixture");
+    let runtime = fixture.runtime();
+    let store = runtime.traversal_store();
 
     let owner = "fuzz_owner";
     let revision = "revision-a";
@@ -87,6 +53,7 @@ fuzz_target!(|data: &[u8]| {
     let operation = OwnerPublicationOperation::reconstruct(
         "fuzz-owner-rule-v1",
         OwnerPublicationBatch {
+            work_input_basis_id: None,
             owner_id: owner.to_string(),
             revision_id: revision.to_string(),
             scope: scope.clone(),
@@ -138,31 +105,16 @@ fuzz_target!(|data: &[u8]| {
         },
     )
     .expect("owner operation");
-    let ledger_id = LedgerIdentity::new();
-    store
-        .put_owner_publication(&ProjectedOwnerPublication {
-            operation,
-            source_event: EventRecordRef { ledger_id, seq: 1 },
-        })
-        .expect("owner publication");
-    store
-        .db()
-        .open_tree("traversal_runtime_meta")
-        .expect("runtime meta")
-        .insert(
-            b"event_authority_cursor",
-            serde_json::to_vec(&LedgerCursor {
-                ledger_id,
-                after_seq: 1,
-            })
-            .expect("cursor encoding"),
-        )
-        .expect("cursor write");
-    store.flush().expect("flush");
+    let receipt = fixture
+        .append(owner_publication_envelope("fuzz", &operation).expect("envelope"))
+        .expect("append");
+    let ledger_id = receipt.ledger_id;
+    runtime.catch_up().expect("projection");
     let query = TraversalQuery::new(&store);
     let cut = query
         .cut(&TraversalCutRequest {
-            owners: vec![TraversalOwnerRequirement { event_source: None,
+            owners: vec![TraversalOwnerRequirement {
+                event_source: None,
                 owner_id: owner.to_string(),
                 scope: scope.clone(),
                 required: true,

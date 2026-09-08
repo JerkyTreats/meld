@@ -12,4 +12,11 @@ pub use search::{search, search_successor};
 pub use verification::{verify_plan, verify_successor_plan};
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
+
+mod history;
+
+mod rule_history;
+
+#[cfg(test)]
+pub(crate) use history::tests::old_wire as historical_plan_fixture;

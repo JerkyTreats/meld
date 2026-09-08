@@ -1,6 +1,4 @@
-use std::sync::Arc;
-
-use meld_events::{DomainObjectRef, EventEnvelope, EventRecord, EventRelation};
+use meld_events::{DomainObjectRef, EventEnvelope, EventRecord};
 use meld_lang::{
     Composition, Condition, CostEstimate, Effect, GoalLifecycle, Literal, Method, Operator,
     Proposition, Resolution, SlotConstraint, Step, StepKind, Term,
@@ -9,8 +7,7 @@ use meld_world_model::agent::{
     AgentCurationRuleConfig, AgentSubscriptionRecord, SeedAgentRegistration,
 };
 use meld_world_model::belief::{BeliefKey, BranchScope};
-use meld_world_model::world_state::graph::store::TraversalStore;
-use meld_world_model::{AnchorSelectionRecord, PerspectiveKey, TraversalFactRecord};
+use meld_world_model::PerspectiveKey;
 use serde_json::json;
 
 pub const AGENT_ID: &str = "seed.docs_freshness";
@@ -25,8 +22,6 @@ pub const SUBJECT_OBJECT_KIND: &str = "node";
 pub const SUBJECT_OBJECT_ID: &str = "node-a";
 pub const PERSPECTIVE_KIND: &str = "default";
 pub const PERSPECTIVE_ID: &str = "default";
-pub const GRAPH_PERSPECTIVE_KIND: &str = "frame_type";
-pub const GRAPH_PERSPECTIVE_ID: &str = "analysis";
 pub const TASK_NETWORK_ID: &str = "network-docs";
 pub const SESSION_ID: &str = "session-docs";
 pub const WORKER_ID: &str = "worker-docs";
@@ -62,10 +57,6 @@ impl DocsFreshnessFirstProofFixture {
 
     pub fn perspective(&self) -> PerspectiveKey {
         PerspectiveKey::new(PERSPECTIVE_KIND, PERSPECTIVE_ID).unwrap()
-    }
-
-    pub fn graph_perspective(&self) -> PerspectiveKey {
-        PerspectiveKey::new(GRAPH_PERSPECTIVE_KIND, GRAPH_PERSPECTIVE_ID).unwrap()
     }
 
     pub fn branch_scope(&self) -> BranchScope {
@@ -313,46 +304,6 @@ impl DocsFreshnessFirstProofFixture {
             cost: self.method_cost(),
             preference: 1,
         }
-    }
-
-    pub fn seeded_graph(&self) -> (tempfile::TempDir, Arc<TraversalStore>, DomainObjectRef) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let store = Arc::new(
-            TraversalStore::new(sled::open(temp_dir.path().join("graph")).unwrap()).unwrap(),
-        );
-        self.seed_graph_into(store.as_ref());
-        (temp_dir, store, self.subject())
-    }
-
-    pub fn seed_graph_into(&self, store: &TraversalStore) {
-        let node = self.subject();
-        let frame = domain_object("context", "frame", "frame-a");
-        let anchor_ref = domain_object("context", "head", "node-a::analysis");
-        let relation = EventRelation::new("selected", node.clone(), frame.clone()).unwrap();
-        let fact = TraversalFactRecord {
-            fact_id: "fact-a".to_string(),
-            source_spine_fact_id: "ledger-a".to_string(),
-            seq: SEED_GRAPH_SEQ,
-            event_type: "context.head.selected".to_string(),
-            objects: vec![node.clone(), frame.clone()],
-            relations: vec![relation],
-        };
-        let anchor = AnchorSelectionRecord {
-            anchor_id: "anchor-a".to_string(),
-            anchor_ref,
-            subject: node.clone(),
-            perspective: self.graph_perspective(),
-            target: frame,
-            source_fact_ids: vec!["ledger-a".to_string()],
-            created_by_fact_id: "fact-a".to_string(),
-            selected_at_seq: SEED_GRAPH_SEQ,
-            ended_at_seq: None,
-            ended_by_anchor_id: None,
-            ended_by_fact_id: None,
-        };
-        store.put_fact(&fact).unwrap();
-        store.put_anchor(&anchor).unwrap();
-        store.set_current_anchor(&anchor).unwrap();
     }
 
     pub fn task_success_event(&self, seq: u64) -> EventRecord {

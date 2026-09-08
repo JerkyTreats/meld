@@ -113,7 +113,7 @@
       "content": {
         "kind": "relative_file",
         "path": "strategy_theory.security.json",
-        "content_hash": "fec5599aa33223a541da2f686ce3eb9919e8611963a91023fc507da4f8aaf823"
+        "content_hash": "298a1f40baff46c2cd97c12f60d56f1b3ec3c375cb9f68edfeb73f4e5227ff0e"
       },
       "requires": []
     },

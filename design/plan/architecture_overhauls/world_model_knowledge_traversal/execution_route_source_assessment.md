@@ -1,5 +1,7 @@
 # WMR-VC-04 Execution Route Source Assessment
 
+> Superseded for current reconciliation direction. [Canonical Flywheel Alignment And Runtime Soft Freeze](flywheel_remediation.md) alone owns the issue register, priorities, next work, and branch acceptance. This document retains historical design or evidence; its prior status and authorization statements do not govern current delivery.
+
 Date: 2026-09-04
 
 Status: corrected, accepted, closed, committed, and pushed for exact candidate `WMR-VC-04-R1::5308f0ba6ce873bd1e00b4ba283d60eefc9df996f9ba261461fc44929c86c430`

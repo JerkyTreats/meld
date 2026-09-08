@@ -1,16 +1,11 @@
 use crate::api::ContextApi;
-use crate::cli::{
-    format_context_json_output, format_context_text_output, parse_provider_additional_json_file,
-    ContextCommands,
-};
-use crate::context::generation::run::{run_generate, GenerateRequest};
+use crate::cli::{format_context_json_output, format_context_text_output, ContextCommands};
 use crate::context::query::get_node_for_cli;
 use crate::error::ApiError;
-use crate::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
 use crate::telemetry::ProgressRuntime;
 use crate::workflow::WorkflowRegistry;
 use serde_json::json;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 pub fn handle_cli_command(
@@ -22,79 +17,9 @@ pub fn handle_cli_command(
     session_id: &str,
 ) -> Result<String, ApiError> {
     match command {
-        ContextCommands::Generate {
-            node,
-            path,
-            path_positional,
-            agent,
-            provider,
-            workflow_id,
-            provider_model,
-            provider_additional_json_file,
-            frame_type,
-            force,
-            no_recursive,
-        } => {
-            let path_merged = path.as_ref().or(path_positional.as_ref());
-            let provider_binding = build_generate_provider_binding(
-                provider.as_deref(),
-                provider_model.as_deref(),
-                provider_additional_json_file.as_ref(),
-            )?;
-            let request = GenerateRequest {
-                node: node.clone(),
-                path: path_merged.cloned(),
-                agent: agent.clone(),
-                provider: provider_binding,
-                workflow_id: workflow_id.clone(),
-                frame_type: frame_type.clone(),
-                force: *force,
-                no_recursive: *no_recursive,
-            };
-            run_generate(
-                api,
-                workspace_root,
-                Some(Arc::clone(progress)),
-                Some(session_id),
-                &request,
-            )
-        }
-        ContextCommands::Regenerate {
-            node,
-            path,
-            path_positional,
-            agent,
-            provider,
-            workflow_id,
-            provider_model,
-            provider_additional_json_file,
-            frame_type,
-            recursive,
-        } => {
-            let path_merged = path.as_ref().or(path_positional.as_ref());
-            let provider_binding = build_generate_provider_binding(
-                provider.as_deref(),
-                provider_model.as_deref(),
-                provider_additional_json_file.as_ref(),
-            )?;
-            let request = GenerateRequest {
-                node: node.clone(),
-                path: path_merged.cloned(),
-                agent: agent.clone(),
-                provider: provider_binding,
-                workflow_id: workflow_id.clone(),
-                frame_type: frame_type.clone(),
-                force: true,
-                no_recursive: !*recursive,
-            };
-            run_generate(
-                api,
-                workspace_root,
-                Some(Arc::clone(progress)),
-                Some(session_id),
-                &request,
-            )
-        }
+        ContextCommands::Generate { .. } | ContextCommands::Regenerate { .. } => Err(ApiError::ConfigError(
+            "Direct Context generation is retired. Use a runtime-loaded theory with a Goal and authorized Context generation capabilities. A replacement Context generation package is not yet provided.".into(),
+        )),
         ContextCommands::Get {
             node,
             path,
@@ -196,27 +121,4 @@ fn resolve_context_get_frame_type(
             .clone()
             .unwrap_or_else(|| format!("context-{}", agent_id)),
     ))
-}
-
-fn build_generate_provider_binding(
-    provider_name: Option<&str>,
-    provider_model: Option<&str>,
-    provider_additional_json_file: Option<&PathBuf>,
-) -> Result<ProviderExecutionBinding, ApiError> {
-    let provider_name = provider_name.ok_or_else(|| {
-        ApiError::ProviderNotConfigured(
-            "Provider is required. Use `--provider <provider_name>` to specify a provider. Use `meld provider list` to see available providers.".to_string(),
-        )
-    })?;
-    let provider_additional_json =
-        parse_provider_additional_json_file(provider_additional_json_file)
-            .map_err(ApiError::ConfigError)?;
-    let provider_runtime_overrides = ProviderRuntimeOverrides::new(
-        provider_model.map(str::to_string),
-        provider_additional_json.unwrap_or_default(),
-    )?;
-    Ok(ProviderExecutionBinding::new(
-        provider_name,
-        provider_runtime_overrides,
-    )?)
 }

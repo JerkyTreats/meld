@@ -42,11 +42,6 @@ fn real_scan_retries_one_owner_operation_and_returns_through_branch_owner_walk()
             .unwrap();
         assert_eq!(owner_event_count(&first), 1);
 
-        let structural = structural_walk(&first, &source.object_id);
-        let facts = structural["walk"]["visited_facts"].as_array().unwrap();
-        assert!(facts.iter().all(|row| {
-            row["fact"]["event_type"].as_str() != Some(OWNER_PUBLICATION_EVENT_TYPE)
-        }));
         drop(first);
 
         let restarted = RunContext::new(workspace.clone(), None).unwrap();
@@ -87,27 +82,6 @@ fn owner_walk(context: &RunContext, scope_id: &str, object_id: &str) -> Value {
     serde_json::from_str(&output).unwrap()
 }
 
-fn structural_walk(context: &RunContext, object_id: &str) -> Value {
-    let output = context
-        .execute(&Commands::Branches {
-            command: BranchesCommands::GraphWalk {
-                scope: "active".to_string(),
-                branch_ids: Vec::new(),
-                domain: "workspace_fs".to_string(),
-                object_kind: "source".to_string(),
-                object_id: object_id.to_string(),
-                direction: "both".to_string(),
-                relation_types: Vec::new(),
-                max_depth: 4,
-                current_only: false,
-                include_facts: true,
-                format: "json".to_string(),
-            },
-        })
-        .unwrap();
-    serde_json::from_str(&output).unwrap()
-}
-
 fn owner_event_count(context: &RunContext) -> usize {
     let replay = context.event_replay_capability();
     let page = replay
@@ -121,6 +95,8 @@ fn owner_event_count(context: &RunContext) -> usize {
         .unwrap();
     page.records
         .iter()
-        .filter(|record| record.event_type == OWNER_PUBLICATION_EVENT_TYPE)
+        .filter(|record| {
+            record.event_type == OWNER_PUBLICATION_EVENT_TYPE && record.domain_id == "workspace_fs"
+        })
         .count()
 }

@@ -19,6 +19,115 @@ use meld_events::events::remote::{
 use meld_events::{EventEnvelope, LedgerIdentity};
 use serde_json::json;
 
+#[test]
+fn callback_backed_native_capabilities_preserve_proofs_batches_and_reopen() {
+    use meld_events::events::remote::LocalEventAuthorityClient;
+    use meld_events::{EventAppendCapability, EventAuthority, EventAuthorityOpenOptions};
+    use std::sync::Arc;
+    let root = tempfile::tempdir().unwrap();
+    let expected = envelope().with_record_id("external-owner-record");
+    let ledger;
+    let position;
+    {
+        let authority = EventAuthority::open(
+            sled::open(root.path()).unwrap(),
+            EventAuthorityOpenOptions::default(),
+        )
+        .unwrap();
+        ledger = authority.ledger_identity();
+        let client = Arc::new(SerdeLoopbackEventAuthorityClient::new(
+            LocalEventAuthorityClient::new(&authority),
+        ));
+        let append = EventAppendCapability::from_remote(ledger, client.clone());
+        let proof = append
+            .append_durable_proven(expected.clone(), AppendMode::Idempotent)
+            .unwrap();
+        position = proof.seq();
+        assert_eq!(
+            proof,
+            authority
+                .replay_capability()
+                .prove_existing(&expected)
+                .unwrap()
+                .unwrap()
+        );
+        assert_eq!(
+            proof,
+            append
+                .append_durable_proven(expected.clone(), AppendMode::Idempotent)
+                .unwrap()
+        );
+        let mut changed = expected.clone();
+        changed.data = json!({"task":"another-task"});
+        assert!(append.replay_capability().prove_existing(&changed).is_err());
+        assert!(append
+            .replay_capability()
+            .prove_existing(&envelope().with_record_id("absent"))
+            .unwrap()
+            .is_none());
+
+        let batch = vec![
+            envelope().with_record_id("batch-one"),
+            envelope().with_record_id("batch-two"),
+        ];
+        let receipts = append
+            .append_durable_batch(batch.clone(), AppendMode::Idempotent)
+            .unwrap();
+        assert_eq!(receipts.len(), 2);
+        for (receipt, event) in receipts.iter().zip(&batch) {
+            assert_eq!(
+                authority
+                    .replay_capability()
+                    .prove_existing(event)
+                    .unwrap()
+                    .unwrap()
+                    .seq(),
+                receipt.seq
+            );
+        }
+        append
+            .append_best_effort(envelope().with_record_id("queued"), AppendMode::Idempotent)
+            .unwrap();
+        append.barrier().unwrap();
+        assert_eq!(
+            append.replay_capability().newest_page(4).unwrap(),
+            authority.replay_capability().newest_page(4).unwrap()
+        );
+
+        let foreign = EventAppendCapability::from_remote(LedgerIdentity::new(), client);
+        assert!(matches!(
+            foreign.append_durable(expected.clone(), AppendMode::Idempotent),
+            Err(EventAuthorityError::IdentityMismatch { .. })
+        ));
+        assert!(matches!(
+            foreign
+                .replay_capability()
+                .committed_record("external-owner-record"),
+            Err(EventAuthorityError::IdentityMismatch { .. })
+        ));
+    }
+    let reopened = EventAuthority::open_existing(sled::open(root.path()).unwrap(), ledger).unwrap();
+    let append = EventAppendCapability::from_remote(
+        ledger,
+        Arc::new(SerdeLoopbackEventAuthorityClient::new(
+            LocalEventAuthorityClient::new(&reopened),
+        )),
+    );
+    let proof = append
+        .replay_capability()
+        .prove_existing(&expected)
+        .unwrap()
+        .unwrap();
+    assert_eq!(proof.seq(), position);
+    assert_eq!(proof.ledger_id(), ledger);
+    assert_eq!(
+        append
+            .append_durable_proven(expected, AppendMode::Idempotent)
+            .unwrap(),
+        proof
+    );
+}
+
 fn ledger_id() -> LedgerIdentity {
     LedgerIdentity::from_str("00000000-0000-4000-8000-000000000001").unwrap()
 }
@@ -315,6 +424,30 @@ struct AlwaysFails {
 }
 
 impl EventAuthorityContract for AlwaysFails {
+    fn durable_append_batch(
+        &self,
+        _: meld_events::events::remote::DurableAppendBatchRequest,
+    ) -> Result<Vec<AppendReceipt>, EventAuthorityError> {
+        Err(self.error.clone())
+    }
+    fn committed_record(
+        &self,
+        _: meld_events::events::remote::CommittedRecordRequest,
+    ) -> Result<meld_events::events::remote::CommittedRecordResponse, EventAuthorityError> {
+        Err(self.error.clone())
+    }
+    fn newest_page(
+        &self,
+        _: meld_events::events::remote::NewestPageRequest,
+    ) -> Result<EventPage, EventAuthorityError> {
+        Err(self.error.clone())
+    }
+    fn barrier(
+        &self,
+        _: meld_events::events::remote::BarrierRequest,
+    ) -> Result<(), EventAuthorityError> {
+        Err(self.error.clone())
+    }
     fn durable_append(
         &self,
         _request: DurableAppendRequest,

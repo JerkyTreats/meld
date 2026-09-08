@@ -39,7 +39,6 @@ use crate::belief::registry::BeliefFamilyRegistry;
 use crate::belief::runtime::BeliefRuntime;
 use crate::belief::store::BeliefStore;
 use crate::waiting::{conditions, StructuralWakeAddress, WaitingOnDeclaration};
-use crate::world_state::graph::store::TraversalStore;
 use crate::world_state::graph::PerspectiveKey;
 
 /// Identity-bearing source of bounded canonical event pages for evidence.
@@ -113,7 +112,6 @@ pub struct EvidenceIngestionReport {
 pub struct EvidenceIngestionActor {
     actor_id: String,
     store: Arc<BeliefStore>,
-    traversal: Arc<TraversalStore>,
     registry: Arc<dyn BeliefFamilyRegistry + Send + Sync>,
     family_id: String,
     replay: Arc<dyn EvidenceEventReplaySource>,
@@ -134,7 +132,6 @@ impl EvidenceIngestionActor {
     pub fn new(
         actor_id: impl Into<String>,
         store: Arc<BeliefStore>,
-        traversal: Arc<TraversalStore>,
         registry: Arc<dyn BeliefFamilyRegistry + Send + Sync>,
         family_id: impl Into<String>,
         replay: Arc<dyn EvidenceEventReplaySource>,
@@ -150,7 +147,6 @@ impl EvidenceIngestionActor {
             work_lock: parking_lot::Mutex::new(()),
             actor_id,
             store,
-            traversal,
             registry,
             family_id: family_id.into(),
             replay,
@@ -518,7 +514,6 @@ impl EvidenceIngestionActor {
                     },
                     BeliefRuntime::from_family_revision(
                         Arc::clone(&self.store),
-                        Arc::clone(&self.traversal),
                         revision,
                         self.perspective.clone(),
                         self.branch_scope.clone(),

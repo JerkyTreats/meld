@@ -1,44 +1,26 @@
-//! Context API–backed implementation of AgentAdapter.
-//!
-//! Depends on context's public API: `ContextApi` for get_node/put_frame and
-//! context facade types (Frame, FrameGenerationQueue, Priority). Queue wait
-//! policy is defined here; behavior matches the legacy tooling adapter.
+//! Context owner adapter for Agent context reads and frame writes.
 
-use super::contract::{AgentAdapter, GENERATE_FRAME_PRIORITY, GENERATE_FRAME_TIMEOUT};
+use super::contract::AgentAdapter;
 use crate::api::{ContextApi, ContextView, NodeContext};
 use crate::context::frame::Frame;
-use crate::context::queue::FrameGenerationQueue;
 use crate::error::ApiError;
 use crate::types::{FrameID, NodeID};
-use async_trait::async_trait;
 use std::sync::Arc;
 
-/// Adapter implementation that delegates to ContextApi and optional queue.
+/// Adapter implementation that delegates to ContextApi .
 pub struct ContextApiAdapter {
     api: Arc<ContextApi>,
-    queue: Option<Arc<FrameGenerationQueue>>,
 }
 
 impl ContextApiAdapter {
-    /// Create an adapter wrapping ContextApi; generation will fail until with_queue is used.
+    /// Create an adapter wrapping the Context owner.
     pub fn new(api: ContextApi) -> Self {
-        Self {
-            api: Arc::new(api),
-            queue: None,
-        }
+        Self { api: Arc::new(api) }
     }
 
-    /// Create from an Arc<ContextApi> without queue.
+    /// Create from a shared Context owner.
     pub fn from_arc(api: Arc<ContextApi>) -> Self {
-        Self { api, queue: None }
-    }
-
-    /// Create with a queue so generate_frame can enqueue and wait.
-    pub fn with_queue(api: Arc<ContextApi>, queue: Arc<FrameGenerationQueue>) -> Self {
-        Self {
-            api,
-            queue: Some(queue),
-        }
+        Self { api }
     }
 
     /// Reference to the underlying ContextApi.
@@ -47,7 +29,6 @@ impl ContextApiAdapter {
     }
 }
 
-#[async_trait]
 impl AgentAdapter for ContextApiAdapter {
     fn read_context(&self, node_id: NodeID, view: ContextView) -> Result<NodeContext, ApiError> {
         self.api.get_node(node_id, view)
@@ -60,33 +41,6 @@ impl AgentAdapter for ContextApiAdapter {
         agent_id: String,
     ) -> Result<FrameID, ApiError> {
         self.api.put_frame(node_id, frame, agent_id)
-    }
-
-    async fn generate_frame(
-        &self,
-        node_id: NodeID,
-        _prompt: String,
-        frame_type: String,
-        agent_id: String,
-        provider_name: String,
-    ) -> Result<FrameID, ApiError> {
-        let queue = self.queue.as_ref().ok_or_else(|| {
-            ApiError::ConfigError(
-                "Generation queue not available. All generation requests must go through the queue."
-                    .to_string(),
-            )
-        })?;
-
-        queue
-            .enqueue_and_wait(
-                node_id,
-                agent_id,
-                provider_name,
-                Some(frame_type),
-                GENERATE_FRAME_PRIORITY,
-                Some(GENERATE_FRAME_TIMEOUT),
-            )
-            .await
     }
 }
 
@@ -113,7 +67,7 @@ mod tests {
         );
         let prompt_context_storage =
             Arc::new(PromptContextArtifactStorage::new(&artifact_storage_path).unwrap());
-        let head_index = Arc::new(parking_lot::RwLock::new(HeadIndex::new()));
+        let head_index = HeadIndex::new();
         let agent_registry = Arc::new(parking_lot::RwLock::new(crate::agent::AgentRegistry::new()));
         let provider_registry = Arc::new(parking_lot::RwLock::new(
             crate::provider::ProviderRegistry::new(),

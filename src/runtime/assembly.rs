@@ -50,7 +50,6 @@ use meld_world_model::world_state::graph::contracts::{
     OwnerCurrentnessPolicy, TraversalCutRequest, TraversalOwnerRequirement,
 };
 use meld_world_model::world_state::graph::runtime::{GraphCatchUpBudget, GraphRuntime};
-use meld_world_model::world_state::graph::store::TraversalStore;
 use meld_world_model::PerspectiveKey;
 use meld_world_model::{
     CurationAuthority, CurationEventPort, CurationStepReport, CurationStore, CurationTraversalPort,
@@ -70,9 +69,14 @@ use crate::runtime::contracts::{
 };
 use crate::runtime::error::{RuntimeAssemblyError, RuntimeRegistryError};
 use crate::runtime::lifecycle::{
-    ActivationLifecycleStore, NativeOwnerReadinessEvidenceV1, OwnerReadinessReceiptV1,
-    OwnerReleaseReceiptV1, OwnerSafePointReceiptV1, OwnerStopReceiptV1, OwnerWaitReceiptV1,
-    ParticipantLifecycleContextV1, StructuralWakeRef,
+    owner_readiness_receipt, owner_release_receipt, owner_safe_point_receipt, owner_stop_receipt,
+    owner_wait_receipt, verified_native_transition, NativeOwnerLifecycle,
+    NativeOwnerLifecycleSnapshot,
+};
+use crate::runtime::lifecycle::{
+    ActivationLifecycleStore, OwnerReadinessReceiptV1, OwnerReleaseReceiptV1,
+    OwnerSafePointReceiptV1, OwnerStopReceiptV1, OwnerWaitReceiptV1, ParticipantLifecycleContextV1,
+    StructuralWakeRef,
 };
 use crate::runtime::ports::{
     ProductAdmissionGenerationObserver, ProductAgentAuthorityPort, ProductAgentExecutionPort,
@@ -360,10 +364,6 @@ pub struct StewardshipActorBindings {
     pub perspective: PerspectiveKey,
     /// World model branch scope the composed actors read through.
     pub branch_scope: BranchScope,
-    /// Graph anchor perspective kind for initial belief assessment.
-    pub anchor_perspective_kind: String,
-    /// Graph anchor perspective id for initial belief assessment.
-    pub anchor_perspective_id: String,
     /// Task network the composed execution actors share.
     pub network_id: String,
     /// Event ledger session partition for aggregate publication.
@@ -382,14 +382,6 @@ impl StewardshipActorBindings {
             perspective: PerspectiveKey::new("default", "default")
                 .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?,
             branch_scope: BranchScope::main(),
-            // Workspace graph anchors are published by context head
-            // selections whose frame type derives from the agent identity —
-            // the same convention the production dispatch route publishes
-            // under, so anchor reads and frame publications share one
-            // lineage vocabulary. This is identity derivation, not belief
-            // theory.
-            anchor_perspective_kind: "frame_type".to_string(),
-            anchor_perspective_id: format!("context-{}", binding.agent_id),
             network_id: format!("stewardship.{expression}"),
             session_id: format!("stewardship::{expression}"),
             expression,
@@ -859,7 +851,6 @@ impl DurableStepSequence {
 #[derive(Clone)]
 struct BeliefAssessmentFactory {
     belief_store: Arc<BeliefStore>,
-    traversal_store: Arc<TraversalStore>,
     registry: Arc<BeliefFamilyRegistryStore>,
     family_id: String,
     subject_binding: BeliefSubjectBinding,
@@ -871,7 +862,6 @@ struct BeliefAssessmentFactory {
 #[derive(Clone)]
 struct EvidenceIngestionFactory {
     belief_store: Arc<BeliefStore>,
-    traversal_store: Arc<TraversalStore>,
     registry: Arc<BeliefFamilyRegistryStore>,
     family_id: String,
     replay: ProductEventReplayPort,
@@ -1075,41 +1065,6 @@ pub struct RuntimeHandleSafePointReport {
     pub safe_for_flush: bool,
     /// Native-owner safe-point evidence for the exact stopped incarnation.
     pub owner_safe_point: Option<OwnerSafePointReceiptV1>,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct NativeOwnerLifecycleSnapshot {
-    checkpoint_ref: String,
-    installed_revision_refs: Vec<String>,
-    binding_refs: Vec<String>,
-    subscription_refs: Vec<String>,
-    proof_position_ref: String,
-    unresolved_operation_summary_ref: String,
-}
-
-impl From<meld_world_model::lifecycle::NativeLifecycleEvidence> for NativeOwnerLifecycleSnapshot {
-    fn from(evidence: meld_world_model::lifecycle::NativeLifecycleEvidence) -> Self {
-        Self {
-            checkpoint_ref: evidence.checkpoint_ref,
-            installed_revision_refs: evidence.installed_revision_refs,
-            binding_refs: evidence.binding_refs,
-            subscription_refs: evidence.subscription_refs,
-            proof_position_ref: evidence.proof_position_ref,
-            unresolved_operation_summary_ref: evidence.unresolved_operation_summary_ref,
-        }
-    }
-}
-impl From<meld_execution::lifecycle::NativeLifecycleEvidence> for NativeOwnerLifecycleSnapshot {
-    fn from(evidence: meld_execution::lifecycle::NativeLifecycleEvidence) -> Self {
-        Self {
-            checkpoint_ref: evidence.checkpoint_ref,
-            installed_revision_refs: evidence.installed_revision_refs,
-            binding_refs: evidence.binding_refs,
-            subscription_refs: evidence.subscription_refs,
-            proof_position_ref: evidence.proof_position_ref,
-            unresolved_operation_summary_ref: evidence.unresolved_operation_summary_ref,
-        }
-    }
 }
 
 /// Diagnostic snapshot from one inert runtime handle.
@@ -1399,7 +1354,6 @@ impl ProductRuntimeAssembly {
             Some(traversal_store) => Some(Arc::new(
                 GraphRuntime::from_ports(
                     Arc::new(ports.event_replay().clone()),
-                    Arc::new(ports.event_append().clone()),
                     Arc::new(ports.graph_cursor().clone()),
                     Arc::clone(traversal_store),
                 )
@@ -2550,9 +2504,8 @@ impl RuntimeSemanticHandleFactory {
                 let Some(composed) = stewardship else {
                     return Ok(Self::None);
                 };
-                let (Some(belief), Some(traversal), Some(registry)) = (
+                let (Some(belief), Some(registry)) = (
                     stores.belief_store.opened(),
-                    stores.traversal_store.opened(),
                     stores.belief_family_registry.opened(),
                 ) else {
                     return Ok(Self::None);
@@ -2565,13 +2518,10 @@ impl RuntimeSemanticHandleFactory {
                 }
                 Ok(Self::BeliefAssessment(Box::new(BeliefAssessmentFactory {
                     belief_store: Arc::clone(belief),
-                    traversal_store: Arc::clone(traversal),
                     registry: Arc::clone(registry),
                     family_id,
                     subject_binding: BeliefSubjectBinding {
                         subject: composed.bindings.subject.clone(),
-                        anchor_perspective_kind: composed.bindings.anchor_perspective_kind.clone(),
-                        anchor_perspective_id: composed.bindings.anchor_perspective_id.clone(),
                     },
                     perspective: composed.bindings.perspective.clone(),
                     branch_scope: composed.bindings.branch_scope.clone(),
@@ -2586,9 +2536,8 @@ impl RuntimeSemanticHandleFactory {
                 let Some(composed) = stewardship else {
                     return Ok(Self::None);
                 };
-                let (Some(belief), Some(traversal), Some(registry)) = (
+                let (Some(belief), Some(registry)) = (
                     stores.belief_store.opened(),
-                    stores.traversal_store.opened(),
                     stores.belief_family_registry.opened(),
                 ) else {
                     return Ok(Self::None);
@@ -2636,7 +2585,6 @@ impl RuntimeSemanticHandleFactory {
                 Ok(Self::EvidenceIngestion(Box::new(
                     EvidenceIngestionFactory {
                         belief_store: Arc::clone(belief),
-                        traversal_store: Arc::clone(traversal),
                         registry: Arc::clone(registry),
                         family_id,
                         replay: ports.event_replay().clone(),
@@ -2900,6 +2848,24 @@ impl RuntimeSemanticHandleFactory {
                     ),
                 ];
                 let planner_policy = PlannerAssemblyPolicy {
+                    acquisition_question: strategy
+                        .package
+                        .snapshot
+                        .settlement_rules
+                        .iter()
+                        .any(|rule| {
+                            rule.construction
+                                == meld_world_model::strategy::StrategyConstruction::ObserveUnknown
+                                && condition
+                                    .target_for(agent.subject.clone())
+                                    .is_ok_and(|target| {
+                                        meld_lang::unify(&rule.goal_pattern, &target).is_some()
+                                    })
+                        })
+                        .then(|| meld_world_model::planner::PlannerBeliefSelection {
+                            key: belief_key.clone(),
+                            family: family_revision.revision_ref(),
+                        }),
                     policy_revision_id: format!(
                         "reasoning-policy::{}",
                         product_compilation_receipt_id
@@ -2964,8 +2930,7 @@ impl RuntimeSemanticHandleFactory {
                             },
                             traversal_request: rule.rule.traversal_request(),
                             belief_key,
-                            unanchored_belief: family_revision.config.anchor_requirement
-                                == meld_world_model::belief::AnchorRequirement::Unanchored,
+
                             source_positions: planner_source_positions.clone(),
                         };
                         (
@@ -3044,8 +3009,7 @@ impl RuntimeSemanticHandleFactory {
                                 context: context.clone(),
                                 policy: planner_policy,
                                 belief_key,
-                                unanchored_belief: family_revision.config.anchor_requirement
-                                    == meld_world_model::belief::AnchorRequirement::Unanchored,
+
                                 source_positions: planner_source_positions.clone(),
                             },
                         );
@@ -3225,7 +3189,6 @@ impl RuntimeSemanticHandleFactory {
                         let actor = BeliefAssessmentActor::new(
                             "world_model.belief_assessment",
                             Arc::clone(&factory.belief_store),
-                            Arc::clone(&factory.traversal_store),
                             Arc::clone(&factory.registry)
                                 as Arc<dyn BeliefFamilyRegistry + Send + Sync>,
                             vec![factory.family_id.clone()],
@@ -3251,7 +3214,6 @@ impl RuntimeSemanticHandleFactory {
                         let actor = EvidenceIngestionActor::new(
                             "world_model.evidence_ingestion",
                             Arc::clone(&factory.belief_store),
-                            Arc::clone(&factory.traversal_store),
                             Arc::clone(&factory.registry)
                                 as Arc<dyn BeliefFamilyRegistry + Send + Sync>,
                             factory.family_id.clone(),
@@ -3539,182 +3501,6 @@ impl RuntimeSemanticHandle {
 
 fn missing_native_lifecycle_owner() -> RuntimeAssemblyError {
     RuntimeAssemblyError::SupervisorHandoff("native lifecycle owner is absent".to_string())
-}
-
-pub(crate) trait NativeTransitionProof {
-    fn generation_id(&self) -> &str;
-    fn incarnation_id(&self) -> &str;
-    fn proof_ref(&self) -> &str;
-}
-
-impl NativeTransitionProof for meld_world_model::lifecycle::NativeLifecycleTransition {
-    fn generation_id(&self) -> &str {
-        &self.generation_id
-    }
-
-    fn incarnation_id(&self) -> &str {
-        &self.incarnation_id
-    }
-
-    fn proof_ref(&self) -> &str {
-        &self.proof_ref
-    }
-}
-
-impl NativeTransitionProof for meld_execution::lifecycle::NativeLifecycleTransition {
-    fn generation_id(&self) -> &str {
-        &self.generation_id
-    }
-
-    fn incarnation_id(&self) -> &str {
-        &self.incarnation_id
-    }
-
-    fn proof_ref(&self) -> &str {
-        &self.proof_ref
-    }
-}
-
-pub(crate) fn verified_native_transition<T: NativeTransitionProof>(
-    context: &ParticipantLifecycleContextV1,
-    transition: T,
-) -> Result<String, RuntimeAssemblyError> {
-    if transition.generation_id() != context.generation_id
-        || transition.incarnation_id() != context.incarnation_id
-        || transition.proof_ref().trim().is_empty()
-    {
-        return Err(RuntimeAssemblyError::SupervisorHandoff(
-            "native lifecycle transition belongs to another activation position".to_string(),
-        ));
-    }
-    Ok(transition.proof_ref().to_string())
-}
-
-pub(crate) trait NativeOwnerLifecycle {
-    fn native_snapshot(&self) -> Result<NativeOwnerLifecycleSnapshot, RuntimeAssemblyError>;
-    fn native_readiness(
-        &mut self,
-        context: &ParticipantLifecycleContextV1,
-    ) -> Result<OwnerReadinessReceiptV1, RuntimeAssemblyError>;
-    fn native_wait(
-        &self,
-        context: &ParticipantLifecycleContextV1,
-        report: &WorkerTickReport,
-    ) -> Result<OwnerWaitReceiptV1, RuntimeAssemblyError>;
-    fn native_safe_point(
-        &mut self,
-        context: &ParticipantLifecycleContextV1,
-    ) -> Result<OwnerSafePointReceiptV1, RuntimeAssemblyError>;
-    fn native_stop(
-        &mut self,
-        context: &ParticipantLifecycleContextV1,
-    ) -> Result<OwnerStopReceiptV1, RuntimeAssemblyError>;
-    fn native_release(
-        &mut self,
-        context: &ParticipantLifecycleContextV1,
-    ) -> Result<OwnerReleaseReceiptV1, RuntimeAssemblyError>;
-    fn native_resolves_wake(
-        &self,
-        wake_ref: &StructuralWakeRef,
-    ) -> Result<bool, RuntimeAssemblyError>;
-}
-
-pub(crate) fn owner_readiness_receipt(
-    context: &ParticipantLifecycleContextV1,
-    snapshot: NativeOwnerLifecycleSnapshot,
-    transition_proof_ref: String,
-) -> Result<OwnerReadinessReceiptV1, RuntimeAssemblyError> {
-    let evidence = NativeOwnerReadinessEvidenceV1::new(
-        context.participant_id.clone(),
-        context.owner_domain.clone(),
-        snapshot.checkpoint_ref,
-        snapshot.installed_revision_refs,
-        snapshot.binding_refs,
-        snapshot.subscription_refs,
-        transition_proof_ref,
-    )
-    .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))?;
-    OwnerReadinessReceiptV1::from_native(context, evidence)
-        .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))
-}
-
-pub(crate) fn owner_wait_receipt(
-    context: &ParticipantLifecycleContextV1,
-    snapshot: NativeOwnerLifecycleSnapshot,
-    report: &WorkerTickReport,
-) -> Result<OwnerWaitReceiptV1, RuntimeAssemblyError> {
-    if report.made_progress()
-        || !report.retryable_errors.is_empty()
-        || !report.fatal_errors.is_empty()
-        || report.budget_exhausted
-    {
-        return Err(RuntimeAssemblyError::SupervisorHandoff(
-            "native owner cannot author a wait for an active or failed step".to_string(),
-        ));
-    }
-    if report.waiting_on.is_empty()
-        || report
-            .waiting_on
-            .iter()
-            .any(|declaration| declaration.wake_refs.is_empty())
-    {
-        return Err(RuntimeAssemblyError::SupervisorHandoff(
-            "native owner supplied incomplete wait evidence".to_string(),
-        ));
-    }
-    let mut reasons = report
-        .waiting_on
-        .iter()
-        .map(|wait| wait.condition.as_str())
-        .collect::<Vec<_>>();
-    reasons.sort_unstable();
-    reasons.dedup();
-    let reason = reasons.join("+");
-    let wake_refs = report
-        .waiting_on
-        .iter()
-        .flat_map(|wait| wait.wake_refs.iter().cloned())
-        .collect();
-    OwnerWaitReceiptV1::new(
-        context.generation_id.clone(),
-        context.incarnation_id.clone(),
-        snapshot.checkpoint_ref,
-        reason,
-        wake_refs,
-    )
-    .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))
-}
-
-pub(crate) fn owner_safe_point_receipt(
-    context: &ParticipantLifecycleContextV1,
-    snapshot: NativeOwnerLifecycleSnapshot,
-    transition_proof_ref: String,
-) -> Result<OwnerSafePointReceiptV1, RuntimeAssemblyError> {
-    OwnerSafePointReceiptV1::new(
-        context,
-        snapshot.checkpoint_ref,
-        snapshot.unresolved_operation_summary_ref,
-        vec![snapshot.proof_position_ref, transition_proof_ref],
-    )
-    .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))
-}
-
-pub(crate) fn owner_stop_receipt(
-    context: &ParticipantLifecycleContextV1,
-    snapshot: NativeOwnerLifecycleSnapshot,
-    transition_proof_ref: String,
-) -> Result<OwnerStopReceiptV1, RuntimeAssemblyError> {
-    OwnerStopReceiptV1::new(context, snapshot.checkpoint_ref, transition_proof_ref)
-        .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))
-}
-
-pub(crate) fn owner_release_receipt(
-    context: &ParticipantLifecycleContextV1,
-    _snapshot: NativeOwnerLifecycleSnapshot,
-    transition_proof_ref: String,
-) -> Result<OwnerReleaseReceiptV1, RuntimeAssemblyError> {
-    OwnerReleaseReceiptV1::new(context, transition_proof_ref)
-        .map_err(|error| RuntimeAssemblyError::SupervisorHandoff(error.to_string()))
 }
 
 impl EventAppendRuntimeHandle {
@@ -5399,6 +5185,8 @@ fn validate_runtime_id(runtime_id: &str) -> Result<(), RuntimeRegistryError> {
 mod tests {
     #[cfg(unix)]
     mod code_change;
+    mod epistemic_bootstrap;
+    mod failed_startup;
     mod failed_work;
     mod intake;
     mod prerequisite;
@@ -7059,6 +6847,7 @@ mod tests {
 
     fn workspace_fixture_curation_template() -> meld_world_model::curation::CurationRuleTemplate {
         meld_world_model::curation::CurationRuleTemplate {
+            selection_posture: Default::default(),
             rule_id: "workspace-fixture-curation".into(),
             source_owner_id: "workspace_fs".into(),
             traversal_direction:
@@ -7100,6 +6889,7 @@ mod tests {
         let operation = OwnerPublicationOperation::reconstruct(
             "workspace-enumeration-v1",
             OwnerPublicationBatch {
+                work_input_basis_id: None,
                 owner_id: "workspace_fs".to_string(),
                 revision_id: revision.to_string(),
                 scope: standing_curation_scope(),
@@ -7217,7 +7007,7 @@ mod tests {
                         crate::context::frame::FrameStorage::new(route_storage.join("frames"))
                             .unwrap(),
                     ),
-                    Arc::new(parking_lot::RwLock::new(crate::heads::HeadIndex::new())),
+                    crate::heads::HeadIndex::new(),
                     Arc::new(
                         crate::prompt_context::PromptContextArtifactStorage::new(
                             route_storage.join("prompt-artifacts"),
@@ -7353,8 +7143,11 @@ mod tests {
             let strategy_path = package.path().join("strategy_theory.docs_freshness.json");
             let mut strategy: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(&strategy_path).unwrap()).unwrap();
-            strategy["snapshot"]["settlement_rules"][0]["epistemic_placement"] =
-                "prerequisite".into();
+            strategy["snapshot"]["settlement_rules"][0]["epistemic_selections"] =
+                serde_json::json!([{"rule_revision": null, "evidence_return": false}]);
+            strategy["snapshot"]["settlement_rules"][0]["product_ordering"] = serde_json::json!([{
+                "before": {"kind": "all_epistemic"}, "after": {"kind": "all_tasks"}, "milestone": "curation_visible"
+            }]);
             let strategy_bytes = serde_json::to_vec(&strategy).unwrap();
             std::fs::write(strategy_path, &strategy_bytes).unwrap();
             let mut manifest: serde_json::Value = serde_json::from_slice(
@@ -8438,8 +8231,9 @@ mod tests {
             } else {
                 std::fs::write(&source, serde_json::to_vec(&changed).unwrap()).unwrap();
             }
+            let mut restored_reports = Vec::new();
             for pass in 0..60 {
-                resumed.tick(5_100 + pass * 10).unwrap();
+                restored_reports.push(resumed.tick(5_100 + pass * 10).unwrap());
             }
             assert_eq!(
                 store
@@ -8461,7 +8255,12 @@ mod tests {
                         disposition.lifecycle,
                         meld_lang::GoalLifecycle::Satisfied { .. }
                     )),
-                "{restored:#?}"
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "plan": restored,
+                    "history": store.completed_history_for_goal(&successor_id).unwrap(),
+                    "latest_reports": format!("{:#?}", &restored_reports[restored_reports.len().saturating_sub(2)..]),
+                })).unwrap()
             );
             let returned = harness
                 .authority
@@ -11184,6 +10983,7 @@ mod tests {
         let subject = stewardship_subject_ref(&harness.binding).unwrap();
         let legacy = standing_curation_rule(subject.clone());
         let template = CurationRuleTemplate {
+            selection_posture: Default::default(),
             coverage: None,
             rule_id: "docs-native-epistemic-rule".into(),
             source_owner_id: "workspace_fs".into(),
@@ -11941,7 +11741,6 @@ mod tests {
         let mut ingestion = EvidenceIngestionActor::new(
             "world_model.evidence_ingestion",
             Arc::clone(&assembly.stores().belief_store),
-            Arc::clone(&assembly.stores().traversal_store),
             Arc::clone(&assembly.stores().belief_family_registry)
                 as Arc<dyn BeliefFamilyRegistry + Send + Sync>,
             FAMILY_ID,

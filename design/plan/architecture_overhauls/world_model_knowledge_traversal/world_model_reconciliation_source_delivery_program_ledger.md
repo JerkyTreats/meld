@@ -1,5 +1,7 @@
 # World Model Reconciliation Source Delivery Program Ledger
 
+> Superseded for current reconciliation direction. [Canonical Flywheel Alignment And Runtime Soft Freeze](flywheel_remediation.md) alone owns the issue register, priorities, next work, and branch acceptance. This document retains historical design or evidence; its prior status and authorization statements do not govern current delivery.
+
 Current authority: historical and directional only. On 2026-09-06 the user withdrew the binding status of this program and authorized the original-outcome audit followed by end-to-end implementation, with commits and branch pushes at natural checkpoints. The old slice exclusions, pickup rules and authorization statements below record the earlier program; they do not restrict that mission or define architectural completion.
 
 Read the [current reconciliation audit](reconciliation_outcome_audit.md) for source behavior, original-outcome evidence, retirement dispositions and validation limits. The original architecture and observable outcomes remain the destination. This ledger has not been re-established as a binding go-forward program.

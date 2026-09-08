@@ -93,6 +93,19 @@ pub trait AgentCurationPort: Send + Sync {
         &self,
         candidate: CurationOperation,
     ) -> Result<CurationOperation, StorageError>;
+    /// Resolve an exact installed Curation rule against the same frozen owner cut.
+    fn operation_for_rule(
+        &self,
+        base: &CurationOperation,
+        reference: &crate::belief::TheoryRevisionRef,
+    ) -> Result<CurationOperation, StorageError> {
+        if &base.rule_revision == reference {
+            return Ok(base.clone());
+        }
+        Err(StorageError::InvalidPath(
+            "Curation adapter does not resolve the selected exact rule".into(),
+        ))
+    }
     fn submit(&self, operation: CurationOperation) -> Result<(), StorageError>;
     fn acceptance(
         &self,
@@ -1719,32 +1732,56 @@ impl GoalReconciliation<'_, '_> {
                 cut.traversal_cut.clone(),
                 cut.traversal_request.clone(),
             )?;
-            let confirmation = self
+            let rules: Vec<_> = self
                 .strategy
                 .package
                 .snapshot
                 .settlement_rules
                 .iter()
-                .find(|rule| meld_lang::unify(&rule.goal_pattern, &self.goal.target).is_some())
-                .is_some_and(|rule| rule.epistemic_placement.is_confirmation());
-            let operation = if confirmation {
-                operation.for_request(stable_id(
-                    "agent-curation-request-v1",
-                    &(&self.goal.agent_id, &self.goal.goal_id),
-                ))?
-            } else {
-                operation
-            };
-            vec![self.curation.resolve_operation(operation)?]
+                .filter(|rule| meld_lang::unify(&rule.goal_pattern, &self.goal.target).is_some())
+                .collect();
+            let mut candidates = vec![operation.clone()];
+            for reference in rules
+                .iter()
+                .flat_map(|rule| &rule.epistemic_selections)
+                .filter_map(|selection| selection.rule_revision.as_ref())
+            {
+                if candidates
+                    .iter()
+                    .all(|candidate| &candidate.rule_revision != reference)
+                {
+                    candidates.push(self.curation.operation_for_rule(&operation, reference)?);
+                }
+            }
+            let mut selected = Vec::new();
+            for candidate in candidates {
+                let confirmation = rules
+                    .iter()
+                    .flat_map(|rule| &rule.epistemic_selections)
+                    .any(|selection| {
+                        selection.evidence_return
+                            && selection
+                                .rule_revision
+                                .as_ref()
+                                .is_none_or(|reference| reference == &candidate.rule_revision)
+                    });
+                let candidate = if confirmation {
+                    candidate.for_request(stable_id(
+                        "agent-curation-request-v1",
+                        &(&self.goal.agent_id, &self.goal.goal_id),
+                    ))?
+                } else {
+                    candidate
+                };
+                selected.push(self.curation.resolve_operation(candidate)?);
+            }
+            selected
         };
         // A transport-only successor cannot grant a second authorization for the
         // same operation without a successful return. Changed semantic input may
         // produce new work.
         let history = self.store.completed_history_for_goal(&self.goal.goal_id)?;
-        if !matches!(
-            meld_lang::evaluate(&cut.world_model_view.world_state, &self.goal.target),
-            meld_lang::EvalResult::Satisfied
-        ) && operations.iter().any(|operation| {
+        let unavailable_curation_operation_ids = operations.iter().filter(|operation| {
             authorizations.iter().any(|authorization| {
                 authorization.activation_generation == cut.context.activation_generation
                     && authorization.admission_epoch == cut.context.admission_epoch
@@ -1757,16 +1794,11 @@ impl GoalReconciliation<'_, '_> {
                                 if prior.accepts_return(&entry.accepted_milestone))
                     })
             })
-        }) {
-            report.waiting_on.push(waiting(
-                "planner_cut_changed", &self.goal.goal_id,
-                "the authorized prerequisite has no successful visibility; new work requires changed semantic input",
-            ));
-            return Ok(None);
-        }
+        }).map(|operation| operation.operation_id.clone()).collect();
         let mut problem = self
             .strategy
             .problem(self.goal.clone(), cut.clone(), operations);
+        problem.unavailable_curation_operation_ids = unavailable_curation_operation_ids;
         if let Some(products) = &self.products {
             problem.task_inputs = products.task_inputs.clone();
             problem.effect_visibility = products.effect_visibility.clone();
@@ -3439,7 +3471,7 @@ mod tests {
             true,
         );
         for rule in &mut actor.strategy.package.snapshot.settlement_rules {
-            rule.epistemic_placement = crate::strategy::StrategyEpistemicPlacement::Confirmation;
+            crate::strategy::tests::DependencyFixture::OperationalConfirmation.apply(rule);
         }
         let execution = Arc::new(TerminalExecution {
             submissions: Mutex::new(Vec::new()),
@@ -3639,8 +3671,8 @@ mod tests {
         .unwrap();
         // These fixtures exercise prerequisite Curation independently of the
         // installed Docs product's post-execution confirmation sequence.
-        package.snapshot.settlement_rules[0].epistemic_placement =
-            crate::strategy::StrategyEpistemicPlacement::Prerequisite;
+        crate::strategy::tests::DependencyFixture::Preparation
+            .apply(&mut package.snapshot.settlement_rules[0]);
         package
     }
 
@@ -3928,8 +3960,8 @@ mod tests {
                 ),
             );
         }
-        legacy.plan_revision_id.clear();
-        legacy.plan_revision_id = stable_id("strategy-plan-v1", &legacy);
+        let legacy: StrategyPlan =
+            serde_json::from_value(crate::strategy::historical_plan_fixture(&legacy)).unwrap();
         fixture.store.put_reconciliation_cut(&fixture.cut).unwrap();
         fixture.store.put_reconciliation_plan(&legacy).unwrap();
         fixture
@@ -4109,7 +4141,7 @@ mod tests {
             preconditions: vec![Proposition::Accessible {
                 scope: Term::Object(subject()),
             }],
-            composition: direct.composition,
+            composition: direct.tasks[0].composition.clone(),
             net_effects: Vec::new(),
             cost: meld_lang::CostEstimate::zero(),
             preference: 0,
@@ -4222,10 +4254,30 @@ mod tests {
 
     struct MultiCuration {
         rule: StandingCurationRuleRevision,
+        additional_rules: Vec<StandingCurationRuleRevision>,
         operations: Mutex<std::collections::BTreeMap<String, CurationOperation>>,
     }
 
     impl AgentCurationPort for MultiCuration {
+        fn operation_for_rule(
+            &self,
+            base: &CurationOperation,
+            reference: &crate::belief::TheoryRevisionRef,
+        ) -> Result<CurationOperation, StorageError> {
+            let rule = std::iter::once(&self.rule)
+                .chain(&self.additional_rules)
+                .find(|rule| &rule.revision_ref() == reference)
+                .ok_or_else(|| {
+                    StorageError::InvalidPath("selected rule is outside fixture catalog".into())
+                })?;
+            CurationOperation::reconstruct(
+                base.authority.clone(),
+                rule.revision_ref(),
+                base.source_cut.clone(),
+                rule.rule.traversal_request(),
+            )
+        }
+
         fn prerequisite_visibility(
             &self,
             operation_id: &str,
@@ -4266,7 +4318,13 @@ mod tests {
                 .lock()
                 .unwrap()
                 .get(id)
-                .map(|operation| CurationAcceptanceRecord::for_operation(operation, &self.rule))
+                .map(|operation| {
+                    let rule = std::iter::once(&self.rule)
+                        .chain(&self.additional_rules)
+                        .find(|rule| rule.revision_ref() == operation.rule_revision)
+                        .unwrap();
+                    CurationAcceptanceRecord::for_operation(operation, rule)
+                })
                 .transpose()
         }
         fn result(&self, id: &str) -> Result<Option<CurationResult>, StorageError> {
@@ -4305,6 +4363,295 @@ mod tests {
     }
 
     #[test]
+    fn pending_operation_does_not_block_an_independent_rule_alternative() {
+        struct PendingCatalog {
+            rules: Vec<StandingCurationRuleRevision>,
+        }
+        impl AgentCurationPort for PendingCatalog {
+            fn operation_for_rule(
+                &self,
+                base: &CurationOperation,
+                reference: &crate::belief::TheoryRevisionRef,
+            ) -> Result<CurationOperation, StorageError> {
+                let rule = self
+                    .rules
+                    .iter()
+                    .find(|rule| &rule.revision_ref() == reference)
+                    .unwrap();
+                CurationOperation::reconstruct(
+                    base.authority.clone(),
+                    reference.clone(),
+                    base.source_cut.clone(),
+                    rule.rule.traversal_request(),
+                )
+            }
+            fn resolve_operation(
+                &self,
+                operation: CurationOperation,
+            ) -> Result<CurationOperation, StorageError> {
+                Ok(operation)
+            }
+            fn submit(&self, _: CurationOperation) -> Result<(), StorageError> {
+                Ok(())
+            }
+            fn acceptance(
+                &self,
+                _: &str,
+            ) -> Result<Option<CurationAcceptanceRecord>, StorageError> {
+                Ok(None)
+            }
+            fn result(&self, _: &str) -> Result<Option<CurationResult>, StorageError> {
+                Ok(None)
+            }
+        }
+        let mut fixture = Fixture::new();
+        let mut extra = fixture.rule.rule.clone();
+        extra.rule_id = "independent-observation".into();
+        let extra = CurationStore::new(fixture.db.clone())
+            .unwrap()
+            .install_rule(extra, 2)
+            .unwrap();
+        let rules = &mut fixture.strategy.package.snapshot.settlement_rules;
+        rules[0].epistemic_selections[0].rule_revision = Some(fixture.rule.revision_ref());
+        let mut alternative = rules[0].clone();
+        alternative.epistemic_selections[0].rule_revision = Some(extra.revision_ref());
+        rules.push(alternative);
+        let (mut actor, _) = fixture.actor(
+            vec![PlannerAssemblyOutcome::Complete(Box::new(
+                fixture.cut.clone(),
+            ))],
+            false,
+        );
+        actor.curation = Arc::new(PendingCatalog {
+            rules: vec![fixture.rule.clone(), extra],
+        });
+        let report = actor.bounded_step(8);
+        assert!(
+            report.fatal_errors.is_empty() && report.retryable_errors.is_empty(),
+            "{report:?}"
+        );
+        let first = fixture
+            .store
+            .current_reconciliation_plan(&fixture.goal.goal_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            fixture
+                .store
+                .product_authorizations_for_goal(&fixture.goal.goal_id)
+                .unwrap()
+                .len(),
+            1
+        );
+        // A transport-only new Planner cut preserves the original semantic operation.
+        let mut cut = fixture.cut.clone();
+        cut.cut_id = "transport-only-cut".into();
+        actor.planner = Arc::new(PlannerSequence {
+            outcomes: Mutex::new(VecDeque::new()),
+            fallback: PlannerAssemblyOutcome::Complete(Box::new(cut)),
+        });
+        let report = actor.bounded_step(8);
+        assert!(
+            report.fatal_errors.is_empty() && report.retryable_errors.is_empty(),
+            "{report:?}"
+        );
+        let next = fixture
+            .store
+            .current_reconciliation_plan(&fixture.goal.goal_id)
+            .unwrap()
+            .unwrap();
+        assert_ne!(next.settlement_rule_id, first.settlement_rule_id);
+        assert_ne!(
+            next.epistemic_operations[0].operation.operation_id,
+            first.epistemic_operations[0].operation.operation_id
+        );
+        assert_eq!(
+            fixture
+                .store
+                .product_authorizations_for_goal(&fixture.goal.goal_id)
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(fixture
+            .store
+            .completed_history_for_goal(&fixture.goal.goal_id)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn mixed_local_products_progress_through_agent_authorization_and_successor_cuts() {
+        use crate::strategy::{
+            StrategyDependencyMilestone as Milestone, StrategyEpistemicSelection,
+            StrategyProductOrdering, StrategyProductSelector as Selector,
+        };
+        let mut fixture = Fixture::new();
+        let mut extra_rule = fixture.rule.rule.clone();
+        extra_rule.rule_id = "after-index-rule".into();
+        let extra_rule = CurationStore::new(fixture.db.clone())
+            .unwrap()
+            .install_rule(extra_rule, 2)
+            .unwrap();
+        let package = &mut fixture.strategy.package;
+        let original_contract = package.capabilities.last().unwrap().contract_id.clone();
+        let mut capability = package.capabilities.last().unwrap().clone();
+        capability.contract_id = "independent-index-contract".into();
+        capability.operator.operator_id = "independent-index".into();
+        capability.operator.resolution.requires_inputs.clear();
+        capability.operator.resolution.requires_outputs[0].artifact_type =
+            Term::ArtifactType("index_evidence".into());
+        capability
+            .operator
+            .resolution
+            .specific
+            .as_mut()
+            .unwrap()
+            .capability_type_id = "test.index".into();
+        capability.outcome_contract_id = "index-ready".into();
+        let effect = Proposition::Exists {
+            scope: Term::Variable("?subject".into()),
+            artifact_type: Term::ArtifactType("index_evidence".into()),
+        };
+        capability.operator.effects = vec![meld_lang::Effect::Assert(effect.clone())];
+        package.capabilities.push(capability);
+        package.requested_authority.push("test.index".into());
+        package.search_bounds.max_expansions = 128;
+        let rule = &mut package.snapshot.settlement_rules[0];
+        rule.repeat_on_changed_owners.clear();
+        rule.settlement_obligation =
+            Proposition::All(vec![rule.settlement_obligation.clone(), effect]);
+        rule.epistemic_selections = vec![
+            StrategyEpistemicSelection {
+                rule_revision: Some(fixture.rule.revision_ref()),
+                evidence_return: false,
+            },
+            StrategyEpistemicSelection {
+                rule_revision: Some(extra_rule.revision_ref()),
+                evidence_return: false,
+            },
+        ];
+        rule.product_ordering = vec![
+            StrategyProductOrdering {
+                condition: crate::strategy::StrategyOrderingCondition::ConsumerSelected,
+                before: Selector::Epistemic {
+                    rule_id: fixture.rule.rule.rule_id.clone(),
+                },
+                after: Selector::Task {
+                    contract_id: "independent-index-contract".into(),
+                },
+                milestone: Milestone::CurationVisible,
+            },
+            StrategyProductOrdering {
+                condition: crate::strategy::StrategyOrderingCondition::ConsumerSelected,
+                before: Selector::Task {
+                    contract_id: "independent-index-contract".into(),
+                },
+                after: Selector::Epistemic {
+                    rule_id: extra_rule.rule.rule_id.clone(),
+                },
+                milestone: Milestone::ExecutionTerminal,
+            },
+            StrategyProductOrdering {
+                condition: crate::strategy::StrategyOrderingCondition::ConsumerSelected,
+                before: Selector::Epistemic {
+                    rule_id: extra_rule.rule.rule_id.clone(),
+                },
+                after: Selector::Task {
+                    contract_id: original_contract,
+                },
+                milestone: Milestone::CurationVisible,
+            },
+        ];
+        let curation = Arc::new(MultiCuration {
+            rule: fixture.rule.clone(),
+            additional_rules: vec![extra_rule.clone()],
+            operations: Mutex::new(Default::default()),
+        });
+        let execution = Arc::new(SelectedTerminalExecution {
+            completed: Mutex::new(Vec::new()),
+            submissions: Mutex::new(Vec::new()),
+        });
+        let (mut actor, _) = fixture.actor(
+            vec![PlannerAssemblyOutcome::Complete(Box::new(
+                fixture.cut.clone(),
+            ))],
+            true,
+        );
+        actor.curation = curation.clone();
+        actor.execution = execution.clone();
+        for _ in 0..4 {
+            let report = actor.bounded_step(16);
+            assert!(
+                report.fatal_errors.is_empty() && report.retryable_errors.is_empty(),
+                "{report:?}"
+            );
+        }
+        let authorized = fixture
+            .store
+            .product_authorizations_for_goal(&fixture.goal.goal_id)
+            .unwrap();
+        let first = authorized.iter().find(|record| matches!(&record.product, AgentAuthorizedProduct::Task(task) if task.capability_contract_ids.contains(&"independent-index-contract".into()))).unwrap();
+        assert_eq!(execution.submissions.lock().unwrap().len(), 1);
+        assert_eq!(curation.operations.lock().unwrap().len(), 1);
+        execution
+            .completed
+            .lock()
+            .unwrap()
+            .push(first.product_id.clone());
+        for _ in 0..2 {
+            let report = actor.bounded_step(16);
+            assert!(report.fatal_errors.is_empty(), "{report:?}");
+        }
+        assert_eq!(
+            curation.operations.lock().unwrap().len(),
+            1,
+            "second observation needs a successor cut after the first Task"
+        );
+        change_planner(&mut actor, &fixture.cut);
+        for _ in 0..8 {
+            let report = actor.bounded_step(16);
+            assert!(
+                report.fatal_errors.is_empty() && report.retryable_errors.is_empty(),
+                "{report:?}"
+            );
+        }
+        assert_eq!(curation.operations.lock().unwrap().len(), 2);
+        assert!(curation
+            .operations
+            .lock()
+            .unwrap()
+            .values()
+            .any(|operation| operation.rule_revision == extra_rule.revision_ref()));
+        assert_eq!(
+            execution.submissions.lock().unwrap().len(),
+            2,
+            "each independently authorized Task is submitted once"
+        );
+        let successor = fixture
+            .store
+            .current_reconciliation_plan(&fixture.goal.goal_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            successor.tasks.len(),
+            1,
+            "completed first Task remains only in history"
+        );
+        assert_eq!(
+            successor.epistemic_operations.len(),
+            1,
+            "completed prerequisite is not repeated for unrelated remaining work"
+        );
+        assert!(fixture
+            .store
+            .completed_history_for_goal(&fixture.goal.goal_id)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.product_id == first.product_id));
+    }
+
+    #[test]
     fn changed_knowledge_reconstructs_the_running_agent_and_preserves_completed_history() {
         let fixture = Fixture::new();
         let (mut actor, _) = fixture.actor(
@@ -4315,6 +4662,7 @@ mod tests {
         );
         let curation = Arc::new(MultiCuration {
             rule: fixture.rule.clone(),
+            additional_rules: Vec::new(),
             operations: Mutex::new(Default::default()),
         });
         actor.curation = curation.clone();
@@ -4674,7 +5022,7 @@ mod tests {
                 required: true,
             });
         for rule in &mut actor.strategy.package.snapshot.settlement_rules {
-            rule.epistemic_placement = crate::strategy::StrategyEpistemicPlacement::Confirmation;
+            crate::strategy::tests::DependencyFixture::OperationalConfirmation.apply(rule);
         }
         let mut fence = actor.frozen_authority.clone();
         fence.admission_epoch = Some("epoch-one".into());
@@ -5558,6 +5906,7 @@ mod tests {
 
     fn rule() -> StandingCurationRule {
         StandingCurationRule {
+            selection_posture: Default::default(),
             coverage: None,
             source_event_route: None,
             judgment_scope: None,
@@ -5620,6 +5969,7 @@ mod tests {
                 },
             ],
             receipts: vec![OwnerGraphRevisionReceipt {
+                work_input_basis_id: None,
                 event_coverage: None,
                 owner_id: "workspace_fs".to_string(),
                 revision_id: "workspace-v1".to_string(),
@@ -5668,6 +6018,7 @@ mod tests {
                 admission_epoch: None,
             },
             policy: PlannerAssemblyPolicy {
+                acquisition_question: None,
                 policy_revision_id: "policy-v1".to_string(),
                 required_sources: vec![PlannerSourceKind::Graph, PlannerSourceKind::Belief],
                 explicitly_not_required: vec![
@@ -5690,6 +6041,7 @@ mod tests {
             },
             source_positions: Vec::new(),
             world_model_view: WorldModelView {
+                unassessed_belief: None,
                 world_state: WorldState::new(Vec::new()).unwrap(),
                 projection_version: PLANNER_PROJECTION_VERSION.to_string(),
                 source_refs: vec![PlannerSourceRef::ProjectionRule {

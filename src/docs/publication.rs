@@ -15,6 +15,8 @@ pub const OBSERVATION_EVENT: &str = "docs.observation";
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DocsObservationRevision {
     pub revision_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_input_basis: Option<super::input_basis::DocsWorkInputBasis>,
     pub predecessor: Option<String>,
     pub sequence: u64,
     pub subject: DomainObjectRef,
@@ -35,13 +37,14 @@ impl DocsObservationRevision {
         subject: DomainObjectRef,
         scope: OwnerPublicationScope,
         evidence: DocsEvidenceBundle,
+        work_input_basis: Option<super::input_basis::DocsWorkInputBasis>,
     ) -> Result<Self, String> {
         subject.validate().map_err(|e| e.to_string())?;
         scope.validate().map_err(|e| e.to_string())?;
         if sequence == 0 || evidence.observation.is_none() {
             return Err("Docs publication requires an observed source and nonzero sequence".into());
         }
-        let bytes = serde_json::to_vec(&(
+        let mut bytes = serde_json::to_vec(&(
             OBSERVATION_SCHEMA,
             &predecessor,
             sequence,
@@ -50,8 +53,16 @@ impl DocsObservationRevision {
             &evidence,
         ))
         .map_err(|e| e.to_string())?;
+        if let Some(basis) = &work_input_basis {
+            if basis.basis_id.trim().is_empty() || basis.policy_identity.trim().is_empty() {
+                return Err("Docs work-input basis is incomplete".into());
+            }
+            bytes = serde_json::to_vec(&("docs-work-input-v1", bytes, basis))
+                .map_err(|error| error.to_string())?;
+        }
         Ok(Self {
             revision_id: format!("docs-revision::{}", blake3::hash(&bytes).to_hex()),
+            work_input_basis,
             predecessor,
             sequence,
             subject,
@@ -141,6 +152,7 @@ impl DocsObservationRevision {
             self.subject.clone(),
             self.scope.clone(),
             self.evidence.clone(),
+            self.work_input_basis.clone(),
         )?;
         if let Some(report) = &self.source_claims {
             expected = expected.with_source_claims(report.clone())?;
@@ -616,6 +628,10 @@ impl DocsObservationRevision {
         OwnerPublicationOperation::reconstruct(
             OBSERVATION_SCHEMA,
             OwnerPublicationBatch {
+                work_input_basis_id: self
+                    .work_input_basis
+                    .as_ref()
+                    .map(|basis| basis.basis_id.clone()),
                 owner_id: OWNER_ID.into(),
                 revision_id: self.revision_id.clone(),
                 scope: self.scope.clone(),

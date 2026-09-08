@@ -24,10 +24,11 @@ impl ProductCodeChangeEpochPreparation {
             .filter(|capability| capability.contract_id == contract.content_identity())
             .count()
             != 1
-            || strategy.snapshot.settlement_rules.iter().any(|rule| {
-                rule.epistemic_placement
-                    != meld_world_model::strategy::StrategyEpistemicPlacement::Confirmation
-            })
+            || strategy
+                .snapshot
+                .settlement_rules
+                .iter()
+                .any(|rule| !rule.has_evidence_returns() || rule.requires_effect_visibility())
             || curation.resolve_template(&template)?.is_none()
         {
             return Err(StorageError::InvalidPath("code-change preparation requires the exact materializer and post-Task confirmation".into()));

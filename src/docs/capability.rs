@@ -21,7 +21,6 @@ use crate::docs::claim_validation::{
 };
 use crate::error::ApiError;
 use crate::execution::{ExecutionEventContext, ExecutionRuntimeContext};
-use crate::provider::executor::{execute_completion, prepare_provider_for_request};
 use crate::provider::ProviderExecutionBinding;
 use crate::task::{ArtifactProducerRef, ArtifactRecord};
 
@@ -554,9 +553,7 @@ fn single_artifact(
 #[cfg(test)]
 pub use super::observation::inspect_scope;
 
-pub(crate) async fn draft_patch_set<
-    P: crate::execution::ProviderValidationPort + crate::execution::ProviderExecutionPort + ?Sized,
->(
+pub(crate) async fn draft_patch_set<P: crate::provider::ProviderCompletionPort + ?Sized>(
     api: &P,
     config: &DocsCapabilityConfig,
     policy: &DocsClaimPolicy,
@@ -619,9 +616,7 @@ pub(crate) async fn draft_patch_set<
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn generate_readme<
-    P: crate::execution::ProviderValidationPort + crate::execution::ProviderExecutionPort + ?Sized,
->(
+async fn generate_readme<P: crate::provider::ProviderCompletionPort + ?Sized>(
     api: &P,
     config: &DocsCapabilityConfig,
     policy: &DocsClaimPolicy,
@@ -648,15 +643,10 @@ async fn generate_readme<
             retry,
             0,
         )?;
-        let preparation = prepare_provider_for_request(api, &generation.request)?;
-        match execute_completion(
-            api,
-            &generation.request,
-            &preparation,
-            generation.messages,
-            event_context,
-        )
-        .await
+        match api
+            .complete_provider_request(&generation.request, generation.messages, event_context)
+            .await
+            .map(|completion| completion.response)
         {
             Ok(response) => {
                 let content = normalize_markdown(&response.content);

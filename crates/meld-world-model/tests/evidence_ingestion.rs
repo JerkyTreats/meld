@@ -23,7 +23,6 @@ use meld_world_model::events::{
     EventAuthorityOpenOptions, EventEnvelope, EventPage, EventRecord, EventReplayCapability,
     LedgerIdentity, ReplayRequest,
 };
-use meld_world_model::world_state::graph::store::TraversalStore;
 use meld_world_model::PerspectiveKey;
 use serde_json::json;
 
@@ -210,7 +209,6 @@ impl<C: DurableConsumerCursor> DurableConsumerCursor for AdvanceFailingCursor<C>
 struct Fixture {
     authority: EventAuthority,
     store: Arc<BeliefStore>,
-    traversal: Arc<TraversalStore>,
     registry: BeliefFamilyRegistryStore,
     _events_dir: tempfile::TempDir,
     _belief_dir: tempfile::TempDir,
@@ -227,14 +225,12 @@ impl Fixture {
         .unwrap();
         let belief_db = sled::open(belief_dir.path()).unwrap();
         let store = Arc::new(BeliefStore::new(belief_db.clone()).unwrap());
-        let traversal = Arc::new(TraversalStore::new(belief_db.clone()).unwrap());
         let mut registry = BeliefFamilyRegistryStore::new(belief_db).unwrap();
         let config = serde_json::from_str(family_config_json()).unwrap();
         registry.install(config, 1).unwrap();
         Self {
             authority,
             store,
-            traversal,
             registry,
             _events_dir: events_dir,
             _belief_dir: belief_dir,
@@ -260,7 +256,6 @@ impl Fixture {
         EvidenceIngestionActor::new(
             "world_model.evidence.actor",
             Arc::clone(&self.store),
-            Arc::clone(&self.traversal),
             Arc::new(self.registry.clone()),
             FAMILY_ID,
             Arc::new(ReplayPort(self.authority.replay_capability())),
@@ -687,7 +682,6 @@ fn incomplete_retained_history_cannot_advance_a_new_evidence_selection() {
     let mut actor = EvidenceIngestionActor::new(
         "evidence-with-missing-prefix",
         fixture.store.clone(),
-        fixture.traversal.clone(),
         Arc::new(fixture.registry.clone()),
         FAMILY_ID,
         Arc::new(MissingPrefix(fixture.authority.replay_capability())),

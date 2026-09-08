@@ -34,12 +34,38 @@
           "outcome_contract_id": "dependency_security.assessment_verification_completed.v1",
           "evidence_schema_id": "dependency_security_posture_v1"
         },
-        "epistemic_placement": "confirmation",
-        "task_ordering": [
+        "epistemic_selections": [
           {
-            "before_contract_id": "capability-contract-165d0b8840429f28803918f8b2b413c707971b7e1e4eb8c45f2d77037a19d2df",
-            "after_contract_id": "capability-contract-6ec4322cfe43bc6b3fa609b85bad7c8d860b53f61a459d1a43f16862dcd0ee46"
+            "rule_revision": null,
+            "evidence_return": true
           }
+        ],
+        "product_ordering": [
+          {
+            "before": {
+              "kind": "all_tasks"
+            },
+            "after": {
+              "kind": "all_epistemic"
+            },
+            "milestone": "execution_terminal"
+          },
+          {
+            "before": {
+              "kind": "task",
+              "contract_id": "capability-contract-165d0b8840429f28803918f8b2b413c707971b7e1e4eb8c45f2d77037a19d2df"
+            },
+            "after": {
+              "kind": "task",
+              "contract_id": "capability-contract-6ec4322cfe43bc6b3fa609b85bad7c8d860b53f61a459d1a43f16862dcd0ee46"
+            },
+            "milestone": "execution_terminal",
+            "condition": "both_selected"
+          }
+        ],
+        "construction": "executable",
+        "repeat_on_changed_owners": [
+          "dependency-security"
         ]
       }
     ]

@@ -37,6 +37,11 @@ pub struct CurationRealizationTemplate {
 /// Installed semantic content independent of physical Agent and subject assignment.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CurationRuleTemplate {
+    #[serde(
+        default,
+        skip_serializing_if = "super::CurationSelectionPosture::is_standing"
+    )]
+    pub selection_posture: super::CurationSelectionPosture,
     pub rule_id: String,
     pub source_owner_id: String,
     pub traversal_direction: TraversalDirection,
@@ -158,6 +163,7 @@ impl CurationRuleTemplate {
             None => expected_object_id,
         };
         let mut rule = StandingCurationRule {
+            selection_posture: self.selection_posture,
             source_event_route: source.and_then(|(source, _)| source.event_source.clone()),
             judgment_scope: source.map(|(_, judgment)| judgment.clone()),
             rule_id: self.rule_id.clone(),

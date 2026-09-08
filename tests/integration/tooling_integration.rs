@@ -25,7 +25,7 @@ fn create_test_api() -> (ContextApi, TempDir) {
         Arc::new(meld::context::frame::storage::FrameStorage::new(&frame_storage_path).unwrap());
     let prompt_context_storage =
         Arc::new(PromptContextArtifactStorage::new(&artifact_storage_path).unwrap());
-    let head_index = Arc::new(parking_lot::RwLock::new(HeadIndex::new()));
+    let head_index = HeadIndex::new();
     let agent_registry = Arc::new(parking_lot::RwLock::new(meld::agent::AgentRegistry::new()));
     let provider_registry = Arc::new(parking_lot::RwLock::new(
         meld::provider::ProviderRegistry::new(),

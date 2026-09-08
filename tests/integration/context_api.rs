@@ -36,7 +36,7 @@ fn create_test_api() -> (ContextApi, TempDir) {
     let frame_storage = Arc::new(FrameStorage::new(&frame_storage_path).unwrap());
     let prompt_context_storage =
         Arc::new(PromptContextArtifactStorage::new(&artifact_storage_path).unwrap());
-    let head_index = Arc::new(parking_lot::RwLock::new(HeadIndex::new()));
+    let head_index = HeadIndex::new();
     let agent_registry = Arc::new(parking_lot::RwLock::new(AgentRegistry::new()));
     let provider_registry = Arc::new(parking_lot::RwLock::new(
         meld::provider::ProviderRegistry::new(),
@@ -680,21 +680,4 @@ fn test_put_frame_rejects_mutability_transition_for_attested_key() {
         result,
         Err(ApiError::FrameMetadataMutabilityViolation { .. })
     ));
-}
-
-#[test]
-fn test_runtime_write_paths_use_shared_put_frame_boundary() {
-    let queue_source = include_str!("../../src/context/queue.rs");
-    let orchestration_source = include_str!("../../src/context/generation/orchestration.rs");
-    let adapter_source = include_str!("../../src/agent/context_access/context_api.rs");
-
-    assert!(!queue_source.contains("frame_storage().store("));
-    assert!(!queue_source.contains("frame_storage.store("));
-    assert!(!orchestration_source.contains("frame_storage().store("));
-    assert!(!orchestration_source.contains("frame_storage.store("));
-    assert!(!adapter_source.contains("frame_storage().store("));
-    assert!(!adapter_source.contains("frame_storage.store("));
-
-    assert!(orchestration_source.contains("api.put_frame("));
-    assert!(adapter_source.contains("self.api.put_frame("));
 }

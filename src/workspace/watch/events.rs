@@ -1,6 +1,5 @@
 //! Watch events, batching, and configuration.
 
-use crate::context::queue::GenerationConfig;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -27,10 +26,6 @@ pub struct WatchConfig {
     pub auto_create_frames: bool,
     /// Batch size for contextframe creation
     pub frame_batch_size: usize,
-    /// Enable automatic LLM-based frame generation
-    pub auto_generate_frames: bool,
-    /// Generation queue configuration
-    pub generation_config: Option<GenerationConfig>,
     /// Optional active observability session
     pub session_id: Option<String>,
     /// Optional progress runtime for event emission
@@ -56,8 +51,6 @@ impl Default for WatchConfig {
             max_queue_size: 10000,
             auto_create_frames: true,
             frame_batch_size: 50,
-            auto_generate_frames: false,
-            generation_config: None,
             session_id: None,
             progress: None,
         }

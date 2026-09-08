@@ -4,14 +4,12 @@
 
 use meld::agent::{AgentRole, AgentStorage, XdgAgentStorage};
 use meld::config::AgentConfig;
-use meld::control::projection::ExecutionProjection;
 use meld::events::{
     EventAuthority, EventAuthorityOpenOptions, EventRecord, LedgerCursor, LedgerIdentity,
     ReplayRequest, MAX_REPLAY_LIMIT,
 };
-use meld::runtime::ports::{
-    ProductEventAppendPort, ProductEventReplayPort, ProductGraphCursorPort,
-};
+use meld::execution::projection::ExecutionProjection;
+use meld::runtime::ports::{ProductEventReplayPort, ProductGraphCursorPort};
 use meld::session::{SessionRuntime, SessionStore};
 use meld::telemetry::ProgressRuntime;
 use meld::world_state::graph::runtime::GraphRuntime;
@@ -50,6 +48,10 @@ pub(crate) fn open_authority_progress(db: sled::Db) -> AuthorityProgressFixture 
 }
 
 impl AuthorityProgressFixture {
+    pub fn append_capability(&self) -> meld_events::EventAppendCapability {
+        self.authority.append_capability()
+    }
+
     pub fn ledger_identity(&self) -> LedgerIdentity {
         self.authority.ledger_identity()
     }
@@ -100,13 +102,12 @@ impl AuthorityProgressFixture {
         let replay = Arc::new(ProductEventReplayPort::new(
             self.authority.replay_capability(),
         ));
-        let append = Arc::new(ProductEventAppendPort::new(&self.authority));
         let cursor = Arc::new(ProductGraphCursorPort::new(
             self.authority.consumer_registry_capability(),
         ));
         let traversal = TraversalStore::shared(db).expect("open graph traversal test store");
         Arc::new(
-            GraphRuntime::from_ports(replay, append, cursor, traversal)
+            GraphRuntime::from_ports(replay, cursor, traversal)
                 .expect("open authority-backed graph runtime"),
         )
     }

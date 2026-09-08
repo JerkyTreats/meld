@@ -20,15 +20,15 @@ fn default_artifacts_path() -> PathBuf {
 /// Storage configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageConfig {
-    /// Path to node record store (relative to workspace root)
+    /// Node store path. Relative selections resolve under the workspace XDG data root.
     #[serde(default = "default_store_path")]
     pub store_path: PathBuf,
 
-    /// Path to frame storage (relative to workspace root)
+    /// Frame storage path. Relative selections resolve under the workspace XDG data root.
     #[serde(default = "default_frames_path")]
     pub frames_path: PathBuf,
 
-    /// Path to prompt context artifact storage (relative to workspace root)
+    /// Artifact storage path. Relative selections resolve under the workspace XDG data root.
     #[serde(default = "default_artifacts_path")]
     pub artifacts_path: PathBuf,
 
@@ -53,105 +53,89 @@ impl StorageConfig {
         &self,
         workspace_root: &Path,
     ) -> Result<(PathBuf, PathBuf, PathBuf), ApiError> {
-        let is_default_store = self.store_path == Path::new(".meld/store");
-        let is_default_frames = self.frames_path == Path::new(".meld/frames");
-        let is_default_artifacts = self.artifacts_path == Path::new(".meld/artifacts");
-
-        let store_path = if is_default_store {
-            let data_dir = xdg::workspace_data_dir(workspace_root)?;
-            data_dir.join("store")
-        } else {
-            workspace_root.join(&self.store_path)
-        };
-
-        let frames_path = if is_default_frames {
-            let data_dir = xdg::workspace_data_dir(workspace_root)?;
-            data_dir.join("frames")
-        } else {
-            workspace_root.join(&self.frames_path)
-        };
-
-        let artifacts_path = if is_default_artifacts {
-            let data_dir = xdg::workspace_data_dir(workspace_root)?;
-            data_dir.join("artifacts")
-        } else {
-            workspace_root.join(&self.artifacts_path)
-        };
-
-        Ok((store_path, frames_path, artifacts_path))
+        Ok((
+            resolve_workspace_state_path(
+                workspace_root,
+                (self.store_path != default_store_path()).then_some(self.store_path.as_path()),
+                "store",
+            )?,
+            resolve_workspace_state_path(
+                workspace_root,
+                (self.frames_path != default_frames_path()).then_some(self.frames_path.as_path()),
+                "frames",
+            )?,
+            resolve_workspace_state_path(
+                workspace_root,
+                (self.artifacts_path != default_artifacts_path())
+                    .then_some(self.artifacts_path.as_path()),
+                "artifacts",
+            )?,
+        ))
     }
 
-    /// Resolve the product runtime storage root.
+    /// Resolve the product runtime storage root through the same external-state boundary.
     pub fn resolve_product_root(&self, workspace_root: &Path) -> Result<PathBuf, ApiError> {
-        let workspace = workspace_root.canonicalize().map_err(|error| {
-            ApiError::ConfigError(format!(
-                "Failed to canonicalize workspace path {}: {error}",
-                workspace_root.display()
-            ))
-        })?;
-        if let Some(configured) = &self.product_root {
-            if configured.is_absolute() {
-                let lexical = normalize_absolute(configured)?;
-                if !path_is_within(&lexical, &workspace) {
-                    return validate_external_product_root(lexical, &workspace, None, None);
-                }
-            }
-        }
-        let xdg_root = normalize_absolute(&xdg::workspace_data_dir(&workspace)?)?;
-        let external_default = xdg_root.join("runtime");
-        let resolved_xdg_root = resolve_existing_ancestor(&xdg_root)?;
-
-        if path_is_within(&resolved_xdg_root, &workspace) {
-            return Err(ApiError::ProductRootInsideWorkspace {
-                old_path: xdg_root,
-                new_path: resolved_xdg_root,
-            });
-        }
-
-        let Some(configured) = &self.product_root else {
-            return validate_external_product_root(
-                external_default,
-                &workspace,
-                Some(&resolved_xdg_root),
-                None,
-            );
-        };
-
-        if configured.is_absolute() {
-            let lexical = normalize_absolute(configured)?;
-            if path_is_within(&lexical, &workspace) {
-                return Err(ApiError::ProductRootInsideWorkspace {
-                    old_path: lexical,
-                    new_path: external_default,
-                });
-            }
-            return validate_external_product_root(
-                lexical,
-                &workspace,
-                None,
-                Some(external_default),
-            );
-        }
-
-        let candidate = normalize_absolute(&xdg_root.join(configured))?;
-        if !path_is_within(&candidate, &xdg_root) {
-            return Err(ApiError::ConfigError(format!(
-                "Relative product runtime root '{}' escapes workspace XDG data root {}",
-                configured.display(),
-                xdg_root.display()
-            )));
-        }
-
-        let legacy = normalize_absolute(&workspace.join(configured))?;
-        if legacy.exists() && path_is_within(&legacy, &workspace) {
-            return Err(ApiError::ProductRootInsideWorkspace {
-                old_path: legacy,
-                new_path: candidate,
-            });
-        }
-
-        validate_external_product_root(candidate, &workspace, Some(&resolved_xdg_root), None)
+        resolve_workspace_state_path(workspace_root, self.product_root.as_deref(), "runtime")
     }
+}
+
+/// All workspace-owned runtime state uses one path authority, including legacy stores.
+fn resolve_workspace_state_path(
+    workspace_root: &Path,
+    configured: Option<&Path>,
+    default_directory: &str,
+) -> Result<PathBuf, ApiError> {
+    let workspace = workspace_root.canonicalize().map_err(|error| {
+        ApiError::ConfigError(format!(
+            "Failed to canonicalize workspace path {}: {error}",
+            workspace_root.display()
+        ))
+    })?;
+    if let Some(configured) = configured.filter(|path| path.is_absolute()) {
+        let lexical = normalize_absolute(configured)?;
+        if !path_is_within(&lexical, &workspace) {
+            return validate_external_product_root(lexical, &workspace, None, None);
+        }
+    }
+    let xdg_root = normalize_absolute(&xdg::workspace_data_dir(&workspace)?)?;
+    let external_default = xdg_root.join(default_directory);
+    let resolved_xdg_root = resolve_existing_ancestor(&xdg_root)?;
+    if path_is_within(&resolved_xdg_root, &workspace) {
+        return Err(ApiError::ProductRootInsideWorkspace {
+            old_path: xdg_root,
+            new_path: resolved_xdg_root,
+        });
+    }
+    let Some(configured) = configured else {
+        return validate_external_product_root(
+            external_default,
+            &workspace,
+            Some(&resolved_xdg_root),
+            None,
+        );
+    };
+    if configured.is_absolute() {
+        return Err(ApiError::ProductRootInsideWorkspace {
+            old_path: normalize_absolute(configured)?,
+            new_path: external_default,
+        });
+    }
+    let candidate = normalize_absolute(&xdg_root.join(configured))?;
+    if !path_is_within(&candidate, &xdg_root) {
+        return Err(ApiError::ConfigError(format!(
+            "Relative runtime state root '{}' escapes workspace XDG data root {}",
+            configured.display(),
+            xdg_root.display()
+        )));
+    }
+    let legacy = normalize_absolute(&workspace.join(configured))?;
+    if legacy.exists() && path_is_within(&legacy, &workspace) {
+        return Err(ApiError::ProductRootInsideWorkspace {
+            old_path: legacy,
+            new_path: candidate,
+        });
+    }
+    validate_external_product_root(candidate, &workspace, Some(&resolved_xdg_root), None)
 }
 
 fn validate_external_product_root(
@@ -524,6 +508,65 @@ mod tests {
                 if old_path.starts_with(workspace.path())
                     || old_path.starts_with(&data_link)
         ));
+    }
+
+    #[test]
+    fn custom_compatibility_storage_uses_the_external_boundary() {
+        with_isolated_xdg_data_home(|| {
+            let workspace = tempfile::tempdir().unwrap();
+            let config = StorageConfig {
+                store_path: "custom/store".into(),
+                frames_path: "custom/frames".into(),
+                artifacts_path: "custom/artifacts".into(),
+                ..StorageConfig::default()
+            };
+            let (store, frames, artifacts) = config.resolve_paths(workspace.path()).unwrap();
+            let data = xdg::workspace_data_dir(workspace.path()).unwrap();
+            assert_eq!(store, data.join("custom/store"));
+            assert_eq!(frames, data.join("custom/frames"));
+            assert_eq!(artifacts, data.join("custom/artifacts"));
+            for index in 0..3 {
+                let mut selected = config.clone();
+                let paths = [
+                    &mut selected.store_path,
+                    &mut selected.frames_path,
+                    &mut selected.artifacts_path,
+                ];
+                *paths.into_iter().nth(index).unwrap() = workspace.path().join("runtime-state");
+                assert!(matches!(
+                    selected.resolve_paths(workspace.path()),
+                    Err(ApiError::ProductRootInsideWorkspace { .. })
+                ));
+            }
+            std::fs::create_dir_all(workspace.path().join("custom/frames")).unwrap();
+            assert!(matches!(
+                config.resolve_paths(workspace.path()),
+                Err(ApiError::ProductRootInsideWorkspace { .. })
+            ));
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn compatibility_storage_rejects_symlink_into_target_and_relative_escape() {
+        with_isolated_xdg_data_home(|| {
+            let workspace = tempfile::tempdir().unwrap();
+            let external = tempfile::tempdir().unwrap();
+            let link = external.path().join("target");
+            std::os::unix::fs::symlink(workspace.path(), &link).unwrap();
+            for index in 0..3 {
+                for path in [link.join("state"), PathBuf::from("../escape")] {
+                    let mut config = StorageConfig::default();
+                    let paths = [
+                        &mut config.store_path,
+                        &mut config.frames_path,
+                        &mut config.artifacts_path,
+                    ];
+                    *paths.into_iter().nth(index).unwrap() = path;
+                    assert!(config.resolve_paths(workspace.path()).is_err());
+                }
+            }
+        });
     }
 
     #[test]

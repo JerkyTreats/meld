@@ -1,4 +1,4 @@
-//! Context domain: frame model, query, mutation, generation, and queue.
+//! Context domain: frame model, query, mutation, and bounded generation mechanisms.
 //! Owns context behavior; CLI, agent adapter, and workspace watch consume via explicit contracts.
 
 pub mod belief_context;
@@ -10,22 +10,16 @@ pub(crate) mod frame_metadata_keys;
 pub mod generation;
 pub mod head;
 pub mod query;
-pub mod queue;
-pub(crate) mod reducer;
 pub mod summary;
 pub mod tooling;
 pub mod types;
 
 pub use facade::ContextFacade;
 pub use frame::{Basis, Frame, FrameMerkleSet, FrameStorage};
-pub use generation::{
-    FailurePolicy, GenerationExecutor, GenerationItem, GenerationNodeType, GenerationPlan,
-    GenerationResult, GenerationTarget, PlanPriority, QueueSubmitter, TargetExecutionProgram,
-    TargetExecutionProgramKind,
-};
-pub use head::{CurrentFrameHead, CurrentFrameHeadRead};
-pub use queue::{
-    FrameGenerationQueue, GenerationConfig, GenerationRequest, GenerationRequestOptions, Priority,
-    QueueEventContext, QueueStats,
-};
+pub use head::CurrentFrameHeadRead;
 pub use types::{CompactResult, RestoreResult, TombstoneResult};
+
+pub mod publication;
+
+pub mod service;
+pub use service::ContextService;

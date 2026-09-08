@@ -1,22 +1,5 @@
-//! Context generation: plan and executor for running generation plans against the queue.
-//! Behavior-named; executor runs the plan; queue and provider stay in their domains.
+//! Bounded Context generation mechanisms used by authorized Task capabilities.
 
 pub mod contracts;
-pub mod executor;
 pub mod metadata_construction;
-pub mod orchestration;
-pub mod plan;
-pub mod program;
 pub mod prompt_collection;
-pub mod provider_execution;
-pub mod run;
-pub mod selection;
-
-pub use executor::{GenerationExecutor, QueueSubmitter};
-pub use plan::{
-    FailurePolicy, GenerationErrorDetail, GenerationItem, GenerationNodeType, GenerationPlan,
-    GenerationResult, GenerationTarget, LevelSummary, PlanPriority,
-};
-pub use program::{TargetExecutionProgram, TargetExecutionProgramKind};
-pub use run::{run_generate, GenerateRequest};
-pub use selection::resolve_target_execution_program;

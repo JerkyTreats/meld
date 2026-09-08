@@ -6,7 +6,9 @@
 //! meaning with the participant owners.
 
 mod contracts;
+mod owner;
 mod store;
 
 pub use contracts::*;
+pub use owner::*;
 pub use store::ActivationLifecycleStore;

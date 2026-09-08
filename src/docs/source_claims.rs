@@ -4,7 +4,7 @@ use super::capability::{DocsCapabilityConfig, DocsEvidenceBundle};
 use super::claim_validation::{decode_json_response, DocsClaimJudge, DocsClaimPolicy};
 use super::observation::{validate_observation, ObservedSource};
 use crate::error::ApiError;
-use crate::execution::{ProviderExecutionPort, ProviderValidationPort};
+use crate::provider::ProviderCompletionPort;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -336,9 +336,7 @@ fn reconcile_source_claims(
     })
 }
 
-pub(crate) async fn extract_provider_claims<
-    P: ProviderValidationPort + ProviderExecutionPort + ?Sized,
->(
+pub(crate) async fn extract_provider_claims<P: ProviderCompletionPort + ?Sized>(
     api: &P,
     config: &DocsCapabilityConfig,
     request: &DocsSourceClaimRequest<'_>,
@@ -352,16 +350,11 @@ pub(crate) async fn extract_provider_claims<
         0,
         0,
     )?;
-    let preparation =
-        crate::provider::executor::prepare_provider_for_request(api, &generation.request)?;
-    let result = crate::provider::executor::execute_completion(
-        api,
-        &generation.request,
-        &preparation,
-        generation.messages,
-        None,
-    )
-    .await?;
+    let completion = api
+        .complete_provider_request(&generation.request, generation.messages, None)
+        .await?;
+    let preparation = completion.preparation;
+    let result = completion.response;
     let mut proposed: ProposedSourceClaims =
         decode_json_response(&result.content, "source claims")?;
     proposed.execution = Some(super::judgment::DocsJudgmentExecution::capture(

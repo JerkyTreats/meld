@@ -16,7 +16,6 @@
 //!     PromotedEvidenceRecord,
 //! };
 //! use meld_world_model::events::DomainObjectRef;
-//! use meld_world_model::world_state::graph::store::TraversalStore;
 //! use meld_world_model::PerspectiveKey;
 //!
 //! let json = r#"{
@@ -67,13 +66,11 @@
 //!
 //! let db = sled::Config::new().temporary(true).open().unwrap();
 //! let belief = Arc::new(BeliefStore::new(db.clone()).unwrap());
-//! let graph = Arc::new(TraversalStore::new(db).unwrap());
 //! let config = BeliefConfigLoader::load_json(json).unwrap();
 //! let perspective = PerspectiveKey::new("default", "default").unwrap();
 //! let branch_scope = BranchScope::main();
 //! let runtime = BeliefRuntime::new(
 //!     belief.clone(),
-//!     graph,
 //!     config.clone(),
 //!     perspective.clone(),
 //!     branch_scope.clone(),

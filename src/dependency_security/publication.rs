@@ -405,6 +405,7 @@ fn publish_product(
     OwnerPublicationOperation::reconstruct(
         SCHEMA,
         OwnerPublicationBatch {
+            work_input_basis_id: None,
             owner_id: OWNER.into(),
             revision_id,
             scope: scope.clone(),

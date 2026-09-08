@@ -1,8 +1,5 @@
 use crate::branches::contracts::BranchesStatusOutput;
-use crate::branches::query::{
-    BranchGraphStatusOutput, FederatedNeighborsOutput, FederatedOwnerWalkOutput,
-    FederatedWalkOutput,
-};
+use crate::branches::query::{BranchGraphStatusOutput, FederatedOwnerWalkOutput};
 
 pub fn format_branch_status_text(output: &BranchesStatusOutput) -> String {
     if output.branches.is_empty() {
@@ -61,46 +58,6 @@ pub fn format_branch_graph_status_text(output: &BranchGraphStatusOutput) -> Stri
             out.push_str(&format!("Error: {}\n", error));
         }
     }
-    out.trim_end().to_string()
-}
-
-pub fn format_federated_neighbors_text(output: &FederatedNeighborsOutput) -> String {
-    let mut out = format!(
-        "Federated neighbors across {} readable branches\n",
-        output.metadata.readable_branch_ids.len()
-    );
-    for neighbor in &output.neighbors {
-        out.push_str(&format!(
-            "- [{}] {}::{}::{} first={} last={} current={}\n",
-            neighbor.branch_id,
-            neighbor.object.domain_id,
-            neighbor.object.object_kind,
-            neighbor.object.object_id,
-            neighbor.first_seen_seq,
-            neighbor.last_seen_seq,
-            neighbor.current_in_branch
-        ));
-    }
-    out.trim_end().to_string()
-}
-
-pub fn format_federated_walk_text(output: &FederatedWalkOutput) -> String {
-    let mut out = format!(
-        "Federated walk across {} readable branches\n",
-        output.metadata.readable_branch_ids.len()
-    );
-    out.push_str(&format!(
-        "Visited Objects: {}\n",
-        output.walk.visited_objects.len()
-    ));
-    out.push_str(&format!(
-        "Visited Facts: {}\n",
-        output.walk.visited_facts.len()
-    ));
-    out.push_str(&format!(
-        "Traversed Relations: {}\n",
-        output.walk.traversed_relations.len()
-    ));
     out.trim_end().to_string()
 }
 

@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use meld_lang::{evaluate, EdgeKind, EvalResult, StepKind};
 
 use super::search::{
-    candidate_evaluation, composition_contributes, plan_family_identity, plan_revision_identity,
-    terminal_outcome_contract,
+    candidate_evaluation, plan_family_identity, plan_revision_identity,
+    tasks_and_history_contribute, terminal_outcome_contract,
 };
 use super::{
     PlanMilestoneRequirement, PlanVerification, StrategyPlan, StrategyProblem,
@@ -37,41 +37,6 @@ fn verify_with_history(
         grounds.push(StrategyRejectionGround::IdentityMismatch);
     }
     if candidate.origin == super::StrategyPlanOrigin::Satisfied {
-        let confirmation_required = problem
-            .theory
-            .settlement_rules
-            .iter()
-            .find_map(|rule| {
-                meld_lang::unify(&rule.goal_pattern, &problem.goal.target)
-                    .map(|bindings| (rule, bindings))
-            })
-            .filter(|(rule, _)| rule.epistemic_placement.is_confirmation())
-            .is_some_and(|(rule, bindings)| {
-                super::search::ground_proposition(&rule.settlement_obligation, &bindings).is_ok_and(
-                    |settlement| {
-                        super::search::history_contributes(
-                            &super::search::completed_task_history(history),
-                            &settlement,
-                        )
-                    },
-                )
-            });
-        if confirmation_required {
-            let operations = super::search::epistemic_products(problem);
-            if operations.is_empty()
-                || !operations.iter().all(|operation| {
-                    history.iter().any(|entry| {
-                        matches!(&entry.product, Some(super::StrategyProduct::Epistemic(prior))
-                    if prior.same_request_as(operation)
-                    && prior.product_id == entry.product_id
-                    && prior.return_evidence == operation.return_evidence
-                    && prior.accepts_return(&entry.accepted_milestone))
-                    })
-                })
-            {
-                grounds.push(StrategyRejectionGround::InvalidEvidenceRoute);
-            }
-        }
         if !matches!(
             evaluate(
                 &problem.planner_cut.world_model_view.world_state,
@@ -81,9 +46,6 @@ fn verify_with_history(
         ) || !candidate.tasks.is_empty()
             || !candidate.epistemic_operations.is_empty()
             || !candidate.dependencies.is_empty()
-            || !candidate.composition.steps.is_empty()
-            || !candidate.composition.edges.is_empty()
-            || !candidate.capability_contract_ids.is_empty()
             || candidate.evidence_route.is_some()
             || candidate.conditions != vec![problem.goal.target.clone()]
             || candidate.settlement_obligation != problem.goal.target
@@ -101,14 +63,23 @@ fn verify_with_history(
             PlanVerification::Invalid { grounds }
         };
     }
-    let rule = problem.theory.settlement_rules.iter().find_map(|rule| {
-        meld_lang::unify(&rule.goal_pattern, &problem.goal.target).map(|bindings| (rule, bindings))
-    });
-    let Some((rule, bindings)) = rule else {
+    let Some(rule) = super::search::selected_rule(problem, candidate) else {
         return PlanVerification::Invalid {
             grounds: vec![StrategyRejectionGround::NoSettlementRule],
         };
     };
+    let bindings = meld_lang::unify(&rule.goal_pattern, &problem.goal.target)
+        .expect("selected rule matches Goal");
+    if problem
+        .planner_cut
+        .world_model_view
+        .unassessed_belief
+        .is_some()
+        && (rule.construction != super::StrategyConstruction::ObserveUnknown
+            || !candidate.tasks.is_empty())
+    {
+        grounds.push(StrategyRejectionGround::InvalidComposition);
+    }
     if super::search::ground_proposition(&rule.settlement_obligation, &bindings).as_ref()
         != Ok(&candidate.settlement_obligation)
         || candidate.evidence_route.as_ref() != Some(&rule.evidence_route)
@@ -118,13 +89,11 @@ fn verify_with_history(
     if candidate.conditions != vec![problem.goal.target.clone()]
         || candidate.explanation.trim().is_empty()
         || candidate.frozen_context_id != problem.planner_cut.context.context_id
-        || candidate.epistemic_operations
-            != super::search::epistemic_products_with_history(problem, history)
         || !dependencies_valid(candidate, history)
     {
         grounds.push(StrategyRejectionGround::InvalidComposition);
     }
-    if super::search::confirmation_is_current(problem, history)
+    if super::search::confirmation_is_current(problem, rule, history)
         && !candidate.tasks.is_empty()
         && candidate.tasks.iter().all(|task| {
             super::search::completed_task_history(history)
@@ -157,130 +126,92 @@ fn verify_with_history(
             None => grounds.push(StrategyRejectionGround::InvalidComposition),
         }
     }
-    let task_ids: BTreeSet<_> = candidate
-        .tasks
-        .iter()
-        .map(|task| task.task_id.as_str())
-        .collect();
-    let mut task_dependencies: Vec<_> = candidate
-        .dependencies
-        .iter()
-        .filter(|dependency| {
-            task_ids.contains(dependency.consumer_product_id.as_str())
-                && matches!(
-                    dependency.required_milestone,
-                    PlanMilestoneRequirement::ExecutionTerminal { .. }
-                )
-        })
-        .cloned()
-        .collect();
-    task_dependencies.sort_by(|left, right| left.dependency_id.cmp(&right.dependency_id));
-    if super::search::task_ordering_dependencies(rule, &candidate.tasks, history).as_ref()
-        != Ok(&task_dependencies)
+    if super::search::planned_epistemic_products(problem, rule, &candidate.tasks, history).as_ref()
+        != Ok(&(
+            candidate.epistemic_operations.clone(),
+            candidate.dependencies.clone(),
+        ))
     {
         grounds.push(StrategyRejectionGround::InvalidComposition);
     }
     let confirmation = candidate.tasks.is_empty();
-    if confirmation {
-        if !rule.epistemic_placement.is_confirmation()
+    if candidate.origin == super::StrategyPlanOrigin::Epistemic {
+        if !confirmation
+            || rule.construction != super::StrategyConstruction::ObserveUnknown
             || candidate.epistemic_operations.is_empty()
-            || !candidate.composition.steps.is_empty()
-            || !candidate.composition.edges.is_empty()
+            || !candidate
+                .epistemic_operations
+                .iter()
+                .any(|operation| operation.return_evidence.is_some())
+            || !matches!(
+                evaluate(
+                    &problem.planner_cut.world_model_view.world_state,
+                    &problem.goal.target
+                ),
+                EvalResult::Indeterminate { .. }
+            )
+        {
+            grounds.push(StrategyRejectionGround::InvalidComposition);
+        }
+    } else if confirmation {
+        if !rule.has_evidence_returns()
+            || candidate.epistemic_operations.is_empty()
             || candidate.bindings != meld_lang::Bindings::empty()
-            || !candidate.capability_contract_ids.is_empty()
-            || !candidate.epistemic_operations.iter().all(|operation| {
-                let linked: Vec<_> = super::search::confirmation_history(problem, rule, history)
-                    .into_iter()
-                    .filter(|entry| {
-                        candidate.dependencies.iter().any(|dependency| {
-                            dependency.consumer_product_id == operation.product_id
-                                && dependency.producer_product_id == entry.product_id
-                                && dependency.required_milestone == entry.accepted_milestone
-                        })
-                    })
-                    .collect();
-                super::search::history_contributes(&linked, &candidate.settlement_obligation)
-            })
+            || !super::search::history_contributes(
+                &super::search::confirmation_history(problem, rule, history),
+                &candidate.settlement_obligation,
+            )
         {
             grounds.push(StrategyRejectionGround::InvalidComposition);
         }
     } else {
-        // The aggregate is a compatibility projection of independently complete Tasks.
-        let steps: Vec<_> = candidate
-            .tasks
-            .iter()
-            .flat_map(|task| task.composition.steps.clone())
-            .collect();
-        let edges: Vec<_> = candidate
-            .tasks
-            .iter()
-            .flat_map(|task| task.composition.edges.clone())
-            .collect();
-        let contracts: BTreeSet<_> = candidate
-            .tasks
-            .iter()
-            .flat_map(|task| task.capability_contract_ids.clone())
-            .collect();
-        if candidate.composition.steps != steps
-            || candidate.composition.edges != edges
-            || contracts != candidate.capability_contract_ids.iter().cloned().collect()
-            || candidate.tasks.iter().any(|task| {
-                task.effect_visibility
-                    != if rule.epistemic_placement
-                        == super::StrategyEpistemicPlacement::GraphConfirmation
-                    {
-                        problem.effect_visibility.clone()
-                    } else {
-                        None
-                    }
-                    || rule.epistemic_placement
-                        == super::StrategyEpistemicPlacement::GraphConfirmation
-                        && task
-                            .effect_visibility
-                            .as_ref()
-                            .is_none_or(|expected| expected.validate().is_err())
-                    || !meld_lang::validate(&task.composition).valid
-                    || task.composition.steps.is_empty()
-                    || task.return_milestone
-                        != Some(PlanMilestoneRequirement::ExecutionTerminal {
-                            task_id: task.task_id.clone(),
-                        })
-            })
-        {
+        if rule.construction != super::StrategyConstruction::Executable {
             grounds.push(StrategyRejectionGround::InvalidComposition);
         }
-        for operation in &candidate.epistemic_operations {
-            let linked = candidate.tasks.iter().all(|task| {
-                candidate
-                    .dependencies
-                    .iter()
-                    .any(|dependency| match rule.epistemic_placement {
-                        super::StrategyEpistemicPlacement::Prerequisite => {
-                            dependency.producer_product_id == operation.product_id
-                                && dependency.consumer_product_id == task.task_id
-                                && dependency.required_milestone
-                                    == PlanMilestoneRequirement::CurationVisible {
-                                        operation_id: operation.operation.operation_id.clone(),
-                                    }
-                        }
-                        super::StrategyEpistemicPlacement::Confirmation
-                        | super::StrategyEpistemicPlacement::GraphConfirmation => {
-                            dependency.producer_product_id == task.task_id
-                                && dependency.consumer_product_id == operation.product_id
-                                && dependency.required_milestone == task.confirmation_milestone()
-                        }
+        if candidate.tasks.iter().any(|task| {
+            task.effect_visibility
+                != if rule.task_requires_visibility(task) {
+                    problem.effect_visibility.clone()
+                } else {
+                    None
+                }
+                || rule.task_requires_visibility(task)
+                    && task
+                        .effect_visibility
+                        .as_ref()
+                        .is_none_or(|expected| expected.validate().is_err())
+                || !meld_lang::validate(&task.composition).valid
+                || task.composition.steps.is_empty()
+                || task.return_milestone
+                    != Some(PlanMilestoneRequirement::ExecutionTerminal {
+                        task_id: task.task_id.clone(),
                     })
-            });
-            if !linked {
-                grounds.push(StrategyRejectionGround::InvalidComposition);
-            }
+        }) {
+            grounds.push(StrategyRejectionGround::InvalidComposition);
         }
     }
     // The candidate carries an operational graph, but the problem remains
     // authoritative for which capability contracts that graph may name.
-    let mut evidence_outcome_supported = false;
+    // An accepted historical producer can supply the route while remaining
+    // Tasks progress. It is not reauthorized or rechecked as live work.
+    let mut evidence_outcome_supported =
+        super::search::current_completed_tasks(problem, rule, history)
+            .iter()
+            .any(|task| {
+                problem.capabilities.iter().any(|capability| {
+                    task.capability_contract_ids
+                        .contains(&capability.contract_id)
+                        && candidate.evidence_route.as_ref().is_some_and(|route| {
+                            capability.outcome_contract_id == route.outcome_contract_id
+                        })
+                })
+            });
     let mut used_contracts = BTreeSet::new();
-    for step in &candidate.composition.steps {
+    for step in candidate
+        .tasks
+        .iter()
+        .flat_map(|task| &task.composition.steps)
+    {
         let StepKind::Op(operator) = &step.kind else {
             grounds.push(StrategyRejectionGround::InvalidComposition);
             continue;
@@ -297,12 +228,6 @@ fn verify_with_history(
             grounds.push(StrategyRejectionGround::InvalidComposition);
             continue;
         };
-        if !candidate
-            .capability_contract_ids
-            .contains(&capability.contract_id)
-        {
-            grounds.push(StrategyRejectionGround::IdentityMismatch);
-        }
         used_contracts.insert(capability.contract_id.clone());
         evidence_outcome_supported |= candidate
             .evidence_route
@@ -330,13 +255,22 @@ fn verify_with_history(
     if !confirmation && !evidence_outcome_supported {
         grounds.push(StrategyRejectionGround::InvalidEvidenceRoute);
     }
-    let declared_contracts: BTreeSet<_> =
-        candidate.capability_contract_ids.iter().cloned().collect();
+    let declared_contracts: BTreeSet<_> = candidate
+        .tasks
+        .iter()
+        .flat_map(|task| task.capability_contract_ids.iter().cloned())
+        .collect();
     if used_contracts != declared_contracts {
         grounds.push(StrategyRejectionGround::IdentityMismatch);
     }
     if !confirmation
-        && !composition_contributes(&candidate.composition, &candidate.settlement_obligation)
+        && !tasks_and_history_contribute(
+            problem,
+            rule,
+            &candidate.tasks,
+            history,
+            &candidate.settlement_obligation,
+        )
     {
         grounds.push(StrategyRejectionGround::InvalidComposition);
     }
@@ -359,7 +293,7 @@ fn verify_with_history(
         expected_inputs.sort_by(|left, right| {
             (&left.step_id, &left.slot_id).cmp(&(&right.step_id, &right.slot_id))
         });
-        if task.source_basis_id != super::search::task_source_basis(problem)
+        if task.source_basis_id != super::search::task_source_basis(problem, rule)
             || task.initial_inputs != expected_inputs
             || task
                 .initial_inputs
@@ -460,6 +394,36 @@ pub fn verify_successor_plan(
     successor: &StrategySuccessorPlan,
 ) -> PlanVerification {
     let predecessor = request.predecessor_plan.as_ref();
+    if successor.plan.origin == super::StrategyPlanOrigin::Satisfied {
+        if let Some(rule) = super::search::selected_rule(&request.search.problem, predecessor) {
+            let bindings =
+                meld_lang::unify(&rule.goal_pattern, &request.search.problem.goal.target)
+                    .expect("selected rule matches Goal");
+            let confirmation_required = rule.has_evidence_returns()
+                && super::search::ground_proposition(&rule.settlement_obligation, &bindings)
+                    .is_ok_and(|settlement| {
+                        super::search::history_contributes(
+                            &super::search::completed_task_history(&request.completed_history),
+                            &settlement,
+                        )
+                    });
+            if confirmation_required
+                && !super::search::confirmation_is_current(
+                    &request.search.problem,
+                    rule,
+                    &request.completed_history,
+                )
+            {
+                return PlanVerification::Invalid {
+                    grounds: vec![StrategyRejectionGround::InvalidEvidenceRoute],
+                };
+            }
+        } else if predecessor.origin != super::StrategyPlanOrigin::Satisfied {
+            return PlanVerification::Invalid {
+                grounds: vec![StrategyRejectionGround::InvalidPredecessor],
+            };
+        }
+    }
     let standard = verify_with_history(
         &request.search.problem,
         &successor.plan,
@@ -468,22 +432,12 @@ pub fn verify_successor_plan(
     if !matches!(standard, PlanVerification::Valid { .. }) {
         return standard;
     }
-    if predecessor.plan_revision_id != plan_revision_identity(predecessor)
+    if !super::history::predecessor_identity_valid(predecessor)
         || predecessor.plan_family_id != plan_family_identity(&request.search.problem)
         || predecessor.goal_id != request.search.problem.goal.goal_id
         || successor.plan.plan_family_id != predecessor.plan_family_id
         || successor.plan.predecessor_plan_revision_id.as_ref()
             != Some(&predecessor.plan_revision_id)
-        || successor.plan.origin == super::StrategyPlanOrigin::Confirmation
-            && predecessor.tasks.iter().any(|task| {
-                !successor.plan.epistemic_operations.iter().all(|operation| {
-                    successor.plan.dependencies.iter().any(|dependency| {
-                        dependency.producer_product_id == task.task_id
-                            && dependency.consumer_product_id == operation.product_id
-                            && dependency.required_milestone == task.confirmation_milestone()
-                    })
-                })
-            })
         || successor.completed_history != request.completed_history
         || request.completed_history.iter().any(|entry| {
             if entry.source_plan_revision_id != predecessor.plan_revision_id {

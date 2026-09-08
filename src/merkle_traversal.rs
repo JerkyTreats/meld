@@ -116,7 +116,7 @@ mod tests {
 
         let node_store = Arc::new(SledNodeRecordStore::new(&store_root).unwrap());
         let frame_storage = Arc::new(FrameStorage::new(&frames_root).unwrap());
-        let head_index = Arc::new(parking_lot::RwLock::new(HeadIndex::new()));
+        let head_index = HeadIndex::new();
         let prompt_context_storage =
             Arc::new(PromptContextArtifactStorage::new(&artifact_storage_root).unwrap());
         let agent_registry = Arc::new(parking_lot::RwLock::new(AgentRegistry::new()));

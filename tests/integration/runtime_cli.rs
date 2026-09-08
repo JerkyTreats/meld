@@ -247,14 +247,22 @@ fn runtime_run_accounts_distinguish_work_from_active_idle() {
     with_xdg_env(&temp_dir, || {
         let workspace_root = workspace(&temp_dir);
         let assembly = open_bound_assembly(&workspace_root);
-        // One committed graph event makes the first maintenance pass a
-        // working pass; later passes are truthfully active-idle.
+        // One owner publication makes the first Graph pass perform semantic work.
+        let frames_dir = tempfile::tempdir().unwrap();
+        let frames = meld::context::frame::FrameStorage::new(frames_dir.path()).unwrap();
+        let publication =
+            meld::context::publication::head_publication(&meld::heads::HeadIndex::new(), &frames)
+                .unwrap();
         assembly
             .event_authority()
             .append_capability()
             .append_durable(
-                head_tombstoned_envelope("session-account", [2; 32], "analysis", None),
-                AppendMode::Plain,
+                meld::world_state::graph::events::owner_publication_envelope(
+                    "session-account",
+                    &publication,
+                )
+                .unwrap(),
+                AppendMode::Idempotent,
             )
             .unwrap();
 

@@ -225,7 +225,16 @@ fn dormant_branch_migrations_keep_separate_product_authorities() {
 }
 
 #[test]
-fn dormant_branch_migration_uses_its_configured_legacy_store() {
+fn dormant_branch_migration_uses_its_configured_external_legacy_store() {
+    assert_configured_branch_migration(false);
+}
+
+#[test]
+fn dormant_branch_migration_refuses_legacy_state_inside_workspace() {
+    assert_configured_branch_migration(true);
+}
+
+fn assert_configured_branch_migration(inside_workspace: bool) {
     let test_dir = TempDir::new().unwrap();
     let workspace = TempDir::new().unwrap();
 
@@ -242,7 +251,13 @@ artifacts_path = "custom-artifacts"
 "#,
         )
         .unwrap();
-        let custom_store = workspace.path().join("custom-events");
+        let custom_store = if inside_workspace {
+            workspace.path().join("custom-events")
+        } else {
+            xdg::workspace_data_dir(workspace.path())
+                .unwrap()
+                .join("custom-events")
+        };
         let store = EventStore::new(sled::open(&custom_store).unwrap()).unwrap();
         store
             .append_envelope(
@@ -266,7 +281,7 @@ artifacts_path = "custom-artifacts"
             format: "json".to_string(),
         })
         .unwrap();
-        meld::branches::tooling::handle_cli_command(&BranchesCommands::Migrate {
+        let migrated = meld::branches::tooling::handle_cli_command(&BranchesCommands::Migrate {
             format: "json".to_string(),
         })
         .unwrap();
@@ -274,6 +289,21 @@ artifacts_path = "custom-artifacts"
         let binding_path = xdg::workspace_data_dir(workspace.path())
             .unwrap()
             .join("event_authority.json");
+        if inside_workspace {
+            let status: BranchesStatusOutput = serde_json::from_str(&migrated).unwrap();
+            assert_eq!(status.branches.len(), 1);
+            assert_eq!(status.branches[0].migration_status, "failed");
+            assert!(!binding_path.exists());
+            let config = meld::config::ConfigLoader::load(workspace.path()).unwrap();
+            assert!(
+                matches!(config.system.storage.resolve_paths(workspace.path()),
+                Err(meld::error::ApiError::ProductRootInsideWorkspace { old_path, .. })
+                if old_path == custom_store.canonicalize().unwrap())
+            );
+            let source = LegacyEventMigrationSource::open(&custom_store).unwrap();
+            assert!(source.cutover_marker().unwrap().is_none());
+            return;
+        }
         let binding: ProductEventBinding =
             serde_json::from_slice(&std::fs::read(binding_path).unwrap()).unwrap();
         assert_eq!(
@@ -358,6 +388,7 @@ fn binary_active_graph_query_routes_through_run_context() {
             String::from_utf8_lossy(&output.stderr)
         );
         let parsed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(parsed["branches"][0]["read_status"], "ready");
+        assert_eq!(parsed["branches"][0]["read_status"], "uninitialized");
+        assert!(parsed["branches"][0]["last_reduced_seq"].is_null());
     });
 }

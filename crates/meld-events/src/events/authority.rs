@@ -19,6 +19,10 @@ use crate::events::durable_cursor::DurableCursorTree;
 use crate::events::identity::LedgerIdentity;
 use crate::events::observability::{CoverageTruncation, EventReadCoverage};
 use crate::events::registry::{ConsumerCursor, EventCursorRegistry};
+use crate::events::remote::{
+    BarrierRequest, BestEffortAppendRequest, CommittedRecordRequest, DurableAppendBatchRequest,
+    DurableAppendRequest, EventAuthorityContract, NewestPageRequest,
+};
 use crate::events::store::EventStore;
 use crate::events::writer::{CommitWatermark, EventWriter};
 use crate::events::{EventEnvelope, EventRecord};
@@ -182,13 +186,31 @@ pub struct ConsumerCursorPosition {
 /// Clonable durable and best-effort append capability.
 #[derive(Clone)]
 pub struct EventAppendCapability {
-    inner: Arc<AuthorityInner>,
+    inner: ProducerAuthorityBacking,
 }
 
 /// Clonable bounded replay capability.
 #[derive(Clone)]
 pub struct EventReplayCapability {
-    inner: Arc<AuthorityInner>,
+    inner: ProducerAuthorityBacking,
+}
+
+#[derive(Clone)]
+enum ProducerAuthorityBacking {
+    Local(Arc<AuthorityInner>),
+    Remote {
+        ledger_id: LedgerIdentity,
+        client: Arc<dyn EventAuthorityContract>,
+    },
+}
+
+impl ProducerAuthorityBacking {
+    fn ledger_identity(&self) -> LedgerIdentity {
+        match self {
+            Self::Local(inner) => inner.ledger_id,
+            Self::Remote { ledger_id, .. } => *ledger_id,
+        }
+    }
 }
 
 /// Clonable blocking subscription capability.
@@ -348,14 +370,14 @@ impl EventAuthority {
     /// Derives the shared append capability.
     pub fn append_capability(&self) -> EventAppendCapability {
         EventAppendCapability {
-            inner: Arc::clone(&self.inner),
+            inner: ProducerAuthorityBacking::Local(Arc::clone(&self.inner)),
         }
     }
 
     /// Derives the shared replay capability.
     pub fn replay_capability(&self) -> EventReplayCapability {
         EventReplayCapability {
-            inner: Arc::clone(&self.inner),
+            inner: ProducerAuthorityBacking::Local(Arc::clone(&self.inner)),
         }
     }
 
@@ -397,9 +419,18 @@ impl EventAuthority {
 }
 
 impl EventAppendCapability {
+    /// Bind producer access to the selected trusted authority transport.
+    /// This creates no writer or ledger. Every operation remains subject to the
+    /// parent's grant, and append proofs are validated against committed reads.
+    pub fn from_remote(ledger_id: LedgerIdentity, client: Arc<dyn EventAuthorityContract>) -> Self {
+        Self {
+            inner: ProducerAuthorityBacking::Remote { ledger_id, client },
+        }
+    }
+
     /// Returns the ledger accepted by this capability.
     pub fn ledger_identity(&self) -> LedgerIdentity {
-        self.inner.ledger_id
+        self.inner.ledger_identity()
     }
 
     /// Derive read-only access to this same bound ledger.
@@ -415,14 +446,25 @@ impl EventAppendCapability {
         envelope: EventEnvelope,
         mode: AppendMode,
     ) -> Result<AppendReceipt, EventAuthorityError> {
-        validate_provenance(self.inner.ledger_id, &envelope)?;
+        validate_provenance(self.ledger_identity(), &envelope)?;
         validate_genesis_identity(&envelope)?;
-        let outcome = self
-            .inner
+        let inner = match &self.inner {
+            ProducerAuthorityBacking::Local(inner) => inner,
+            ProducerAuthorityBacking::Remote { ledger_id, client } => {
+                let receipt = client.durable_append(DurableAppendRequest {
+                    ledger_id: *ledger_id,
+                    envelope,
+                    mode,
+                })?;
+                validate_append_receipt(*ledger_id, &receipt)?;
+                return Ok(receipt);
+            }
+        };
+        let outcome = inner
             .writer
             .append_durable_outcome(envelope, mode == AppendMode::Idempotent)?;
         Ok(AppendReceipt {
-            ledger_id: self.inner.ledger_id,
+            ledger_id: self.ledger_identity(),
             seq: outcome.seq,
             disposition: if outcome.inserted {
                 AppendDisposition::Inserted
@@ -459,9 +501,9 @@ impl EventAppendCapability {
                 "an identity-bearing append proof requires an Event record ID",
             )
         })?;
-        if receipt.ledger_id != self.inner.ledger_id {
+        if receipt.ledger_id != self.ledger_identity() {
             return Err(EventAuthorityError::IdentityMismatch {
-                expected: self.inner.ledger_id,
+                expected: self.ledger_identity(),
                 actual: receipt.ledger_id,
             });
         }
@@ -470,21 +512,20 @@ impl EventAppendCapability {
                 "append proof requires a nonzero sequence and nonempty record ID",
             ));
         }
-        let record = self.inner.store.event_at(receipt.seq)?.ok_or_else(|| {
-            EventAuthorityError::invalid_request(
-                "append receipt sequence does not resolve to a durable Event record",
-            )
-        })?;
-        if !same_proven_envelope(&record.envelope, expected_envelope) {
-            return Err(EventAuthorityError::invalid_request(
-                "append receipt sequence contains another Event envelope",
-            ));
-        }
-        Ok(EventAppendProof {
-            ledger_id: receipt.ledger_id,
-            seq: receipt.seq,
-            record_id: expected_record_id.to_string(),
-        })
+        let record = self
+            .replay_capability()
+            .committed_record(expected_record_id)?
+            .ok_or_else(|| {
+                EventAuthorityError::invalid_request(
+                    "append receipt does not resolve to a committed Event record",
+                )
+            })?;
+        validate_record_proof(
+            self.ledger_identity(),
+            &record,
+            expected_envelope,
+            Some(receipt.seq),
+        )
     }
 
     /// Appends and flushes a batch through the same group commit, preserving
@@ -495,16 +536,36 @@ impl EventAppendCapability {
         mode: AppendMode,
     ) -> Result<Vec<AppendReceipt>, EventAuthorityError> {
         for envelope in &envelopes {
-            validate_provenance(self.inner.ledger_id, envelope)?;
+            validate_provenance(self.ledger_identity(), envelope)?;
             validate_genesis_identity(envelope)?;
         }
-        self.inner
+        let inner = match &self.inner {
+            ProducerAuthorityBacking::Local(inner) => inner,
+            ProducerAuthorityBacking::Remote { ledger_id, client } => {
+                let count = envelopes.len();
+                let receipts = client.durable_append_batch(DurableAppendBatchRequest {
+                    ledger_id: *ledger_id,
+                    envelopes,
+                    mode,
+                })?;
+                if receipts.len() != count {
+                    return Err(EventAuthorityError::invalid_request(
+                        "remote batch receipt count differs",
+                    ));
+                }
+                for receipt in &receipts {
+                    validate_append_receipt(*ledger_id, receipt)?;
+                }
+                return Ok(receipts);
+            }
+        };
+        inner
             .writer
             .append_durable_outcomes_batch(envelopes, mode == AppendMode::Idempotent)?
             .into_iter()
             .map(|outcome| {
                 Ok(AppendReceipt {
-                    ledger_id: self.inner.ledger_id,
+                    ledger_id: self.ledger_identity(),
                     seq: outcome.seq,
                     disposition: if outcome.inserted {
                         AppendDisposition::Inserted
@@ -522,21 +583,81 @@ impl EventAppendCapability {
         envelope: EventEnvelope,
         mode: AppendMode,
     ) -> Result<BestEffortAppendReceipt, EventAuthorityError> {
-        validate_provenance(self.inner.ledger_id, &envelope)?;
+        validate_provenance(self.ledger_identity(), &envelope)?;
         validate_genesis_identity(&envelope)?;
-        self.inner
+        let inner = match &self.inner {
+            ProducerAuthorityBacking::Local(inner) => inner,
+            ProducerAuthorityBacking::Remote { ledger_id, client } => {
+                let receipt = client.best_effort_append(BestEffortAppendRequest {
+                    ledger_id: *ledger_id,
+                    envelope,
+                    mode,
+                })?;
+                validate_identity(*ledger_id, receipt.ledger_id)?;
+                return Ok(receipt);
+            }
+        };
+        inner
             .writer
             .enqueue_best_effort(envelope, mode == AppendMode::Idempotent)?;
         Ok(BestEffortAppendReceipt {
-            ledger_id: self.inner.ledger_id,
+            ledger_id: self.ledger_identity(),
         })
     }
 
     /// Waits until every previously accepted best-effort append has been
     /// processed and its group flush attempted.
     pub fn barrier(&self) -> Result<(), EventAuthorityError> {
-        self.inner.writer.barrier().map_err(Into::into)
+        match &self.inner {
+            ProducerAuthorityBacking::Local(inner) => inner.writer.barrier().map_err(Into::into),
+            ProducerAuthorityBacking::Remote { ledger_id, client } => {
+                client.barrier(BarrierRequest {
+                    ledger_id: *ledger_id,
+                })
+            }
+        }
     }
+}
+
+fn validate_append_receipt(
+    ledger: LedgerIdentity,
+    receipt: &AppendReceipt,
+) -> Result<(), EventAuthorityError> {
+    validate_identity(ledger, receipt.ledger_id)?;
+    if receipt.seq == 0 {
+        return Err(EventAuthorityError::invalid_request(
+            "append receipt has no durable sequence",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_record_proof(
+    ledger_id: LedgerIdentity,
+    record: &EventRecord,
+    expected: &EventEnvelope,
+    expected_seq: Option<u64>,
+) -> Result<EventAppendProof, EventAuthorityError> {
+    let record_id = expected
+        .record_id
+        .as_deref()
+        .filter(|id| !id.trim().is_empty())
+        .ok_or_else(|| {
+            EventAuthorityError::invalid_request("Event proof requires an exact record identity")
+        })?;
+    if record.seq == 0
+        || expected_seq.is_some_and(|seq| seq != record.seq)
+        || !same_proven_envelope(&record.envelope, expected)
+    {
+        return Err(EventAuthorityError::invalid_request(
+            "committed Event differs from the exact expected envelope or position",
+        ));
+    }
+    Ok(EventAppendProof {
+        ledger_id,
+        seq: record.seq,
+        record_id: record_id.into(),
+    })
 }
 
 fn same_proven_envelope(actual: &EventEnvelope, expected: &EventEnvelope) -> bool {
@@ -553,9 +674,16 @@ fn same_proven_envelope(actual: &EventEnvelope, expected: &EventEnvelope) -> boo
 }
 
 impl EventReplayCapability {
+    /// Bind read-only access to the selected trusted authority transport.
+    pub fn from_remote(ledger_id: LedgerIdentity, client: Arc<dyn EventAuthorityContract>) -> Self {
+        Self {
+            inner: ProducerAuthorityBacking::Remote { ledger_id, client },
+        }
+    }
+
     /// Returns the ledger accepted by this capability.
     pub fn ledger_identity(&self) -> LedgerIdentity {
-        self.inner.ledger_id
+        self.inner.ledger_identity()
     }
 
     /// Read one retained, committed record by its exact producer identity.
@@ -569,14 +697,32 @@ impl EventReplayCapability {
                 "committed Event lookup requires a record ID",
             ));
         }
-        let committed = self.inner.writer.watermark().committed_seq();
-        let Some(seq) = self.inner.store.lookup_record_seq(record_id)? else {
+        let inner = match &self.inner {
+            ProducerAuthorityBacking::Local(inner) => inner,
+            ProducerAuthorityBacking::Remote { ledger_id, client } => {
+                let response = client.committed_record(CommittedRecordRequest {
+                    ledger_id: *ledger_id,
+                    record_id: record_id.into(),
+                })?;
+                validate_identity(*ledger_id, response.ledger_id)?;
+                if response.record.as_ref().is_some_and(|record| {
+                    record.seq == 0
+                        || record.seq > response.committed_seq
+                        || record.envelope.record_id.as_deref() != Some(record_id)
+                }) {
+                    return Err(EventAuthorityError::invalid_request("remote committed record differs from the requested identity or durable watermark"));
+                }
+                return Ok(response.record);
+            }
+        };
+        let committed = inner.writer.watermark().committed_seq();
+        let Some(seq) = inner.store.lookup_record_seq(record_id)? else {
             return Ok(None);
         };
         if seq == 0 || seq > committed {
             return Ok(None);
         }
-        let Some(record) = self.inner.store.event_at(seq)? else {
+        let Some(record) = inner.store.event_at(seq)? else {
             return Ok(None);
         };
         if record.envelope.record_id.as_deref() != Some(record_id) {
@@ -603,22 +749,26 @@ impl EventReplayCapability {
         let Some(record) = self.committed_record(record_id)? else {
             return Ok(None);
         };
-        let seq = record.seq;
-        if !same_proven_envelope(&record.envelope, expected) {
-            return Err(EventAuthorityError::invalid_request(
-                "existing Event identity contains another envelope",
-            ));
-        }
-        Ok(Some(EventAppendProof {
-            ledger_id: self.inner.ledger_id,
-            seq,
-            record_id: record_id.into(),
-        }))
+        validate_record_proof(self.ledger_identity(), &record, expected, None).map(Some)
     }
 
     /// Replays one identity-checked, bounded page at a frozen durable tip.
     pub fn replay(&self, request: ReplayRequest) -> Result<EventPage, EventAuthorityError> {
-        replay(&self.inner, request)
+        match &self.inner {
+            ProducerAuthorityBacking::Local(inner) => replay(inner, request),
+            ProducerAuthorityBacking::Remote { ledger_id, client } => {
+                validate_identity(*ledger_id, request.cursor.ledger_id)?;
+                if !(1..=MAX_REPLAY_LIMIT).contains(&request.limit) {
+                    return Err(EventAuthorityError::invalid_request(
+                        "replay limit is outside native bounds",
+                    ));
+                }
+                let page = client.replay(request)?;
+                validate_identity(*ledger_id, page.ledger_id)?;
+                validate_identity(*ledger_id, page.next_cursor.ledger_id)?;
+                Ok(page)
+            }
+        }
     }
 
     /// Returns the newest retained records by count at a frozen durable tip.
@@ -628,12 +778,26 @@ impl EventReplayCapability {
                 "replay limit must be in 1..={MAX_REPLAY_LIMIT}, got {limit}"
             )));
         }
+        let inner = match &self.inner {
+            ProducerAuthorityBacking::Local(inner) => inner,
+            ProducerAuthorityBacking::Remote { ledger_id, client } => {
+                let page = client.newest_page(NewestPageRequest {
+                    ledger_id: *ledger_id,
+                    limit,
+                })?;
+                validate_identity(*ledger_id, page.ledger_id)?;
+                validate_identity(*ledger_id, page.next_cursor.ledger_id)?;
+                return Ok(page);
+            }
+        };
         crate::events::observability::read_newest_page(
-            self.inner.store.as_ref(),
-            self.inner.ledger_id,
+            inner.store.as_ref(),
+            self.ledger_identity(),
             limit,
         )
-        .map_err(|error| EventAuthorityError::from_storage_for_ledger(self.inner.ledger_id, error))
+        .map_err(|error| {
+            EventAuthorityError::from_storage_for_ledger(self.ledger_identity(), error)
+        })
     }
 }
 

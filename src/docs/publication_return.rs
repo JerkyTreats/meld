@@ -11,6 +11,116 @@ use meld_events::{
 
 pub(crate) const EVENT_TYPE: &str = "docs.patch_set_published.v1";
 
+pub(super) struct ObservedPublicationEffect {
+    pub seq: u64,
+    pub record_id: String,
+    pub receipt: DocsPublicationReceipt,
+}
+
+pub(super) struct ObservedPublicationEffects {
+    pub after: meld_events::LedgerCursor,
+    pub through: meld_events::LedgerCursor,
+    pub receipts: Vec<ObservedPublicationEffect>,
+}
+
+/// Read exact owner-return records once. A consumed receipt cannot excuse a later
+/// external edit merely because the same output appeared somewhere in history.
+pub(super) fn observed_publication_effects(
+    events: &EventReplayCapability,
+    after: Option<meld_events::LedgerCursor>,
+    config: Option<&DocsCapabilityConfig>,
+) -> Result<ObservedPublicationEffects, ApiError> {
+    let after = after.unwrap_or(meld_events::LedgerCursor {
+        ledger_id: events.ledger_identity(),
+        after_seq: 0,
+    });
+    let mut cursor = after;
+    let mut tip = None;
+    let mut receipts = Vec::new();
+    loop {
+        let page = events
+            .replay(meld_events::ReplayRequest { cursor, limit: 512 })
+            .map_err(event_error)?;
+        if page.coverage.retained_from > after.after_seq.saturating_add(1) {
+            return Err(invalid(
+                "Docs work-input observation requires retained publication history",
+            ));
+        }
+        let frozen = *tip.get_or_insert(page.coverage.tip_seq);
+        for record in page.records.iter().filter(|record| record.seq <= frozen) {
+            if record.domain_id != "docs" || record.event_type != EVENT_TYPE {
+                continue;
+            }
+            let Some(config) = config else {
+                continue;
+            };
+            let binding = &record.data["binding"];
+            if binding["target_root"]
+                != serde_json::to_value(&config.target_root).map_err(invalid)?
+                || binding["agent_id"] != config.agent_id
+                || binding["subject_id"] != config.subject_id
+            {
+                continue;
+            }
+            let identity = publication_identity(events.ledger_identity(), binding)?;
+            let receipt: DocsPublicationReceipt =
+                serde_json::from_value(record.data["receipt"].clone()).map_err(invalid)?;
+            if record.record_id.as_deref() != Some(identity.as_str())
+                || binding["policy_identity"] != receipt.policy_identity
+                || binding["validation_fingerprint"] != receipt.validation_fingerprint
+                || binding["session"] != record.session
+                || binding["subject"]["object_id"] != config.subject_id
+                || binding["issuer"] != config.agent_id
+                || receipt
+                    .published
+                    .iter()
+                    .any(|output| output.path.is_empty() || output.content_hash.is_empty())
+            {
+                return Err(invalid(
+                    "Docs work-input return disagrees with its exact publication binding",
+                ));
+            }
+            events
+                .prove_existing(&record.envelope)
+                .map_err(event_error)?
+                .ok_or_else(|| invalid("Docs work-input return is not durably proven"))?;
+            receipts.push(ObservedPublicationEffect {
+                seq: record.seq,
+                record_id: identity,
+                receipt,
+            });
+        }
+        cursor = meld_events::LedgerCursor {
+            ledger_id: events.ledger_identity(),
+            after_seq: page.next_cursor.after_seq.min(frozen),
+        };
+        if cursor.after_seq >= frozen {
+            break;
+        }
+        if page.records.is_empty() {
+            return Err(invalid(
+                "Docs publication replay did not reach its frozen boundary",
+            ));
+        }
+    }
+    Ok(ObservedPublicationEffects {
+        after,
+        through: cursor,
+        receipts,
+    })
+}
+
+fn publication_identity(
+    ledger: LedgerIdentity,
+    binding: &serde_json::Value,
+) -> Result<String, ApiError> {
+    let bytes = serde_json::to_vec(&(ledger, binding)).map_err(invalid)?;
+    Ok(format!(
+        "docs-publication-return-v1::{}",
+        blake3::hash(&bytes).to_hex()
+    ))
+}
+
 pub(super) struct PublicationInvocation<'a> {
     config: &'a DocsCapabilityConfig,
     policy: &'a DocsClaimPolicy,
@@ -67,11 +177,7 @@ impl<'a> PublicationInvocation<'a> {
     }
 
     fn identity(&self, ledger: LedgerIdentity) -> Result<String, ApiError> {
-        let bytes = serde_json::to_vec(&(ledger, &self.binding)).map_err(invalid)?;
-        Ok(format!(
-            "docs-publication-return-v1::{}",
-            blake3::hash(&bytes).to_hex()
-        ))
+        publication_identity(ledger, &self.binding)
     }
 
     fn envelope(

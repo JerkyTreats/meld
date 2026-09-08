@@ -30,7 +30,81 @@ pub struct BeliefQuery<'a> {
     store: &'a BeliefStore,
 }
 
+/// Belief's answer for a durably accepted question before its first assessment.
+/// This is an absence of a revision, never a prior or a source revision.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UnassessedBeliefQuestion {
+    pub key: BeliefKey,
+    pub family: crate::belief::TheoryRevisionRef,
+    pub subscription_request_id: String,
+    pub subscription_acceptance_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BeliefQuestionState {
+    Committed(Box<(BeliefRevision, BeliefView)>),
+    NoCommittedRevision(Box<UnassessedBeliefQuestion>),
+    AssessmentPending,
+    StaleRevision { revision_id: String },
+}
+
 impl<'a> BeliefQuery<'a> {
+    /// Resolve the exact subscribed question without treating owner failure or
+    /// pending evidence as an unassessed condition.
+    pub fn question_state(
+        &self,
+        key: &BeliefKey,
+        family: &crate::belief::TheoryRevisionRef,
+    ) -> Result<BeliefQuestionState, StorageError> {
+        family.validate_for_registry("belief_family")?;
+        key.validate()?;
+        let request = self
+            .store
+            .accepted_subscription(family, key)?
+            .ok_or_else(|| {
+                StorageError::InvalidPath(
+                    "Belief question has no accepted exact subscription".into(),
+                )
+            })?;
+        let acceptance = self
+            .store
+            .subscription_acceptance(&request.request_id)?
+            .ok_or_else(|| {
+                StorageError::InvalidPath("Belief question acceptance is unavailable".into())
+            })?;
+        if let Some(current) = self.current_revision_and_view(key)? {
+            if current.0.theory_revision.as_ref() != Some(family)
+                || current.1.freshness.stale
+                || matches!(
+                    current.1.status,
+                    crate::belief::BeliefStatus::Stale | crate::belief::BeliefStatus::Invalid
+                )
+            {
+                return Ok(BeliefQuestionState::StaleRevision {
+                    revision_id: current.0.revision_id,
+                });
+            }
+            if matches!(
+                current.1.status,
+                crate::belief::BeliefStatus::AssessmentPending
+                    | crate::belief::BeliefStatus::NeedsAssessment
+            ) {
+                return Ok(BeliefQuestionState::AssessmentPending);
+            }
+            return Ok(BeliefQuestionState::Committed(Box::new(current)));
+        }
+        if self.store.dirty_state(key)?.is_some() {
+            return Ok(BeliefQuestionState::AssessmentPending);
+        }
+        Ok(BeliefQuestionState::NoCommittedRevision(Box::new(
+            UnassessedBeliefQuestion {
+                key: key.clone(),
+                family: family.clone(),
+                subscription_request_id: request.request_id,
+                subscription_acceptance_id: acceptance.acceptance_id,
+            },
+        )))
+    }
     /// Create a query facade over an existing store.
     pub fn new(store: &'a BeliefStore) -> Self {
         Self { store }

@@ -50,7 +50,7 @@ use crate::belief::contracts::{
 };
 use crate::error::StorageError;
 use crate::events::DomainObjectRef;
-use crate::world_state::graph::{AnchorProvenanceRecord, AnchorSelectionRecord, PerspectiveKey};
+use crate::world_state::graph::PerspectiveKey;
 
 /// Converts graph-facing records into configured evidence items.
 pub struct BeliefEvidenceNormalizer {
@@ -71,99 +71,6 @@ impl BeliefEvidenceNormalizer {
             perspective,
             branch_scope,
         }
-    }
-
-    /// Normalize one current graph anchor and provenance bundle.
-    ///
-    /// Unsupported source mappings return an audit-visible rejection instead
-    /// of falling back to hardcoded family logic.
-    pub fn normalize_anchor(
-        &self,
-        anchor: &AnchorSelectionRecord,
-        provenance: &AnchorProvenanceRecord,
-    ) -> Result<Vec<EvidenceItem>, EvidenceRejection> {
-        let mappings: Vec<&EvidenceSourceMapping> = self
-            .config
-            .source_mappings
-            .iter()
-            .filter(|mapping| mapping.source_kind == "graph_anchor")
-            .collect();
-        if mappings.is_empty() {
-            return Err(self.rejection(anchor, "missing graph anchor source mapping"));
-        }
-
-        let mut out = Vec::new();
-        for mapping in mappings {
-            let Some(schema) = self
-                .config
-                .evidence_schemas
-                .iter()
-                .find(|schema| schema.schema_id == mapping.evidence_schema_id)
-            else {
-                return Err(self.rejection(anchor, "mapping refers to missing schema"));
-            };
-            let value = scalar_from_anchor(anchor, mapping.value_field.as_str());
-            let key = BeliefKey {
-                subject: anchor.subject.clone(),
-                dimension_id: self.config.dimension_id.clone(),
-                predicate_id: self.config.predicate_id.clone(),
-                perspective: self.perspective.clone(),
-                branch_scope: self.branch_scope.clone(),
-                evidence_policy_id: self.config.evidence_policy_id.clone(),
-            };
-            let mut source_fact_ids = provenance.source_fact_ids.clone();
-            for fact_id in &provenance.derived_fact_ids {
-                if !source_fact_ids.contains(fact_id) {
-                    source_fact_ids.push(fact_id.clone());
-                }
-            }
-            let provenance_summary = BeliefProvenanceSummary {
-                evidence_ids: Vec::new(),
-                source_fact_ids: source_fact_ids.clone(),
-                graph_anchor_ids: vec![anchor.anchor_id.clone()],
-                objects: provenance.objects.clone(),
-                relations: provenance.relations.clone(),
-                revision_ids: Vec::new(),
-            };
-            let seed = format!(
-                "{}::{}::{}::{}",
-                anchor.anchor_id,
-                mapping.mapping_id,
-                anchor.selected_at_seq,
-                key.index_key()
-            );
-            out.push(EvidenceItem {
-                publication_record_id: None,
-                evidence_id: format!(
-                    "evidence-{}",
-                    stable_hash_hex(
-                        format!(
-                            "graph_anchor::{seed}::{}::{}::{}",
-                            schema.schema_id,
-                            self.config.config_version,
-                            key.index_key()
-                        )
-                        .as_bytes()
-                    )
-                ),
-                candidate_key: key,
-                source_fact_ids,
-                graph_anchor_ids: vec![anchor.anchor_id.clone()],
-                source_cursor_start: anchor.selected_at_seq,
-                source_cursor_end: anchor.ended_at_seq.unwrap_or(anchor.selected_at_seq),
-                role: schema.role.clone(),
-                evidence_schema_id: schema.schema_id.clone(),
-                typed_value: EvidenceValue::Scalar(value),
-                reliability: schema.reliability,
-                precision: schema.precision,
-                reference_time: None,
-                transaction_seq: anchor.ended_at_seq.unwrap_or(anchor.selected_at_seq),
-                content_hash: None,
-                outcome_mapping_revision: None,
-                provenance: provenance_summary,
-            });
-        }
-        Ok(out)
     }
 
     /// Normalize one promoted graph-readable outcome record.
@@ -287,20 +194,6 @@ impl BeliefEvidenceNormalizer {
         })
     }
 
-    fn rejection(&self, anchor: &AnchorSelectionRecord, reason: &str) -> EvidenceRejection {
-        EvidenceRejection {
-            rejection_id: format!(
-                "rejection-{}",
-                stable_hash_hex(format!("{}::{reason}", anchor.anchor_id).as_bytes())
-            ),
-            source_id: anchor.anchor_id.clone(),
-            reason: reason.to_string(),
-            source_cursor_start: anchor.selected_at_seq,
-            source_cursor_end: anchor.ended_at_seq.unwrap_or(anchor.selected_at_seq),
-            outcome_mapping_revision: None,
-        }
-    }
-
     fn promoted_rejection(
         &self,
         promoted: &PromotedEvidenceRecord,
@@ -342,15 +235,6 @@ fn subject_from_promoted(
     }
 }
 
-fn scalar_from_anchor(anchor: &AnchorSelectionRecord, field: &str) -> f64 {
-    match field {
-        "selected_at_seq" => anchor.selected_at_seq as f64,
-        "ended" => f64::from(anchor.ended_at_seq.is_some()),
-        _ => 1.0,
-    }
-}
-
-#[allow(dead_code)]
 fn _role_is_assignable(role: &EvidenceRole) -> bool {
     matches!(
         role,

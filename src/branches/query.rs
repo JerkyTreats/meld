@@ -8,11 +8,10 @@ use crate::branches::contracts::BranchCatalogEntry;
 use crate::branches::locator;
 use crate::branches::runtime::BranchRuntime;
 use crate::error::{ApiError, StorageError};
-use crate::events::{DomainObjectRef, EventRelation, LedgerCursor};
+use crate::events::LedgerCursor;
 use crate::world_state::graph::contracts::{
-    BoundedTraversalRequest, GraphWalkSpec, OwnerCurrentnessPolicy, OwnerPublicationScope,
-    TraversalCut, TraversalCutRequest, TraversalDirection, TraversalFactRecord,
-    TraversalOwnerRequirement, TraversalResult,
+    BoundedTraversalRequest, OwnerCurrentnessPolicy, OwnerPublicationScope, TraversalCut,
+    TraversalCutRequest, TraversalOwnerRequirement, TraversalResult,
 };
 use crate::world_state::graph::query::TraversalQuery;
 use crate::world_state::graph::store::TraversalStore;
@@ -75,53 +74,6 @@ pub struct BranchGraphStatusOutput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FederatedObjectPresence {
-    pub branch_id: String,
-    pub canonical_locator: String,
-    pub object: DomainObjectRef,
-    pub first_seen_seq: u64,
-    pub last_seen_seq: u64,
-    pub current_in_branch: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FederatedTraversalFact {
-    pub branch_id: String,
-    pub canonical_locator: String,
-    pub federated_fact_id: String,
-    pub fact: TraversalFactRecord,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FederatedRelationRecord {
-    pub branch_id: String,
-    pub canonical_locator: String,
-    pub federated_fact_id: String,
-    pub fact_id: String,
-    pub seq: u64,
-    pub relation: EventRelation,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FederatedGraphWalkResult {
-    pub visited_objects: Vec<FederatedObjectPresence>,
-    pub visited_facts: Vec<FederatedTraversalFact>,
-    pub traversed_relations: Vec<FederatedRelationRecord>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FederatedNeighborsOutput {
-    pub metadata: FederatedReadMetadata,
-    pub neighbors: Vec<FederatedObjectPresence>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FederatedWalkOutput {
-    pub metadata: FederatedReadMetadata,
-    pub walk: FederatedGraphWalkResult,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BranchOwnerWalkResult {
     pub branch_id: String,
     pub canonical_locator: String,
@@ -171,14 +123,22 @@ impl BranchQueryRuntime {
         for entry in &selection.entries {
             match self.open_traversal_store(entry) {
                 Ok(store) => {
-                    let last_reduced_seq = store.last_reduced_seq().map_err(ApiError::from)?;
+                    let last_reduced_seq = store
+                        .projection_position()
+                        .map_err(ApiError::from)?
+                        .map(|cursor| cursor.after_seq);
                     metadata.readable_branch_ids.push(entry.branch_id.clone());
                     rows.push(BranchGraphStatusRow {
                         branch_id: entry.branch_id.clone(),
                         canonical_locator: entry.canonical_locator.clone(),
                         store_path: entry.store_path.clone(),
-                        read_status: "ready".to_string(),
-                        last_reduced_seq: Some(last_reduced_seq),
+                        read_status: if last_reduced_seq.is_some() {
+                            "ready"
+                        } else {
+                            "uninitialized"
+                        }
+                        .to_string(),
+                        last_reduced_seq,
                         error: None,
                     });
                 }
@@ -207,145 +167,6 @@ impl BranchQueryRuntime {
         })
     }
 
-    pub fn neighbors(
-        &self,
-        scope: BranchQueryScope,
-        workspace_root: Option<&Path>,
-        object: &DomainObjectRef,
-        direction: TraversalDirection,
-        relation_types: Option<&[String]>,
-        current_only: bool,
-    ) -> Result<FederatedNeighborsOutput, ApiError> {
-        let selection = self.select_branches(scope, workspace_root)?;
-        let strict_scope = selection.scope.is_strict();
-        let mut metadata = self.base_metadata(&selection);
-        let mut neighbors = Vec::new();
-
-        for entry in &selection.entries {
-            match self.query_branch(entry, |query| {
-                let branch_neighbors =
-                    query.neighbors(object, direction, relation_types, current_only)?;
-                branch_neighbors
-                    .into_iter()
-                    .map(|neighbor| object_presence(entry, query, neighbor))
-                    .collect::<Result<Vec<_>, StorageError>>()
-            }) {
-                Ok(branch_neighbors) => {
-                    metadata.readable_branch_ids.push(entry.branch_id.clone());
-                    neighbors.extend(branch_neighbors);
-                }
-                Err(err) => {
-                    if strict_scope {
-                        return Err(err);
-                    }
-                    metadata
-                        .skipped_branches
-                        .push(read_failure(entry, err.to_string()));
-                }
-            }
-        }
-
-        if metadata.readable_branch_ids.is_empty() {
-            return Err(no_readable_branches_error(&metadata));
-        }
-
-        metadata.readable_branch_ids.sort();
-        neighbors.sort_by(|left, right| {
-            left.branch_id
-                .cmp(&right.branch_id)
-                .then(left.object.index_key().cmp(&right.object.index_key()))
-        });
-        Ok(FederatedNeighborsOutput {
-            metadata,
-            neighbors,
-        })
-    }
-
-    pub fn walk(
-        &self,
-        scope: BranchQueryScope,
-        workspace_root: Option<&Path>,
-        start: &DomainObjectRef,
-        spec: &GraphWalkSpec,
-    ) -> Result<FederatedWalkOutput, ApiError> {
-        let selection = self.select_branches(scope, workspace_root)?;
-        let strict_scope = selection.scope.is_strict();
-        let mut metadata = self.base_metadata(&selection);
-        let mut visited_objects = Vec::new();
-        let mut visited_facts = Vec::new();
-        let mut traversed_relations = Vec::new();
-
-        for entry in &selection.entries {
-            match self.query_branch(entry, |query| {
-                let mut branch_spec = spec.clone();
-                branch_spec.include_facts = true;
-                let branch_walk = query.walk(start, &branch_spec)?;
-                let object_rows = branch_walk
-                    .visited_objects
-                    .iter()
-                    .cloned()
-                    .map(|object| object_presence(entry, query, object))
-                    .collect::<Result<Vec<_>, StorageError>>()?;
-                let fact_rows = branch_walk
-                    .visited_facts
-                    .iter()
-                    .cloned()
-                    .map(|fact| federated_fact(entry, fact))
-                    .collect::<Vec<_>>();
-                let relation_rows = federated_relations(
-                    entry,
-                    &branch_walk.visited_facts,
-                    &branch_walk.traversed_relations,
-                );
-                Ok((object_rows, fact_rows, relation_rows))
-            }) {
-                Ok((branch_objects, branch_facts, branch_relations)) => {
-                    metadata.readable_branch_ids.push(entry.branch_id.clone());
-                    visited_objects.extend(branch_objects);
-                    if spec.include_facts {
-                        visited_facts.extend(branch_facts);
-                    }
-                    traversed_relations.extend(branch_relations);
-                }
-                Err(err) => {
-                    if strict_scope {
-                        return Err(err);
-                    }
-                    metadata
-                        .skipped_branches
-                        .push(read_failure(entry, err.to_string()));
-                }
-            }
-        }
-
-        if metadata.readable_branch_ids.is_empty() {
-            return Err(no_readable_branches_error(&metadata));
-        }
-
-        metadata.readable_branch_ids.sort();
-        visited_objects.sort_by(|left, right| {
-            left.branch_id
-                .cmp(&right.branch_id)
-                .then(left.object.index_key().cmp(&right.object.index_key()))
-        });
-        visited_facts.sort_by(|left, right| {
-            left.branch_id
-                .cmp(&right.branch_id)
-                .then(left.fact.seq.cmp(&right.fact.seq))
-                .then(left.fact.fact_id.cmp(&right.fact.fact_id))
-        });
-
-        Ok(FederatedWalkOutput {
-            metadata,
-            walk: FederatedGraphWalkResult {
-                visited_objects,
-                visited_facts,
-                traversed_relations,
-            },
-        })
-    }
-
-    /// Query exact owner material without consulting structural Graph facts.
     pub fn owner_walk(
         &self,
         scope: BranchQueryScope,
@@ -361,6 +182,21 @@ impl BranchQueryRuntime {
         let mut branches = Vec::new();
         for entry in &selection.entries {
             let read = self.open_traversal_store(entry).and_then(|store| {
+                let projected = store
+                    .projection_position()
+                    .map_err(ApiError::from)?
+                    .ok_or_else(|| {
+                        ApiError::ConfigError(
+                            "branch has no canonical Graph projection position".into(),
+                        )
+                    })?;
+                // The active branch can ask for its newer Event tip. Other branches
+                // retain their own ledger identities and report their durable cuts.
+                let event_position = if projected.ledger_id == event_position.ledger_id {
+                    event_position
+                } else {
+                    projected
+                };
                 let query = TraversalQuery::new(store.as_ref());
                 let cut = query
                     .cut(&TraversalCutRequest {
@@ -460,15 +296,6 @@ impl BranchQueryRuntime {
         }
     }
 
-    fn query_branch<T, F>(&self, entry: &BranchCatalogEntry, f: F) -> Result<T, ApiError>
-    where
-        F: FnOnce(&TraversalQuery<'_>) -> Result<T, StorageError>,
-    {
-        let store = self.open_traversal_store(entry)?;
-        let query = TraversalQuery::new(store.as_ref());
-        f(&query).map_err(ApiError::from)
-    }
-
     fn open_traversal_store(
         &self,
         entry: &BranchCatalogEntry,
@@ -515,62 +342,6 @@ fn read_failure(entry: &BranchCatalogEntry, error: String) -> BranchReadFailure 
         store_path: entry.store_path.clone(),
         error,
     }
-}
-
-fn object_presence(
-    entry: &BranchCatalogEntry,
-    query: &TraversalQuery<'_>,
-    object: DomainObjectRef,
-) -> Result<FederatedObjectPresence, StorageError> {
-    let facts = query.facts_for_object(&object, 0)?;
-    let first_seen_seq = facts.first().map(|fact| fact.seq).unwrap_or_default();
-    let last_seen_seq = facts.last().map(|fact| fact.seq).unwrap_or_default();
-    Ok(FederatedObjectPresence {
-        branch_id: entry.branch_id.clone(),
-        canonical_locator: entry.canonical_locator.clone(),
-        object,
-        first_seen_seq,
-        last_seen_seq,
-        current_in_branch: !facts.is_empty(),
-    })
-}
-
-fn federated_fact(entry: &BranchCatalogEntry, fact: TraversalFactRecord) -> FederatedTraversalFact {
-    let federated_fact_id = federated_fact_id(&entry.branch_id, &fact.fact_id);
-    FederatedTraversalFact {
-        branch_id: entry.branch_id.clone(),
-        canonical_locator: entry.canonical_locator.clone(),
-        federated_fact_id,
-        fact,
-    }
-}
-
-fn federated_relations(
-    entry: &BranchCatalogEntry,
-    facts: &[TraversalFactRecord],
-    traversed_relations: &[EventRelation],
-) -> Vec<FederatedRelationRecord> {
-    let mut rows = Vec::new();
-    for relation in traversed_relations {
-        if let Some(fact) = facts
-            .iter()
-            .find(|fact| fact.relations.iter().any(|candidate| candidate == relation))
-        {
-            rows.push(FederatedRelationRecord {
-                branch_id: entry.branch_id.clone(),
-                canonical_locator: entry.canonical_locator.clone(),
-                federated_fact_id: federated_fact_id(&entry.branch_id, &fact.fact_id),
-                fact_id: fact.fact_id.clone(),
-                seq: fact.seq,
-                relation: relation.clone(),
-            });
-        }
-    }
-    rows
-}
-
-fn federated_fact_id(branch_id: &str, fact_id: &str) -> String {
-    format!("{branch_id}::{fact_id}")
 }
 
 fn no_readable_branches_error(metadata: &FederatedReadMetadata) -> ApiError {

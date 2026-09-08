@@ -18,6 +18,7 @@ use std::time::Duration;
 pub mod capability;
 pub mod clients;
 pub mod commands;
+pub mod completion;
 pub mod diagnostics;
 pub mod executor;
 pub(crate) mod frame_metadata_keys;
@@ -29,6 +30,10 @@ pub mod summary;
 pub mod tooling;
 
 pub use crate::execution::{ProviderExecutionBinding, ProviderRuntimeOverrides};
+pub use completion::{
+    ProviderCompletion, ProviderCompletionFailure, ProviderCompletionPort,
+    ProviderExecutionDescription,
+};
 pub use meld_execution::generation::{
     ChatMessage, CompletionOptions, CompletionResponse, GeneratedFrameMetadataInput, MessageRole,
     PromptAssemblyOutput, TokenUsage,

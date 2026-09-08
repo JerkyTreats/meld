@@ -3,7 +3,7 @@
 //!
 //! Owner: harness. The walk is derivation, not storage: it follows the
 //! typed reference fields the domains already persist — event provenance,
-//! traversal fact sources, anchor citations, evidence hydration, revision
+//! owner publication sources, evidence hydration, revision
 //! lineage, decision input references, sink receipts, and task lineage —
 //! through public domain read surfaces, and materializes nothing. Deleting
 //! a walk result and re-deriving it yields an identical thread, so the
@@ -13,12 +13,10 @@
 //! downstream complement ("why does a record NOT exist") is the
 //! eligibility walk over waiting-on declarations, delivered by phase two
 //! of the runtime harness plan. A reference that does not resolve is
-//! recorded truthfully as a cut — the absent anchor of the runtime survey
-//! stall surfaces exactly there.
+//! recorded truthfully as a cut, including retired or foreign provenance.
 
 use std::collections::{BTreeMap, VecDeque};
 
-use meld_events::DomainObjectRef;
 use meld_execution::task_network::store::{
     network_storage_key, SledTaskNetworkStore, TaskNetworkStoreFactory,
 };
@@ -41,20 +39,8 @@ pub const DEFAULT_MAX_THREAD_NODES: usize = 256;
 pub enum ThreadSubject {
     /// Canonical ledger record by sequence.
     Event { seq: u64 },
-    /// Traversal fact projected from the ledger.
-    Fact { fact_id: String },
-    /// Graph anchor selection record.
-    Anchor { anchor_id: String },
-    /// The current anchor selection for a subject under one perspective —
-    /// the record whose absence the runtime survey's anchor stall is
-    /// about. Resolving it names the exact subject key either way.
-    AnchorForSubject {
-        subject_domain_id: String,
-        subject_object_kind: String,
-        subject_object_id: String,
-        perspective_kind: String,
-        perspective_id: String,
-    },
+    /// Intact owner publication admitted from one canonical Event record.
+    OwnerPublication { source_seq: u64 },
     /// Evidence item admitted into a belief key.
     Evidence { evidence_id: String },
     /// Committed belief revision.
@@ -75,16 +61,8 @@ pub enum ThreadSubject {
 pub enum ThreadCitation {
     /// Event → event through structural source-record provenance.
     SourceRecord,
-    /// Fact → the ledger event it was reduced from.
-    FactSource,
-    /// Fact → the spine fact it derives from.
-    SpineFact,
-    /// Anchor → the fact that created the selection.
-    CreatedByFact,
-    /// Anchor → its source facts.
-    AnchorSourceFact,
-    /// Anchor-for-subject → the concrete anchor selection it resolves to.
-    CurrentAnchor,
+    /// Owner publication → the canonical Event containing it.
+    PublicationSource,
     /// Evidence → the traversal facts it cites.
     EvidenceSourceFact,
     /// Evidence → the graph anchors it cites.
@@ -346,85 +324,23 @@ impl<'a> ThreadWalker<'a> {
                         }),
                 ))
             }
-            ThreadSubject::Fact { fact_id } => {
+            ThreadSubject::OwnerPublication { source_seq } => {
                 let Some(traversal) = self.traversal else {
                     return Ok(Resolution::out_of_scope(None));
                 };
                 Ok(Resolution::from(
                     traversal
-                        .get_fact(fact_id)
+                        .owner_publication_for_event(*source_seq)
                         .map_err(storage_error)?
-                        .map(|fact| format!("fact {} at seq {}", fact.event_type, fact.seq)),
-                ))
-            }
-            ThreadSubject::Anchor { anchor_id } => {
-                let Some(traversal) = self.traversal else {
-                    return Ok(Resolution::out_of_scope(None));
-                };
-                Ok(Resolution::from(
-                    traversal
-                        .get_anchor(anchor_id)
-                        .map_err(storage_error)?
-                        .map(|anchor| {
+                        .map(|publication| {
                             format!(
-                                "anchor {} for subject {}",
-                                anchor.anchor_ref.index_key(),
-                                anchor.subject.index_key()
+                                "owner {} revision {} in scope {}",
+                                publication.operation.batch.owner_id,
+                                publication.operation.batch.revision_id,
+                                publication.operation.batch.scope.scope_id,
                             )
                         }),
                 ))
-            }
-            ThreadSubject::AnchorForSubject {
-                subject_domain_id,
-                subject_object_kind,
-                subject_object_id,
-                perspective_kind,
-                perspective_id,
-            } => {
-                let Some(traversal) = self.traversal else {
-                    return Ok(Resolution::out_of_scope(None));
-                };
-                let subject =
-                    DomainObjectRef::new(subject_domain_id, subject_object_kind, subject_object_id)
-                        .map_err(storage_error)?;
-                let current = traversal
-                    .current_anchor_for_subject(&subject, perspective_kind, perspective_id)
-                    .map_err(storage_error)?;
-                match current {
-                    Some(anchor) => Ok(Resolution::Present(format!(
-                        "current anchor {} for subject {}",
-                        anchor.anchor_id,
-                        subject.index_key()
-                    ))),
-                    None => {
-                        // The subject-key dead end from the runtime survey:
-                        // when the subject key appears in no anchor record
-                        // at all, the absence is a vocabulary mismatch, not
-                        // just a missing perspective.
-                        let anywhere = traversal
-                            .current_anchors_for_subject(&subject)
-                            .map_err(storage_error)?;
-                        let reference = if anywhere.is_empty() {
-                            format!(
-                                "current anchor for subject {} under {}::{}; \
-                                 the subject key appears in no anchor record",
-                                subject.index_key(),
-                                perspective_kind,
-                                perspective_id
-                            )
-                        } else {
-                            format!(
-                                "current anchor for subject {} under {}::{}; \
-                                 {} anchors exist under other perspectives",
-                                subject.index_key(),
-                                perspective_kind,
-                                perspective_id,
-                                anywhere.len()
-                            )
-                        };
-                        Ok(Resolution::absent(Some(reference)))
-                    }
-                }
             }
             ThreadSubject::Evidence { evidence_id } => {
                 let Some(belief) = self.belief else {
@@ -515,79 +431,52 @@ impl<'a> ThreadWalker<'a> {
                     .read_after_limit(seq.saturating_sub(1), 1)
                     .map_err(|error| HarnessError::Storage(error.to_string()))?;
                 if let Some(record) = records.into_iter().find(|record| record.seq == *seq) {
-                    // Same-ledger walk: the product composes exactly one
-                    // ledger, and the replay port rejects foreign cursors.
                     for source in &record.envelope.provenance.source_records {
-                        refs.push(Reference::hop(
-                            ThreadSubject::Event { seq: source.seq },
-                            ThreadCitation::SourceRecord,
-                        ));
+                        if source.ledger_id == replay.ledger_identity() {
+                            refs.push(Reference::hop(
+                                ThreadSubject::Event { seq: source.seq },
+                                ThreadCitation::SourceRecord,
+                            ));
+                        } else {
+                            refs.push(Reference::Cut {
+                                reference: format!(
+                                    "foreign Event {} at {}",
+                                    source.seq, source.ledger_id
+                                ),
+                                citation: ThreadCitation::SourceRecord,
+                                reason: ThreadCutReason::SourceOutOfScope,
+                            });
+                        }
                     }
                 }
             }
-            ThreadSubject::Fact { fact_id } => {
-                let Some(traversal) = self.traversal else {
-                    return Ok(refs);
-                };
-                if let Some(fact) = traversal.get_fact(fact_id).map_err(storage_error)? {
-                    refs.push(Reference::hop(
-                        ThreadSubject::Event { seq: fact.seq },
-                        ThreadCitation::FactSource,
-                    ));
-                    if fact.source_spine_fact_id != *fact_id {
-                        refs.push(Reference::hop(
-                            ThreadSubject::Fact {
-                                fact_id: fact.source_spine_fact_id.clone(),
-                            },
-                            ThreadCitation::SpineFact,
-                        ));
+            ThreadSubject::OwnerPublication { source_seq } => {
+                if let Some(traversal) = self.traversal {
+                    if let Some(publication) = traversal
+                        .owner_publication_for_event(*source_seq)
+                        .map_err(storage_error)?
+                    {
+                        if self.replay.is_some_and(|replay| {
+                            replay.ledger_identity() == publication.source_event.ledger_id
+                        }) {
+                            refs.push(Reference::hop(
+                                ThreadSubject::Event {
+                                    seq: publication.source_event.seq,
+                                },
+                                ThreadCitation::PublicationSource,
+                            ));
+                        } else {
+                            refs.push(Reference::Cut {
+                                reference: format!(
+                                    "Event {} at {}",
+                                    publication.source_event.seq,
+                                    publication.source_event.ledger_id
+                                ),
+                                citation: ThreadCitation::PublicationSource,
+                                reason: ThreadCutReason::SourceOutOfScope,
+                            });
+                        }
                     }
-                }
-            }
-            ThreadSubject::Anchor { anchor_id } => {
-                let Some(traversal) = self.traversal else {
-                    return Ok(refs);
-                };
-                if let Some(anchor) = traversal.get_anchor(anchor_id).map_err(storage_error)? {
-                    refs.push(Reference::hop(
-                        ThreadSubject::Fact {
-                            fact_id: anchor.created_by_fact_id.clone(),
-                        },
-                        ThreadCitation::CreatedByFact,
-                    ));
-                    for fact_id in &anchor.source_fact_ids {
-                        refs.push(Reference::hop(
-                            ThreadSubject::Fact {
-                                fact_id: fact_id.clone(),
-                            },
-                            ThreadCitation::AnchorSourceFact,
-                        ));
-                    }
-                }
-            }
-            ThreadSubject::AnchorForSubject {
-                subject_domain_id,
-                subject_object_kind,
-                subject_object_id,
-                perspective_kind,
-                perspective_id,
-            } => {
-                let Some(traversal) = self.traversal else {
-                    return Ok(refs);
-                };
-                let subject =
-                    DomainObjectRef::new(subject_domain_id, subject_object_kind, subject_object_id)
-                        .map_err(storage_error)?;
-                if let Some(anchor) = traversal
-                    .current_anchor_for_subject(&subject, perspective_kind, perspective_id)
-                    .map_err(storage_error)?
-                {
-                    refs.push(Reference::hop(
-                        ThreadSubject::Anchor {
-                            anchor_id: anchor.anchor_id.clone(),
-                        },
-                        ThreadCitation::CurrentAnchor,
-                    ));
                 }
             }
             ThreadSubject::Evidence { evidence_id } => {
@@ -595,21 +484,21 @@ impl<'a> ThreadWalker<'a> {
                     return Ok(refs);
                 };
                 if let Some(item) = belief.get_evidence(evidence_id).map_err(storage_error)? {
+                    // Opaque owner provenance is preserved as a named cut until its
+                    // owner exposes a resolver. It is never recast as a Graph fact.
                     for fact_id in &item.source_fact_ids {
-                        refs.push(Reference::hop(
-                            ThreadSubject::Fact {
-                                fact_id: fact_id.clone(),
-                            },
-                            ThreadCitation::EvidenceSourceFact,
-                        ));
+                        refs.push(Reference::Cut {
+                            reference: fact_id.clone(),
+                            citation: ThreadCitation::EvidenceSourceFact,
+                            reason: ThreadCutReason::SourceOutOfScope,
+                        });
                     }
                     for anchor_id in &item.graph_anchor_ids {
-                        refs.push(Reference::hop(
-                            ThreadSubject::Anchor {
-                                anchor_id: anchor_id.clone(),
-                            },
-                            ThreadCitation::EvidenceAnchor,
-                        ));
+                        refs.push(Reference::Cut {
+                            reference: format!("retired graph anchor {anchor_id}"),
+                            citation: ThreadCitation::EvidenceAnchor,
+                            reason: ThreadCutReason::SourceOutOfScope,
+                        });
                     }
                 }
             }
@@ -808,9 +697,7 @@ fn open_existing_network(
 fn owning_citation(subject: &ThreadSubject) -> ThreadCitation {
     match subject {
         ThreadSubject::Event { .. } => ThreadCitation::SourceRecord,
-        ThreadSubject::Fact { .. } => ThreadCitation::FactSource,
-        ThreadSubject::Anchor { .. } => ThreadCitation::CreatedByFact,
-        ThreadSubject::AnchorForSubject { .. } => ThreadCitation::CurrentAnchor,
+        ThreadSubject::OwnerPublication { .. } => ThreadCitation::PublicationSource,
         ThreadSubject::Evidence { .. } => ThreadCitation::EvidenceSourceFact,
         ThreadSubject::BeliefRevision { .. } => ThreadCitation::RevisionEvidence,
         ThreadSubject::Decision { .. } => ThreadCitation::DecisionInput,
@@ -823,18 +710,9 @@ fn owning_citation(subject: &ThreadSubject) -> ThreadCitation {
 fn display_subject(subject: &ThreadSubject) -> String {
     match subject {
         ThreadSubject::Event { seq } => format!("event seq {seq}"),
-        ThreadSubject::Fact { fact_id } => format!("fact {fact_id}"),
-        ThreadSubject::Anchor { anchor_id } => format!("anchor {anchor_id}"),
-        ThreadSubject::AnchorForSubject {
-            subject_domain_id,
-            subject_object_kind,
-            subject_object_id,
-            perspective_kind,
-            perspective_id,
-        } => format!(
-            "current anchor for {subject_domain_id}::{subject_object_kind}::\
-             {subject_object_id} under {perspective_kind}::{perspective_id}"
-        ),
+        ThreadSubject::OwnerPublication { source_seq } => {
+            format!("owner publication at Event {source_seq}")
+        }
         ThreadSubject::Evidence { evidence_id } => format!("evidence {evidence_id}"),
         ThreadSubject::BeliefRevision { revision_id } => {
             format!("belief revision {revision_id}")
@@ -854,16 +732,16 @@ fn storage_error(error: meld_world_model::error::StorageError) -> HarnessError {
 
 #[cfg(test)]
 mod tests {
+    use meld_events::DomainObjectRef;
     use meld_world_model::agent::AgentStore;
     use meld_world_model::belief::{
         AssessmentLease, BeliefKey, BeliefProvenanceSummary, BeliefRevision, BeliefStatus,
         BeliefStore, BranchScope, ContradictionState, EvidenceItem, EvidenceRole, EvidenceValue,
         FreshnessState, LeaseStatus, PlannerProjectionSummary, PosteriorSummary, TheoryRevisionRef,
     };
-    use meld_world_model::{AnchorSelectionRecord, PerspectiveKey, TraversalFactRecord};
+    use meld_world_model::PerspectiveKey;
 
     use super::*;
-    use meld_events::DomainObjectRef;
 
     const REVISION_ID: &str = "revision-1";
     const EVIDENCE_ID: &str = "evidence-1";
@@ -905,31 +783,6 @@ mod tests {
         let agent = AgentStore::new(db.clone()).unwrap();
         let legacy_db = db.clone();
 
-        traversal
-            .put_fact(&TraversalFactRecord {
-                fact_id: FACT_ID.to_string(),
-                source_spine_fact_id: FACT_ID.to_string(),
-                seq: 5,
-                event_type: "context.frame.head_advanced".to_string(),
-                objects: vec![subject()],
-                relations: Vec::new(),
-            })
-            .unwrap();
-        traversal
-            .put_anchor(&AnchorSelectionRecord {
-                anchor_id: ANCHOR_ID.to_string(),
-                anchor_ref: DomainObjectRef::new("context", "head", "node-a::analysis").unwrap(),
-                subject: subject(),
-                perspective: PerspectiveKey::new("frame_type", "analysis").unwrap(),
-                target: subject(),
-                source_fact_ids: vec![FACT_ID.to_string()],
-                created_by_fact_id: FACT_ID.to_string(),
-                selected_at_seq: 5,
-                ended_at_seq: None,
-                ended_by_anchor_id: None,
-                ended_by_fact_id: None,
-            })
-            .unwrap();
         belief
             .put_evidence(&EvidenceItem {
                 publication_record_id: None,
@@ -1071,6 +924,67 @@ mod tests {
     }
 
     #[test]
+    fn owner_publication_thread_follows_its_exact_ledger_and_refuses_foreign_replay() {
+        use crate::runtime::ports::ProductGraphCursorPort;
+        use meld_events::{AppendMode, EventAuthority, EventAuthorityOpenOptions};
+        use meld_world_model::world_state::graph::runtime::GraphRuntime;
+        use std::sync::Arc;
+        let events = EventAuthority::open(
+            sled::Config::new().temporary(true).open().unwrap(),
+            EventAuthorityOpenOptions::default(),
+        )
+        .unwrap();
+        let replay = Arc::new(ProductEventReplayPort::new(events.replay_capability()));
+        let graph = Arc::new(
+            TraversalStore::new(sled::Config::new().temporary(true).open().unwrap()).unwrap(),
+        );
+        let runtime = GraphRuntime::from_ports(
+            replay.clone(),
+            Arc::new(ProductGraphCursorPort::new(
+                events.consumer_registry_capability(),
+            )),
+            graph.clone(),
+        )
+        .unwrap();
+        let frames_dir = tempfile::tempdir().unwrap();
+        let frames = crate::context::frame::FrameStorage::new(frames_dir.path()).unwrap();
+        let publication =
+            crate::context::publication::head_publication(&crate::heads::HeadIndex::new(), &frames)
+                .unwrap();
+        events
+            .append_capability()
+            .append_durable(
+                crate::world_state::graph::events::owner_publication_envelope(
+                    "thread",
+                    &publication,
+                )
+                .unwrap(),
+                AppendMode::Idempotent,
+            )
+            .unwrap();
+        runtime.catch_up().unwrap();
+        let start = ThreadSubject::OwnerPublication { source_seq: 1 };
+        let thread = ThreadWalker::from_parts(Some(&replay), None, None, Some(&graph), None)
+            .walk(start.clone())
+            .unwrap();
+        assert!(thread.cuts.is_empty());
+        assert_eq!(thread.nodes.len(), 2);
+        assert_eq!(thread.nodes[1].subject, ThreadSubject::Event { seq: 1 });
+        assert_eq!(thread.edges[0].citation, ThreadCitation::PublicationSource);
+        let foreign = EventAuthority::open(
+            sled::Config::new().temporary(true).open().unwrap(),
+            EventAuthorityOpenOptions::default(),
+        )
+        .unwrap();
+        let foreign_replay = ProductEventReplayPort::new(foreign.replay_capability());
+        let cut = ThreadWalker::from_parts(Some(&foreign_replay), None, None, Some(&graph), None)
+            .walk(start)
+            .unwrap();
+        assert_eq!(cut.nodes.len(), 1);
+        assert_eq!(cut.cuts[0].reason, ThreadCutReason::SourceOutOfScope);
+    }
+
+    #[test]
     fn decision_thread_resolves_across_domain_boundaries_to_its_facts() {
         let world = chain_world();
         let thread = walker(&world)
@@ -1099,26 +1013,14 @@ mod tests {
             },
             ThreadCitation::RevisionEvidence,
         ));
-        assert!(edge_exists(
-            &thread,
-            &ThreadSubject::Evidence {
-                evidence_id: EVIDENCE_ID.to_string()
-            },
-            &ThreadSubject::Fact {
-                fact_id: FACT_ID.to_string()
-            },
-            ThreadCitation::EvidenceSourceFact,
-        ));
-        assert!(edge_exists(
-            &thread,
-            &ThreadSubject::Evidence {
-                evidence_id: EVIDENCE_ID.to_string()
-            },
-            &ThreadSubject::Anchor {
-                anchor_id: ANCHOR_ID.to_string()
-            },
-            ThreadCitation::EvidenceAnchor,
-        ));
+        assert!(thread
+            .cuts
+            .iter()
+            .any(|cut| cut.reference == FACT_ID
+                && cut.citation == ThreadCitation::EvidenceSourceFact));
+        assert!(thread.cuts.iter().any(|cut| cut.reference
+            == format!("retired graph anchor {ANCHOR_ID}")
+            && cut.citation == ThreadCitation::EvidenceAnchor));
         assert!(!thread.bounded);
     }
 
@@ -1135,16 +1037,16 @@ mod tests {
         let cut = thread
             .cuts
             .iter()
-            .find(|cut| cut.reference == format!("anchor {MISSING_ANCHOR_ID}"))
+            .find(|cut| cut.reference == format!("retired graph anchor {MISSING_ANCHOR_ID}"))
             .expect("missing anchor is recorded as a cut");
-        assert_eq!(cut.reason, ThreadCutReason::AbsentRecord);
+        assert_eq!(cut.reason, ThreadCutReason::SourceOutOfScope);
         assert_eq!(cut.citation, ThreadCitation::EvidenceAnchor);
 
         // The ledger is out of scope for this walker, so the fact's event
         // reference is a scope cut rather than a silent omission.
         assert!(thread.cuts.iter().any(|cut| {
             cut.reason == ThreadCutReason::SourceOutOfScope
-                && cut.citation == ThreadCitation::FactSource
+                && cut.citation == ThreadCitation::EvidenceSourceFact
         }));
     }
 
@@ -1204,57 +1106,6 @@ mod tests {
             .expect("theory revision reference is recorded");
         assert_eq!(cut.reason, ThreadCutReason::SourceOutOfScope);
         assert!(cut.reference.contains("belief_family::docs_freshness"));
-    }
-
-    #[test]
-    fn a_present_anchor_for_subject_resolves_and_hops_to_the_anchor() {
-        let world = chain_world();
-        let thread = walker(&world)
-            .walk(ThreadSubject::AnchorForSubject {
-                subject_domain_id: "workspace_fs".to_string(),
-                subject_object_kind: "node".to_string(),
-                subject_object_id: "node-a".to_string(),
-                perspective_kind: "frame_type".to_string(),
-                perspective_id: "analysis".to_string(),
-            })
-            .unwrap();
-
-        assert!(thread.nodes[0].summary.contains(ANCHOR_ID));
-        let hop = thread
-            .edges
-            .iter()
-            .find(|edge| edge.citation == ThreadCitation::CurrentAnchor)
-            .expect("resolved anchor-for-subject hops to the anchor record");
-        assert_eq!(
-            thread.nodes[hop.to].subject,
-            ThreadSubject::Anchor {
-                anchor_id: ANCHOR_ID.to_string()
-            }
-        );
-    }
-
-    #[test]
-    fn an_absent_perspective_reports_the_anchors_that_do_exist() {
-        let world = chain_world();
-        let thread = walker(&world)
-            .walk(ThreadSubject::AnchorForSubject {
-                subject_domain_id: "workspace_fs".to_string(),
-                subject_object_kind: "node".to_string(),
-                subject_object_id: "node-a".to_string(),
-                perspective_kind: "frame_type".to_string(),
-                perspective_id: "other-perspective".to_string(),
-            })
-            .unwrap();
-
-        assert_eq!(thread.cuts.len(), 1);
-        assert_eq!(thread.cuts[0].reason, ThreadCutReason::AbsentRecord);
-        assert!(
-            thread.cuts[0]
-                .reference
-                .contains("1 anchors exist under other perspectives"),
-            "the absence names the perspectives that do exist: {}",
-            thread.cuts[0].reference
-        );
     }
 
     #[test]

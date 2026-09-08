@@ -24,9 +24,26 @@ pub const CURATION_SELECTION_UNCHANGED: &str = "curation_selection_unchanged";
 /// Standing Curation has durable intent whose Event append remains pending.
 pub const CURATION_PUBLICATION_PENDING: &str = "curation_publication_pending";
 
+/// Whether a rule may originate standing work or requires an Agent-selected product.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CurationSelectionPosture {
+    #[default]
+    Standing,
+    PlannedOnly,
+}
+
+impl CurationSelectionPosture {
+    pub fn is_standing(&self) -> bool {
+        *self == Self::Standing
+    }
+}
+
 /// One narrow installed rule for Curation-owned expected state.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StandingCurationRule {
+    #[serde(default, skip_serializing_if = "CurationSelectionPosture::is_standing")]
+    pub selection_posture: CurationSelectionPosture,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_event_route: Option<crate::world_state::graph::admission::OwnerEventSourceRef>,
     /// Exact judgment authority when observing an independently owned source scope.

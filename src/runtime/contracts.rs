@@ -1535,7 +1535,6 @@ mod tests {
             output_event_seq: 3,
             events_attempted: 2,
             traversal_events_applied: 1,
-            derived_events_appended: 1,
             retryable_errors: Vec::new(),
             fatal_errors: Vec::new(),
             budget_exhausted: false,

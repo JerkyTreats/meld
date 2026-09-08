@@ -17,28 +17,6 @@ pub struct SessionEndedData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QueueEventData {
-    pub node_id: String,
-    pub agent_id: String,
-    pub provider_name: String,
-    pub frame_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub request_id: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub retry_count: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub duration_ms: Option<u128>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QueueStatsEventData {
-    pub pending: usize,
-    pub processing: usize,
-    pub completed: usize,
-    pub failed: usize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderLifecycleEventData {
     pub node_id: String,
     pub agent_id: String,

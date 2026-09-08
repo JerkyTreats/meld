@@ -3,4 +3,3 @@
 pub use crate::api::ContextApi;
 pub use crate::world_state::graph::runtime::GraphRuntime;
 pub use crate::world_state::graph::store::TraversalStore;
-pub use crate::world_state::store::WorldStateStore;

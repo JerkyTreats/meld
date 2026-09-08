@@ -1,37 +1,24 @@
-//! Graph traversal domain for current anchors and provenance.
+//! Canonical Graph projection of owner-published knowledge.
 //!
-//! The graph layer reduces runtime events into object facts, current anchors,
-//! anchor history, and relation indexes. It owns graph-shaped facts only; belief
-//! semantics and planner projections live in their own domains. Product
-//! composition supplies identity-bearing event replay, derived-publication,
-//! and cursor-reporting ports from one event authority.
-//!
-//! Product composition creates [`runtime::GraphRuntime`] with [`runtime::GraphRuntime::from_ports`].
-//! Raw event storage construction is intentionally unavailable here.
+//! Graph admits intact owner publications from one Event authority and provides
+//! bounded traversal over explicit owner revision cuts. Owners define meaning;
+//! Graph neither interprets foreign event payloads nor authors semantic facts.
 
 pub mod admission;
-pub mod compat;
 pub mod contracts;
 mod cursor;
 pub mod events;
-mod outbox;
 pub mod ports;
-pub mod projection;
 pub mod query;
 pub mod reducer;
 pub mod runtime;
-mod source_intent;
 pub mod store;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 pub mod visibility;
 
-pub use contracts::{
-    AnchorEndInput, AnchorId, AnchorProvenanceRecord, AnchorSelectionInput, AnchorSelectionRecord,
-    GraphWalkResult, GraphWalkSpec, PerspectiveKey, TraversalDirection, TraversalFactId,
-    TraversalFactRecord, TraversalIntent,
-};
-pub use ports::{GraphConsumerCursorReporter, GraphDerivedEventSink, GraphEventReplaySource};
+pub use contracts::{PerspectiveKey, TraversalDirection};
+pub use ports::{GraphConsumerCursorReporter, GraphEventReplaySource};
 pub use query::TraversalQuery;
 
 pub(crate) mod source_replay;

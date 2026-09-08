@@ -702,6 +702,7 @@ fn successor_cut_observes_existing_state_as_unchanged() {
     next_cut.event_position.after_seq += 1;
     next_cut.graph_position.after_seq += 1;
     next_cut.receipts = vec![OwnerGraphRevisionReceipt {
+        work_input_basis_id: None,
         event_coverage: None,
         owner_id: "workspace_fs".to_string(),
         revision_id: "workspace-v2".to_string(),
@@ -881,6 +882,7 @@ fn owner_neutral_rule_authors_dissimilar_installed_vocabulary() {
     let store = Arc::new(CurationStore::new(db).unwrap());
     let subject = DomainObjectRef::new("inventory", "asset", "asset-a").unwrap();
     let neutral_rule = StandingCurationRule {
+        selection_posture: Default::default(),
         coverage: None,
         source_event_route: None,
         judgment_scope: None,
@@ -1608,6 +1610,7 @@ impl Fixture {
 
 fn rule() -> StandingCurationRule {
     StandingCurationRule {
+        selection_posture: Default::default(),
         coverage: None,
         source_event_route: None,
         judgment_scope: None,
@@ -1697,6 +1700,7 @@ fn cut(after_seq: u64) -> TraversalCut {
             },
         ],
         receipts: vec![OwnerGraphRevisionReceipt {
+            work_input_basis_id: None,
             event_coverage: None,
             owner_id: "workspace_fs".to_string(),
             revision_id: "workspace-v1".to_string(),

@@ -22,8 +22,6 @@ use crate::belief::selection::{BeliefSubjectBinding, BeliefWorkKind, BeliefWorkS
 use crate::belief::store::BeliefStore;
 use crate::error::StorageError;
 use crate::waiting::{conditions, StructuralWakeAddress, WaitingOnDeclaration};
-use crate::world_state::graph::query::TraversalQuery;
-use crate::world_state::graph::store::TraversalStore;
 use crate::world_state::graph::PerspectiveKey;
 
 /// Bounded belief assessment step request.
@@ -78,7 +76,6 @@ pub struct BeliefAssessmentReport {
 pub struct BeliefAssessmentActor {
     actor_id: String,
     store: Arc<BeliefStore>,
-    traversal: Arc<TraversalStore>,
     registry: Arc<dyn BeliefFamilyRegistry + Send + Sync>,
     family_ids: Vec<String>,
     subjects: Vec<BeliefSubjectBinding>,
@@ -95,7 +92,6 @@ impl BeliefAssessmentActor {
     pub fn new(
         actor_id: impl Into<String>,
         store: Arc<BeliefStore>,
-        traversal: Arc<TraversalStore>,
         registry: Arc<dyn BeliefFamilyRegistry + Send + Sync>,
         family_ids: Vec<String>,
         subjects: Vec<BeliefSubjectBinding>,
@@ -108,7 +104,6 @@ impl BeliefAssessmentActor {
             work_lock: parking_lot::Mutex::new(()),
             actor_id,
             store,
-            traversal,
             registry,
             family_ids,
             subjects,
@@ -152,14 +147,6 @@ impl BeliefAssessmentActor {
         {
             return Ok(!self.family_ids.is_empty());
         }
-        if matches!(wake, StructuralWakeAddress::OwnerRevision(_))
-            && self.traversal.resource_id() == self.store.resource_id()
-            && self.subjects.iter().any(|binding| {
-                value == format!("graph-anchor::{}::successor", binding.subject.index_key())
-            })
-        {
-            return Ok(true);
-        }
         let families = match &self.pinned_families {
             Some(families) => families.clone(),
             None => self
@@ -180,23 +167,7 @@ impl BeliefAssessmentActor {
                             .strip_prefix(prefix)
                             .and_then(|value| value.strip_suffix("::successor"))
                     })
-                    .map(str::to_string)
-                    .or_else(|| {
-                        value
-                            .strip_prefix("graph-anchor::")
-                            .and_then(|value| value.strip_suffix("::successor"))
-                            .filter(|_| self.traversal.resource_id() == self.store.resource_id())
-                            .map(|subject| {
-                                format!(
-                                    "{subject}::{}::{}::{}::{}::{}",
-                                    family.config.dimension_id,
-                                    family.config.predicate_id,
-                                    self.perspective.index_key(),
-                                    self.branch_scope.branch_id,
-                                    family.config.evidence_policy_id
-                                )
-                            })
-                    }),
+                    .map(str::to_string),
                 StructuralWakeAddress::DurableDeadline(_) => value
                     .strip_prefix("belief-assessment-lease::")
                     .and_then(|value| value.rsplit_once("::after::"))
@@ -496,7 +467,7 @@ impl BeliefAssessmentActor {
             report.waiting_on.push(WaitingOnDeclaration::broad(
                 conditions::BELIEF_WORK_INELIGIBLE,
                 format!(
-                    "no dirty keys and no unassessed subject bindings across {} installed \
+                    "no admitted evidence or prior-authorized initial work across {} installed \
                      families and {} configured subjects",
                     families.len(),
                     self.subjects.len()
@@ -520,7 +491,6 @@ impl BeliefAssessmentActor {
             // step, so lineage always cites the theory actually executed.
             let runtime = BeliefRuntime::from_family_revision(
                 Arc::clone(&self.store),
-                Arc::clone(&self.traversal),
                 family,
                 self.perspective.clone(),
                 self.branch_scope.clone(),
@@ -528,12 +498,7 @@ impl BeliefAssessmentActor {
             let item_id = item.key.index_key();
             let outcome = match &item.kind {
                 BeliefWorkKind::InitialAssessment { binding } => runtime
-                    .assess_subject(
-                        &binding.subject,
-                        &binding.anchor_perspective_kind,
-                        &binding.anchor_perspective_id,
-                        &self.actor_id,
-                    )
+                    .assess_subject(&binding.subject, &self.actor_id)
                     .map(Some),
                 BeliefWorkKind::DirtyKey { .. } => {
                     runtime.assess_dirty_key(&item.key, &self.actor_id)
@@ -580,81 +545,27 @@ impl BeliefAssessmentActor {
         report
     }
 
-    /// Declare what a blocked assessment item is waiting on.
-    ///
-    /// For an initial assessment the load-bearing precondition is the
-    /// current graph anchor; the read here is observational (a point
-    /// lookup on state the failed attempt just consulted) and names the
-    /// exact subject key and perspective, so the anchor stall reads as a
-    /// nameable divergence rather than an opaque error.
+    /// Name the evidence or lease successor that can unblock assessment.
     fn declare_blocked_item(
         &self,
         report: &mut BeliefAssessmentReport,
         kind: &BeliefWorkKind,
         item_id: &str,
     ) {
-        match kind {
-            BeliefWorkKind::InitialAssessment { binding } => {
-                // A read failure must not mint a false absence: only a
-                // successful read that finds nothing declares the anchor
-                // absent; an errored read degrades to the generic block.
-                let anchor = match TraversalQuery::new(self.traversal.as_ref())
-                    .current_anchor_for_subject(
-                        &binding.subject,
-                        &binding.anchor_perspective_kind,
-                        &binding.anchor_perspective_id,
-                    ) {
-                    Ok(anchor) => anchor,
-                    Err(_) => {
-                        report.waiting_on.push(WaitingOnDeclaration::about(
-                            conditions::ASSESSMENT_BLOCKED,
-                            item_id,
-                            "initial assessment failed and the anchor precondition \
-                             could not be re-read",
-                            vec![StructuralWakeAddress::OwnerRevision(format!(
-                                "belief-input::{item_id}::successor"
-                            ))],
-                        ));
-                        return;
-                    }
-                };
-                if anchor.is_none() {
-                    report.waiting_on.push(WaitingOnDeclaration::about(
-                        conditions::GRAPH_ANCHOR_ABSENT,
-                        binding.subject.index_key(),
-                        format!(
-                            "no current anchor for subject {} under {}::{}",
-                            binding.subject.index_key(),
-                            binding.anchor_perspective_kind,
-                            binding.anchor_perspective_id
-                        ),
-                        vec![StructuralWakeAddress::OwnerRevision(format!(
-                            "graph-anchor::{}::successor",
-                            binding.subject.index_key()
-                        ))],
-                    ));
-                    return;
-                }
-                report.waiting_on.push(WaitingOnDeclaration::about(
-                    conditions::ASSESSMENT_BLOCKED,
-                    item_id,
-                    "initial assessment failed past the anchor precondition",
-                    vec![StructuralWakeAddress::OwnerRevision(format!(
-                        "belief-input::{item_id}::successor"
-                    ))],
-                ));
+        let reason = match kind {
+            BeliefWorkKind::InitialAssessment { .. } => {
+                "initial assessment awaits admitted evidence or a lease successor"
             }
-            BeliefWorkKind::DirtyKey { .. } => {
-                report.waiting_on.push(WaitingOnDeclaration::about(
-                    conditions::ASSESSMENT_BLOCKED,
-                    item_id,
-                    "dirty-key assessment failed; the key stays dirty",
-                    vec![StructuralWakeAddress::OwnerRevision(format!(
-                        "belief-dirty-key::{item_id}::successor"
-                    ))],
-                ));
-            }
-        }
+            BeliefWorkKind::DirtyKey { .. } => "dirty-key assessment failed; the key stays dirty",
+        };
+        report.waiting_on.push(WaitingOnDeclaration::about(
+            conditions::ASSESSMENT_BLOCKED,
+            item_id,
+            reason,
+            vec![StructuralWakeAddress::OwnerRevision(format!(
+                "belief-input::{item_id}::successor"
+            ))],
+        ));
     }
 
     /// Resolve the current registry revision for every configured family.

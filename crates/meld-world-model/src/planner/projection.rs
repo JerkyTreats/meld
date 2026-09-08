@@ -126,6 +126,35 @@ impl PlannerCut {
 
 fn validate_assembly_request(request: &PlannerAssemblyRequest) -> Vec<PlannerRefusalGround> {
     let mut grounds = Vec::new();
+    let admitted_unassessed = request
+        .view_input
+        .unassessed_belief
+        .as_ref()
+        .is_some_and(|answer| {
+            request
+                .policy
+                .acquisition_question
+                .as_ref()
+                .is_some_and(|question| {
+                    question.key == answer.key && question.family == answer.family
+                })
+                && request.view_input.belief_view.is_none()
+                && answer.key.subject == *request.context.observation_subject()
+                && answer.key.perspective.perspective_id == request.context.perspective_id
+                && answer.key.branch_scope.branch_id == request.context.branch_id
+                && !answer.subscription_request_id.is_empty()
+                && !answer.subscription_acceptance_id.is_empty()
+                && !request.source_positions.iter().any(|source| {
+                    source.kind == PlannerSourceKind::Belief
+                        && source.source_id == answer.key.index_key()
+                })
+        });
+    if request.view_input.unassessed_belief.is_some() && !admitted_unassessed {
+        grounds.push(PlannerRefusalGround::InvalidInput {
+            detail: "unassessed Belief answer differs from the installed acquisition question"
+                .into(),
+        });
+    }
     if &request.view_input.context.subject != request.context.observation_subject() {
         grounds.push(PlannerRefusalGround::InvalidInput {
             detail: "projected evidence belongs to another observation subject".into(),
@@ -148,7 +177,7 @@ fn validate_assembly_request(request: &PlannerAssemblyRequest) -> Vec<PlannerRef
             .iter()
             .filter(|source| source.kind == *kind)
             .collect::<Vec<_>>();
-        if supplied.is_empty() {
+        if supplied.is_empty() && !(*kind == PlannerSourceKind::Belief && admitted_unassessed) {
             grounds.push(PlannerRefusalGround::Missing { kind: *kind });
         } else if supplied.len() > 1 {
             let views: Vec<_> = request
@@ -280,6 +309,29 @@ pub fn project_world_state(
     let mut hydration_refs = PlannerHydrationRefs::default();
     let mut warnings = Vec::new();
 
+    if let Some(answer) = &input.unassessed_belief {
+        if input.belief_view.is_some()
+            || answer.key.subject != input.context.subject
+            || answer.key.perspective != input.context.perspective
+            || answer.key.branch_scope != input.context.branch_scope
+            || answer
+                .family
+                .validate_for_registry("belief_family")
+                .is_err()
+        {
+            return Err(PlannerProjectionError::Storage(
+                crate::error::StorageError::InvalidPath(
+                    "unassessed Belief answer differs from the projection question".into(),
+                ),
+            ));
+        }
+        source_refs.push(PlannerSourceRef::BeliefSelection {
+            key_id: answer.key.index_key(),
+            family_id: answer.family.id.clone(),
+            content_hash: answer.family.content_hash.clone(),
+        });
+    }
+
     if let Some(view) = input.belief_view.as_ref() {
         validate_view_context(&input, view)?;
         project_belief_view(
@@ -360,18 +412,6 @@ pub fn project_world_state(
                 rule_id: "graph.accessible".to_string(),
             });
         }
-        for anchor_id in &scope.anchor_ids {
-            source_refs.push(PlannerSourceRef::GraphAnchor {
-                anchor_id: anchor_id.clone(),
-            });
-            hydration_refs.graph_anchor_ids.push(anchor_id.clone());
-        }
-        for source_fact_id in &scope.source_fact_ids {
-            source_refs.push(PlannerSourceRef::SourceFact {
-                source_fact_id: source_fact_id.clone(),
-            });
-            hydration_refs.source_fact_ids.push(source_fact_id.clone());
-        }
     } else {
         warnings.push(PlannerProjectionWarning::MissingGraphScope {
             subject: input.context.subject.clone(),
@@ -393,6 +433,7 @@ pub fn project_world_state(
         .and_then(|view| view.theory_revision.clone());
 
     Ok(WorldModelView {
+        unassessed_belief: input.unassessed_belief,
         world_state: WorldState::new(propositions)?,
         projection_version: input.context.projection_version,
         source_refs,
@@ -552,6 +593,68 @@ mod cut_tests {
                 .grounds
                 .contains(&PlannerRefusalGround::Missing { kind }));
         }
+    }
+
+    #[test]
+    fn acquisition_admits_only_the_exact_unanswered_question_and_keeps_source_requirements() {
+        let mut input = request();
+        input
+            .source_positions
+            .retain(|source| source.kind != PlannerSourceKind::Belief);
+        let key = crate::belief::BeliefKey {
+            subject: input.context.subject.clone(),
+            dimension_id: "question".into(),
+            predicate_id: "confidence".into(),
+            evidence_policy_id: "evidence".into(),
+            perspective: input.view_input.context.perspective.clone(),
+            branch_scope: BranchScope::main(),
+        };
+        let family = crate::belief::TheoryRevisionRef {
+            registry: "belief_family".into(),
+            id: "question".into(),
+            content_hash: "exact-family".into(),
+        };
+        input.policy.acquisition_question = Some(PlannerBeliefSelection {
+            key: key.clone(),
+            family: family.clone(),
+        });
+        input.view_input.unassessed_belief = Some(crate::belief::UnassessedBeliefQuestion {
+            key,
+            family,
+            subscription_request_id: "accepted-request".into(),
+            subscription_acceptance_id: "owner-acceptance".into(),
+        });
+        let PlannerAssemblyOutcome::Complete(cut) = PlannerCut::assemble(input.clone()) else {
+            panic!("exact absence must be a complete unanswered cut");
+        };
+        cut.validate().unwrap();
+        assert!(cut.world_model_view.hydration_refs.revision_ids.is_empty());
+        let mut wrong = input.clone();
+        wrong
+            .view_input
+            .unassessed_belief
+            .as_mut()
+            .unwrap()
+            .family
+            .content_hash = "another-family".into();
+        assert!(matches!(
+            PlannerCut::assemble(wrong),
+            PlannerAssemblyOutcome::Refused(_)
+        ));
+        let mut missing = input.clone();
+        missing
+            .source_positions
+            .retain(|source| source.kind != PlannerSourceKind::Graph);
+        assert!(matches!(
+            PlannerCut::assemble(missing),
+            PlannerAssemblyOutcome::Refused(_)
+        ));
+        let mut unselected = input;
+        unselected.policy.acquisition_question = None;
+        assert!(matches!(
+            PlannerCut::assemble(unselected),
+            PlannerAssemblyOutcome::Refused(_)
+        ));
     }
 
     #[test]
@@ -723,6 +826,7 @@ mod cut_tests {
         PlannerAssemblyRequest {
             context: context.clone(),
             policy: PlannerAssemblyPolicy {
+                acquisition_question: None,
                 policy_revision_id: "policy-v1".into(),
                 required_sources: kinds.clone(),
                 explicitly_not_required: vec![
@@ -759,6 +863,7 @@ mod cut_tests {
                 })
                 .collect(),
             view_input: PlannerProjectionInput {
+                unassessed_belief: None,
                 additional_beliefs: Vec::new(),
                 context: PlannerProjectionContext {
                     subject,
@@ -767,11 +872,7 @@ mod cut_tests {
                     projection_version: PLANNER_PROJECTION_VERSION.into(),
                 },
                 belief_view: None,
-                graph_scope: Some(PlannerGraphScope {
-                    accessible: true,
-                    anchor_ids: Vec::new(),
-                    source_fact_ids: Vec::new(),
-                }),
+                graph_scope: Some(PlannerGraphScope { accessible: true }),
                 field_config: PlannerFieldProjectionConfig::default(),
             },
         }

@@ -49,7 +49,6 @@ pub(crate) fn replay_pending_source(
         output_event_seq: target.after_seq,
         events_attempted: 0,
         traversal_events_applied: 0,
-        derived_events_appended: 0,
         retryable_errors: Vec::new(),
         fatal_errors: Vec::new(),
         budget_exhausted: true,
@@ -115,11 +114,6 @@ pub(crate) fn replay_pending_source(
                     std::iter::once(event),
                 )?;
                 report.traversal_events_applied += reduced.applied_events;
-                if !reduced.emitted_envelopes.is_empty() {
-                    return Err(StorageError::InvalidPath(
-                        "owner publication replay unexpectedly authored derived Events".into(),
-                    ));
-                }
             }
             cursor = store.advance_owner_event_replay(&state.source, cursor, next)?;
             report

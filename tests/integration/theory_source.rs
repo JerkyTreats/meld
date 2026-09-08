@@ -94,8 +94,8 @@ fn shipped_theory_provisions_and_loads_through_every_selection_identity() {
             "coverage_probability"
         );
         assert_eq!(
-            family.anchor_requirement,
-            meld_world_model::belief::AnchorRequirement::Unanchored
+            family.initial_assessment,
+            meld_world_model::belief::InitialAssessmentPolicy::PriorAllowed
         );
 
         let rule = load_curation_rule_config("docs_freshness").unwrap();

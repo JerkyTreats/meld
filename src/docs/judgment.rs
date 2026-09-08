@@ -1,8 +1,8 @@
 //! Execution provenance authored by the Docs provider adapter, never by model output.
 
 use crate::error::ApiError;
-use crate::provider::executor::ProviderPreparation;
 use crate::provider::CompletionResponse;
+use crate::provider::ProviderExecutionDescription;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,26 +27,18 @@ impl DocsJudgmentExecution {
     pub(crate) fn capture(
         policy_identity: String,
         request: &crate::context::generation::contracts::GenerationOrchestrationRequest,
-        preparation: &ProviderPreparation,
+        preparation: &ProviderExecutionDescription,
         response: &CompletionResponse,
     ) -> Result<Self, ApiError> {
-        let config = &preparation.provider_config;
-        // Hash the resolved settings; do not persist endpoints or credentials.
-        let configuration_identity = digest(&(
-            &preparation.provider_type,
-            &config.model,
-            &config.endpoint,
-            &config.default_options,
-        ))?;
         let mut execution = Self {
             execution_id: String::new(),
             request_identity: hex::encode(request.node_id),
             policy_identity,
             provider_name: request.provider.provider_name.clone(),
             provider_type: preparation.provider_type.clone(),
-            requested_model: config.model.clone(),
+            requested_model: preparation.requested_model.clone(),
             reported_model: response.model.clone(),
-            configuration_identity,
+            configuration_identity: preparation.configuration_identity.clone(),
             response_identity: blake3::hash(response.content.as_bytes())
                 .to_hex()
                 .to_string(),

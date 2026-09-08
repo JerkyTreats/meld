@@ -7,7 +7,7 @@ use crate::api::ContextApi;
 use crate::branches::ResolvedBranch;
 use crate::config::MerkleConfig;
 use crate::config::PhysicalBinding;
-use crate::context::head::backfill_legacy_heads_into_ledger;
+use crate::context::publication::publish_heads;
 use crate::error::{ApiError, StorageError};
 use crate::events::binding::{
     resolve_product_event_authority, resolve_product_event_authority_at, ProductEventBindingError,
@@ -20,7 +20,6 @@ use crate::runtime::storage::ProductStorageLayout;
 use crate::session::{SessionRuntime, SessionStore};
 use crate::store::persistence::SledNodeRecordStore;
 use crate::telemetry::ProgressRuntime;
-use crate::world_state::belief::BeliefStore;
 
 #[derive(Clone)]
 pub struct CliRuntimeAssembly {
@@ -117,9 +116,8 @@ impl CliRuntimeAssembly {
                 .map_err(|error| ApiError::ConfigError(error.to_string()))?,
         );
 
-        // Existing CLI-owned node, frame, prompt, belief, and session state
-        // stays on its characterized compatibility paths. Only canonical
-        // events and the graph projection move to the product authority in E5.
+        // Retained node, frame, prompt, and session data use this store.
+        // Live Events, Graph, and Belief belong to the product runtime above.
         std::fs::create_dir_all(&legacy_store_path)
             .map_err(|error| ApiError::StorageError(StorageError::IoError(error)))?;
         let compatibility_db = sled::open(&legacy_store_path).map_err(|error| {
@@ -128,7 +126,6 @@ impl CliRuntimeAssembly {
             ))))
         })?;
         let node_store = Arc::new(SledNodeRecordStore::from_db(compatibility_db.clone()));
-        let belief_store = BeliefStore::shared(compatibility_db.clone()).map_err(ApiError::from)?;
         let session_store = SessionStore::shared(compatibility_db).map_err(ApiError::from)?;
         let session_runtime = Arc::new(SessionRuntime::new(session_store));
         std::fs::create_dir_all(&frame_storage_path)
@@ -152,27 +149,24 @@ impl CliRuntimeAssembly {
             &graph_runtime,
         )));
 
-        let head_index = Arc::new(parking_lot::RwLock::new(match &runtime_workspace {
+        let head_index = match &runtime_workspace {
             Some(workspace) => HeadIndex::load_from_disk(HeadIndex::persistence_path(workspace))
-                .unwrap_or_else(|error| {
-                    tracing::warn!(
-                        "Failed to load head index from disk: {}, starting with empty index",
-                        error
-                    );
-                    HeadIndex::new()
-                }),
+                .map_err(ApiError::from)?,
             None => HeadIndex::new(),
-        }));
+        };
         {
-            let head_index_guard = head_index.read();
-            if let Err(error) = backfill_legacy_heads_into_ledger(
-                &progress,
-                &head_index_guard,
-                frame_storage.as_ref(),
-                "context_head_backfill",
-            ) {
-                tracing::warn!(error = %error, "failed to backfill legacy heads into ledger");
+            let heads = &head_index;
+            if let Some(workspace) = &runtime_workspace {
+                heads
+                    .save_to_disk(HeadIndex::persistence_path(workspace))
+                    .map_err(ApiError::from)?;
             }
+            publish_heads(
+                &product_runtime.event_authority().append_capability(),
+                heads,
+                frame_storage.as_ref(),
+                "context_head_publication",
+            )?;
         }
 
         let mut agent_registry = crate::agent::AgentRegistry::new();
@@ -193,8 +187,8 @@ impl CliRuntimeAssembly {
             Arc::new(crate::concurrency::NodeLockManager::new()),
         )
         .with_optional_workspace(runtime_workspace);
+        api.bind_event_append(product_runtime.event_authority().append_capability())?;
         api.set_world_model_queries(world_model_queries);
-        api.set_belief_store(belief_store);
 
         Ok(Self {
             api: Arc::new(api),

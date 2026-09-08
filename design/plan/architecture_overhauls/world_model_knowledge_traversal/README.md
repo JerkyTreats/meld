@@ -1,49 +1,19 @@
 # World Model Reconciliation
 
-This folder preserves requirements, design history and implementation evidence for World Model Reconciliation. Canonical intent lives in [Cognitive Architecture](../../../cognitive_architecture/README.md).
+Start with [Canonical Flywheel Alignment And Runtime Soft Freeze](flywheel_remediation.md).
 
-The user withdrew the delivery program's binding authority and authorized audit and implementation against the original outcomes. Start with the [current reconciliation audit](reconciliation_outcome_audit.md), which maps those outcomes to native source and executable evidence. The old ledgers, slice restrictions and acceptance receipts are historical and directional; they do not govern current implementation or prove overall completion.
+That document is the sole current issue register, severity order, remediation plan, and branch-acceptance definition. The objective is one canonical flywheel that turns through ordinary runtime entrypoints, followed by a soft freeze that supports PDS and use-case development. Causation and Regime remain deferred.
 
-## Primary Evidence
+All earlier assessments, ledgers, recovery amendments, detailed delivery plans, reviews, and gate receipts in this directory and its descendants are superseded as current delivery direction. They remain supporting design history and evidence. Their embedded next-task, authorization, and completion statements are historical and must not be used to resume an old program.
 
-The [original code ground map](current_code_groundmap.md) records the pre-reconciliation baseline. Read the [Strategy Plan redesign](strategy_plan_redesign.md), [Curation assessment](curation_assessment.md), and [bounded Epistemic Operations](bounded_epistemic_operations.md) for the architecture thesis that was approved.
+[Runtime Invariants](../../../../governance/runtime_invariants.md) and [Contribution Policy](../../../../governance/contribution_policy.md) remain governing policy. [Cognitive Architecture](../../../cognitive_architecture/README.md) remains the evergreen specification. The canonical remediation document records current implementation gaps and does not replace those authorities.
 
-The [cognitive architecture alignment assessment](cognitive_architecture_alignment_assessment.md) records the canonicalization boundary and complete domain sweep.
+## Supporting Evidence
 
-The historical [source delivery program ledger](world_model_reconciliation_source_delivery_program_ledger.md), [VC-04-R retirement record](wmr_vc_04_r_execution_retirement.md) and [post-VC-04 assessment](post_vc_04_retirement_assessment.md) preserve the earlier decomposition and its accepted evidence. The current audit records the subsequent native implementation and retirement corrections.
+- [Retained minimum-flywheel artifacts](evidence/minimum_flywheel_2026_09_08/result.json) preserve the exact narrow product demonstrations.
+- [Historical outcome audit](reconciliation_outcome_audit.md) preserves implementation history and prior validation.
+- [Historical acceptance record](reconciliation_acceptance.md) preserves the previous scope and evidence limits; it does not establish soft-freeze readiness.
+- [Historical Strategy redesign](strategy_plan_redesign.md) and [bounded Epistemic Operations](bounded_epistemic_operations.md) explain the heterogeneous Plan rationale.
+- [Retirement-policy incident](../../incidents/2026-09-02-wmr-vc-04-retirement-policy-dilution.md) explains why migration and retirement must remain in the same replacement slice.
 
-The delivery-control RCA is recorded in [WMR VC-04 retirement policy dilution](../../incidents/2026-09-02-wmr-vc-04-retirement-policy-dilution.md).
-
-## Scope Evidence
-
-The [impact assessment](impact_assessment/README.md) maps crate, domain, and entity impact. The [PDS boundary assessment](pds_boundary_assessment/README.md) frames productization through theory, assignment, activation, and Agent genesis. The [runtime, initialization, and lifecycle assessment](runtime_initialization_lifecycle/README.md) maps the durable producer-consumer loop and activation-wide liveness gaps.
-
-The [detailed design workstream framing](detailed_design_workstream_framing.md) maps the major specification verticals, confirms code-evidence readiness, and records their dependency order without authorizing implementation.
-
-The historical [detailed design delivery program ledger](world_model_reconciliation_delivery_program_ledger.md) records the former maturity envelope, slice boundaries, phase inventory and Delivery Gates. The [handoff and lifecycle ledger](world_model_reconciliation_handoff_ledger.md) preserves producer-consumer relationships across phases.
-
-The user-approved [Startup PDS design requirements](startup_pds_design_requirements/README.md) define `meld_startup` as the first bounded runtime proof of the complete reconciliation path. The reusable `nonce.emit.v1` Capability emits one owner-issued Event kind `nonce`, while Startup-specific Goal, Agent, epoch, Curation, and satisfaction meaning remains in product theory. The core canary remains non-gating; its native implementation and ordinary CLI proof are recorded in the current audit.
-
-The committed first slice consists of the [semantic transition ledger](detailed_design/semantic_transition_ledger.md) and [owner publication to TraversalCut design](detailed_design/owner_publication_to_traversal_cut.md). A later [independent retrospective review](reviews/wmr_dd_01_retrospective_assurance_recommendation.md) corrected five frozen findings from the historical review. The separate [retrospective WMR-DG-01 assurance receipt](delivery_gates/wmr_dg_01_retrospective_assurance_receipt.md) now provides the current accepted evidence while preserving the [historical receipt](delivery_gates/wmr_dg_01_acceptance_receipt.md).
-
-The completed second slice consists of the [epistemic operation transition ledger](detailed_design/epistemic_operation_transition_ledger.md) and [epistemic authorship and settlement design](detailed_design/epistemic_authorship_and_settlement.md). Its [independent retrospective review](reviews/wmr_dd_02_retrospective_assurance_recommendation.md) confirmed the semantic pass, reconciled the historical closeout defect, and clarified rejection plus failed-work successor behavior. The separate [retrospective WMR-DG-02 assurance receipt](delivery_gates/wmr_dg_02_retrospective_assurance_receipt.md) provides the current accepted evidence.
-
-The completed third slice consists of the [PlannerCut and Plan transition ledger](detailed_design/planner_cut_and_plan_transition_ledger.md) and [PlannerCut, Strategy Plan, and Agent progression design](detailed_design/planner_cut_strategy_plan_and_agent_progression.md). Its [subagent review recommendation](reviews/wmr_dd_03_subagent_review_recommendation.md) produced four bounded corrections that passed verification. A distinct [Gate Acceptance recommendation](delivery_gates/wmr_dg_03_subagent_acceptance_recommendation.md) supported the official [WMR-DG-03 Gate Acceptance](delivery_gates/wmr_dg_03_acceptance_receipt.md).
-
-The completed fourth slice consists of the [Execution admission and observation transition ledger](detailed_design/execution_admission_and_observation_transition_ledger.md) and [Execution admission and observation return design](detailed_design/execution_admission_and_observation_return.md). Its bounded [subagent review recommendation](reviews/wmr_dd_04_subagent_review_recommendation.md) passed after correction, and a distinct [Gate Acceptance recommendation](delivery_gates/wmr_dg_04_subagent_acceptance_recommendation.md) supported the official [WMR-DG-04 Gate Acceptance](delivery_gates/wmr_dg_04_acceptance_receipt.md).
-
-The completed fifth slice consists of the [product compilation and Agent genesis transition ledger](detailed_design/product_compilation_and_agent_genesis_transition_ledger.md) and [product compilation and Agent genesis design](detailed_design/product_compilation_and_agent_genesis.md). Its bounded [subagent review recommendation](reviews/wmr_dd_05_subagent_review_recommendation.md) passed after correction, and a distinct [Gate Acceptance recommendation](delivery_gates/wmr_dg_05_subagent_acceptance_recommendation.md) supported the official [WMR-DG-05 Gate Acceptance](delivery_gates/wmr_dg_05_acceptance_receipt.md).
-
-The completed sixth slice consists of the [activation generation and lifecycle transition ledger](detailed_design/activation_generation_and_lifecycle_transition_ledger.md) and [activation generation and lifecycle closure design](detailed_design/activation_generation_and_lifecycle_closure.md). Its bounded [subagent review recommendation](reviews/wmr_dd_06_subagent_review_recommendation.md) passed after correction, and a distinct [Gate Acceptance recommendation](delivery_gates/wmr_dg_06_subagent_acceptance_recommendation.md) supported the official [WMR-DG-06 Gate Acceptance](delivery_gates/wmr_dg_06_acceptance_receipt.md).
-
-The completed seventh slice consists of the [integrated product outcome evidence matrix](detailed_design/integrated_product_outcome_evidence_matrix.md) and [integrated product proof and inspection design](detailed_design/integrated_product_proof_and_inspection.md). Its bounded [subagent review recommendation](reviews/wmr_dd_07_subagent_review_recommendation.md) passed after correction, and a distinct [Gate Acceptance recommendation](delivery_gates/wmr_dg_07_subagent_acceptance_recommendation.md) supported the official [WMR-DG-07 Gate Acceptance](delivery_gates/wmr_dg_07_acceptance_receipt.md).
-
-The separate [cross-gate expected outcomes evidence report](reviews/world_model_reconciliation_cross_gate_expected_outcomes_evidence_report.md) catalogs the accepted design outcomes, owner evidence, lifecycle positions, forbidden inferences, and future runtime matching artifacts without issuing a coherence judgment.
-
-The final approval audit reopened two bounded design surfaces without reopening the historical receipts. The [WMR-DG-04 revision 2 candidate](delivery_gates/wmr_dg_04_execution_coherence_and_observation_return_revision_2.md) corrects Execution coherence so compatible Goal-attributed Tasks share work inside one unified Task Network while retaining independent discharge. The [WMR-DG-07 revision 2 candidate](delivery_gates/wmr_dg_07_integrated_product_proof_and_inspection_revision_2.md) adds direct proof for that cross-Agent outcome, successor Plan reconstruction after changed knowledge, the full review evidence map, and exact candidate preservation. Its [independent review](reviews/world_model_reconciliation_approval_review_recommendation.md) recommended approval, but separate Gate Acceptance did not occur before the next amendment.
-
-The user then approved the full Startup PDS design and authorized its inclusion. The [WMR-DG-07 revision 3 candidate](delivery_gates/wmr_dg_07_integrated_product_proof_and_inspection_revision_3.md) preserves every revision 1 and revision 2 criterion, adds exact Startup outcomes and transition evidence, and names the Startup nonce as the first runtime proof after separate implementation authorization. The [exact revision 3 manifest](reviews/world_model_reconciliation_startup_integration_candidate.sha256) freezes the candidate for independent review and later separate user Gate Acceptance. The optional policy that blocks other PDS activation on Startup satisfaction remains excluded.
-
-## Reviews
-
-The `reviews` folder contains focused evidentiary pressure on shared Goal language and Event-backed Epistemic Operations. It also contains the [program design review receipt](reviews/world_model_reconciliation_program_design_review_receipt.md), the historical [revision 2 approval recommendation](reviews/world_model_reconciliation_approval_review_recommendation.md), and exact candidate manifests. Reviews inform requirements but do not override cognitive architecture or issue Gate Acceptance.
+Current implementation status and next work are maintained only in the canonical remediation document.

@@ -15,6 +15,12 @@ pub(super) fn repeat_for_new_advisory(
 ) {
     use meld_world_model::{strategy::PlanMilestoneRequirement, AgentAuthorizedProduct};
     let store = &assembly.stores().agent_store;
+    let before_seq = assembly
+        .ports()
+        .event_append()
+        .watermark()
+        .unwrap()
+        .committed_seq;
     let prior_goals = store
         .reconciliation_goals_for_agent(&harness.binding.agent_id)
         .unwrap();
@@ -222,8 +228,47 @@ pub(super) fn repeat_for_new_advisory(
             .iter()
             .filter(|record| record.event_type == "dependency_security.invocation_return.v1")
             .count(),
-        20
+        24
     );
+    let network = assembly.task_network_reader().unwrap().snapshot().unwrap();
+    let materialized_seq = records
+        .iter()
+        .find(|record| {
+            record.seq > before_seq && record.event_type == "code_change.materialized.v1"
+        })
+        .unwrap()
+        .seq;
+    let mut returned_by_task = std::collections::BTreeMap::<String, usize>::new();
+    for record in records.iter().filter(|record| {
+        record.seq > before_seq && record.event_type == "dependency_security.invocation_return.v1"
+    }) {
+        let run = record
+            .data
+            .pointer("/binding/payload/upstream_lineage/task_run_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap();
+        let node = network
+            .tasks
+            .values()
+            .find(|node| node.task_run_context.task_run_id == run)
+            .unwrap();
+        let task_id = &node.lineage.admission.as_ref().unwrap().task_id;
+        if task_id == &verifications[0].product_id {
+            assert!(
+                record.seq > materialized_seq,
+                "verification observes the materialized effect"
+            );
+        } else {
+            assert!(
+                record.seq < materialized_seq,
+                "assessment establishes the exposure before mutation"
+            );
+        }
+        *returned_by_task.entry(task_id.clone()).or_default() += 1;
+    }
+    assert_eq!(returned_by_task.len(), 2, "new exposure requires a current assessment and a distinct post-mutation verification: {returned_by_task:?}");
+    assert!(returned_by_task.values().all(|count| *count == 4));
+    assert!(returned_by_task.contains_key(&verifications[0].product_id));
 }
 
 pub(super) fn declare(harness: &StewardshipHarness, original: &[u8]) {

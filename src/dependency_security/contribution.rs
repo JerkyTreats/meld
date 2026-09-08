@@ -249,7 +249,7 @@ mod tests {
         crate::api::ContextApi::new(
             Arc::new(crate::store::SledNodeRecordStore::new(root.join("nodes")).unwrap()),
             Arc::new(crate::context::frame::FrameStorage::new(root.join("frames")).unwrap()),
-            Arc::new(parking_lot::RwLock::new(crate::heads::HeadIndex::new())),
+            crate::heads::HeadIndex::new(),
             Arc::new(
                 crate::prompt_context::PromptContextArtifactStorage::new(root.join("prompts"))
                     .unwrap(),
@@ -611,9 +611,7 @@ mod tests {
             !verified.verified,
             "a valid calculation cannot authenticate a forged product identity"
         );
-        use crate::runtime::ports::{
-            ProductEventAppendPort, ProductEventReplayPort, ProductGraphCursorPort,
-        };
+        use crate::runtime::ports::{ProductEventReplayPort, ProductGraphCursorPort};
         use meld_world_model::world_state::graph::{
             contracts::*,
             runtime::{GraphCatchUpBudget, GraphRuntime},
@@ -630,7 +628,6 @@ mod tests {
             .is_empty());
         let graph = GraphRuntime::from_ports(
             Arc::new(ProductEventReplayPort::new(events.replay_capability())),
-            Arc::new(ProductEventAppendPort::new(&events)),
             Arc::new(ProductGraphCursorPort::new(
                 events.consumer_registry_capability(),
             )),

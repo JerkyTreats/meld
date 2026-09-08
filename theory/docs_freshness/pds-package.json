@@ -116,7 +116,7 @@
       "content": {
         "kind": "relative_file",
         "path": "strategy_theory.docs_freshness.json",
-        "content_hash": "e70cd84a9e775010daf36f808c8c433a1dc28fe50678b0df5fcf671be54f20eb"
+        "content_hash": "09cda6b219212fa99824e4e5c9d916f52ead2e1b33558f3acdfd34d9ffa6e435"
       },
       "requires": [
         {

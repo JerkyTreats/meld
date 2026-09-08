@@ -11,7 +11,7 @@ use crate::generation::{
 };
 
 /// Exact effect boundary derived from an admitted Task's authority.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionEffectAuthority {
     /// Opaque Agent-owned request identity, retained independently of the live effect fence.
     pub request_ref: Option<String>,
@@ -26,7 +26,7 @@ pub struct ExecutionEffectAuthority {
 }
 
 /// Event publication context supplied by callers that want durable envelopes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExecutionEventContext {
     /// Validated effect authority, absent for telemetry-only contexts.
     pub effect_authority: Option<ExecutionEffectAuthority>,
@@ -80,17 +80,6 @@ pub struct ExecutionNodeContext<N, F> {
     pub frames: Vec<ExecutionFrame<F>>,
     /// Total frame count known to the backing context store.
     pub frame_count: usize,
-}
-
-/// World model anchor for an artifact already produced by a task run.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TaskRunArtifactAnchor {
-    /// Domain that owns the target object.
-    pub target_domain_id: String,
-    /// Target object kind inside the owning domain.
-    pub target_object_kind: String,
-    /// Target object identifier inside the owning domain.
-    pub target_object_id: String,
 }
 
 /// Read-only view of provider preparation output used by workflow execution.
@@ -407,20 +396,7 @@ pub trait WorkspaceScanPort: Send + Sync {
         -> Result<Self::ScanOutcome, Self::Error>;
 }
 
-/// Reads task-run artifact anchors from the world model.
-pub trait WorldModelQueryPort: Send + Sync {
-    /// Adapter error type.
-    type Error;
-
-    /// Returns the current artifact anchor for one task run and artifact type.
-    fn current_artifact_for_task_run(
-        &self,
-        task_run_id: &str,
-        artifact_type_id: &str,
-    ) -> Result<Option<TaskRunArtifactAnchor>, Self::Error>;
-}
-
-/// Typed belief status label carried by [`BeliefSubjectSignal`].
+/// Historical belief status label carried in explicitly supplied Context artifacts.
 ///
 /// Mirrors the world model's belief status set: this crate cannot depend on
 /// the world model, so the owning adapter maps its status into this label at
@@ -461,49 +437,6 @@ impl std::fmt::Display for BeliefStatusLabel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
     }
-}
-
-/// Planner-safe belief signal for one subject, projected for context-side
-/// selection and prompt conditioning. This is a thin view over the world
-/// model's belief query surface; it never carries prompt text.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct BeliefSubjectSignal {
-    /// Current belief revision id, when the view has settled at least once.
-    pub revision_id: Option<String>,
-    /// Belief status label for the current view.
-    pub status: BeliefStatusLabel,
-    /// Planner-facing confidence for the current view.
-    pub confidence: f64,
-    /// True when the view is flagged stale by freshness tracking.
-    pub stale: bool,
-    /// True when unresolved counterevidence contradicts the view.
-    pub contradicted: bool,
-    /// Evidence ids counted as unresolved contradicted claims.
-    pub contradicted_evidence_ids: Vec<String>,
-    /// Evidence ids hydratable for provenance.
-    pub evidence_ids: Vec<String>,
-    /// Source fact ids hydratable for provenance.
-    pub source_fact_ids: Vec<String>,
-    /// Sequence the view is current as of; selection is deterministic at
-    /// this sequence.
-    pub as_of_seq: u64,
-}
-
-/// Read port for current belief signals consumed by context assembly.
-///
-/// Owned by the world model side of the boundary; the context domain only
-/// reads projected signals and never mutates belief state through it.
-pub trait BeliefContextReadPort: Send + Sync {
-    /// Adapter error type.
-    type Error;
-
-    /// Reads the current belief signal for one workspace node subject under
-    /// the given belief family, or `None` when no belief covers the subject.
-    fn current_belief_signal(
-        &self,
-        node_id_hex: &str,
-        family_id: &str,
-    ) -> Result<Option<BeliefSubjectSignal>, Self::Error>;
 }
 
 /// Composite context required for deterministic execution planning.

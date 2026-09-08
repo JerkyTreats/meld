@@ -5,11 +5,11 @@ pub mod ports;
 
 pub use contracts::{ProviderExecutionBinding, ProviderRuntimeOverrides};
 pub use ports::{
-    BeliefContextReadPort, BeliefStatusLabel, BeliefSubjectSignal, ContextReadPort,
-    ContextWritePort, EventPublicationPort, ExecutionContext, ExecutionEventContext,
-    ExecutionFrame, ExecutionNodeContext, ExecutionNodeKind, ExecutionNodeRecord,
-    ExecutionProgressPort, ExecutionRuntimeContext, GeneratedMetadataPort, NodeResolutionPort,
-    PromptArtifactReadPort, PromptLineagePort, ProviderExecutionPort, ProviderPreparationView,
-    ProviderValidationPort, SystemPromptPort, TaskRunArtifactAnchor, WorkspaceScanPort,
-    WorldModelQueryPort,
+    BeliefStatusLabel, ContextReadPort, ContextWritePort, EventPublicationPort, ExecutionContext,
+    ExecutionEventContext, ExecutionFrame, ExecutionNodeContext, ExecutionNodeKind,
+    ExecutionNodeRecord, ExecutionProgressPort, ExecutionRuntimeContext, GeneratedMetadataPort,
+    NodeResolutionPort, PromptArtifactReadPort, PromptLineagePort, ProviderExecutionPort,
+    ProviderPreparationView, ProviderValidationPort, SystemPromptPort, WorkspaceScanPort,
 };
+
+pub mod projection;

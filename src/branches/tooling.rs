@@ -2,8 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::branches::format::{
-    format_branch_graph_status_text, format_branches_status_text, format_federated_neighbors_text,
-    format_federated_owner_walk_text, format_federated_walk_text,
+    format_branch_graph_status_text, format_branches_status_text, format_federated_owner_walk_text,
 };
 use crate::branches::query::BranchQueryScope;
 use crate::branches::{BranchQueryRuntime, BranchRuntime};
@@ -11,8 +10,7 @@ use crate::cli::BranchesCommands;
 use crate::error::{ApiError, StorageError};
 use crate::events::DomainObjectRef;
 use crate::world_state::graph::contracts::{
-    BoundedTraversalRequest, GraphWalkSpec, OwnerPublicationScope, TraversalBounds,
-    TraversalDirection,
+    BoundedTraversalRequest, OwnerPublicationScope, TraversalBounds, TraversalDirection,
 };
 use crate::world_state::graph::store::TraversalStore;
 
@@ -69,60 +67,6 @@ pub fn handle_cli_command_with_runtime_state(
             let output =
                 query_runtime.graph_status(parse_scope(scope, branch_ids)?, workspace_root)?;
             render_output(format, &output, format_branch_graph_status_text)
-        }
-        BranchesCommands::GraphNeighbors {
-            scope,
-            branch_ids,
-            domain,
-            object_kind,
-            object_id,
-            direction,
-            relation_types,
-            current_only,
-            format,
-        } => {
-            let object = object_ref(domain, object_kind, object_id)?;
-            let direction = parse_direction(direction)?;
-            let relation_types = relation_types_filter(relation_types);
-            let output = query_runtime.neighbors(
-                parse_scope(scope, branch_ids)?,
-                workspace_root,
-                &object,
-                direction,
-                relation_types,
-                *current_only,
-            )?;
-            render_output(format, &output, format_federated_neighbors_text)
-        }
-        BranchesCommands::GraphWalk {
-            scope,
-            branch_ids,
-            domain,
-            object_kind,
-            object_id,
-            direction,
-            relation_types,
-            max_depth,
-            current_only,
-            include_facts,
-            format,
-        } => {
-            let object = object_ref(domain, object_kind, object_id)?;
-            let direction = parse_direction(direction)?;
-            let spec = GraphWalkSpec {
-                direction,
-                relation_types: relation_types_filter(relation_types).map(|items| items.to_vec()),
-                max_depth: *max_depth,
-                current_only: *current_only,
-                include_facts: *include_facts,
-            };
-            let output = query_runtime.walk(
-                parse_scope(scope, branch_ids)?,
-                workspace_root,
-                &object,
-                &spec,
-            )?;
-            render_output(format, &output, format_federated_walk_text)
         }
         BranchesCommands::GraphOwnerWalk {
             scope,

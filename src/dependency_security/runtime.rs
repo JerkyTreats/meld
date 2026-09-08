@@ -1,7 +1,7 @@
 //! Native Security source observation and lifecycle evidence owned by Security.
 
 use super::{capability::SecurityCapability, observation};
-use crate::runtime::assembly::{
+use crate::runtime::lifecycle::{
     owner_readiness_receipt, owner_release_receipt, owner_safe_point_receipt, owner_stop_receipt,
     owner_wait_receipt, verified_native_transition, NativeOwnerLifecycle,
     NativeOwnerLifecycleSnapshot,

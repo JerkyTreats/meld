@@ -494,7 +494,6 @@ fn migrate_branch_graph(resolved: &ResolvedBranch) -> Result<(u64, usize, PathBu
     .map_err(|error| ApiError::ConfigError(error.to_string()))?;
     let graph_runtime = GraphRuntime::from_ports(
         std::sync::Arc::new(ports.event_replay().clone()),
-        std::sync::Arc::new(ports.event_append().clone()),
         std::sync::Arc::new(ports.graph_cursor().clone()),
         std::sync::Arc::clone(&stores.traversal_store),
     )

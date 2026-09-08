@@ -29,7 +29,7 @@ use std::collections::BTreeMap;
 use crate::belief::registry::TheoryRevisionRef;
 use crate::error::StorageError;
 use crate::events::{DomainObjectRef, EventRelation};
-use crate::world_state::graph::{AnchorId, PerspectiveKey};
+use crate::world_state::graph::PerspectiveKey;
 
 /// Runtime-selected policy identity for evidence filtering and weighting.
 pub type EvidencePolicyId = String;
@@ -130,12 +130,11 @@ pub struct BeliefFamilyConfig {
     /// guesses; absent in older configs, defaulting to observational.
     #[serde(default)]
     pub observationality: DimensionObservationality,
-    /// Whether initial subject assessment consumes a current graph anchor.
-    /// Declared by the owning family so the runtime never guesses; absent
-    /// in older configs, defaulting to the anchor-required semantics those
-    /// configs were written against.
-    #[serde(default)]
-    pub anchor_requirement: AnchorRequirement,
+    /// Whether a subject without curated evidence may receive a prior-only revision.
+    // Preserve installed theory hashes. This wire name belongs to accepted family
+    // revisions; runtime evidence admission no longer reads Graph anchors.
+    #[serde(default, rename = "anchor_requirement")]
+    pub initial_assessment: InitialAssessmentPolicy,
 }
 
 /// How a belief dimension can be settled.
@@ -152,21 +151,15 @@ pub enum DimensionObservationality {
     Derived,
 }
 
-/// Whether initial subject assessment consumes a current graph anchor.
-///
-/// Family-declared theory: an anchor-required family stalls truthfully on
-/// an unobserved subject until an anchor exists and its `graph_anchor`
-/// source mapping normalizes it. An unanchored family never consults the
-/// graph anchor — an unobserved scope assesses to its prior-based revision
-/// and evidence arrives only through ingestion.
+/// Evidence required before a family's first assessment.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum AnchorRequirement {
-    /// Initial assessment requires a current graph anchor for the subject
-    /// and normalizes it through the family's `graph_anchor` mapping.
+pub enum InitialAssessmentPolicy {
+    /// Wait for durable evidence admitted through Curation and ingestion.
     #[default]
     Required,
-    /// Initial assessment proceeds without consulting graph anchors.
-    Unanchored,
+    /// Permit a prior-only revision until evidence arrives.
+    #[serde(rename = "Unanchored")]
+    PriorAllowed,
 }
 
 /// Evidence schema declared by runtime configuration.
@@ -270,7 +263,7 @@ pub struct EvidenceItem {
     pub evidence_id: String,
     pub candidate_key: BeliefKey,
     pub source_fact_ids: Vec<String>,
-    pub graph_anchor_ids: Vec<AnchorId>,
+    pub graph_anchor_ids: Vec<String>,
     pub source_cursor_start: u64,
     pub source_cursor_end: u64,
     pub role: EvidenceRole,
@@ -301,7 +294,7 @@ pub struct PromotedEvidenceRecord {
     pub source_id: String,
     pub subject: DomainObjectRef,
     pub source_fact_ids: Vec<String>,
-    pub graph_anchor_ids: Vec<AnchorId>,
+    pub graph_anchor_ids: Vec<String>,
     pub objects: Vec<DomainObjectRef>,
     pub relations: Vec<EventRelation>,
     pub source_cursor_start: u64,
@@ -567,7 +560,7 @@ pub struct BeliefView {
 pub struct BeliefProvenanceSummary {
     pub evidence_ids: Vec<String>,
     pub source_fact_ids: Vec<String>,
-    pub graph_anchor_ids: Vec<AnchorId>,
+    pub graph_anchor_ids: Vec<String>,
     pub objects: Vec<DomainObjectRef>,
     pub relations: Vec<EventRelation>,
     pub revision_ids: Vec<String>,
@@ -592,7 +585,7 @@ impl BeliefProvenanceSummary {
 pub struct HydrationRefs {
     pub evidence_ids: Vec<String>,
     pub source_fact_ids: Vec<String>,
-    pub graph_anchor_ids: Vec<AnchorId>,
+    pub graph_anchor_ids: Vec<String>,
     pub revision_id: Option<String>,
 }
 

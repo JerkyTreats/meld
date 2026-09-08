@@ -1,39 +1,15 @@
-//! Read-only graph traversal query facade.
-//!
-//! This module exposes current anchors, anchor history, provenance, object
-//! facts, and bounded walks without exposing sled tree layout. Belief
-//! normalization consumes this facade rather than reaching into graph storage.
-//!
-//! # Example
-//!
-//! ```rust,no_run
-//! use meld_world_model::world_state::graph::store::TraversalStore;
-//! use meld_world_model::TraversalQuery;
-//!
-//! let temp = tempfile::tempdir().unwrap();
-//! let store = TraversalStore::new(sled::open(temp.path()).unwrap()).unwrap();
-//! let query = TraversalQuery::new(&store);
-//! let object = meld_world_model::events::DomainObjectRef::new(
-//!     "workspace_fs",
-//!     "node",
-//!     "node-a",
-//! )
-//! .unwrap();
-//! assert!(query.current_anchors_for_subject(&object).unwrap().is_empty());
-//! ```
+//! Read-only traversal over owner publications selected by a canonical Event cut.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
 
 use crate::error::StorageError;
 use crate::events::{DomainObjectRef, LedgerCursor};
 use crate::world_state::graph::contracts::{
-    traversal_cut_identity, traversal_result_identity, AnchorProvenanceRecord,
-    AnchorSelectionRecord, BoundedTraversalRequest, GraphWalkResult, GraphWalkSpec,
+    traversal_cut_identity, traversal_result_identity, BoundedTraversalRequest,
     OwnerCompletenessStatus, OwnerGraphRevisionReceipt, OwnerObjectPublication,
     OwnerRelationOccurrence, ProjectedOwnerPublication, TraversalCut, TraversalCutIssue,
-    TraversalCutRequest, TraversalCutStatus, TraversalDirection, TraversalFactRecord,
-    TraversalFrontierEntry, TraversalFrontierReason, TraversalPath, TraversalResult,
-    TraversalTruncation,
+    TraversalCutRequest, TraversalCutStatus, TraversalDirection, TraversalFrontierEntry,
+    TraversalFrontierReason, TraversalPath, TraversalResult, TraversalTruncation,
 };
 use crate::world_state::graph::store::TraversalStore;
 
@@ -116,6 +92,7 @@ impl<'a> TraversalQuery<'a> {
                     continue;
                 }
                 receipts.push(OwnerGraphRevisionReceipt {
+                    work_input_basis_id: batch.work_input_basis_id.clone(),
                     event_coverage: event_coverage.clone(),
                     owner_id: batch.owner_id.clone(),
                     revision_id: batch.revision_id.clone(),
@@ -136,6 +113,7 @@ impl<'a> TraversalQuery<'a> {
                 .map_err(|error| StorageError::InvalidPath(error.to_string()))?;
                 let revision_id = format!("empty-event-source::{}", blake3::hash(&bytes).to_hex());
                 receipts.push(OwnerGraphRevisionReceipt {
+                    work_input_basis_id: None,
                     event_coverage: Some(coverage),
                     source_event: None,
                     owner_id: requirement.owner_id.clone(),
@@ -381,138 +359,6 @@ impl<'a> TraversalQuery<'a> {
             truncation,
         })
     }
-
-    /// Read the current anchor for a logical anchor reference.
-    pub fn current_anchor(
-        &self,
-        anchor_ref: &DomainObjectRef,
-    ) -> Result<Option<AnchorSelectionRecord>, StorageError> {
-        self.store.current_anchor(anchor_ref)
-    }
-
-    /// Read the current anchor for one subject and perspective.
-    pub fn current_anchor_for_subject(
-        &self,
-        subject: &DomainObjectRef,
-        perspective_kind: &str,
-        perspective_id: &str,
-    ) -> Result<Option<AnchorSelectionRecord>, StorageError> {
-        self.store
-            .current_anchor_for_subject(subject, perspective_kind, perspective_id)
-    }
-
-    /// Read every current anchor for one subject.
-    pub fn current_anchors_for_subject(
-        &self,
-        subject: &DomainObjectRef,
-    ) -> Result<Vec<AnchorSelectionRecord>, StorageError> {
-        self.store.current_anchors_for_subject(subject)
-    }
-
-    /// Read anchor history for one logical anchor reference.
-    pub fn anchor_history(
-        &self,
-        anchor_ref: &DomainObjectRef,
-    ) -> Result<Vec<AnchorSelectionRecord>, StorageError> {
-        self.store.anchor_history(anchor_ref)
-    }
-
-    /// Read adjacent objects through relation indexes.
-    pub fn neighbors(
-        &self,
-        object: &DomainObjectRef,
-        direction: TraversalDirection,
-        relation_types: Option<&[String]>,
-        current_only: bool,
-    ) -> Result<Vec<DomainObjectRef>, StorageError> {
-        self.store
-            .neighbors(object, direction, relation_types, current_only)
-    }
-
-    /// Run a bounded graph walk from one object.
-    pub fn walk(
-        &self,
-        start: &DomainObjectRef,
-        spec: &GraphWalkSpec,
-    ) -> Result<GraphWalkResult, StorageError> {
-        self.store.walk(start, spec)
-    }
-
-    /// Read graph-readable facts for one object after a sequence cursor.
-    pub fn facts_for_object(
-        &self,
-        object: &DomainObjectRef,
-        after_seq: u64,
-    ) -> Result<Vec<TraversalFactRecord>, StorageError> {
-        self.store.facts_for_object(object, after_seq)
-    }
-
-    /// Read compact provenance for one anchor.
-    pub fn provenance_for_anchor(
-        &self,
-        anchor_id: &str,
-    ) -> Result<AnchorProvenanceRecord, StorageError> {
-        self.store.anchor_provenance(anchor_id)
-    }
-
-    /// Read an anchor record when callers need generic graph lifecycle state.
-    pub fn supersession_for_anchor(
-        &self,
-        anchor_id: &str,
-    ) -> Result<Option<AnchorSelectionRecord>, StorageError> {
-        Ok(self.store.get_anchor(anchor_id)?.filter(|anchor| {
-            anchor.ended_at_seq.is_some()
-                || anchor.ended_by_anchor_id.is_some()
-                || anchor.ended_by_fact_id.is_some()
-        }))
-    }
-
-    /// Read the current workspace snapshot anchor for a source object.
-    pub fn current_snapshot_for_source(
-        &self,
-        source: &DomainObjectRef,
-    ) -> Result<Option<AnchorSelectionRecord>, StorageError> {
-        self.current_anchor_for_subject(source, "snapshot", "current")
-    }
-
-    /// Read the current frame head anchor for a node and frame type.
-    pub fn current_frame_head(
-        &self,
-        node: &DomainObjectRef,
-        frame_type: &str,
-    ) -> Result<Option<AnchorSelectionRecord>, StorageError> {
-        self.current_anchor_for_subject(node, "frame_type", frame_type)
-    }
-
-    /// Read current frame head anchors for a node.
-    pub fn current_frame_heads_for_node(
-        &self,
-        node: &DomainObjectRef,
-    ) -> Result<Vec<AnchorSelectionRecord>, StorageError> {
-        Ok(self
-            .current_anchors_for_subject(node)?
-            .into_iter()
-            .filter(|anchor| anchor.perspective.perspective_kind == "frame_type")
-            .collect())
-    }
-
-    /// Count current frame head anchors for a frame type.
-    pub fn current_frame_head_count_by_type(
-        &self,
-        frame_type: &str,
-    ) -> Result<usize, StorageError> {
-        self.store
-            .current_anchor_count_by_perspective("frame_type", frame_type)
-    }
-
-    /// Read the current artifact anchor for a task run and artifact type.
-    pub fn current_artifact_for_task_run(
-        &self,
-        task_run: &DomainObjectRef,
-        artifact_type_id: &str,
-    ) -> Result<Option<AnchorSelectionRecord>, StorageError> {
-        self.current_anchor_for_subject(task_run, "artifact_type", artifact_type_id)
-    }
 }
 
 fn selected_publications(
@@ -698,7 +544,9 @@ mod owner_publication_tests {
         let temp = tempfile::tempdir().unwrap();
         let db = sled::open(temp.path()).unwrap();
         let fixture = GraphRuntimeTestFixture::open(db.clone()).unwrap();
-        let operation = operation("docs", "scope-a", "revision-a", true);
+        let mut batch = operation("docs", "scope-a", "revision-a", true).batch;
+        batch.work_input_basis_id = Some("opaque-owner-input".into());
+        let operation = OwnerPublicationOperation::reconstruct("owner-rule-v1", batch).unwrap();
         let receipt = fixture
             .append(owner_publication_envelope("session-a", &operation).unwrap())
             .unwrap();
@@ -732,6 +580,10 @@ mod owner_publication_tests {
         let cut = query.cut(&cut_request).unwrap();
         assert_eq!(cut.status, TraversalCutStatus::Complete);
         assert_eq!(cut.receipts[0].revision_id, "revision-a");
+        assert_eq!(
+            cut.receipts[0].work_input_basis_id.as_deref(),
+            Some("opaque-owner-input")
+        );
         assert_eq!(query.cut(&cut_request).unwrap().cut_id, cut.cut_id);
         let visibility = query
             .publication_visibility(&cut, &expected)
@@ -773,10 +625,6 @@ mod owner_publication_tests {
             query.traverse(&cut, &request).unwrap().result_id,
             result.result_id
         );
-        assert!(query
-            .facts_for_object(&object("docs", "a"), 0)
-            .unwrap()
-            .is_empty());
 
         let bounded = query.traverse(&cut, &traversal_request("docs", 1)).unwrap();
         assert!(bounded.truncation.occurrences);
@@ -860,10 +708,6 @@ mod owner_publication_tests {
             .unwrap();
         assert_eq!(missing.status, TraversalCutStatus::Incomplete);
         assert!(missing.receipts.is_empty());
-        assert!(query
-            .facts_for_object(&object("workspace_fs", "raw-only"), 0)
-            .unwrap()
-            .is_empty());
         assert_eq!(
             complete.batch.objects[0].hydration.owner_id,
             "dependency_security"
@@ -929,6 +773,7 @@ mod owner_publication_tests {
         OwnerPublicationOperation::reconstruct(
             "owner-rule-v1",
             OwnerPublicationBatch {
+                work_input_basis_id: None,
                 owner_id: owner_id.to_string(),
                 revision_id: revision_id.to_string(),
                 scope: scope.clone(),

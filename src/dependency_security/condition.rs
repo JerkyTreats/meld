@@ -38,6 +38,8 @@ pub struct ProductPosition {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CurrentSecurityCondition {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_input_basis_id: Option<String>,
     pub subject: DomainObjectRef,
     pub policy_revision: crate::theory::TheoryRevisionRef,
     pub reference_time: u64,
@@ -307,6 +309,13 @@ pub(crate) fn current_state(
     };
     Ok((
         Some(CurrentSecurityCondition {
+            work_input_basis_id: work_input_basis(
+                &capability.subject,
+                &capability.policy,
+                inventory.as_ref(),
+                advisory.as_ref(),
+            )
+            .map_err(invalid)?,
             subject: capability.subject.subject.clone(),
             policy_revision: capability.policy.revision_ref().map_err(invalid)?,
             reference_time,
@@ -321,6 +330,37 @@ pub(crate) fn current_state(
         }),
         bodies,
     ))
+}
+
+/// Acquisition times and our own assessment returns are not changed domain inputs.
+fn work_input_basis(
+    subject: &DependencySecuritySubjectV1,
+    policy: &super::policy::DependencySecurityPolicyV1,
+    inventory: Option<&DependencyInventorySnapshotV1>,
+    advisory: Option<&AdvisoryKnowledgeSnapshotV1>,
+) -> Result<Option<String>, String> {
+    let (Some(inventory), Some(advisory)) = (inventory, advisory) else {
+        return Ok(None);
+    };
+    let material_inventory = (
+        &inventory.subject,
+        &inventory.workspace_revision,
+        &inventory.manifest_content_hash,
+        &inventory.lockfile_content_hash,
+        &inventory.components,
+        &inventory.completeness,
+    );
+    let material_advisory = (
+        &advisory.source_id,
+        &advisory.source_revision,
+        &advisory.covered_ecosystem,
+        &advisory.covered_components,
+        &advisory.advisories,
+        &advisory.conflicts,
+        &advisory.completeness,
+    );
+    content_hash(&(subject, policy, material_inventory, material_advisory))
+        .map(|hash| Some(format!("security-work-input-v1::{hash}")))
 }
 
 impl CurrentSecurityCondition {
@@ -348,6 +388,7 @@ impl CurrentSecurityCondition {
         let operation = OwnerPublicationOperation::reconstruct(
             SCHEMA,
             OwnerPublicationBatch {
+                work_input_basis_id: self.work_input_basis_id.clone(),
                 owner_id: OWNER.into(),
                 revision_id: revision.clone(),
                 scope: scope.clone(),
@@ -437,4 +478,100 @@ pub(crate) fn is_published(
 
 fn invalid(error: impl ToString) -> ApiError {
     ApiError::ConfigError(error.to_string())
+}
+
+#[cfg(test)]
+mod input_basis_tests {
+    use super::*;
+
+    #[test]
+    fn security_inputs_ignore_acquisition_churn_and_track_material_changes() {
+        let policy: super::super::policy::DependencySecurityPolicyV1 = serde_json::from_str(
+            include_str!("../../theory/dependency_security/policy.cargo_fixture.json"),
+        )
+        .unwrap();
+        let subject = DependencySecuritySubjectV1 {
+            subject: DomainObjectRef::new("workspace_fs", "node", "repo").unwrap(),
+            ecosystem: PackageEcosystem::Cargo,
+            inventory_scope: InventoryScopeV1 {
+                manifest_ref: DomainObjectRef::new("workspace_fs", "file", "Cargo.toml").unwrap(),
+                lockfile_ref: DomainObjectRef::new("workspace_fs", "file", "Cargo.lock").unwrap(),
+                include_transitive: true,
+            },
+        };
+        let inventory = |time, hash: &str| {
+            DependencyInventorySnapshotV1::canonical(
+                subject.clone(),
+                "workspace-revision".into(),
+                "manifest".into(),
+                hash.into(),
+                vec![],
+                InventoryCompleteness::CompleteTransitive,
+                time,
+            )
+            .unwrap()
+        };
+        let advisory = |time, revision: &str| {
+            AdvisoryKnowledgeSnapshotV1::canonical(
+                policy.required_advisory_source_id.clone(),
+                revision.into(),
+                PackageEcosystem::Cargo,
+                vec![],
+                vec![],
+                vec![],
+                AdvisoryCompleteness::CompleteForDeclaredCoverage,
+                time,
+            )
+            .unwrap()
+        };
+        let first_inventory = inventory(1, "lockfile");
+        let first_advisory = advisory(1, "source-revision");
+        let later_inventory = inventory(2, "lockfile");
+        let later_advisory = advisory(2, "source-revision");
+        assert_ne!(first_inventory.snapshot_id, later_inventory.snapshot_id);
+        assert_ne!(first_advisory.snapshot_id, later_advisory.snapshot_id);
+        let basis = work_input_basis(
+            &subject,
+            &policy,
+            Some(&first_inventory),
+            Some(&first_advisory),
+        )
+        .unwrap();
+        assert!(basis.is_some());
+        assert_eq!(
+            basis,
+            work_input_basis(
+                &subject,
+                &policy,
+                Some(&later_inventory),
+                Some(&later_advisory)
+            )
+            .unwrap()
+        );
+        assert_ne!(
+            basis,
+            work_input_basis(
+                &subject,
+                &policy,
+                Some(&inventory(2, "changed-lockfile")),
+                Some(&later_advisory)
+            )
+            .unwrap()
+        );
+        assert_ne!(
+            basis,
+            work_input_basis(
+                &subject,
+                &policy,
+                Some(&later_inventory),
+                Some(&advisory(2, "changed-source"))
+            )
+            .unwrap()
+        );
+        assert!(
+            work_input_basis(&subject, &policy, Some(&first_inventory), None)
+                .unwrap()
+                .is_none()
+        );
+    }
 }

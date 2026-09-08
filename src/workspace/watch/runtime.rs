@@ -3,10 +3,7 @@
 use super::events::{ChangeEvent, EventBatcher, WatchConfig};
 use crate::agent::AgentIdentity;
 use crate::api::ContextApi;
-use crate::context::head::backfill_legacy_heads_into_ledger;
-use crate::context::queue::{FrameGenerationQueue, QueueEventContext};
 use crate::error::ApiError;
-use crate::heads::HeadIndex;
 use crate::ignore;
 use crate::store::{NodeRecord, NodeRecordStore};
 use crate::tree::builder::TreeBuilder;
@@ -36,66 +33,15 @@ pub struct WatchDaemon {
     api: Arc<ContextApi>,
     config: WatchConfig,
     running: Arc<RwLock<bool>>,
-    generation_queue: Option<Arc<FrameGenerationQueue>>,
 }
 
 impl WatchDaemon {
     /// Create a new watch daemon
     pub fn new(api: Arc<ContextApi>, config: WatchConfig) -> Result<Self, ApiError> {
-        let head_index_path = HeadIndex::persistence_path(&config.workspace_root);
-        {
-            let mut head_index = api.head_index().write();
-            if let Ok(loaded) = HeadIndex::load_from_disk(&head_index_path) {
-                *head_index = loaded;
-                info!(
-                    "Loaded head index from disk: {} entries",
-                    head_index.heads.len()
-                );
-            } else {
-                info!("Starting with empty head index");
-            }
-        }
-        if let Some(progress) = &config.progress {
-            let session_id = config
-                .session_id
-                .as_deref()
-                .unwrap_or("context_head_backfill");
-            let head_index = api.head_index().read();
-            if let Err(err) = backfill_legacy_heads_into_ledger(
-                progress,
-                &head_index,
-                api.frame_storage(),
-                session_id,
-            ) {
-                warn!(error = %err, "failed to backfill legacy heads into ledger");
-            }
-        }
-
-        let generation_queue = if config.auto_generate_frames {
-            let queue_event_context = match (&config.session_id, &config.progress) {
-                (Some(session_id), Some(progress)) => Some(QueueEventContext {
-                    session_id: session_id.clone(),
-                    progress: Arc::clone(progress),
-                }),
-                _ => None,
-            };
-            let queue = Arc::new(FrameGenerationQueue::with_event_context(
-                Arc::clone(&api),
-                config.generation_config.clone().unwrap_or_default(),
-                queue_event_context,
-            ));
-            queue.start()?;
-            info!("Frame generation queue started");
-            Some(queue)
-        } else {
-            None
-        };
-
         Ok(Self {
             api,
             config,
             running: Arc::new(RwLock::new(false)),
-            generation_queue,
         })
     }
 
@@ -184,10 +130,6 @@ impl WatchDaemon {
     /// Stop the watch daemon
     pub async fn stop(&self) -> Result<(), ApiError> {
         *self.running.write() = false;
-
-        if let Some(queue) = &self.generation_queue {
-            queue.stop().await?;
-        }
 
         Ok(())
     }
@@ -412,12 +354,10 @@ impl WatchDaemon {
                         continue;
                     }
 
-                    match self.api.ensure_agent_frame(
-                        *node_id,
-                        agent.agent_id.clone(),
-                        None,
-                        self.generation_queue.as_ref().map(Arc::clone),
-                    ) {
+                    match self
+                        .api
+                        .ensure_agent_frame(*node_id, agent.agent_id.clone(), None)
+                    {
                         Ok(Some(frame_id)) => {
                             created_count += 1;
                             debug!(
@@ -506,7 +446,6 @@ mod tests {
     use crate::config::{MerkleConfig, ProviderConfig, ProviderType, WorkflowConfig};
     use crate::context::frame::storage::FrameStorage;
     use crate::events::{EventAuthority, EventAuthorityOpenOptions};
-    use crate::heads::HeadIndex;
     use crate::prompt_context::PromptContextArtifactStorage;
     use crate::provider::ProviderRegistry;
     use crate::session::{SessionRuntime, SessionStore};
@@ -546,7 +485,7 @@ mod tests {
         let frame_storage = Arc::new(FrameStorage::new(&frame_storage_path).unwrap());
         let prompt_context_storage =
             Arc::new(PromptContextArtifactStorage::new(&artifact_storage_path).unwrap());
-        let head_index = Arc::new(parking_lot::RwLock::new(HeadIndex::new()));
+        let head_index = crate::heads::HeadIndex::new();
         let agent_registry = Arc::new(parking_lot::RwLock::new(AgentRegistry::new()));
         let provider_registry = Arc::new(parking_lot::RwLock::new(ProviderRegistry::new()));
         let lock_manager = Arc::new(crate::concurrency::NodeLockManager::new());
@@ -842,56 +781,6 @@ failure_policy:
         assert_eq!(result.data["workflow_id"], "watch_skip_workflow");
         assert!(result.data["error"].as_str().unwrap().contains("retired"));
         assert_eq!(std::fs::read(legacy_record).unwrap(), historical);
-    }
-
-    #[test]
-    fn retired_workflow_addresses_cannot_enter_an_unstarted_queue() {
-        use crate::context::generation::{TargetExecutionProgram, TargetExecutionProgramKind};
-        use crate::context::queue::{
-            FrameGenerationQueue, GenerationConfig, GenerationRequestOptions, Priority,
-        };
-        use crate::provider::{ProviderExecutionBinding, ProviderRuntimeOverrides};
-        use std::sync::Arc;
-        let temp_dir = TempDir::new().unwrap();
-        {
-            let workspace_root = temp_dir.path().join("workspace");
-            std::fs::create_dir_all(&workspace_root).unwrap();
-            let api = Arc::new(create_test_api(&workspace_root));
-            let queue = FrameGenerationQueue::new(api, GenerationConfig::default());
-            let runtime = tokio::runtime::Runtime::new().unwrap();
-            runtime.block_on(async {
-                for program in [
-                    TargetExecutionProgram::workflow("retained-profile"),
-                    TargetExecutionProgram {
-                        kind: TargetExecutionProgramKind::SingleShot,
-                        workflow_id: Some("retained-profile".into()),
-                    },
-                ] {
-                    let error = queue
-                        .enqueue_and_wait_with_program(
-                            crate::types::Hash::from([7; 32]),
-                            "absent-agent".into(),
-                            ProviderExecutionBinding::new(
-                                "absent-provider",
-                                ProviderRuntimeOverrides::default(),
-                            )
-                            .unwrap(),
-                            None,
-                            program,
-                            Priority::Urgent,
-                            Some(std::time::Duration::from_millis(10)),
-                            GenerationRequestOptions::default(),
-                        )
-                        .await
-                        .unwrap_err();
-                    assert!(error.to_string().contains("retired"), "{error}");
-                }
-                queue
-                    .wait_for_completion(Some(std::time::Duration::ZERO))
-                    .await
-                    .unwrap();
-            });
-        }
     }
 
     #[test]

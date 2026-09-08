@@ -104,7 +104,17 @@ fn product_storage_persists_and_reopens_runtime_stores() {
                 AppendMode::Plain,
             )
             .unwrap();
-        stores.traversal_store.set_last_reduced_seq(42).unwrap();
+        let graph = meld_world_model::graph::runtime::GraphRuntime::from_ports(
+            std::sync::Arc::new(meld::runtime::ports::ProductEventReplayPort::new(
+                authority.replay_capability(),
+            )),
+            std::sync::Arc::new(meld::runtime::ports::ProductGraphCursorPort::new(
+                authority.consumer_registry_capability(),
+            )),
+            std::sync::Arc::clone(&stores.traversal_store),
+        )
+        .unwrap();
+        graph.catch_up().unwrap();
         stores
             .belief_store
             .put_config_snapshot("config-a", "{\"ok\":true}")
@@ -159,7 +169,17 @@ fn product_storage_persists_and_reopens_runtime_stores() {
             .len(),
         1
     );
-    assert_eq!(reopened.traversal_store.last_reduced_seq().unwrap(), 42);
+    assert_eq!(
+        reopened
+            .traversal_store
+            .projection_position()
+            .unwrap()
+            .unwrap(),
+        LedgerCursor {
+            ledger_id: authority.ledger_identity(),
+            after_seq: 1
+        }
+    );
     assert_eq!(
         reopened
             .belief_store

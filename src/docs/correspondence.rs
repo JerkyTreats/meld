@@ -5,7 +5,7 @@ use super::claim_validation::{decode_json_response, DocsClaimJudge, DocsClaimPol
 use super::observation::{validate_observation, ObservedReadme, ObservedReadmeState};
 use super::source_claims::{DocsSourceClaimReport, ObservedSourceClaim};
 use crate::error::ApiError;
-use crate::execution::{ProviderExecutionPort, ProviderValidationPort};
+use crate::provider::ProviderCompletionPort;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
@@ -420,9 +420,7 @@ fn validate_readme(
     Ok(())
 }
 
-pub(crate) async fn provider_correspondence<
-    P: ProviderValidationPort + ProviderExecutionPort + ?Sized,
->(
+pub(crate) async fn provider_correspondence<P: ProviderCompletionPort + ?Sized>(
     api: &P,
     config: &DocsCapabilityConfig,
     request: &DocsCorrespondenceRequest<'_>,
@@ -432,16 +430,11 @@ pub(crate) async fn provider_correspondence<
         config, &request.policy.content_identity(), super::semantics::DocsJudgmentOperation::Correspondence,
         serde_json::json!({"readme_path": request.readme_path, "sources": request.sources, "readme_claims": request.readme_claims}), 0, 0,
     )?;
-    let preparation =
-        crate::provider::executor::prepare_provider_for_request(api, &generation.request)?;
-    let result = crate::provider::executor::execute_completion(
-        api,
-        &generation.request,
-        &preparation,
-        generation.messages,
-        None,
-    )
-    .await?;
+    let completion = api
+        .complete_provider_request(&generation.request, generation.messages, None)
+        .await?;
+    let preparation = completion.preparation;
+    let result = completion.response;
     let execution = super::judgment::DocsJudgmentExecution::capture(
         request.policy.content_identity(),
         &generation.request,

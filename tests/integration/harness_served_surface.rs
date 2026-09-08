@@ -8,7 +8,7 @@
 
 use std::fs;
 
-use super::harness_survey_fixture::{survey_binding, survey_boot_request, AGENT_ID, SUBJECT_ID};
+use super::harness_survey_fixture::{survey_binding, survey_boot_request, SUBJECT_ID};
 use meld::harness::boot::HarnessRun;
 use meld::harness::eligibility::EligibilityChain;
 use meld::harness::walk::CausalThread;
@@ -124,35 +124,29 @@ fn the_substrate_serves_contract_types_over_loopback_for_a_live_session() {
         action
             .waiting_on
             .iter()
-            .any(|declaration| declaration.condition == "graph_anchor_absent")
+            .any(|declaration| declaration.condition == "belief_work_ineligible")
     }));
 
-    // Both walks answer over the wire with the same divergence the
-    // in-process walks derive.
+    // The source thread resolves the actual Event. Retired anchor queries
+    // are rejected rather than served through a competing Graph corpus.
     let thread: CausalThread = post(
         addr,
         "/v1/walks/thread",
         json!({
-            "subject": {
-                "AnchorForSubject": {
-                    "subject_domain_id": "workspace_fs",
-                    "subject_object_kind": "node",
-                    "subject_object_id": SUBJECT_ID,
-                    "perspective_kind": "frame_type",
-                    // The perspective the composed bindings actually derive,
-                    // so the walk explains the specimen's real stall rather
-                    // than any absent anchor.
-                    "perspective_id": format!("context-{AGENT_ID}"),
-                }
-            }
+            "subject": { "Event": { "seq": page.records[0].seq } }
         }),
     )
     .into_json()
     .unwrap();
-    assert_eq!(thread.cuts.len(), 1);
-    assert!(thread.cuts[0]
-        .reference
-        .contains("appears in no anchor record"));
+    assert!(thread.cuts.is_empty());
+    let retired = post(
+        addr,
+        "/v1/walks/thread",
+        json!({
+            "subject": { "AnchorForSubject": { "subject_object_id": SUBJECT_ID } }
+        }),
+    );
+    assert_eq!(retired.status(), 400);
 
     let chain: EligibilityChain = post(
         addr,
@@ -165,9 +159,10 @@ fn the_substrate_serves_contract_types_over_loopback_for_a_live_session() {
     .into_json()
     .unwrap();
     assert!(chain
-        .divergences
+        .links
         .iter()
-        .any(|divergence| divergence.contains("appears in no anchor record")));
+        .any(|link| link.declaration.condition == "belief_work_ineligible"));
+    assert!(!chain.divergences.is_empty());
 
     // Errors are machine-readable, never prose pages.
     let missing = post(addr, "/v1/no/such/route", json!({}));

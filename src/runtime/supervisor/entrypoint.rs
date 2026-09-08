@@ -200,6 +200,7 @@ pub struct RuntimeSupervisor<'a> {
     started_at_ms: u64,
     desired: BTreeMap<String, SupervisorRuntimeDesired>,
     handles: BTreeMap<String, SupervisedRuntimeHandle>,
+    startup_acquisitions: Option<Vec<RuntimeLeaseOwner>>,
     report_store: SupervisorReportStore,
     event_sequence: u64,
     action_sequence: u64,
@@ -312,6 +313,7 @@ impl<'a> RuntimeSupervisor<'a> {
             started_at_ms: command.started_at_ms,
             desired,
             handles: BTreeMap::new(),
+            startup_acquisitions: Some(Vec::new()),
             report_store,
             event_sequence: INITIAL_EVENT_SEQUENCE,
             action_sequence: 0,
@@ -330,15 +332,120 @@ impl<'a> RuntimeSupervisor<'a> {
         };
 
         supervisor.register_instance()?;
-        supervisor.persist_desired_state()?;
-        supervisor.recover_expired_leases(command.started_at_ms)?;
-        let activation_mode = supervisor.prepare_activation()?;
-        supervisor.start_enabled_runtimes(command.started_at_ms)?;
-        supervisor.publish_activation(activation_mode)?;
-        supervisor.retire_predecessors()?;
-        supervisor.mark_instance(RuntimeInstanceStatus::Running, None, command.started_at_ms)?;
-        supervisor.supervisor_store.flush()?;
+        let started = (|| {
+            supervisor.persist_desired_state()?;
+            supervisor.recover_expired_leases(command.started_at_ms)?;
+            supervisor.check_startup_ownership()?;
+            let activation_mode = supervisor.prepare_activation()?;
+            supervisor.start_enabled_runtimes(command.started_at_ms)?;
+            supervisor.publish_activation(activation_mode)?;
+            supervisor.retire_predecessors()?;
+            supervisor.mark_instance(
+                RuntimeInstanceStatus::Running,
+                None,
+                command.started_at_ms,
+            )?;
+            supervisor.supervisor_store.flush()?;
+            Ok::<_, SupervisorRuntimeError>(())
+        })();
+        if let Err(error) = started {
+            if let Err(cleanup) = supervisor.abort_start(command.started_at_ms) {
+                return Err(SupervisorRuntimeError::InvalidCommand(format!(
+                    "{error}; startup acquisition cleanup also failed: {cleanup}"
+                )));
+            }
+            return Err(error);
+        }
+        supervisor.startup_acquisitions = None;
         Ok(supervisor)
+    }
+
+    /// A prepared activation requires its whole participant set. Detect a live
+    /// predecessor before changing its admission fence or acquiring partial ownership.
+    fn check_startup_ownership(&self) -> Result<(), SupervisorRuntimeError> {
+        if self.prepared_activation.is_none() {
+            return Ok(());
+        }
+        for desired in self.desired.values().filter(|desired| {
+            desired.enabled && desired.classification == RuntimeClassification::ActiveBound
+        }) {
+            if let Some(lease) = self
+                .supervisor_store
+                .get_active_runtime_lease(&desired.runtime_id)?
+            {
+                return Err(SupervisorRuntimeError::InvalidCommand(format!(
+                    "runtime '{}' is owned by instance '{}' under lease '{}' until {} ms UTC",
+                    desired.runtime_id, lease.instance_id, lease.lease_id, lease.expires_at_ms,
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// No bounded step runs during startup. Unwind this attempt's operational
+    /// acquisitions without retiring semantic history or releasing predecessor leases.
+    fn abort_start(&mut self, now_ms: u64) -> Result<(), SupervisorRuntimeError> {
+        if let (Some(store), Some(prepared), Some(generation_id)) = (
+            self.lifecycle_store,
+            self.prepared_activation,
+            self.generation_id.as_deref(),
+        ) {
+            if store
+                .current_generation(&prepared.assignment.assignment_id)?
+                .is_some_and(|generation| {
+                    generation.generation_id == generation_id && generation.admission_open()
+                })
+            {
+                store.interrupt(&prepared.assignment.assignment_id, generation_id)?;
+            }
+        }
+        let mut failures = Vec::new();
+        for owner in self
+            .startup_acquisitions
+            .take()
+            .unwrap_or_default()
+            .into_iter()
+            .rev()
+        {
+            let context = self.lifecycle_context(owner.runtime_id.as_str());
+            if let Some(mut runtime) = self.handles.remove(owner.runtime_id.as_str()) {
+                let stopped = (|| {
+                    if runtime.actor.is_started() {
+                        if let Some(context) = context? {
+                            let safe = runtime.actor.wait_for_lifecycle_safe_point(&context)?;
+                            if !safe.safe_for_flush {
+                                return Err(SupervisorRuntimeError::InvalidCommand(format!(
+                                    "startup runtime '{}' is not quiescent",
+                                    owner.runtime_id
+                                )));
+                            }
+                            runtime.actor.flush_resources()?;
+                            runtime.actor.request_lifecycle_stop(&context)?;
+                            runtime.actor.release_lifecycle(&context)?;
+                        } else {
+                            runtime.actor.request_stop();
+                            runtime.actor.flush_resources()?;
+                        }
+                    }
+                    Ok::<_, SupervisorRuntimeError>(())
+                })();
+                if let Err(error) = stopped {
+                    failures.push(error.to_string());
+                    continue;
+                }
+            }
+            if let Err(error) = self.supervisor_store.release_runtime_lease(&owner, now_ms) {
+                failures.push(error.to_string());
+            }
+        }
+        self.passive_sources.clear();
+        self.mark_instance(RuntimeInstanceStatus::Failed, Some(now_ms), now_ms)?;
+        self.supervisor_store.flush()?;
+        if failures.is_empty() {
+            Ok(())
+        } else {
+            Err(SupervisorRuntimeError::InvalidCommand(failures.join("; ")))
+        }
     }
 
     /// Return this supervisor instance id.
@@ -1693,7 +1800,10 @@ impl<'a> RuntimeSupervisor<'a> {
             self.lifecycle_config.lease_duration_ms,
         ) {
             Ok(lease) => lease,
-            Err(SupervisorStoreError::DuplicateActiveLease { .. }) => {
+            Err(error @ SupervisorStoreError::DuplicateActiveLease { .. }) => {
+                if self.prepared_activation.is_some() {
+                    return Err(error.into());
+                }
                 self.write_health_snapshot(
                     &runtime,
                     None,
@@ -1706,6 +1816,9 @@ impl<'a> RuntimeSupervisor<'a> {
             }
             Err(error) => return Err(error.into()),
         };
+        if let Some(acquired) = &mut self.startup_acquisitions {
+            acquired.push(lease.owner());
+        }
         self.write_lifecycle_event(
             Some(runtime.clone()),
             Some(lease.lease_id.clone()),
@@ -1723,9 +1836,17 @@ impl<'a> RuntimeSupervisor<'a> {
             lease_id: lease.lease_id.clone(),
         };
         let start_report = match lifecycle_context.as_ref() {
-            Some(context) => handle.start_after_lifecycle_lease(lease_context, context)?,
-            None => handle.start_after_lease(lease_context)?,
+            Some(context) => handle.start_after_lifecycle_lease(lease_context, context),
+            None => handle.start_after_lease(lease_context),
         };
+        self.handles.insert(
+            runtime_id.to_string(),
+            SupervisedRuntimeHandle {
+                actor: BoundedActorHandle::new(handle),
+                owner: owner.clone(),
+            },
+        );
+        let start_report = start_report?;
         self.record_runtime_readiness(runtime_id, start_report.owner_readiness)?;
         // A started actor has not proven health yet: only a real bounded
         // tick report may promote it past starting.
@@ -1745,13 +1866,6 @@ impl<'a> RuntimeSupervisor<'a> {
             restart_count,
             last_restart_cause,
         )?;
-        self.handles.insert(
-            runtime_id.to_string(),
-            SupervisedRuntimeHandle {
-                actor: BoundedActorHandle::new(handle),
-                owner: owner.clone(),
-            },
-        );
         Ok(Some(owner))
     }
 
@@ -2903,22 +3017,20 @@ mod tests {
         let mut config = ProductRuntimeConfig::for_product_root(temp.path());
         config.enabled_runtime_ids = vec!["world_model.graph_replay".to_string()];
         let assembly = ProductRuntimeAssembly::load(config).unwrap();
-        let subject = DomainObjectRef::new("context", "head", "node-a::analysis").unwrap();
+        let frames_dir = tempfile::tempdir().unwrap();
+        let frames = crate::context::frame::FrameStorage::new(frames_dir.path()).unwrap();
+        let publication =
+            crate::context::publication::head_publication(&crate::heads::HeadIndex::new(), &frames)
+                .unwrap();
         assembly
             .event_authority()
             .append_capability()
             .append_durable(
-                EventEnvelope::new_domain(
-                    "2026-06-22T00:00:00Z".to_string(),
+                crate::world_state::graph::events::owner_publication_envelope(
                     "session-a",
-                    "context",
-                    "workspace-a",
-                    "context.head_tombstoned",
-                    None,
-                    json!({ "node": "node-a" }),
+                    &publication,
                 )
-                .with_graph(vec![subject], Vec::new())
-                .with_record_id("context-head-report-a"),
+                .unwrap(),
                 AppendMode::Idempotent,
             )
             .unwrap();

@@ -89,16 +89,17 @@ fn docs_task_success_rejects_invalid_probability() {
 #[test]
 fn docs_writer_success_promotes_configured_freshness_evidence() {
     let fixture = DocsFreshnessFirstProofFixture::new();
-    let (_graph_dir, graph, subject) = fixture.seeded_graph();
+    let subject = fixture.subject();
+    let mut config = BeliefConfigLoader::load_json(fixture.belief_config_json())
+        .unwrap()
+        .config;
+    config.initial_assessment = meld_world_model::belief::InitialAssessmentPolicy::PriorAllowed;
+    let config_json = serde_json::to_string(&config).unwrap();
     let belief_dir = tempfile::tempdir().unwrap();
     let belief_store =
         Arc::new(BeliefStore::new(sled::open(belief_dir.path().join("belief")).unwrap()).unwrap());
-    let runtime =
-        BeliefRuntime::from_json_config(belief_store.clone(), graph, fixture.belief_config_json())
-            .unwrap();
-    runtime
-        .assess_subject(&subject, "frame_type", "analysis", "worker-a")
-        .unwrap();
+    let runtime = BeliefRuntime::from_json_config(belief_store.clone(), &config_json).unwrap();
+    runtime.assess_subject(&subject, "worker-a").unwrap();
     let first = BeliefQuery::new(belief_store.as_ref())
         .current_views_for_subject(
             &subject,
@@ -109,7 +110,7 @@ fn docs_writer_success_promotes_configured_freshness_evidence() {
     let map_request = || docs_success_request(fixture.task_success_event(2), subject.clone());
     let ingest_request = |record| PromotedEvidenceIngestionRequest {
         record,
-        config: BeliefConfigLoader::load_json(fixture.belief_config_json()).unwrap(),
+        config: BeliefConfigLoader::load_json(&config_json).unwrap(),
         perspective: PerspectiveKey::new("default", "default").unwrap(),
         branch_scope: BranchScope::main(),
         owner_id: "worker-ingest",

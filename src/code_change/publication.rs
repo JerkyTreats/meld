@@ -116,6 +116,7 @@ pub(super) fn envelope(
     let operation = OwnerPublicationOperation::reconstruct(
         SCHEMA,
         OwnerPublicationBatch {
+            work_input_basis_id: None,
             owner_id: OWNER.into(),
             revision_id: revision.clone(),
             scope: scope.clone(),

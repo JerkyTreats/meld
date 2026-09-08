@@ -1,5 +1,7 @@
 # Executive Report: PDS Theory Must Be Separate From Rust Runtime
 
+> Superseded for current reconciliation direction. [Canonical Flywheel Alignment And Runtime Soft Freeze](flywheel_remediation.md) alone owns the issue register, priorities, next work, and branch acceptance. This document retains historical design or evidence; its prior status and authorization statements do not govern current delivery.
+
 Date: 2026-09-06
 
 Status: architectural violation report for executive-agent disposition; source-inspected, not execution-verified

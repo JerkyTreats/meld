@@ -435,13 +435,12 @@ impl WorkspaceCommandService {
             let mut artifacts = 0u64;
             if !keep_frames {
                 for nid in &node_ids {
-                    frames += api.head_index().read().get_all_heads_for_node(nid).len() as u64;
+                    frames += api.heads().get_all_heads_for_node(nid).len() as u64;
                 }
                 artifacts = api.prompt_context_storage().count_older_than(cutoff)?;
             }
             let head_count: usize = api
-                .head_index()
-                .read()
+                .heads()
                 .heads
                 .iter()
                 .filter(|(_, e)| e.tombstoned_at.is_some_and(|ts| ts <= cutoff))

@@ -33,9 +33,7 @@ use meld_world_model::world_state::graph::contracts::{
     BoundedTraversalRequest, TraversalCut, TraversalCutRequest, TraversalResult,
 };
 use meld_world_model::world_state::graph::store::TraversalStore;
-use meld_world_model::world_state::graph::{
-    GraphConsumerCursorReporter, GraphDerivedEventSink, GraphEventReplaySource,
-};
+use meld_world_model::world_state::graph::{GraphConsumerCursorReporter, GraphEventReplaySource};
 use meld_world_model::TraversalQuery;
 use meld_world_model::{
     AgentAuthorityPort, AgentAuthorizationFence, AgentAuthorizedProduct, AgentCurationPort,
@@ -46,7 +44,7 @@ use meld_world_model::{
 };
 
 use crate::context::frame::FrameStorage;
-use crate::control::projection::ExecutionProjectionReplaySource;
+use crate::execution::projection::ExecutionProjectionReplaySource;
 use crate::prompt_context::PromptContextArtifactStorage;
 use crate::runtime::error::{RuntimeAssemblyError, RuntimePortError};
 use crate::runtime::storage::{OpenProductStores, ScopedResource};
@@ -142,7 +140,6 @@ pub struct ProductEpochPlannerBinding {
     pub context: meld_world_model::planner::PlannerDecisionContext,
     pub policy: meld_world_model::planner::PlannerAssemblyPolicy,
     pub belief_key: meld_world_model::belief::BeliefKey,
-    pub unanchored_belief: bool,
     pub source_positions: Vec<meld_world_model::planner::PlannerSourcePosition>,
 }
 
@@ -219,7 +216,7 @@ impl AgentPlannerPort for ProductEpochAgentPlannerPort {
             }),
             required_graph_evidence: products.curation_rule.rule.source_readiness_requirements(),
             context: self.binding.context.clone(), policy: self.binding.policy.clone(),
-            belief_key: self.binding.belief_key.clone(), unanchored_belief: self.binding.unanchored_belief,
+            belief_key: self.binding.belief_key.clone(),
             source_positions: self.binding.source_positions.clone(),
             traversal_request: products.curation_rule.rule.traversal_request(),
             traversal_cut_request: TraversalCutRequest {
@@ -616,19 +613,6 @@ impl ExecutionProjectionReplaySource for ProductEventReplayPort {
     }
 }
 
-impl GraphDerivedEventSink for ProductEventAppendPort {
-    fn ledger_identity(&self) -> LedgerIdentity {
-        self.append.ledger_identity()
-    }
-
-    fn append_derived(
-        &self,
-        envelope: EventEnvelope,
-    ) -> Result<AppendReceipt, EventAuthorityError> {
-        self.append.append_durable(envelope, AppendMode::Idempotent)
-    }
-}
-
 impl GraphConsumerCursorReporter for ProductGraphCursorPort {
     fn report_owner_source_cursor(
         &self,
@@ -741,6 +725,9 @@ impl AgentPlannerPort for ProductAgentPlannerPort {
         request.context.scope_id = rule.rule.scope.scope_id.clone();
         request.context.observation_subject = Some(products.observation_subject.clone());
         request.belief_key.subject = products.observation_subject.clone();
+        if let Some(question) = &mut request.policy.acquisition_question {
+            question.key.subject = products.observation_subject.clone();
+        }
         for selected in &mut request.additional_beliefs {
             selected.key.subject = products.observation_subject.clone();
         }
@@ -1228,6 +1215,20 @@ impl AgentCurationPort for ProductPlannedCurationPort {
             operation_id,
             cut,
             &TraversalQuery::new(&self.graph),
+        )
+    }
+
+    fn operation_for_rule(
+        &self,
+        base: &CurationOperation,
+        reference: &meld_world_model::belief::TheoryRevisionRef,
+    ) -> Result<CurationOperation, meld_world_model::error::StorageError> {
+        let rule = self.store.resolve_rule(reference)?;
+        CurationOperation::reconstruct(
+            base.authority.clone(),
+            rule.revision_ref(),
+            base.source_cut.clone(),
+            rule.rule.traversal_request(),
         )
     }
 

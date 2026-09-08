@@ -8,7 +8,6 @@ pub mod events;
 mod facade;
 mod format;
 pub(crate) mod lifecycle;
-pub(crate) mod reducer;
 pub mod scan;
 mod section;
 pub mod summary;

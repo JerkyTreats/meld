@@ -1,9 +1,4 @@
 use std::fs;
-use std::io::{Read, Write};
-use std::net::TcpListener;
-use std::sync::mpsc;
-use std::thread;
-use std::time::Duration;
 
 use meld::agent::{AgentRole, AgentStorage, XdgAgentStorage};
 use meld::cli::{
@@ -75,73 +70,6 @@ fn create_test_writer_agent_with_workflow(agent_id: &str, workflow_id: Option<&s
     fs::write(config_path, toml).unwrap();
 }
 
-fn spawn_completion_server(
-    response_body: &str,
-    expected_requests: usize,
-) -> (String, mpsc::Receiver<String>, thread::JoinHandle<()>) {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let endpoint = format!("http://{}", listener.local_addr().unwrap());
-    let response_body = response_body.to_string();
-    let (tx, rx) = mpsc::channel();
-
-    let handle = thread::spawn(move || {
-        for _ in 0..expected_requests {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut buffer = Vec::new();
-            let mut chunk = [0u8; 4096];
-            let mut header_end = None;
-            loop {
-                let read = stream.read(&mut chunk).unwrap();
-                if read == 0 {
-                    break;
-                }
-                buffer.extend_from_slice(&chunk[..read]);
-                if header_end.is_none() {
-                    header_end = find_header_end(&buffer);
-                }
-                if let Some(end) = header_end {
-                    let headers = String::from_utf8_lossy(&buffer[..end]);
-                    let content_length = headers
-                        .lines()
-                        .find_map(|line| {
-                            let lower = line.to_ascii_lowercase();
-                            lower
-                                .strip_prefix("content-length:")
-                                .and_then(|value| value.trim().parse::<usize>().ok())
-                        })
-                        .unwrap_or(0);
-                    let body_start = end + 4;
-                    while buffer.len() < body_start + content_length {
-                        let read = stream.read(&mut chunk).unwrap();
-                        if read == 0 {
-                            break;
-                        }
-                        buffer.extend_from_slice(&chunk[..read]);
-                    }
-                    let body =
-                        String::from_utf8_lossy(&buffer[body_start..body_start + content_length])
-                            .to_string();
-                    tx.send(body).unwrap();
-                    let response = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                        response_body.len(),
-                        response_body
-                    );
-                    stream.write_all(response.as_bytes()).unwrap();
-                    stream.flush().unwrap();
-                    break;
-                }
-            }
-        }
-    });
-
-    (endpoint, rx, handle)
-}
-
-fn find_header_end(buffer: &[u8]) -> Option<usize> {
-    buffer.windows(4).position(|window| window == b"\r\n\r\n")
-}
-
 fn replay_session_events(cli: &RunContext, session_id: &str) -> Vec<EventRecord> {
     let replay = cli.event_replay_capability();
     let mut cursor = LedgerCursor {
@@ -193,7 +121,7 @@ fn scan_emits_session_boundary_events() {
         let events = replay_session_events(&cli, &scan_session.session_id);
         assert!(events.len() >= 2);
         assert_eq!(events.first().unwrap().event_type, "session_started");
-        assert_eq!(events.first().unwrap().seq, 1);
+        assert!(events.first().unwrap().seq >= 1);
         assert_eq!(events.last().unwrap().event_type, "session_ended");
         assert!(events.windows(2).all(|w| w[1].seq == w[0].seq + 1));
         assert!(events.iter().any(|e| e.event_type == "scan_started"));
@@ -331,157 +259,6 @@ fn failed_command_emits_session_end() {
         assert_eq!(events.first().unwrap().event_type, "session_started");
         assert_eq!(events.last().unwrap().event_type, "session_ended");
         assert!(events.iter().any(|e| e.event_type == "command_summary"));
-    });
-}
-
-#[test]
-fn context_generate_plan_constructed_includes_path_field() {
-    let temp_dir = TempDir::new().unwrap();
-    with_xdg_env(&temp_dir, || {
-        let workspace_root = temp_dir.path().join("workspace");
-        fs::create_dir_all(&workspace_root).unwrap();
-        let target = workspace_root.join("a.txt");
-        fs::write(&target, "hello").unwrap();
-
-        create_test_writer_agent("obs-agent");
-        create_test_openai_provider("obs-provider", "gpt-4-test", "http://127.0.0.1:9");
-
-        let cli = RunContext::new(workspace_root.clone(), None).unwrap();
-        cli.execute(&Commands::Scan { force: true }).unwrap();
-
-        let result = cli.execute(&Commands::Context {
-            command: ContextCommands::Generate {
-                node: None,
-                path: Some(target.clone()),
-                path_positional: None,
-                agent: Some("obs-agent".to_string()),
-                provider: Some("obs-provider".to_string()),
-                workflow_id: None,
-                provider_model: None,
-                provider_additional_json_file: None,
-                frame_type: Some("context-obs-agent".to_string()),
-                force: true,
-                no_recursive: false,
-            },
-        });
-        assert!(result.is_err());
-
-        let runtime = cli.progress_runtime();
-        let sessions = runtime.list_sessions().unwrap();
-        let session = sessions
-            .iter()
-            .find(|s| s.command == "context.generate")
-            .expect("context.generate session should exist");
-        let events = replay_session_events(&cli, &session.session_id);
-        let plan = events
-            .iter()
-            .find(|e| e.event_type == "plan_constructed")
-            .expect("plan_constructed should be emitted");
-
-        let expected_path = fs::canonicalize(&target)
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
-        assert_eq!(
-            plan.data.get("path").and_then(|v| v.as_str()),
-            Some(expected_path.as_str())
-        );
-        assert_eq!(
-            plan.data.get("agent_id").and_then(|v| v.as_str()),
-            Some("obs-agent")
-        );
-        assert_eq!(
-            plan.data.get("provider_name").and_then(|v| v.as_str()),
-            Some("obs-provider")
-        );
-        assert_eq!(
-            plan.data.get("frame_type").and_then(|v| v.as_str()),
-            Some("context-obs-agent")
-        );
-    });
-}
-
-#[test]
-fn context_generate_node_skipped_includes_path_field() {
-    let temp_dir = TempDir::new().unwrap();
-    with_xdg_env(&temp_dir, || {
-        let workspace_root = temp_dir.path().join("workspace");
-        fs::create_dir_all(&workspace_root).unwrap();
-        let target = workspace_root.join("a.txt");
-        fs::write(&target, "hello").unwrap();
-
-        create_test_writer_agent("skip-agent");
-        create_test_openai_provider("skip-provider", "gpt-4-test", "http://127.0.0.1:9");
-
-        let cli = RunContext::new(workspace_root.clone(), None).unwrap();
-        cli.execute(&Commands::Scan { force: true }).unwrap();
-
-        let canonical_target = fs::canonicalize(&target).unwrap();
-        let record = cli
-            .api()
-            .node_store()
-            .find_by_path(&canonical_target)
-            .unwrap()
-            .expect("target node should exist");
-        let node_id = record.node_id;
-        let frame_type = "context-skip-agent".to_string();
-        let mut frame_metadata = std::collections::HashMap::new();
-        frame_metadata.insert("agent_id".to_string(), "skip-agent".to_string());
-        frame_metadata.insert("provider".to_string(), "skip-provider".to_string());
-        frame_metadata.insert("model".to_string(), "gpt-4-test".to_string());
-        frame_metadata.insert("provider_type".to_string(), "openai".to_string());
-        frame_metadata.insert("prompt_digest".to_string(), "prompt-digest-a".to_string());
-        frame_metadata.insert("context_digest".to_string(), "context-digest-a".to_string());
-        frame_metadata.insert("prompt_link_id".to_string(), "prompt-link-a".to_string());
-        let frame = Frame::new(
-            Basis::Node(node_id),
-            b"existing".to_vec(),
-            frame_type.clone(),
-            "skip-agent".to_string(),
-            frame_metadata,
-        )
-        .unwrap();
-        cli.api()
-            .put_frame(node_id, frame, "skip-agent".to_string())
-            .unwrap();
-
-        let result = cli.execute(&Commands::Context {
-            command: ContextCommands::Generate {
-                node: None,
-                path: Some(target.clone()),
-                path_positional: None,
-                agent: Some("skip-agent".to_string()),
-                provider: Some("skip-provider".to_string()),
-                workflow_id: None,
-                provider_model: None,
-                provider_additional_json_file: None,
-                frame_type: Some(frame_type),
-                force: false,
-                no_recursive: false,
-            },
-        });
-        assert!(result.is_ok());
-        assert!(result.unwrap().contains("Frame already exists"));
-
-        let runtime = cli.progress_runtime();
-        let sessions = runtime.list_sessions().unwrap();
-        let session = sessions
-            .iter()
-            .find(|s| s.command == "context.generate")
-            .expect("context.generate session should exist");
-        let events = replay_session_events(&cli, &session.session_id);
-        let skipped = events
-            .iter()
-            .find(|e| e.event_type == "node_skipped")
-            .expect("node_skipped should be emitted");
-        assert_eq!(
-            skipped.data.get("path").and_then(|v| v.as_str()),
-            Some(canonical_target.to_string_lossy().as_ref())
-        );
-        assert_eq!(
-            skipped.data.get("reason").and_then(|v| v.as_str()),
-            Some("head_reuse")
-        );
     });
 }
 
@@ -793,109 +570,6 @@ fn context_generate_rejects_workflow_binding_before_constructing_a_plan() {
 }
 
 #[test]
-fn context_generate_recursive_completes_levels_bottom_up() {
-    let temp_dir = TempDir::new().unwrap();
-    with_xdg_env(&temp_dir, || {
-        let workspace_root = temp_dir.path().join("workspace");
-        let target = workspace_root.join("docs");
-        fs::create_dir_all(target.join("nested")).unwrap();
-        fs::write(target.join("nested").join("leaf.md"), "# leaf").unwrap();
-        fs::write(target.join("root.md"), "# root").unwrap();
-
-        create_test_writer_agent("bottom-up-agent");
-        let response_body = r##"{"id":"test","object":"chat.completion","created":0,"model":"test-model","choices":[{"index":0,"message":{"role":"assistant","content":"generated"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"##;
-        let (endpoint, body_rx, handle) = spawn_completion_server(response_body, 4);
-        create_test_openai_provider("bottom-up-provider", "gpt-4-test", &endpoint);
-
-        let cli = RunContext::new(workspace_root.clone(), None).unwrap();
-        cli.execute(&Commands::Scan { force: true }).unwrap();
-
-        let output = cli
-            .execute(&Commands::Context {
-                command: ContextCommands::Generate {
-                    node: None,
-                    path: Some(target.clone()),
-                    path_positional: None,
-                    agent: Some("bottom-up-agent".to_string()),
-                    provider: Some("bottom-up-provider".to_string()),
-                    workflow_id: None,
-                    provider_model: None,
-                    provider_additional_json_file: None,
-                    frame_type: Some("context-bottom-up-agent".to_string()),
-                    force: true,
-                    no_recursive: false,
-                },
-            })
-            .unwrap();
-
-        for _ in 0..4 {
-            let _ = body_rx.recv_timeout(Duration::from_secs(5)).unwrap();
-        }
-        handle.join().unwrap();
-
-        assert!(output.contains("generated=4, failed=0"));
-
-        let runtime = cli.progress_runtime();
-        let sessions = runtime.list_sessions().unwrap();
-        let session = sessions
-            .iter()
-            .find(|s| s.command == "context.generate")
-            .expect("context.generate session should exist");
-        let events = replay_session_events(&cli, &session.session_id);
-
-        let plan = events
-            .iter()
-            .find(|e| e.event_type == "plan_constructed")
-            .expect("plan_constructed should be emitted");
-        assert_eq!(
-            plan.data
-                .get("total_nodes")
-                .and_then(|value| value.as_u64()),
-            Some(4)
-        );
-        assert_eq!(
-            plan.data
-                .get("total_levels")
-                .and_then(|value| value.as_u64()),
-            Some(3)
-        );
-
-        let completed_levels: Vec<u64> = events
-            .iter()
-            .filter(|event| event.event_type == "execution.control.node_completed")
-            .map(|event| {
-                event
-                    .data
-                    .get("level_index")
-                    .and_then(|value| value.as_u64())
-                    .expect("node_generation_completed.level_index should be present")
-            })
-            .collect();
-        assert_eq!(completed_levels.len(), 4);
-        assert_eq!(completed_levels, vec![0, 1, 1, 2]);
-
-        let level_completed_positions: Vec<(u64, usize)> = events
-            .iter()
-            .enumerate()
-            .filter(|(_, event)| event.event_type == "execution.control.level_completed")
-            .map(|(index, event)| {
-                (
-                    event
-                        .data
-                        .get("level_index")
-                        .and_then(|value| value.as_u64())
-                        .expect("level_completed.level_index should be present"),
-                    index,
-                )
-            })
-            .collect();
-        assert_eq!(level_completed_positions.len(), 3);
-        assert!(level_completed_positions[0].1 < level_completed_positions[1].1);
-        assert!(level_completed_positions[1].1 < level_completed_positions[2].1);
-    });
-}
-
-#[test]
 fn retired_workflow_force_generate_preserves_historical_final_head() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
@@ -981,81 +655,6 @@ fn retired_workflow_force_generate_preserves_historical_final_head() {
         assert!(!events
             .iter()
             .any(|event| event.event_type == "provider_request_sent"));
-    });
-}
-
-#[test]
-fn single_shot_force_generate_replaces_stale_attested_head() {
-    let temp_dir = TempDir::new().unwrap();
-    with_xdg_env(&temp_dir, || {
-        let workspace_root = temp_dir.path().join("workspace");
-        fs::create_dir_all(&workspace_root).unwrap();
-        let target = workspace_root.join("doc.md");
-        fs::write(&target, "# hello").unwrap();
-
-        create_test_writer_agent("force-single-agent");
-        let response_body = r#"{"id":"test","object":"chat.completion","created":0,"model":"gpt-4-test","choices":[{"index":0,"message":{"role":"assistant","content":"fresh documentation"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
-        let (endpoint, rx, handle) = spawn_completion_server(response_body, 1);
-        create_test_openai_provider("force-single-provider", "gpt-4-test", &endpoint);
-
-        let cli = RunContext::new(workspace_root.clone(), None).unwrap();
-        cli.execute(&Commands::Scan { force: true }).unwrap();
-
-        let node_id = resolve_workspace_node_id(
-            cli.api(),
-            &workspace_root,
-            Some(target.as_path()),
-            None,
-            false,
-        )
-        .unwrap();
-        let frame_type = "context-force-single-agent".to_string();
-        let stale_frame = Frame::new(
-            Basis::Node(node_id),
-            b"stale documentation".to_vec(),
-            frame_type.clone(),
-            "force-single-agent".to_string(),
-            build_generated_metadata(&generated_metadata_input_from_payload(
-                "force-single-agent",
-                "force-single-provider",
-                "gpt-4-test",
-                "openai",
-                "stale prompt",
-                "stale context",
-            )),
-        )
-        .unwrap();
-        let stale_frame_id = cli
-            .api()
-            .put_frame(node_id, stale_frame, "force-single-agent".to_string())
-            .unwrap();
-
-        let output = cli
-            .execute(&Commands::Context {
-                command: ContextCommands::Generate {
-                    node: None,
-                    path: Some(target.clone()),
-                    path_positional: None,
-                    agent: Some("force-single-agent".to_string()),
-                    provider: Some("force-single-provider".to_string()),
-                    workflow_id: None,
-                    provider_model: None,
-                    provider_additional_json_file: None,
-                    frame_type: Some(frame_type.clone()),
-                    force: true,
-                    no_recursive: false,
-                },
-            })
-            .unwrap();
-
-        assert!(output.contains("Generation completed: generated=1, failed=0"));
-        let _request_body = rx.recv_timeout(Duration::from_secs(2)).unwrap();
-        handle.join().unwrap();
-
-        let head = cli.api().get_head(&node_id, &frame_type).unwrap().unwrap();
-        assert_ne!(head, stale_frame_id);
-        let frame = cli.api().frame_storage().get(&head).unwrap().unwrap();
-        assert_eq!(frame.text_content().unwrap(), "fresh documentation");
     });
 }
 
@@ -1184,19 +783,11 @@ fn command_summary_failure_message_is_bounded() {
         cli.execute(&Commands::Scan { force: true }).unwrap();
 
         let provider_name = "p".repeat(700);
-        let result = cli.execute(&Commands::Context {
-            command: ContextCommands::Generate {
-                node: None,
-                path: Some(target),
-                path_positional: None,
-                agent: Some("summary-agent".to_string()),
-                provider: Some(provider_name),
-                workflow_id: None,
-                provider_model: None,
-                provider_additional_json_file: None,
-                frame_type: None,
-                force: false,
-                no_recursive: false,
+        let result = cli.execute(&Commands::Provider {
+            command: ProviderCommands::Test {
+                provider_name,
+                model: None,
+                timeout: 1,
             },
         });
         assert!(result.is_err());
@@ -1205,8 +796,8 @@ fn command_summary_failure_message_is_bounded() {
         let sessions = runtime.list_sessions().unwrap();
         let session = sessions
             .iter()
-            .find(|s| s.command == "context.generate")
-            .expect("context.generate session should exist");
+            .find(|s| s.command == "provider.test")
+            .expect("provider.test session should exist");
         let events = replay_session_events(&cli, &session.session_id);
         let summary = events
             .iter()

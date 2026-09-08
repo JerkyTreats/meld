@@ -23,7 +23,6 @@ on:
           - world-model
           - belief
           - integration
-          - generation-parity
       force_release:
         description: Force a patch release even with no new commits since last tag
         required: false
@@ -102,9 +101,6 @@ jobs:
               ;;
             integration)
               cargo_locked test --test integration_tests
-              ;;
-            generation-parity)
-              cargo_locked test --test integration_tests generation_parity
               ;;
             *)
               echo "::error::Unknown test harness '$TEST_HARNESS'"

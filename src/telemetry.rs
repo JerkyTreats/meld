@@ -14,9 +14,8 @@ pub use crate::session::{PrunePolicy, SessionStatus};
 pub use contracts::{DomainObjectRef, EventRelation};
 pub use events::{
     FrameMetadataValidationEventData, ProgressEvent, PromptContextLineageEventData,
-    ProviderLifecycleEventData, QueueEventData, QueueStatsEventData, SessionEndedData,
-    SessionStartedData, SummaryEventData, WorkflowForceResetEventData, WorkflowTargetEventData,
-    WorkflowTurnEventData,
+    ProviderLifecycleEventData, SessionEndedData, SessionStartedData, SummaryEventData,
+    WorkflowForceResetEventData, WorkflowTargetEventData, WorkflowTurnEventData,
 };
 pub use sessions::ProgressRuntime;
 pub use types::{new_session_id, now_millis};

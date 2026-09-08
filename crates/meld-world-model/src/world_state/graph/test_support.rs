@@ -11,12 +11,12 @@ use meld_events::error::EventAuthorityError;
 
 use crate::error::StorageError;
 use crate::events::{
-    AppendMode, AppendReceipt, EventAppendCapability, EventAuthority, EventAuthorityOpenOptions,
+    AppendMode, AppendReceipt, EventAuthority, EventAuthorityOpenOptions,
     EventConsumerRegistryCapability, EventEnvelope, EventPage, EventReplayCapability, LedgerCursor,
     LedgerIdentity, ReplayRequest,
 };
 
-use super::ports::{GraphConsumerCursorReporter, GraphDerivedEventSink, GraphEventReplaySource};
+use super::ports::{GraphConsumerCursorReporter, GraphEventReplaySource};
 use super::runtime::GraphRuntime;
 use super::store::TraversalStore;
 
@@ -25,7 +25,6 @@ const GRAPH_ACTOR_ID: &str = "world_state.graph.reducer";
 #[derive(Clone)]
 struct AuthorityGraphTestPorts {
     replay: EventReplayCapability,
-    append: EventAppendCapability,
     registry: EventConsumerRegistryCapability,
 }
 
@@ -33,7 +32,6 @@ impl AuthorityGraphTestPorts {
     fn new(authority: &EventAuthority) -> Self {
         Self {
             replay: authority.replay_capability(),
-            append: authority.append_capability(),
             registry: authority.consumer_registry_capability(),
         }
     }
@@ -46,19 +44,6 @@ impl GraphEventReplaySource for AuthorityGraphTestPorts {
 
     fn replay(&self, request: ReplayRequest) -> Result<EventPage, EventAuthorityError> {
         self.replay.replay(request)
-    }
-}
-
-impl GraphDerivedEventSink for AuthorityGraphTestPorts {
-    fn ledger_identity(&self) -> LedgerIdentity {
-        self.append.ledger_identity()
-    }
-
-    fn append_derived(
-        &self,
-        envelope: EventEnvelope,
-    ) -> Result<AppendReceipt, EventAuthorityError> {
-        self.append.append_durable(envelope, AppendMode::Idempotent)
     }
 }
 
@@ -96,12 +81,7 @@ impl GraphRuntimeTestFixture {
             .map_err(authority_error_to_storage)?;
         let ports = Arc::new(AuthorityGraphTestPorts::new(&authority));
         let traversal = TraversalStore::shared(db)?;
-        let runtime = Arc::new(GraphRuntime::from_ports(
-            ports.clone(),
-            ports.clone(),
-            ports,
-            traversal,
-        )?);
+        let runtime = Arc::new(GraphRuntime::from_ports(ports.clone(), ports, traversal)?);
         Ok(Self { authority, runtime })
     }
 

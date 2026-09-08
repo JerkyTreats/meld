@@ -15,14 +15,16 @@ use super::contracts::*;
 /// construct within the supplied bounds. `Bounded` means traversal stopped
 /// early and must not be interpreted as proof that no candidate exists.
 pub fn search(request: &StrategySearchRequest) -> StrategySearchResult {
-    search_with_completed(request, &[])
+    search_with_completed(request, &[], &[])
 }
 
 fn search_with_completed(
     request: &StrategySearchRequest,
     completed: &[&StrategyTask],
+    history: &[StrategyCompletedHistoryEntry],
 ) -> StrategySearchResult {
     let mut state = SearchState::new(request);
+    state.history = history;
     if !request.problem.goal.target.is_ground()
         || !matches!(request.problem.goal.lifecycle, GoalLifecycle::Proposed)
     {
@@ -38,20 +40,17 @@ fn search_with_completed(
         EvalResult::Satisfied
     ) {
         let mut plan = StrategyPlan {
+            historical_identity: None,
+            settlement_rule_id: String::new(),
             plan_revision_id: String::new(),
             plan_family_id: plan_family_identity(&request.problem),
             problem_id: request.problem.problem_id.clone(),
             goal_id: request.problem.goal.goal_id.clone(),
             planner_cut_id: request.problem.planner_cut.cut_id.clone(),
             origin: StrategyPlanOrigin::Satisfied,
-            composition: Composition {
-                steps: Vec::new(),
-                edges: Vec::new(),
-            },
             bindings: meld_lang::Bindings::empty(),
             settlement_obligation: request.problem.goal.target.clone(),
             evidence_route: None,
-            capability_contract_ids: Vec::new(),
             tasks: Vec::new(),
             epistemic_operations: Vec::new(),
             dependencies: Vec::new(),
@@ -69,39 +68,65 @@ fn search_with_completed(
         return state.finish(Some(plan));
     }
 
-    let Some((rule, bindings)) = request
+    let mut rules = request
         .problem
         .theory
         .settlement_rules
         .iter()
         .filter_map(|rule| {
-            unify(&rule.goal_pattern, &request.problem.goal.target).map(|b| (rule, b))
+            unify(&rule.goal_pattern, &request.problem.goal.target).map(|bindings| (rule, bindings))
         })
-        .next()
-    else {
+        .collect::<Vec<_>>();
+    rules.sort_by_key(|(rule, _)| settlement_rule_identity(rule));
+    if rules.is_empty() {
         state.reject(StrategyRejectionGround::NoSettlementRule);
         return state.finish(None);
-    };
-
-    let settlement = match ground_proposition(&rule.settlement_obligation, &bindings) {
-        Ok(settlement) => settlement,
-        Err(variable) => {
-            state.reject(StrategyRejectionGround::UnboundVariable { variable });
-            return state.finish(None);
+    }
+    let mut candidates = Vec::new();
+    for (rule, bindings) in rules {
+        if request
+            .problem
+            .planner_cut
+            .world_model_view
+            .unassessed_belief
+            .is_some()
+            && rule.construction != StrategyConstruction::ObserveUnknown
+        {
+            state.reject(StrategyRejectionGround::InvalidComposition);
+            continue;
         }
-    };
-
-    // Method seeds and novel construction converge before ranking so cached
-    // knowledge cannot bypass the same eligibility and identity rules.
-    let mut candidates = method_candidates(request, rule, &settlement, &bindings, &mut state);
-    if !state.bounded {
-        candidates.extend(direct_candidates(
+        let settlement = match ground_proposition(&rule.settlement_obligation, &bindings) {
+            Ok(value) => value,
+            Err(_) => {
+                state.reject(StrategyRejectionGround::InvalidComposition);
+                continue;
+            }
+        };
+        if rule.construction == StrategyConstruction::ObserveUnknown {
+            if let Some(candidate) = epistemic_candidate(request, rule, &settlement, &mut state) {
+                candidates.push(candidate);
+            }
+            continue;
+        }
+        candidates.extend(method_candidates(
             request,
             rule,
             &settlement,
             &bindings,
             &mut state,
         ));
+        if !state.bounded {
+            candidates.extend(direct_candidates(
+                request,
+                rule,
+                &settlement,
+                &bindings,
+                &mut state,
+            ));
+        }
+        if state.bounded {
+            break;
+        }
     }
     candidates.retain(|candidate| {
         let repeats = !candidate.tasks.is_empty()
@@ -132,7 +157,7 @@ fn search_with_completed(
 pub fn search_successor(request: &StrategySuccessorRequest) -> StrategySuccessorResult {
     let predecessor = request.predecessor_plan.as_ref();
     let expected_family = plan_family_identity(&request.search.problem);
-    if predecessor.plan_revision_id != plan_revision_identity(predecessor)
+    if !super::history::predecessor_identity_valid(predecessor)
         || predecessor.plan_family_id != expected_family
         || predecessor.goal_id != request.search.problem.goal.goal_id
     {
@@ -145,10 +170,26 @@ pub fn search_successor(request: &StrategySuccessorRequest) -> StrategySuccessor
         };
     }
 
-    let confirmed_current =
-        confirmation_is_current(&request.search.problem, &request.completed_history);
+    let prior_rule = selected_rule(&request.search.problem, predecessor);
+    if predecessor.historical_identity.is_some()
+        && predecessor.origin != StrategyPlanOrigin::Satisfied
+        && prior_rule.is_none()
+    {
+        return StrategySuccessorResult {
+            problem_id: request.search.problem.problem_id.clone(),
+            completion: StrategySearchCompletion::Exhaustive,
+            recommendation: None,
+            rejections: vec![StrategyRejectionGround::InvalidPredecessor],
+            statistics: StrategySearchStatistics::default(),
+        };
+    }
+    let confirmed_current = prior_rule.is_some_and(|rule| {
+        confirmation_is_current(&request.search.problem, rule, &request.completed_history)
+    });
     let source_changed_after_confirmation = predecessor.origin == StrategyPlanOrigin::Confirmation
-        && !epistemic_products(&request.search.problem)
+        && !prior_rule
+            .map(|rule| epistemic_products(&request.search.problem, rule))
+            .unwrap_or_default()
             .iter()
             .all(|operation| {
                 predecessor
@@ -186,62 +227,26 @@ pub fn search_successor(request: &StrategySuccessorRequest) -> StrategySuccessor
     } else {
         Vec::new()
     };
-    let mut result =
-        confirmation.unwrap_or_else(|| search_with_completed(&request.search, &completed));
+    let mut result = confirmation.unwrap_or_else(|| {
+        search_with_completed(&request.search, &completed, &request.completed_history)
+    });
     let recommendation = result.recommendation.and_then(|mut plan| {
-        if let Some(rule) = request
-            .search
-            .problem
-            .theory
-            .settlement_rules
-            .iter()
-            .find(|rule| unify(&rule.goal_pattern, &request.search.problem.goal.target).is_some())
-        {
-            let ordering =
-                match task_ordering_dependencies(rule, &plan.tasks, &request.completed_history) {
-                    Ok(ordering) => ordering,
-                    Err(ground) => {
-                        result.rejections.push(ground);
-                        return None;
-                    }
-                };
-            let tasks: BTreeSet<_> = plan
-                .tasks
-                .iter()
-                .map(|task| task.task_id.as_str())
-                .collect();
-            plan.dependencies.retain(|dependency| {
-                !(tasks.contains(dependency.consumer_product_id.as_str())
-                    && matches!(
-                        dependency.required_milestone,
-                        PlanMilestoneRequirement::ExecutionTerminal { .. }
-                    ))
-            });
-            plan.dependencies.extend(ordering);
-        }
-
-        if !plan.epistemic_operations.is_empty() {
-            let retained = epistemic_products_with_history(
+        if let Some(rule) = selected_rule(&request.search.problem, &plan) {
+            match planned_epistemic_products(
                 &request.search.problem,
+                rule,
+                &plan.tasks,
                 &request.completed_history,
-            );
-            for (operation, prior) in plan.epistemic_operations.iter().zip(&retained) {
-                if operation.product_id == prior.product_id {
-                    continue;
+            ) {
+                Ok((operations, dependencies)) => {
+                    plan.epistemic_operations = operations;
+                    plan.dependencies = dependencies;
                 }
-                for edge in &mut plan.dependencies {
-                    if edge.producer_product_id == operation.product_id {
-                        *edge = dependency(
-                            &prior.product_id,
-                            &edge.consumer_product_id,
-                            PlanMilestoneRequirement::CurationVisible {
-                                operation_id: prior.operation.operation_id.clone(),
-                            },
-                        );
-                    }
+                Err(ground) => {
+                    result.rejections.push(ground);
+                    return None;
                 }
             }
-            plan.epistemic_operations = retained;
         }
         plan.plan_family_id = predecessor.plan_family_id.clone();
         plan.predecessor_plan_revision_id = Some(predecessor.plan_revision_id.clone());
@@ -262,9 +267,12 @@ pub fn search_successor(request: &StrategySuccessorRequest) -> StrategySuccessor
 
 pub(super) fn confirmation_is_current(
     problem: &StrategyProblem,
+    rule: &StrategySettlementRule,
     history: &[StrategyCompletedHistoryEntry],
 ) -> bool {
-    let operations = epistemic_products(problem);
+    let Ok((operations, _)) = planned_epistemic_products(problem, rule, &[], history) else {
+        return false;
+    };
     !operations.is_empty()
         && operations.iter().all(|operation| {
             history.iter().any(|entry| {
@@ -278,32 +286,59 @@ pub(super) fn confirmation_is_current(
         })
 }
 
-/// Curation's own return is not new input authorizing repeated effects.
-pub(super) fn task_source_basis(problem: &StrategyProblem) -> Option<String> {
-    let owners = &problem
-        .theory
-        .settlement_rules
-        .iter()
-        .find(|rule| unify(&rule.goal_pattern, &problem.goal.target).is_some())?
-        .repeat_on_changed_owners;
-    let source_basis = problem
-        .planner_cut
-        .traversal_cut
-        .receipts
-        .iter()
-        .filter(|receipt| {
-            owners.contains(&receipt.owner_id)
-                && (receipt.owner_id != crate::curation::CURATION_OWNER_ID
-                    || receipt.scope != problem.planner_cut.traversal_cut.scope)
-        })
-        .map(|receipt| receipt.semantic_basis())
-        .collect::<Vec<_>>();
-    (!source_basis.is_empty()).then(|| stable_id("strategy-task-source-v1", &source_basis))
+/// Only comparable owner-authored inputs can justify repeating a completed effect.
+pub(super) fn task_source_basis(
+    problem: &StrategyProblem,
+    rule: &StrategySettlementRule,
+) -> Option<String> {
+    let owners = &rule.repeat_on_changed_owners;
+    if owners.is_empty() {
+        return None;
+    }
+    let mut sources = Vec::new();
+    for owner in owners {
+        let receipts = problem
+            .planner_cut
+            .traversal_cut
+            .receipts
+            .iter()
+            .filter(|receipt| {
+                &receipt.owner_id == owner
+                    && (receipt.owner_id != crate::curation::CURATION_OWNER_ID
+                        || receipt.scope != problem.planner_cut.traversal_cut.scope)
+            })
+            .collect::<Vec<_>>();
+        if receipts.is_empty() {
+            return None;
+        }
+        for receipt in receipts {
+            let basis = receipt
+                .work_input_basis_id
+                .as_deref()
+                .filter(|basis| !basis.trim().is_empty())?;
+            sources.push((&receipt.owner_id, &receipt.scope, basis));
+        }
+    }
+    sources.sort_by_cached_key(|source| {
+        serde_json::to_vec(source).expect("serializable work-input identity")
+    });
+    Some(stable_id("strategy-task-input-v2", &sources))
 }
 
 pub(super) fn same_work(left: &StrategyTask, right: &StrategyTask) -> bool {
-    left.source_basis_id == right.source_basis_id
-        && left.composition == right.composition
+    let changed_inputs = match (&left.source_basis_id, &right.source_basis_id) {
+        (Some(left), Some(right)) => {
+            left.starts_with("strategy-task-input-v2::")
+                && right.starts_with("strategy-task-input-v2::")
+                && left != right
+        }
+        _ => false,
+    };
+    same_effect(left, right) && !changed_inputs
+}
+
+pub(super) fn same_effect(left: &StrategyTask, right: &StrategyTask) -> bool {
+    left.composition == right.composition
         && left.bindings == right.bindings
         && left.initial_inputs == right.initial_inputs
         && left.execution_subject == right.execution_subject
@@ -315,10 +350,9 @@ pub(super) fn same_work(left: &StrategyTask, right: &StrategyTask) -> bool {
 
 fn confirmation_successor(request: &StrategySuccessorRequest) -> Option<StrategySearchResult> {
     let problem = &request.search.problem;
-    let (rule, bindings) = problem.theory.settlement_rules.iter().find_map(|rule| {
-        unify(&rule.goal_pattern, &problem.goal.target).map(|bindings| (rule, bindings))
-    })?;
-    if !rule.epistemic_placement.is_confirmation() {
+    let rule = selected_rule(problem, &request.predecessor_plan)?;
+    let bindings = unify(&rule.goal_pattern, &problem.goal.target)?;
+    if !rule.has_evidence_returns() {
         return None;
     }
     let settlement = ground_proposition(&rule.settlement_obligation, &bindings).ok()?;
@@ -332,7 +366,8 @@ fn confirmation_successor(request: &StrategySuccessorRequest) -> Option<Strategy
     {
         return None;
     }
-    let epistemic_operations = epistemic_products(problem);
+    let (epistemic_operations, dependencies) =
+        planned_epistemic_products(problem, rule, &[], &request.completed_history).ok()?;
     if epistemic_operations.is_empty() {
         return None;
     }
@@ -347,33 +382,18 @@ fn confirmation_successor(request: &StrategySuccessorRequest) -> Option<Strategy
     }) {
         return None;
     }
-    let dependencies = epistemic_operations
-        .iter()
-        .flat_map(|operation| {
-            completed.iter().map(|entry| {
-                dependency(
-                    &entry.product_id,
-                    &operation.product_id,
-                    entry.accepted_milestone.clone(),
-                )
-            })
-        })
-        .collect();
     let mut plan = StrategyPlan {
+        historical_identity: None,
+        settlement_rule_id: settlement_rule_identity(rule),
         plan_revision_id: String::new(),
         plan_family_id: plan_family_identity(problem),
         problem_id: problem.problem_id.clone(),
         goal_id: problem.goal.goal_id.clone(),
         planner_cut_id: problem.planner_cut.cut_id.clone(),
         origin: StrategyPlanOrigin::Confirmation,
-        composition: Composition {
-            steps: Vec::new(),
-            edges: Vec::new(),
-        },
         bindings: meld_lang::Bindings::empty(),
         settlement_obligation: settlement,
         evidence_route: Some(rule.evidence_route.clone()),
-        capability_contract_ids: Vec::new(),
         tasks: Vec::new(),
         epistemic_operations,
         dependencies,
@@ -461,26 +481,26 @@ pub(crate) fn confirmation_expectation_matches(
     rule: &super::StrategySettlementRule,
     task: &super::StrategyTask,
 ) -> bool {
-    match rule.epistemic_placement {
-        StrategyEpistemicPlacement::GraphConfirmation => {
+    rule.has_evidence_returns()
+        && if rule.task_requires_visibility(task) {
             task.effect_visibility == problem.effect_visibility
                 && task
                     .effect_visibility
                     .as_ref()
                     .is_some_and(|expected| expected.validate().is_ok())
+        } else {
+            task.effect_visibility.is_none()
         }
-        StrategyEpistemicPlacement::Confirmation => task.effect_visibility.is_none(),
-        StrategyEpistemicPlacement::Prerequisite => false,
-    }
 }
 
 /// A prerequisite's own publication changes the cut, but does not create a new obligation
 /// when the new cut still selects the exact accepted result over unchanged source evidence.
 pub(crate) fn epistemic_products_with_history(
     problem: &StrategyProblem,
+    rule: &StrategySettlementRule,
     history: &[StrategyCompletedHistoryEntry],
 ) -> Vec<StrategyEpistemicOperation> {
-    epistemic_products(problem)
+    epistemic_products(problem, rule)
         .into_iter()
         .map(|operation| {
             if operation.return_evidence.is_some() {
@@ -514,18 +534,23 @@ pub(crate) fn epistemic_products_with_history(
         .collect()
 }
 
-pub(crate) fn epistemic_products(problem: &StrategyProblem) -> Vec<StrategyEpistemicOperation> {
-    let return_evidence = problem
-        .theory
-        .settlement_rules
-        .iter()
-        .find(|rule| unify(&rule.goal_pattern, &problem.goal.target).is_some())
-        .filter(|rule| rule.epistemic_placement.is_confirmation())
-        .map(|rule| rule.evidence_route.clone());
+pub(crate) fn epistemic_products(
+    problem: &StrategyProblem,
+    rule: &StrategySettlementRule,
+) -> Vec<StrategyEpistemicOperation> {
     problem
         .curation_operations
         .iter()
-        .map(|operation| {
+        .filter_map(|operation| {
+            let selection = rule.epistemic_selections.iter().find(|selection| {
+                selection
+                    .rule_revision
+                    .as_ref()
+                    .is_none_or(|reference| reference == &operation.rule_revision)
+            })?;
+            let return_evidence = selection
+                .evidence_return
+                .then(|| rule.evidence_route.clone());
             let mut product_id = stable_id(
                 "strategy-epistemic-product-v1",
                 &(&problem.goal.goal_id, &operation.operation_id),
@@ -533,13 +558,13 @@ pub(crate) fn epistemic_products(problem: &StrategyProblem) -> Vec<StrategyEpist
             if let Some(route) = &return_evidence {
                 product_id = stable_id("strategy-epistemic-return-v1", &(&product_id, route));
             }
-            StrategyEpistemicOperation {
+            Some(StrategyEpistemicOperation {
                 return_evidence: return_evidence.clone(),
                 idempotency_key: format!("curation::{product_id}"),
                 product_id,
                 operation: operation.clone(),
                 authority_requirements: vec![operation.authority.agent_id.clone()],
-            }
+            })
         })
         .collect()
 }
@@ -563,49 +588,106 @@ fn dependency(
     }
 }
 
-pub(crate) fn task_ordering_dependencies(
+fn product_dependencies(
     rule: &StrategySettlementRule,
     tasks: &[StrategyTask],
+    operations: &[StrategyEpistemicOperation],
     history: &[StrategyCompletedHistoryEntry],
+    required_consumers: &BTreeSet<String>,
 ) -> Result<Vec<StrategyPlanDependency>, StrategyRejectionGround> {
-    let mut producers: std::collections::BTreeMap<_, _> = tasks
+    let current: Vec<_> = tasks
         .iter()
-        .map(|task| (task.task_id.as_str(), task))
+        .map(|task| StrategyProduct::Task(Box::new(task.clone())))
+        .chain(
+            operations
+                .iter()
+                .map(|operation| StrategyProduct::Epistemic(Box::new(operation.clone()))),
+        )
+        .collect();
+    let mut producers: std::collections::BTreeMap<_, _> = current
+        .iter()
+        .map(|product| (product_id(product), product))
         .collect();
     for entry in history {
-        if let Some(StrategyProduct::Task(task)) = &entry.product {
-            if entry.product_id == task.task_id
+        if let Some(product) = &entry.product {
+            let accepted = match product {
+                StrategyProduct::Task(task) => {
+                    task.accounts_for_return(&entry.accepted_milestone)
+                        || task.confirmation_milestone() == entry.accepted_milestone
+                }
+                StrategyProduct::Epistemic(operation) => {
+                    operation.accepts_return(&entry.accepted_milestone)
+                }
+            };
+            if accepted
                 && !entry.owner_position_id.is_empty()
-                && entry.accepted_milestone
-                    == (PlanMilestoneRequirement::ExecutionTerminal {
-                        task_id: task.task_id.clone(),
-                    })
+                && product_id(product) == entry.product_id
             {
-                producers
-                    .entry(task.task_id.as_str())
-                    .or_insert(task.as_ref());
+                producers.entry(product_id(product)).or_insert(product);
             }
         }
     }
     let mut dependencies = Vec::new();
-    for constraint in &rule.task_ordering {
-        for before in producers.values().filter(|task| {
-            task.capability_contract_ids
-                .contains(&constraint.before_contract_id)
-        }) {
-            for after in tasks.iter().filter(|task| {
-                task.capability_contract_ids
-                    .contains(&constraint.after_contract_id)
-            }) {
-                if before.task_id == after.task_id {
+    for constraint in &rule.product_ordering {
+        let consumers: Vec<_> = current
+            .iter()
+            .filter(|product| {
+                required_consumers.contains(product_id(product))
+                    && selector_matches(&constraint.after, product)
+            })
+            .collect();
+        if consumers.is_empty() {
+            continue;
+        }
+        let selected_current: Vec<_> = current
+            .iter()
+            .filter(|product| selector_matches(&constraint.before, product))
+            .collect();
+        let selected: Vec<_> = if selected_current.is_empty() {
+            producers
+                .values()
+                .copied()
+                .filter(|product| selector_matches(&constraint.before, product))
+                .collect()
+        } else {
+            selected_current
+        };
+        if selected.is_empty()
+            && constraint.before.is_exact()
+            && constraint.condition == StrategyOrderingCondition::ConsumerSelected
+        {
+            return Err(StrategyRejectionGround::InvalidComposition);
+        }
+        for before in selected {
+            let milestone = match (before, constraint.milestone) {
+                (StrategyProduct::Task(task), StrategyDependencyMilestone::ExecutionTerminal) => {
+                    PlanMilestoneRequirement::ExecutionTerminal {
+                        task_id: task.task_id.clone(),
+                    }
+                }
+                (StrategyProduct::Task(task), StrategyDependencyMilestone::EffectVisible)
+                    if task.effect_visibility.is_some() =>
+                {
+                    task.confirmation_milestone()
+                }
+                (
+                    StrategyProduct::Epistemic(operation),
+                    StrategyDependencyMilestone::CurationVisible,
+                ) if operation.return_evidence.is_none() => {
+                    PlanMilestoneRequirement::CurationVisible {
+                        operation_id: operation.operation.operation_id.clone(),
+                    }
+                }
+                _ => return Err(StrategyRejectionGround::InvalidComposition),
+            };
+            for after in &consumers {
+                if product_id(before) == product_id(after) {
                     return Err(StrategyRejectionGround::InvalidComposition);
                 }
                 dependencies.push(dependency(
-                    &before.task_id,
-                    &after.task_id,
-                    PlanMilestoneRequirement::ExecutionTerminal {
-                        task_id: before.task_id.clone(),
-                    },
+                    product_id(before),
+                    product_id(after),
+                    milestone.clone(),
                 ));
             }
         }
@@ -615,8 +697,63 @@ pub(crate) fn task_ordering_dependencies(
     Ok(dependencies)
 }
 
+pub(crate) fn planned_epistemic_products(
+    problem: &StrategyProblem,
+    rule: &StrategySettlementRule,
+    tasks: &[StrategyTask],
+    history: &[StrategyCompletedHistoryEntry],
+) -> Result<(Vec<StrategyEpistemicOperation>, Vec<StrategyPlanDependency>), StrategyRejectionGround>
+{
+    let mut operations = epistemic_products_with_history(problem, rule, history);
+    let mut required: BTreeSet<String> = tasks
+        .iter()
+        .map(|task| task.task_id.clone())
+        .chain(
+            operations
+                .iter()
+                .filter(|operation| operation.return_evidence.is_some())
+                .map(|operation| operation.product_id.clone()),
+        )
+        .collect();
+    let dependencies = loop {
+        let dependencies = product_dependencies(rule, tasks, &operations, history, &required)?;
+        let before = required.len();
+        for edge in &dependencies {
+            if required.contains(&edge.consumer_product_id) {
+                required.insert(edge.producer_product_id.clone());
+            }
+        }
+        if required.len() == before {
+            break dependencies;
+        }
+    };
+    operations.retain(|operation| required.contains(&operation.product_id));
+    if operations.iter().any(|operation| {
+        problem
+            .unavailable_curation_operation_ids
+            .contains(&operation.operation.operation_id)
+    }) {
+        return Err(StrategyRejectionGround::UnchangedCompletedWork);
+    }
+    Ok((operations, dependencies))
+}
+
+fn product_id(product: &StrategyProduct) -> &str {
+    match product {
+        StrategyProduct::Task(task) => &task.task_id,
+        StrategyProduct::Epistemic(operation) => &operation.product_id,
+    }
+}
+fn selector_matches(selector: &StrategyProductSelector, product: &StrategyProduct) -> bool {
+    match product {
+        StrategyProduct::Task(task) => selector.selects_task(task),
+        StrategyProduct::Epistemic(operation) => selector.selects_epistemic(operation),
+    }
+}
+
 struct SearchState<'a> {
     request: &'a StrategySearchRequest,
+    history: &'a [StrategyCompletedHistoryEntry],
     rejections: Vec<StrategyRejectionGround>,
     expanded: usize,
     bounded: bool,
@@ -626,6 +763,7 @@ impl<'a> SearchState<'a> {
     fn new(request: &'a StrategySearchRequest) -> Self {
         Self {
             request,
+            history: &[],
             rejections: Vec::new(),
             expanded: 0,
             bounded: false,
@@ -663,6 +801,73 @@ impl<'a> SearchState<'a> {
             },
         }
     }
+}
+
+fn epistemic_candidate(
+    request: &StrategySearchRequest,
+    rule: &StrategySettlementRule,
+    settlement: &Proposition,
+    state: &mut SearchState<'_>,
+) -> Option<StrategyPlan> {
+    if !matches!(
+        evaluate(
+            &request.problem.planner_cut.world_model_view.world_state,
+            &request.problem.goal.target
+        ),
+        EvalResult::Indeterminate { .. }
+    ) || !state.expand()
+    {
+        return None;
+    }
+    let (operations, dependencies) =
+        match planned_epistemic_products(&request.problem, rule, &[], state.history) {
+            Ok(products) => products,
+            Err(ground) => {
+                state.reject(ground);
+                return None;
+            }
+        };
+    if operations.is_empty()
+        || !operations
+            .iter()
+            .any(|operation| operation.return_evidence.is_some())
+    {
+        state.reject(StrategyRejectionGround::InvalidEvidenceRoute);
+        return None;
+    }
+    let mut plan = StrategyPlan {
+        historical_identity: None,
+        settlement_rule_id: settlement_rule_identity(rule),
+        plan_revision_id: String::new(),
+        plan_family_id: plan_family_identity(&request.problem),
+        problem_id: request.problem.problem_id.clone(),
+        goal_id: request.problem.goal.goal_id.clone(),
+        planner_cut_id: request.problem.planner_cut.cut_id.clone(),
+        origin: StrategyPlanOrigin::Epistemic,
+        bindings: meld_lang::Bindings::empty(),
+        settlement_obligation: settlement.clone(),
+        evidence_route: Some(rule.evidence_route.clone()),
+        tasks: Vec::new(),
+        epistemic_operations: operations,
+        dependencies,
+        conditions: vec![request.problem.goal.target.clone()],
+        frozen_context_id: request.problem.planner_cut.context.context_id.clone(),
+        explanation:
+            "Acquire bounded evidence for unknown Goal knowledge before selecting executable work"
+                .into(),
+        predecessor_plan_revision_id: None,
+        evaluation: StrategyPlanEvaluation {
+            step_count: 0,
+            time_ms: 0,
+            provider_calls: 0,
+        },
+    };
+    if !super::verification::dependencies_valid(&plan, state.history) {
+        state.reject(StrategyRejectionGround::InvalidComposition);
+        return None;
+    }
+    plan.plan_revision_id = plan_revision_identity(&plan);
+    Some(plan)
 }
 
 fn method_candidates(
@@ -1083,17 +1288,7 @@ fn finish_bodies(
     if tasks.is_empty() {
         return None;
     }
-    let composition = Composition {
-        steps: tasks
-            .iter()
-            .flat_map(|task| task.composition.steps.clone())
-            .collect(),
-        edges: tasks
-            .iter()
-            .flat_map(|task| task.composition.edges.clone())
-            .collect(),
-    };
-    if !composition_contributes(&composition, settlement) {
+    if !tasks_contribute(&tasks, settlement) {
         return None;
     }
     let mut contract_ids: Vec<_> = tasks
@@ -1109,50 +1304,38 @@ fn finish_bodies(
         state.reject(StrategyRejectionGround::InvalidEvidenceRoute);
         return None;
     }
-    let evaluation = evaluate_candidate(&composition);
-    let epistemic_operations = epistemic_products(&request.problem);
-    let mut dependencies: Vec<_> = tasks
-        .iter()
-        .flat_map(|task| {
-            epistemic_operations
-                .iter()
-                .map(|operation| match rule.epistemic_placement {
-                    StrategyEpistemicPlacement::Prerequisite => dependency(
-                        &operation.product_id,
-                        &task.task_id,
-                        PlanMilestoneRequirement::CurationVisible {
-                            operation_id: operation.operation.operation_id.clone(),
-                        },
-                    ),
-                    StrategyEpistemicPlacement::Confirmation
-                    | StrategyEpistemicPlacement::GraphConfirmation => dependency(
-                        &task.task_id,
-                        &operation.product_id,
-                        task.confirmation_milestone(),
-                    ),
-                })
-        })
-        .collect();
-    match task_ordering_dependencies(rule, &tasks, &[]) {
-        Ok(ordering) => dependencies.extend(ordering),
-        Err(ground) => {
-            state.reject(ground);
-            return None;
-        }
+    // Completed complete Tasks remain historical producers. They are not
+    // reconstructed as fresh executable work merely because another local product waits.
+    tasks.retain(|task| {
+        !completed_task_history(state.history).iter().any(|entry|
+        matches!(&entry.product, Some(StrategyProduct::Task(prior)) if same_work(task, prior)))
+    });
+    if tasks.is_empty() {
+        state.reject(StrategyRejectionGround::UnchangedCompletedWork);
+        return None;
     }
+    let evaluation = evaluate_tasks(&tasks);
+    let (epistemic_operations, dependencies) =
+        match planned_epistemic_products(&request.problem, rule, &tasks, state.history) {
+            Ok(products) => products,
+            Err(ground) => {
+                state.reject(ground);
+                return None;
+            }
+        };
     let plan_family_id = plan_family_identity(&request.problem);
     let mut candidate = StrategyPlan {
+        historical_identity: None,
+        settlement_rule_id: settlement_rule_identity(rule),
         plan_revision_id: String::new(),
         plan_family_id,
         problem_id: request.problem.problem_id.clone(),
         goal_id: request.problem.goal.goal_id.clone(),
         planner_cut_id: request.problem.planner_cut.cut_id.clone(),
         origin,
-        composition,
         bindings,
         settlement_obligation: settlement.clone(),
         evidence_route: Some(rule.evidence_route.clone()),
-        capability_contract_ids: contract_ids,
         tasks,
         epistemic_operations,
         dependencies,
@@ -1165,7 +1348,7 @@ fn finish_bodies(
         predecessor_plan_revision_id: None,
         evaluation,
     };
-    if !super::verification::dependencies_valid(&candidate, &[]) {
+    if !super::verification::dependencies_valid(&candidate, state.history) {
         state.reject(StrategyRejectionGround::InvalidComposition);
         return None;
     }
@@ -1255,21 +1438,27 @@ fn complete_task(
         "strategy-task-subject-v1",
         &(&task_id, &request.problem.planner_cut.context.subject),
     );
-    let effect_visibility =
-        if rule.epistemic_placement == StrategyEpistemicPlacement::GraphConfirmation {
-            let Some(expected) = request
-                .problem
-                .effect_visibility
-                .clone()
-                .filter(|expected| expected.validate().is_ok())
-            else {
-                state.reject(StrategyRejectionGround::InvalidEvidenceRoute);
-                return None;
-            };
-            Some(expected)
-        } else {
-            None
+    let effect_visibility = if rule.product_ordering.iter().any(|ordering| {
+        ordering.milestone == StrategyDependencyMilestone::EffectVisible
+            && match &ordering.before {
+                StrategyProductSelector::AllTasks => true,
+                StrategyProductSelector::Task { contract_id } => contract_ids.contains(contract_id),
+                _ => false,
+            }
+    }) {
+        let Some(expected) = request
+            .problem
+            .effect_visibility
+            .clone()
+            .filter(|expected| expected.validate().is_ok())
+        else {
+            state.reject(StrategyRejectionGround::InvalidEvidenceRoute);
+            return None;
         };
+        Some(expected)
+    } else {
+        None
+    };
     let task_id = effect_visibility.as_ref().map_or_else(
         || task_id.clone(),
         |expected| stable_id("strategy-task-visibility-v1", &(&task_id, expected)),
@@ -1278,7 +1467,7 @@ fn complete_task(
         task_id: task_id.clone(),
     };
     let task = StrategyTask {
-        source_basis_id: task_source_basis(&request.problem),
+        source_basis_id: task_source_basis(&request.problem, rule),
         effect_visibility,
         execution_subject: Some(request.problem.planner_cut.context.subject.clone()),
         initial_inputs,
@@ -1492,6 +1681,80 @@ fn evaluate_candidate(composition: &Composition) -> StrategyPlanEvaluation {
     }
 }
 
+fn evaluate_tasks(tasks: &[StrategyTask]) -> StrategyPlanEvaluation {
+    tasks
+        .iter()
+        .map(|task| evaluate_candidate(&task.composition))
+        .fold(
+            StrategyPlanEvaluation {
+                step_count: 0,
+                time_ms: 0,
+                provider_calls: 0,
+            },
+            |mut total, local| {
+                total.step_count += local.step_count;
+                total.time_ms += local.time_ms;
+                total.provider_calls += local.provider_calls;
+                total
+            },
+        )
+}
+
+/// Check prospective contribution directly over the complete Task products.
+pub(crate) fn tasks_and_history_contribute(
+    problem: &StrategyProblem,
+    rule: &StrategySettlementRule,
+    tasks: &[StrategyTask],
+    history: &[StrategyCompletedHistoryEntry],
+    obligation: &Proposition,
+) -> bool {
+    let mut products = tasks.to_vec();
+    products.extend(
+        current_completed_tasks(problem, rule, history)
+            .into_iter()
+            .cloned(),
+    );
+    tasks_contribute(&products, obligation)
+}
+
+/// Historical producers contribute only to the same subject and material inputs.
+/// Their accepted owner milestone remains the authority for completion.
+pub(crate) fn current_completed_tasks<'a>(
+    problem: &StrategyProblem,
+    rule: &StrategySettlementRule,
+    history: &'a [StrategyCompletedHistoryEntry],
+) -> Vec<&'a StrategyTask> {
+    let basis = task_source_basis(problem, rule);
+    completed_task_history(history)
+        .into_iter()
+        .filter_map(|entry| match &entry.product {
+            Some(StrategyProduct::Task(task))
+                if task.source_basis_id == basis
+                    && task.execution_subject.as_ref()
+                        == Some(&problem.planner_cut.context.subject) =>
+            {
+                Some(task.as_ref())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+pub(crate) fn tasks_contribute(tasks: &[StrategyTask], obligation: &Proposition) -> bool {
+    tasks
+        .iter()
+        .any(|task| composition_contributes(&task.composition, obligation))
+        || match obligation {
+            Proposition::All(children) => {
+                !children.is_empty() && children.iter().all(|child| tasks_contribute(tasks, child))
+            }
+            Proposition::Any(children) => {
+                children.iter().any(|child| tasks_contribute(tasks, child))
+            }
+            _ => false,
+        }
+}
+
 fn candidate_key(candidate: &StrategyPlan) -> (usize, u64, u32, &str) {
     (
         candidate.evaluation.step_count,
@@ -1510,12 +1773,42 @@ fn alternative_candidate_key(candidate: &StrategyPlan) -> (u64, u32, usize, &str
     )
 }
 
+pub(crate) fn settlement_rule_identity(rule: &StrategySettlementRule) -> String {
+    stable_id("strategy-settlement-rule-v1", rule)
+}
+
+pub(crate) fn selected_rule<'a>(
+    problem: &'a StrategyProblem,
+    plan: &StrategyPlan,
+) -> Option<&'a StrategySettlementRule> {
+    if !plan.settlement_rule_id.is_empty() {
+        return problem.theory.settlement_rules.iter().find(|rule| {
+            settlement_rule_identity(rule) == plan.settlement_rule_id
+                && unify(&rule.goal_pattern, &problem.goal.target).is_some()
+        });
+    }
+    if plan.historical_identity.is_none() || !super::history::predecessor_identity_valid(plan) {
+        return None;
+    }
+    // Historical Plans did not name their rule. Only a unique exact meaning
+    // can be recovered; ambiguity does not authorize another selection.
+    let mut matches = problem.theory.settlement_rules.iter().filter(|rule| {
+        unify(&rule.goal_pattern, &problem.goal.target).is_some_and(|bindings| {
+            ground_proposition(&rule.settlement_obligation, &bindings).as_ref()
+                == Ok(&plan.settlement_obligation)
+                && plan.evidence_route.as_ref() == Some(&rule.evidence_route)
+        })
+    });
+    let selected = matches.next()?;
+    matches.next().is_none().then_some(selected)
+}
+
 pub(crate) fn plan_revision_identity(candidate: &StrategyPlan) -> String {
     let mut identity = candidate.clone();
     identity.plan_revision_id.clear();
     let bytes =
         serde_json::to_vec(&identity).expect("Strategy candidate serialization is infallible");
-    format!("strategy-plan-v1::{}", blake3::hash(&bytes).to_hex())
+    format!("strategy-plan-v2::{}", blake3::hash(&bytes).to_hex())
 }
 
 pub(crate) fn plan_family_identity(problem: &StrategyProblem) -> String {
@@ -1534,5 +1827,5 @@ fn stable_id(namespace: &str, value: &impl serde::Serialize) -> String {
 }
 
 pub(crate) fn candidate_evaluation(candidate: &StrategyPlan) -> StrategyPlanEvaluation {
-    evaluate_candidate(&candidate.composition)
+    evaluate_tasks(&candidate.tasks)
 }

@@ -275,7 +275,12 @@ mod tests {
         traversal: &TraversalStore,
         target_ledger_id: LedgerIdentity,
     ) -> sled::Tree {
-        traversal.set_last_reduced_seq(42).unwrap();
+        traversal
+            .db()
+            .open_tree("traversal_runtime_meta")
+            .unwrap()
+            .insert("last_reduced_seq", b"42")
+            .unwrap();
         let facts = traversal.db().open_tree("traversal_facts").unwrap();
         facts.insert("legacy-fact", "legacy-value").unwrap();
         let runtime_meta = traversal.db().open_tree(TREE_RUNTIME_META).unwrap();
@@ -315,7 +320,12 @@ mod tests {
         let cursor = GraphProjectionCursor::open(&traversal, ledger_id).unwrap();
 
         assert_eq!(cursor.get().unwrap().after_seq, 0);
-        assert!(facts.is_empty());
+        // Retired projections remain inert historical bytes; only the canonical
+        // owner-publication projection participates in cursor recovery.
+        assert_eq!(
+            facts.get("legacy-fact").unwrap().unwrap().as_ref(),
+            b"legacy-value"
+        );
         assert!(runtime_meta
             .get(KEY_PENDING_DERIVED_EVENTS)
             .unwrap()
@@ -365,6 +375,16 @@ mod tests {
             .unwrap()
             .is_some());
         assert!(runtime_meta.get(KEY_AUTHORITY_CURSOR).unwrap().is_none());
-        assert_eq!(traversal.last_reduced_seq().unwrap(), 42);
+        assert_eq!(
+            traversal
+                .db()
+                .open_tree("traversal_runtime_meta")
+                .unwrap()
+                .get("last_reduced_seq")
+                .unwrap()
+                .unwrap()
+                .as_ref(),
+            b"42"
+        );
     }
 }

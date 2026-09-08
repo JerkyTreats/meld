@@ -11,8 +11,8 @@ use crate::docs::capability::{
     DirectoryEvidence, DocsCapabilityConfig, DocsEvidenceBundle, DocsPatchSet, ReadmePatch,
 };
 use crate::error::ApiError;
-use crate::execution::{ExecutionEventContext, ProviderExecutionPort, ProviderValidationPort};
-use crate::provider::executor::{execute_completion, prepare_provider_for_request};
+use crate::execution::ExecutionEventContext;
+use crate::provider::ProviderCompletionPort;
 
 const CLAIM_BATCH_SIZE: usize = 6;
 const MAX_EVIDENCE_QUOTE_CHARS: usize = 160;
@@ -448,9 +448,7 @@ pub struct ProviderDocsClaimJudge<'a, P: ?Sized> {
 }
 
 #[async_trait::async_trait]
-impl<P: ProviderValidationPort + ProviderExecutionPort + ?Sized> DocsClaimJudge
-    for ProviderDocsClaimJudge<'_, P>
-{
+impl<P: ProviderCompletionPort + ?Sized> DocsClaimJudge for ProviderDocsClaimJudge<'_, P> {
     async fn correspond(
         &self,
         request: &super::correspondence::DocsCorrespondenceRequest<'_>,
@@ -486,7 +484,7 @@ impl<P: ProviderValidationPort + ProviderExecutionPort + ?Sized> DocsClaimJudge
 }
 
 /// Validate and, when needed, revise every candidate README within policy bounds.
-pub async fn validate_patch_set<P: ProviderValidationPort + ProviderExecutionPort + ?Sized>(
+pub async fn validate_patch_set<P: ProviderCompletionPort + ?Sized>(
     api: &P,
     config: &DocsCapabilityConfig,
     policy: &DocsClaimPolicy,
@@ -704,7 +702,7 @@ async fn assess_readme(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn assess_claim_batch<P: ProviderValidationPort + ProviderExecutionPort + ?Sized>(
+async fn assess_claim_batch<P: ProviderCompletionPort + ?Sized>(
     api: &P,
     config: &DocsCapabilityConfig,
     policy: &DocsClaimPolicy,
@@ -734,15 +732,11 @@ async fn assess_claim_batch<P: ProviderValidationPort + ProviderExecutionPort + 
         revision_attempt,
         batch_index,
     )?;
-    let preparation = prepare_provider_for_request(api, &generation.request)?;
-    let response = execute_completion(
-        api,
-        &generation.request,
-        &preparation,
-        generation.messages,
-        event_context,
-    )
-    .await?;
+    let completion = api
+        .complete_provider_request(&generation.request, generation.messages, event_context)
+        .await?;
+    let preparation = completion.preparation;
+    let response = completion.response;
     let execution = super::judgment::DocsJudgmentExecution::capture(
         policy.content_identity(),
         &generation.request,
@@ -989,7 +983,7 @@ fn apply_deterministic_guards(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn revise_readme<P: ProviderValidationPort + ProviderExecutionPort + ?Sized>(
+async fn revise_readme<P: ProviderCompletionPort + ?Sized>(
     api: &P,
     config: &DocsCapabilityConfig,
     policy: &DocsClaimPolicy,
@@ -1030,15 +1024,10 @@ async fn revise_readme<P: ProviderValidationPort + ProviderExecutionPort + ?Size
         revision_attempt,
         0,
     )?;
-    let preparation = prepare_provider_for_request(api, &generation.request)?;
-    let response = execute_completion(
-        api,
-        &generation.request,
-        &preparation,
-        generation.messages,
-        event_context,
-    )
-    .await?;
+    let response = api
+        .complete_provider_request(&generation.request, generation.messages, event_context)
+        .await?
+        .response;
     let content = normalize_markdown(&response.content);
     if content.trim().is_empty() {
         return Err(ApiError::ConfigError(format!(

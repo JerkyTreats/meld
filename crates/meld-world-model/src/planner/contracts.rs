@@ -11,7 +11,7 @@ use crate::events::DomainObjectRef;
 use crate::world_state::graph::contracts::{
     BoundedTraversalRequest, TraversalCut, TraversalCutRequest, TraversalResult,
 };
-use crate::world_state::graph::{AnchorId, PerspectiveKey};
+use crate::world_state::graph::PerspectiveKey;
 
 /// Static projection version for the first planner-facing world state slice.
 pub const PLANNER_PROJECTION_VERSION: &str = "world_model.planner.v1";
@@ -49,6 +49,9 @@ pub struct PlannerSourcePosition {
 /// Deliberately limited installed policy for one Planner decision context.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlannerAssemblyPolicy {
+    /// Installed observation-only construction may acquire this exact unanswered question.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acquisition_question: Option<PlannerBeliefSelection>,
     pub policy_revision_id: String,
     pub required_sources: Vec<PlannerSourceKind>,
     pub explicitly_not_required: Vec<PlannerSourceKind>,
@@ -108,7 +111,6 @@ pub struct PlannerCurrentAssemblyRequest {
     /// Exact additional questions from the compiled package, never arbitrary current heads.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub additional_beliefs: Vec<PlannerBeliefSelection>,
-    pub unanchored_belief: bool,
     pub source_positions: Vec<PlannerSourcePosition>,
 }
 
@@ -275,6 +277,8 @@ impl Default for PlannerFieldProjectionConfig {
 /// Input to the pure planner projection function.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlannerProjectionInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unassessed_belief: Option<crate::belief::UnassessedBeliefQuestion>,
     pub context: PlannerProjectionContext,
     pub belief_view: Option<BeliefView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -287,13 +291,13 @@ pub struct PlannerProjectionInput {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlannerGraphScope {
     pub accessible: bool,
-    pub anchor_ids: Vec<AnchorId>,
-    pub source_fact_ids: Vec<String>,
 }
 
 /// Output envelope for a projected ground world state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorldModelView {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unassessed_belief: Option<crate::belief::UnassessedBeliefQuestion>,
     pub world_state: WorldState,
     pub projection_version: String,
     pub source_refs: Vec<PlannerSourceRef>,
@@ -325,7 +329,7 @@ pub enum PlannerSourceRef {
         source_fact_id: String,
     },
     GraphAnchor {
-        anchor_id: AnchorId,
+        anchor_id: String,
     },
     ProjectionRule {
         rule_id: String,
@@ -337,7 +341,7 @@ pub enum PlannerSourceRef {
 pub struct PlannerHydrationRefs {
     pub evidence_ids: Vec<String>,
     pub source_fact_ids: Vec<String>,
-    pub graph_anchor_ids: Vec<AnchorId>,
+    pub graph_anchor_ids: Vec<String>,
     pub revision_ids: Vec<String>,
 }
 

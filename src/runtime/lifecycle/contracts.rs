@@ -232,7 +232,7 @@ impl ParticipantIncarnationV1 {
 }
 
 /// Exact structural context supplied to one native lifecycle owner.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParticipantLifecycleContextV1 {
     /// Owning generation.
     pub generation_id: String,

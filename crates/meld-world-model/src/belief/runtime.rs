@@ -16,7 +16,7 @@
 //! let db = sled::open(temp.path()).unwrap();
 //! let belief = Arc::new(BeliefStore::new(db.clone()).unwrap());
 //! let graph = Arc::new(TraversalStore::new(db).unwrap());
-//! let runtime = BeliefRuntime::from_json_config(belief, graph, json);
+//! let runtime = BeliefRuntime::from_json_config(belief, json);
 //! # let _ = runtime;
 //! ```
 
@@ -25,15 +25,13 @@ use std::sync::Arc;
 use crate::belief::comparator::{BayesianComparator, ComparatorInput};
 use crate::belief::config::{BeliefConfigLoader, ConfigSnapshot};
 use crate::belief::contracts::{
-    AnchorRequirement, AssessmentLease, BeliefKey, BranchScope, LeaseStatus,
+    AssessmentLease, BeliefKey, BranchScope, InitialAssessmentPolicy, LeaseStatus,
 };
-use crate::belief::evidence::BeliefEvidenceNormalizer;
 use crate::belief::registry::{BeliefFamilyRevision, TheoryRevisionRef};
 use crate::belief::store::BeliefStore;
 use crate::error::StorageError;
 use crate::events::DomainObjectRef;
-use crate::world_state::graph::store::TraversalStore;
-use crate::world_state::graph::{PerspectiveKey, TraversalQuery};
+use crate::world_state::graph::PerspectiveKey;
 
 /// Summary returned after one subject assessment.
 #[derive(Debug, Clone, PartialEq)]
@@ -46,10 +44,9 @@ pub struct RuntimeAssessmentResult {
     pub confidence: f64,
 }
 
-/// Orchestrates the first graph-to-belief runtime slice.
+/// Assesses admitted evidence under the selected Belief family and policy.
 pub struct BeliefRuntime {
     belief_store: Arc<BeliefStore>,
-    traversal_store: Arc<TraversalStore>,
     config: ConfigSnapshot,
     perspective: PerspectiveKey,
     branch_scope: BranchScope,
@@ -62,14 +59,12 @@ impl BeliefRuntime {
     /// Build a runtime from already opened stores and a validated config.
     pub fn new(
         belief_store: Arc<BeliefStore>,
-        traversal_store: Arc<TraversalStore>,
         config: ConfigSnapshot,
         perspective: PerspectiveKey,
         branch_scope: BranchScope,
     ) -> Self {
         Self {
             belief_store,
-            traversal_store,
             config,
             perspective,
             branch_scope,
@@ -84,7 +79,6 @@ impl BeliefRuntime {
     /// revision lineage reference is stamped onto every committed revision.
     pub fn from_family_revision(
         belief_store: Arc<BeliefStore>,
-        traversal_store: Arc<TraversalStore>,
         revision: &BeliefFamilyRevision,
         perspective: PerspectiveKey,
         branch_scope: BranchScope,
@@ -92,7 +86,6 @@ impl BeliefRuntime {
         let theory_revision = revision.revision_ref();
         Self::new(
             belief_store,
-            traversal_store,
             ConfigSnapshot {
                 config: revision.config.clone(),
                 hash: revision.content_hash.clone(),
@@ -115,13 +108,11 @@ impl BeliefRuntime {
     /// Build a runtime from JSON config using default perspective and branch.
     pub fn from_json_config(
         belief_store: Arc<BeliefStore>,
-        traversal_store: Arc<TraversalStore>,
         json: &str,
     ) -> Result<Self, StorageError> {
         let config = BeliefConfigLoader::load_json(json)?;
         Ok(Self::new(
             belief_store,
-            traversal_store,
             config,
             PerspectiveKey::new("default", "default")?,
             BranchScope::main(),
@@ -135,8 +126,6 @@ impl BeliefRuntime {
     pub fn assess_subject(
         &self,
         subject: &DomainObjectRef,
-        anchor_perspective_kind: &str,
-        anchor_perspective_id: &str,
         owner_id: &str,
     ) -> Result<RuntimeAssessmentResult, StorageError> {
         let config_json = serde_json::to_string(&self.config.config).map_err(to_storage_data)?;
@@ -150,89 +139,35 @@ impl BeliefRuntime {
             &format!("active_policy_id::{}", self.config.config.family_id),
             &self.config.config.evidence_policy_id,
         )?;
-        // Family-declared anchor coupling: an unanchored family never
-        // consults graph anchors — an unobserved scope assesses to its
-        // prior-based revision and evidence arrives only through ingestion.
-        if self.config.config.anchor_requirement == AnchorRequirement::Unanchored {
-            return self.assess_unanchored_subject(subject, owner_id);
+        let key = BeliefKey {
+            subject: subject.clone(),
+            dimension_id: self.config.config.dimension_id.clone(),
+            predicate_id: self.config.config.predicate_id.clone(),
+            perspective: self.perspective.clone(),
+            branch_scope: self.branch_scope.clone(),
+            evidence_policy_id: self.config.config.evidence_policy_id.clone(),
+        };
+        if self.belief_store.dirty_state(&key)?.is_some() {
+            return self.assess_dirty_key(&key, owner_id)?.ok_or_else(|| {
+                StorageError::Backpressure("initial evidence assessment remains pending".into())
+            });
         }
-        let query = TraversalQuery::new(self.traversal_store.as_ref());
-        let anchor = query
-            .current_anchor_for_subject(subject, anchor_perspective_kind, anchor_perspective_id)?
-            .ok_or_else(|| StorageError::InvalidPath("missing graph anchor".to_string()))?;
-        let provenance = query.provenance_for_anchor(&anchor.anchor_id)?;
-        let normalizer = BeliefEvidenceNormalizer::new(
-            self.config.config.clone(),
-            self.perspective.clone(),
-            self.branch_scope.clone(),
-        );
-        let evidence = match normalizer.normalize_anchor(&anchor, &provenance) {
-            Ok(evidence) => evidence,
-            Err(rejection) => {
-                self.belief_store.put_rejection(&rejection)?;
-                return Err(StorageError::InvalidPath(rejection.reason));
+        if let Some(view) = self.belief_store.current_view(&key)? {
+            if let Some(revision_id) = view.current_revision_id {
+                return Ok(RuntimeAssessmentResult {
+                    evidence_count: 0,
+                    revision_id,
+                    confidence: view.planner_projection.confidence,
+                });
             }
-        };
-        for item in &evidence {
-            self.belief_store.put_evidence(item)?;
-            self.belief_store
-                .put_assignment(&normalizer.assign(item)?)?;
         }
-        let key = evidence
-            .first()
-            .ok_or_else(|| StorageError::InvalidPath("no normalized evidence".to_string()))?
-            .candidate_key
-            .clone();
-        let source_cursor_start = evidence
-            .iter()
-            .map(|item| item.source_cursor_start)
-            .min()
-            .unwrap_or(anchor.selected_at_seq);
-        let source_cursor_end = evidence
-            .iter()
-            .map(|item| item.source_cursor_end)
-            .max()
-            .unwrap_or(anchor.selected_at_seq);
-        let prior = self.belief_store.current_revision(&key)?;
-        let lease = AssessmentLease {
-            lease_id: format!("lease-{}-{}", source_cursor_end, key.index_key()),
-            belief_key: key.clone(),
-            epoch: source_cursor_end,
-            owner_id: owner_id.to_string(),
-            input_cursor_start: source_cursor_start,
-            input_cursor_end: source_cursor_end,
-            started_at_seq: source_cursor_end,
-            expires_at_seq: source_cursor_end + 100,
-            comparator_engine_id: self.config.config.comparator.engine_id.clone(),
-            config_snapshot_hash: self.config.hash.clone(),
-            status: LeaseStatus::Queued,
-        };
-        let lease = self.belief_store.acquire_lease(lease)?;
-        let mut output = BayesianComparator::assess(ComparatorInput {
-            config: self.config.config.clone(),
-            config_snapshot_hash: self.config.hash.clone(),
-            prior_revision: prior,
-            evidence: evidence.clone(),
-            subject_key: None,
-            source_cursor_start,
-            source_cursor_end,
-        })?;
-        // Stamp lineage before commit so the durable revision, not just the
-        // in-memory view, answers which theory produced this belief.
-        output.revision.theory_revision = self.theory_revision.clone();
-        self.belief_store
-            .commit_revision(&lease, &output.revision)?;
-        let view = self
-            .belief_store
-            .project_view(&output.revision, output.view_hydration);
-        self.belief_store.put_view(&view)?;
-        self.belief_store.complete_lease(&lease)?;
-        self.belief_store.flush()?;
-        Ok(RuntimeAssessmentResult {
-            evidence_count: evidence.len(),
-            revision_id: output.revision.revision_id,
-            confidence: view.planner_projection.confidence,
-        })
+        if self.config.config.initial_assessment == InitialAssessmentPolicy::PriorAllowed {
+            self.assess_prior_subject(subject, owner_id)
+        } else {
+            Err(StorageError::Unavailable(
+                "initial assessment requires curated evidence".into(),
+            ))
+        }
     }
 
     /// Assess one subject of an unanchored family to its prior-based
@@ -242,7 +177,7 @@ impl BeliefRuntime {
     /// cursor window is pinned to zero so the first promoted evidence at
     /// any ledger sequence re-dirties the key instead of being absorbed by
     /// a window the revision never actually covered.
-    fn assess_unanchored_subject(
+    fn assess_prior_subject(
         &self,
         subject: &DomainObjectRef,
         owner_id: &str,

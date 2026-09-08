@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use meld_lang::{
     condition::Condition,
     effect::Effect,
@@ -8,21 +6,15 @@ use meld_lang::{
     term::{Literal, Term},
 };
 use meld_world_model::belief::{
-    BeliefProvenanceSummary, BeliefQuery, BeliefRuntime, BeliefStore, BranchScope,
-    ContradictionState, FreshnessState, HydrationRefs, ObservationOpportunity, ObservationReason,
-    PlannerProjectionSummary, PosteriorSummary,
+    BeliefProvenanceSummary, BranchScope, ContradictionState, FreshnessState, HydrationRefs,
+    ObservationOpportunity, ObservationReason, PlannerProjectionSummary, PosteriorSummary,
 };
-use meld_world_model::events::{DomainObjectRef, EventRelation};
+use meld_world_model::events::DomainObjectRef;
 use meld_world_model::planner::{
     project_world_state, PlannerFieldProjectionConfig, PlannerGraphScope, PlannerHydrationRefs,
-    PlannerProjectionContext, PlannerProjectionInput, PlannerProjectionWarning, PlannerQuery,
-    PlannerSourceRef, PLANNER_PROJECTION_VERSION,
+    PlannerProjectionContext, PlannerProjectionInput, PlannerProjectionWarning, PlannerSourceRef,
 };
-use meld_world_model::world_state::graph::store::TraversalStore;
-use meld_world_model::{
-    AnchorSelectionRecord, BeliefStatus, BeliefView, PerspectiveKey, TraversalFactRecord,
-    TraversalQuery,
-};
+use meld_world_model::{BeliefStatus, BeliefView, PerspectiveKey};
 use proptest::prelude::*;
 
 fn object(domain_id: &str, object_kind: &str, object_id: &str) -> DomainObjectRef {
@@ -31,89 +23,6 @@ fn object(domain_id: &str, object_kind: &str, object_id: &str) -> DomainObjectRe
 
 fn subject() -> DomainObjectRef {
     object("workspace_fs", "node", "node-a")
-}
-
-fn config_json() -> &'static str {
-    r#"{
-        "family_id": "docs_freshness",
-        "dimension_id": "docs_freshness",
-        "predicate_id": "confidence",
-        "evidence_policy_id": "default_policy",
-        "evidence_schemas": [
-            {
-                "schema_id": "graph_anchor_signal",
-                "required": true,
-                "role": "Support",
-                "reliability": 1.0,
-                "precision": 1.0
-            }
-        ],
-        "source_mappings": [
-            {
-                "mapping_id": "anchor_to_signal",
-                "source_kind": "graph_anchor",
-                "evidence_schema_id": "graph_anchor_signal",
-                "subject_from": "anchor.subject",
-                "value_field": "ended",
-                "factor_id": "freshness_signal"
-            }
-        ],
-        "comparator": {
-            "engine_id": "weighted_bayesian",
-            "engine_version": "1",
-            "factors": [
-                {
-                    "factor_id": "freshness_signal",
-                    "evidence_schema_id": "graph_anchor_signal",
-                    "weight": 1.0,
-                    "polarity": "Supports"
-                }
-            ],
-            "missing_evidence_uncertainty": 0.9
-        },
-        "default_prior": 0.8,
-        "planner_projection": {
-            "confidence_field": "confidence",
-            "threshold": 0.7,
-            "posterior_meaning": "stale_probability"
-        },
-        "config_version": "1"
-    }"#
-}
-
-fn seeded_graph() -> (tempfile::TempDir, Arc<TraversalStore>, DomainObjectRef) {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let store =
-        Arc::new(TraversalStore::new(sled::open(temp_dir.path().join("graph")).unwrap()).unwrap());
-    let node = subject();
-    let frame = object("context", "frame", "frame-a");
-    let anchor_ref = object("context", "head", "node-a::analysis");
-    let relation = EventRelation::new("selected", node.clone(), frame.clone()).unwrap();
-    let fact = TraversalFactRecord {
-        fact_id: "fact-a".to_string(),
-        source_spine_fact_id: "ledger-a".to_string(),
-        seq: 1,
-        event_type: "context.head.selected".to_string(),
-        objects: vec![node.clone(), frame.clone()],
-        relations: vec![relation],
-    };
-    let anchor = AnchorSelectionRecord {
-        anchor_id: "anchor-a".to_string(),
-        anchor_ref,
-        subject: node.clone(),
-        perspective: PerspectiveKey::new("frame_type", "analysis").unwrap(),
-        target: frame,
-        source_fact_ids: vec!["ledger-a".to_string()],
-        created_by_fact_id: "fact-a".to_string(),
-        selected_at_seq: 1,
-        ended_at_seq: None,
-        ended_by_anchor_id: None,
-        ended_by_fact_id: None,
-    };
-    store.put_fact(&fact).unwrap();
-    store.put_anchor(&anchor).unwrap();
-    store.set_current_anchor(&anchor).unwrap();
-    (temp_dir, store, node)
 }
 
 fn test_view(dimension_id: &str, confidence: f64, stale: bool, observation: bool) -> BeliefView {
@@ -188,14 +97,11 @@ fn test_view(dimension_id: &str, confidence: f64, stale: bool, observation: bool
 
 fn projection_input(view: Option<BeliefView>) -> PlannerProjectionInput {
     PlannerProjectionInput {
+        unassessed_belief: None,
         additional_beliefs: Vec::new(),
         context: PlannerProjectionContext::first_slice(subject()),
         belief_view: view,
-        graph_scope: Some(PlannerGraphScope {
-            accessible: true,
-            anchor_ids: vec!["anchor-a".to_string()],
-            source_fact_ids: vec!["ledger-a".to_string()],
-        }),
+        graph_scope: Some(PlannerGraphScope { accessible: true }),
         field_config: PlannerFieldProjectionConfig::default(),
     }
 }
@@ -394,14 +300,11 @@ fn planner_indeterminate_projection() {
 #[test]
 fn planner_graph_projection() {
     let output = project_world_state(PlannerProjectionInput {
+        unassessed_belief: None,
         additional_beliefs: Vec::new(),
         context: PlannerProjectionContext::first_slice(subject()),
         belief_view: None,
-        graph_scope: Some(PlannerGraphScope {
-            accessible: true,
-            anchor_ids: vec!["anchor-a".to_string()],
-            source_fact_ids: vec!["ledger-a".to_string()],
-        }),
+        graph_scope: Some(PlannerGraphScope { accessible: true }),
         field_config: PlannerFieldProjectionConfig::default(),
     })
     .unwrap();
@@ -413,10 +316,7 @@ fn planner_graph_projection() {
             scope: Term::Object(subject())
         }
     );
-    assert!(output
-        .hydration_refs
-        .graph_anchor_ids
-        .contains(&"anchor-a".to_string()));
+    assert!(output.hydration_refs.graph_anchor_ids.is_empty());
 }
 
 #[test]
@@ -450,19 +350,7 @@ fn planner_world_state_grounding() {
 #[test]
 fn planner_determinism() {
     let mut input = projection_input(Some(test_view("dimension_a", 0.5, false, false)));
-    input.graph_scope = Some(PlannerGraphScope {
-        accessible: true,
-        anchor_ids: vec![
-            "anchor-b".to_string(),
-            "anchor-a".to_string(),
-            "anchor-a".to_string(),
-        ],
-        source_fact_ids: vec![
-            "ledger-b".to_string(),
-            "ledger-a".to_string(),
-            "ledger-a".to_string(),
-        ],
-    });
+    input.graph_scope = Some(PlannerGraphScope { accessible: true });
 
     let first = project_world_state(input.clone()).unwrap();
     let second = project_world_state(input).unwrap();
@@ -470,114 +358,8 @@ fn planner_determinism() {
     assert_eq!(first, second);
     assert_eq!(
         first.hydration_refs.graph_anchor_ids,
-        vec!["anchor-a".to_string(), "anchor-b".to_string()]
+        vec!["anchor-a".to_string()]
     );
-}
-
-#[test]
-fn planner_query() {
-    let (_graph_dir, graph, node) = seeded_graph();
-    let belief_dir = tempfile::tempdir().unwrap();
-    let belief_store =
-        Arc::new(BeliefStore::new(sled::open(belief_dir.path().join("belief")).unwrap()).unwrap());
-    let runtime =
-        BeliefRuntime::from_json_config(belief_store.clone(), graph.clone(), config_json())
-            .unwrap();
-    runtime
-        .assess_subject(&node, "frame_type", "analysis", "worker-a")
-        .unwrap();
-
-    let query = PlannerQuery::new(
-        BeliefQuery::new(belief_store.as_ref()),
-        TraversalQuery::new(graph.as_ref()),
-    );
-    let output = query
-        .project_current_world_state(&node, "docs_freshness", None, None)
-        .unwrap();
-
-    assert_eq!(output.projection_version, PLANNER_PROJECTION_VERSION);
-    assert!(output
-        .world_state
-        .propositions()
-        .iter()
-        .any(|proposition| matches!(proposition, Proposition::Holds { .. })));
-    assert!(output
-        .world_state
-        .propositions()
-        .contains(&Proposition::Accessible {
-            scope: Term::Object(node)
-        }));
-}
-
-#[test]
-fn planner_query_reopen() {
-    let graph_dir = tempfile::tempdir().unwrap();
-    let belief_dir = tempfile::tempdir().unwrap();
-    let graph_path = graph_dir.path().join("graph");
-    let belief_path = belief_dir.path().join("belief");
-    let node = subject();
-
-    {
-        let graph = Arc::new(TraversalStore::new(sled::open(&graph_path).unwrap()).unwrap());
-        let frame = object("context", "frame", "frame-a");
-        let anchor_ref = object("context", "head", "node-a::analysis");
-        let relation = EventRelation::new("selected", node.clone(), frame.clone()).unwrap();
-        let fact = TraversalFactRecord {
-            fact_id: "fact-a".to_string(),
-            source_spine_fact_id: "ledger-a".to_string(),
-            seq: 1,
-            event_type: "context.head.selected".to_string(),
-            objects: vec![node.clone(), frame.clone()],
-            relations: vec![relation],
-        };
-        let anchor = AnchorSelectionRecord {
-            anchor_id: "anchor-a".to_string(),
-            anchor_ref,
-            subject: node.clone(),
-            perspective: PerspectiveKey::new("frame_type", "analysis").unwrap(),
-            target: frame,
-            source_fact_ids: vec!["ledger-a".to_string()],
-            created_by_fact_id: "fact-a".to_string(),
-            selected_at_seq: 1,
-            ended_at_seq: None,
-            ended_by_anchor_id: None,
-            ended_by_fact_id: None,
-        };
-        graph.put_fact(&fact).unwrap();
-        graph.put_anchor(&anchor).unwrap();
-        graph.set_current_anchor(&anchor).unwrap();
-        let belief_store = Arc::new(BeliefStore::new(sled::open(&belief_path).unwrap()).unwrap());
-        let runtime =
-            BeliefRuntime::from_json_config(belief_store.clone(), graph.clone(), config_json())
-                .unwrap();
-        runtime
-            .assess_subject(&node, "frame_type", "analysis", "worker-a")
-            .unwrap();
-        graph.flush().unwrap();
-        belief_store.flush().unwrap();
-    }
-
-    let first_graph = TraversalStore::new(sled::open(&graph_path).unwrap()).unwrap();
-    let first_belief = BeliefStore::new(sled::open(&belief_path).unwrap()).unwrap();
-    let first = PlannerQuery::new(
-        BeliefQuery::new(&first_belief),
-        TraversalQuery::new(&first_graph),
-    )
-    .project_current_world_state(&node, "docs_freshness", None, None)
-    .unwrap();
-    drop(first_graph);
-    drop(first_belief);
-
-    let second_graph = TraversalStore::new(sled::open(&graph_path).unwrap()).unwrap();
-    let second_belief = BeliefStore::new(sled::open(&belief_path).unwrap()).unwrap();
-    let second = PlannerQuery::new(
-        BeliefQuery::new(&second_belief),
-        TraversalQuery::new(&second_graph),
-    )
-    .project_current_world_state(&node, "docs_freshness", None, None)
-    .unwrap();
-
-    assert_eq!(first, second);
 }
 
 #[test]

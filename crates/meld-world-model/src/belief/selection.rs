@@ -24,10 +24,6 @@ use crate::world_state::graph::PerspectiveKey;
 pub struct BeliefSubjectBinding {
     /// Object whose state the family assesses.
     pub subject: DomainObjectRef,
-    /// Graph anchor perspective kind used to read the subject.
-    pub anchor_perspective_kind: String,
-    /// Graph anchor perspective id used to read the subject.
-    pub anchor_perspective_id: String,
 }
 
 /// Why a belief key was selected for assessment work.
@@ -102,8 +98,7 @@ impl<'a> BeliefWorkSelector<'a> {
     /// Initial-assessment candidates come first, ordered by family id then
     /// subject index key; dirty keys follow in dirty-index order. A key never
     /// appears twice: dirty state supersedes an initial candidate because the
-    /// dirty path replays from durable assignments rather than re-reading the
-    /// anchor.
+    /// dirty path replays the admitted evidence from durable assignments.
     pub fn select(
         &self,
         families: &[BeliefFamilyRevision],
@@ -127,6 +122,12 @@ impl<'a> BeliefWorkSelector<'a> {
         let mut more_available = false;
 
         for family in &ordered_families {
+            // No runnable initial assessment exists until Curation admits evidence.
+            // Dirty work below becomes eligible through the same durable assignment path.
+            if family.config.initial_assessment == crate::belief::InitialAssessmentPolicy::Required
+            {
+                continue;
+            }
             for binding in &ordered_subjects {
                 let key =
                     configured_belief_key(family, &binding.subject, perspective, branch_scope);
@@ -171,8 +172,6 @@ impl<'a> BeliefWorkSelector<'a> {
                         kind: BeliefWorkKind::InitialAssessment {
                             binding: BeliefSubjectBinding {
                                 subject: key.subject.clone(),
-                                anchor_perspective_kind: key.perspective.perspective_kind.clone(),
-                                anchor_perspective_id: key.perspective.perspective_id.clone(),
                             },
                         },
                         key,

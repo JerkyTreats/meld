@@ -12,56 +12,115 @@ pub struct StrategyTheorySnapshot {
     pub settlement_rules: Vec<StrategySettlementRule>,
 }
 
-/// Declared settlement meaning for one class of Goals.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Declared settlement meaning and local product relationships for one class of Goals.
+#[derive(Debug, Clone, PartialEq)]
 pub struct StrategySettlementRule {
-    /// Installed permission to repeat complete work after these owners' input changes.
-    /// Empty keeps repetition dependent on a different operation or explicit inputs.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) historical_wire: Option<Box<super::rule_history::HistoricalRule>>,
     pub repeat_on_changed_owners: Vec<String>,
-    /// When both contracts are selected, their distinct complete Tasks must progress in this order.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub task_ordering: Vec<StrategyTaskOrdering>,
-    /// Goal pattern to which this rule applies.
     pub goal_pattern: Proposition,
-    /// Proposition that prospective action must contribute toward.
     pub settlement_obligation: Proposition,
-    /// Evidence route required after action completes.
     pub evidence_route: ProspectiveEvidenceRoute,
-    /// Whether the configured epistemic products prepare work or confirm its effects.
-    #[serde(
-        default,
-        skip_serializing_if = "StrategyEpistemicPlacement::is_prerequisite"
-    )]
-    pub epistemic_placement: StrategyEpistemicPlacement,
+    /// The bounded Curation products this rule selects from the frozen problem.
+    pub epistemic_selections: Vec<StrategyEpistemicSelection>,
+    /// Local prerequisites between selected complete products.
+    pub product_ordering: Vec<StrategyProductOrdering>,
+    pub construction: StrategyConstruction,
 }
 
-/// A causal requirement between complete Tasks containing exact Capability contracts.
-/// The consumer waits for the producer Task's accepted operational return.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-pub struct StrategyTaskOrdering {
-    pub before_contract_id: String,
-    pub after_contract_id: String,
-}
-
-/// Causal placement of configured epistemic work relative to executable realization.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum StrategyEpistemicPlacement {
+pub enum StrategyConstruction {
     #[default]
-    Prerequisite,
-    /// Confirmation follows the Task's operational return.
-    Confirmation,
-    /// Confirmation follows exact Graph visibility; operational return remains separate.
-    GraphConfirmation,
+    Executable,
+    /// Select only bounded evidence acquisition while Goal knowledge is indeterminate.
+    ObserveUnknown,
 }
 
-impl StrategyEpistemicPlacement {
-    pub fn is_confirmation(self) -> bool {
-        matches!(self, Self::Confirmation | Self::GraphConfirmation)
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StrategyEpistemicSelection {
+    /// Absent selects every supplied bounded operation; a value names an exact Curation rule.
+    pub rule_revision: Option<crate::belief::TheoryRevisionRef>,
+    /// A semantic return must pass through Belief before Agent accepts it.
+    pub evidence_return: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum StrategyProductSelector {
+    Task { contract_id: String },
+    Epistemic { rule_id: String },
+    AllTasks,
+    AllEpistemic,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StrategyDependencyMilestone {
+    ExecutionTerminal,
+    EffectVisible,
+    CurationVisible,
+}
+
+/// Whether a rule requires its producer, or only orders products selected together.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StrategyOrderingCondition {
+    #[default]
+    ConsumerSelected,
+    BothSelected,
+}
+
+impl StrategyOrderingCondition {
+    fn is_default(&self) -> bool {
+        *self == Self::ConsumerSelected
     }
-    fn is_prerequisite(&self) -> bool {
-        *self == Self::Prerequisite
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct StrategyProductOrdering {
+    #[serde(default, skip_serializing_if = "StrategyOrderingCondition::is_default")]
+    pub condition: StrategyOrderingCondition,
+    pub before: StrategyProductSelector,
+    pub after: StrategyProductSelector,
+    pub milestone: StrategyDependencyMilestone,
+}
+
+impl StrategyProductSelector {
+    pub(crate) fn selects_task(&self, task: &StrategyTask) -> bool {
+        match self {
+            Self::AllTasks => true,
+            Self::Task { contract_id } => task.capability_contract_ids.contains(contract_id),
+            _ => false,
+        }
+    }
+    pub(crate) fn selects_epistemic(&self, operation: &StrategyEpistemicOperation) -> bool {
+        match self {
+            Self::AllEpistemic => true,
+            Self::Epistemic { rule_id } => &operation.operation.rule_revision.id == rule_id,
+            _ => false,
+        }
+    }
+    pub(crate) fn is_exact(&self) -> bool {
+        matches!(self, Self::Task { .. } | Self::Epistemic { .. })
+    }
+}
+
+impl StrategySettlementRule {
+    pub fn has_evidence_returns(&self) -> bool {
+        self.epistemic_selections
+            .iter()
+            .any(|selection| selection.evidence_return)
+    }
+    pub fn requires_effect_visibility(&self) -> bool {
+        self.product_ordering
+            .iter()
+            .any(|ordering| ordering.milestone == StrategyDependencyMilestone::EffectVisible)
+    }
+    pub(crate) fn task_requires_visibility(&self, task: &StrategyTask) -> bool {
+        self.product_ordering.iter().any(|ordering| {
+            ordering.milestone == StrategyDependencyMilestone::EffectVisible
+                && ordering.before.selects_task(task)
+        })
     }
 }
 
@@ -152,6 +211,9 @@ pub struct StrategyProblem {
     pub methods: Vec<Method>,
     /// Declared deterministic comparison policy.
     pub evaluation_policy: StrategyEvaluationPolicy,
+    /// Previously admitted operations whose unchanged input has no successful return.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unavailable_curation_operation_ids: Vec<String>,
     /// Exact constructible Curation operations frozen beside the cut.
     pub curation_operations: Vec<crate::CurationOperation>,
 }
@@ -168,6 +230,8 @@ pub struct StrategySearchRequest {
 /// Origin of a constructed candidate.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StrategyPlanOrigin {
+    /// Bounded evidence acquisition for an indeterminate Goal, with no executable Task.
+    Epistemic,
     /// Desired state is already established by the admitted Planner input.
     Satisfied,
     /// Remaining epistemic work follows an accepted effect milestone from executable work.
@@ -394,8 +458,13 @@ pub struct StrategyCompletedHistoryEntry {
 }
 
 /// Ground immutable heterogeneous Plan returned for Agent judgment.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct StrategyPlan {
+    pub(super) historical_identity: Option<Box<super::history::HistoricalPlanIdentity>>,
+    /// Exact installed settlement rule selected during construction; empty for satisfied Plans
+    /// and historical records that predate explicit rule identity.
+    pub settlement_rule_id: String,
+
     /// Content-derived immutable Plan revision identity.
     pub plan_revision_id: String,
     /// Stable lineage identity for one Agent Goal.
@@ -408,17 +477,12 @@ pub struct StrategyPlan {
     pub planner_cut_id: String,
     /// Candidate construction origin.
     pub origin: StrategyPlanOrigin,
-    /// Ground semantic action graph.
-    pub composition: Composition,
     /// Ground bindings used during construction.
     pub bindings: Bindings,
     /// Settlement obligation discharged by the root action.
     pub settlement_obligation: Proposition,
     /// Prospective evidence from executable work, absent when no work is required.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evidence_route: Option<ProspectiveEvidenceRoute>,
-    /// Exact Capability contract identities selected by the candidate.
-    pub capability_contract_ids: Vec<String>,
     /// Independently complete executable products.
     pub tasks: Vec<StrategyTask>,
     /// Independently complete bounded epistemic products.
