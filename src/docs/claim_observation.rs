@@ -56,7 +56,7 @@ pub(crate) async fn advance_observed_claims(
     max_readmes: usize,
 ) -> Result<ObservedDocsClaimReport, ApiError> {
     policy.validate()?;
-    validate_observation(bundle)?;
+    super::observation::validate_selected_scope(policy, bundle)?;
     let observed = bundle.observation.as_ref().expect("validated observation");
     if !observed.coverage_gaps.is_empty() {
         return Err(invalid(
@@ -108,11 +108,7 @@ pub(crate) async fn advance_observed_claims(
     let mut judgments = BTreeMap::new();
     let mut advanced = 0;
     for directory in directories {
-        let path = if directory.path == "." {
-            "README.md".into()
-        } else {
-            format!("{}/README.md", directory.path)
-        };
+        let path = super::observation::document_path(bundle, &directory.path);
         let state = readmes
             .get(path.as_str())
             .ok_or_else(|| invalid("Docs observation is missing a managed README disposition"))?;
@@ -218,6 +214,15 @@ impl ObservedDocsClaimReport {
 
     pub fn matches_capture(&self, bundle: &DocsEvidenceBundle) -> Result<bool, ApiError> {
         validate_observation(bundle)?;
+        for readme in &self.readmes {
+            if let ObservedClaimDisposition::Assessed { report } = &readme.disposition {
+                for assessment in &report.assessments {
+                    if let Some(execution) = &assessment.execution {
+                        execution.validate(Some(&self.policy_identity))?;
+                    }
+                }
+            }
+        }
         Ok(self.report_id == self.identity()?
             && self.source_fingerprint == bundle.source_fingerprint
             && bundle
@@ -289,6 +294,7 @@ pub(crate) mod test_support {
             use super::super::correspondence::{ProposedCorrespondence, SourceCorrespondence};
             self.correspondence_calls.fetch_add(1, Ordering::SeqCst);
             Ok(ProposedCorrespondence {
+                execution: None,
                 complete: true,
                 claims: request
                     .sources
@@ -353,6 +359,7 @@ pub(crate) mod test_support {
                 .is_empty()
                 .then(|| "captured source is empty".to_string());
             Ok(ProposedSourceClaims {
+                execution: None,
                 complete: true,
                 claims,
                 no_claims_reason,
@@ -371,6 +378,7 @@ pub(crate) mod test_support {
                     let supported = !claim.statement.contains("invented")
                         && request.evidence.direct.contains("pub fn run");
                     ProviderClaimAssessment {
+                        execution: None,
                         claim_id: claim.claim_id.clone(),
                         verdict: if supported {
                             ClaimVerdict::Supported

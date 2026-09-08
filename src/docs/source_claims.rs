@@ -19,6 +19,8 @@ pub struct DocsSourceClaimRequest<'a> {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProposedSourceClaims {
+    #[serde(skip)]
+    pub execution: Option<super::judgment::DocsJudgmentExecution>,
     pub complete: bool,
     pub claims: Vec<SourceClaimProposal>,
     #[serde(default)]
@@ -50,6 +52,8 @@ pub struct ObservedSourceClaim {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SourceFileClaims {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<super::judgment::DocsJudgmentExecution>,
     pub path: String,
     pub content_hash: String,
     pub claims: Vec<ObservedSourceClaim>,
@@ -73,7 +77,7 @@ pub fn source_input_identity(
     bundle: &DocsEvidenceBundle,
 ) -> Result<String, ApiError> {
     policy.validate()?;
-    validate_observation(bundle)?;
+    super::observation::validate_selected_scope(policy, bundle)?;
     let observed = bundle.observation.as_ref().expect("validated capture");
     if observed.sources.iter().any(|source| source.text.is_none()) {
         return Err(invalid(
@@ -209,6 +213,9 @@ impl DocsSourceClaimReport {
             ));
         }
         for (file, source) in self.files.iter().zip(selected) {
+            if let Some(execution) = &file.execution {
+                execution.validate(Some(&self.policy_identity))?;
+            }
             if file.path != source.path || file.content_hash != source.content_hash {
                 return Err(invalid(
                     "Docs source-claim report substituted source identity",
@@ -321,6 +328,7 @@ fn reconcile_source_claims(
         );
     }
     Ok(SourceFileClaims {
+        execution: proposed.execution,
         path: source.path.clone(),
         content_hash: source.content_hash.clone(),
         claims: claims.into_values().collect(),
@@ -354,7 +362,15 @@ pub(crate) async fn extract_provider_claims<
         None,
     )
     .await?;
-    decode_json_response(&result.content, "source claims")
+    let mut proposed: ProposedSourceClaims =
+        decode_json_response(&result.content, "source claims")?;
+    proposed.execution = Some(super::judgment::DocsJudgmentExecution::capture(
+        request.policy.content_identity(),
+        &generation.request,
+        &preparation,
+        &result,
+    )?);
+    Ok(proposed)
 }
 
 fn identity(kind: &str, value: &impl Serialize) -> Result<String, ApiError> {
@@ -421,6 +437,7 @@ mod tests {
             text: Some(text.into()),
         };
         let proposal = || ProposedSourceClaims {
+            execution: None,
             complete: true,
             no_claims_reason: None,
             claims: vec![SourceClaimProposal {
@@ -441,6 +458,7 @@ mod tests {
                 &source,
                 &policy(),
                 ProposedSourceClaims {
+                    execution: None,
                     complete: true,
                     claims: vec![],
                     no_claims_reason: Some(empty_reason.into()),
@@ -476,6 +494,7 @@ mod tests {
             &source,
             &policy(),
             ProposedSourceClaims {
+                execution: None,
                 complete: true,
                 claims: vec![],
                 no_claims_reason: None
@@ -490,6 +509,7 @@ mod tests {
         std::fs::write(root.path().join("lib.rs"), "pub fn run() {}\n").unwrap();
         let mut capture = super::super::observation::inspect_scope(root.path()).unwrap();
         let observed = capture.observation.as_mut().unwrap();
+        observed.scope = None;
         for source in &mut observed.sources {
             source.text = None;
         }

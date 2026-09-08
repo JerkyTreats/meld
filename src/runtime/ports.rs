@@ -1502,7 +1502,7 @@ impl ClaimedTaskInvoker for CompiledTaskClaimInvoker {
                 let message = error.to_string();
                 // Only an owner-declared terminal failure closes the claim.
                 // Other failures preserve unresolved operational evidence.
-                if is_terminal_claimed_failure(&message) {
+                if matches!(error, crate::error::ApiError::TerminalCapabilityFailure(_)) {
                     Ok(ClaimedInvocationOutcome::Failed { error: message })
                 } else {
                     // Any other unresolved invocation keeps the claim
@@ -1540,11 +1540,6 @@ impl CompiledTaskClaimInvoker {
                 session_id: session_id.clone(),
             })
     }
-}
-
-fn is_terminal_claimed_failure(message: &str) -> bool {
-    message.contains(meld_execution::error::TERMINAL_CAPABILITY_FAILURE_MARKER)
-        || message.contains(crate::context::capability::GATE_FAILURE_MARKER)
 }
 
 /// Shared handle adapter for an injected claimed-task invoker.

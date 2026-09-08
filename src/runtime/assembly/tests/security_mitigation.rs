@@ -183,6 +183,7 @@ fn materialize(
         admission_epoch: fence.admission_epoch.clone(),
         curation_authorization: None,
         product: AgentAuthorizedProduct::Task(Box::new(meld_world_model::strategy::StrategyTask {
+            source_basis_id: None,
             effect_visibility: None,
             return_milestone: Some(
                 meld_world_model::strategy::PlanMilestoneRequirement::ExecutionTerminal {

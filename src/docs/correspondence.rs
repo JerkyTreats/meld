@@ -30,6 +30,8 @@ pub struct DocsCorrespondenceRequest<'a> {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProposedCorrespondence {
+    #[serde(skip)]
+    pub execution: Option<super::judgment::DocsJudgmentExecution>,
     pub complete: bool,
     pub claims: Vec<SourceCorrespondence>,
 }
@@ -47,6 +49,8 @@ pub struct SourceCorrespondence {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReadmeCorrespondence {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<super::judgment::DocsJudgmentExecution>,
     pub path: String,
     pub content_hash: Option<String>,
     pub claims: Vec<SourceCorrespondence>,
@@ -68,6 +72,7 @@ pub(crate) fn input_identity(
     sources: &DocsSourceClaimReport,
 ) -> Result<String, ApiError> {
     policy.validate()?;
+    super::observation::validate_selected_scope(policy, bundle)?;
     sources.validate_capture(bundle)?;
     if !sources.complete || sources.policy_identity != policy.content_identity() {
         return Err(invalid(
@@ -133,25 +138,14 @@ fn captured_readmes(bundle: &DocsEvidenceBundle) -> Result<Vec<&ObservedReadme>,
     let expected = bundle
         .directories
         .iter()
-        .map(|directory| {
-            if directory.path == "." {
-                "README.md".to_string()
-            } else {
-                format!("{}/README.md", directory.path)
-            }
-        })
+        .map(|directory| super::observation::document_path(bundle, &directory.path))
         .collect::<BTreeSet<_>>();
     let actual = observed
         .readmes
         .iter()
         .map(|readme| readme.path.clone())
         .collect::<BTreeSet<_>>();
-    if expected != actual
-        || expected.len() != bundle.directories.len()
-        || actual
-            .iter()
-            .any(|path| path != "README.md" && !path.ends_with("/README.md"))
-    {
+    if expected != actual || expected.len() != bundle.directories.len() {
         return Err(invalid(
             "Docs correspondence must name every managed README exactly once",
         ));
@@ -167,14 +161,22 @@ fn captured_readmes(bundle: &DocsEvidenceBundle) -> Result<Vec<&ObservedReadme>,
 fn selected_sources<'a>(
     path: &str,
     sources: &'a DocsSourceClaimReport,
+    bundle: &DocsEvidenceBundle,
 ) -> Vec<CorrespondenceSource<'a>> {
-    let prefix = path
-        .strip_suffix("README.md")
-        .expect("captured README path");
+    let scope = bundle
+        .observation
+        .as_ref()
+        .and_then(|capture| capture.scope.as_ref());
     let mut selected = sources
         .files
         .iter()
-        .filter(|file| file.path.starts_with(prefix))
+        .filter(|file| match scope {
+            Some(scope) => scope.compares(path, &file.path),
+            // Historical captures use the original subtree comparison contract.
+            None => path
+                .strip_suffix("README.md")
+                .is_some_and(|prefix| file.path.starts_with(prefix)),
+        })
         .flat_map(|file| {
             file.claims.iter().map(|claim| CorrespondenceSource {
                 path: &file.path,
@@ -219,10 +221,11 @@ pub(crate) async fn advance_correspondence(
     let readmes = captured_readmes(bundle)?;
     let mut results = prior.map_or_else(Vec::new, |report| report.readmes.clone());
     for readme in readmes.iter().skip(results.len()).take(max_readmes) {
-        let selected = selected_sources(&readme.path, sources);
+        let selected = selected_sources(&readme.path, sources, bundle);
         let claims = readme_claims(readme);
         let proposed = if selected.is_empty() || claims.is_empty() {
             ProposedCorrespondence {
+                execution: None,
                 complete: true,
                 claims: selected
                     .iter()
@@ -248,6 +251,7 @@ pub(crate) async fn advance_correspondence(
             return Err(invalid("Docs correspondence proposal is incomplete"));
         }
         let mut result = ReadmeCorrespondence {
+            execution: proposed.execution,
             path: readme.path.clone(),
             content_hash: content_hash(readme),
             claims: proposed.claims,
@@ -353,10 +357,13 @@ impl DocsCorrespondenceReport {
             ));
         }
         for (result, readme) in self.readmes.iter().zip(readmes) {
+            if let Some(execution) = &result.execution {
+                execution.validate(Some(&self.policy_identity))?;
+            }
             validate_readme(
                 result,
                 readme,
-                &selected_sources(&readme.path, sources),
+                &selected_sources(&readme.path, sources, bundle),
                 0.0,
             )?;
         }
@@ -435,15 +442,25 @@ pub(crate) async fn provider_correspondence<
         None,
     )
     .await?;
+    let execution = super::judgment::DocsJudgmentExecution::capture(
+        request.policy.content_identity(),
+        &generation.request,
+        &preparation,
+        &result,
+    )?;
     if let Some(claims) =
         super::claim_validation::decode_keyed_claims(&result.content, "claims", "source_claim_id")?
     {
         return Ok(ProposedCorrespondence {
+            execution: Some(execution),
             complete: true,
             claims,
         });
     }
-    decode_json_response(&result.content, "claim correspondence")
+    let mut proposed: ProposedCorrespondence =
+        decode_json_response(&result.content, "claim correspondence")?;
+    proposed.execution = Some(execution);
+    Ok(proposed)
 }
 
 fn identity(kind: &str, value: &impl Serialize) -> Result<String, ApiError> {
@@ -601,6 +618,7 @@ mod tests {
             request: &DocsCorrespondenceRequest<'_>,
         ) -> Result<ProposedCorrespondence, ApiError> {
             let mut proposal = ProposedCorrespondence {
+                execution: None,
                 complete: true,
                 claims: request
                     .sources
@@ -670,8 +688,15 @@ mod tests {
             );
         }
         let unresolved = advance_correspondence(
-            &BadJudge("uncertain_missing"), &policy, &bundle, &sources, None, 1,
-        ).await.unwrap();
+            &BadJudge("uncertain_missing"),
+            &policy,
+            &bundle,
+            &sources,
+            None,
+            1,
+        )
+        .await
+        .unwrap();
         assert!(unresolved.complete);
         assert!(unresolved.readmes[0].claims[0].readme_claim_ids.is_empty());
         assert_eq!(unresolved.readmes[0].claims[0].confidence, 0.01);

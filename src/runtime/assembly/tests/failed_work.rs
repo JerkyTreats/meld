@@ -175,3 +175,73 @@ fn assert_draft_recovery(status: u16) {
         );
     }
 }
+
+#[test]
+fn docs_changed_knowledge_during_confirmation_can_repeat_the_repair() {
+    let provider = super::super::docs_fixture::ProviderServer::new();
+    let harness = StewardshipHarness::new();
+    let source = harness._workspace.path().join("lib.rs");
+    let readme = harness._workspace.path().join("README.md");
+    std::fs::write(&source, "pub fn run() {}\n").unwrap();
+    {
+        let assembly = harness.assembly();
+        harness.run_world_genesis(&assembly);
+    }
+    let assembly = harness.assembly();
+    let api = harness.bind_production_routes_with_loss(&assembly, None);
+    let mut config =
+        stewardship_merkle_config(harness._workspace.path(), &harness.binding.storage_root);
+    config.providers.get_mut("main-provider").unwrap().endpoint = Some(provider.endpoint());
+    api.provider_registry()
+        .write()
+        .load_from_config(&config)
+        .unwrap();
+    assert!(assembly.bind_production_docs_claim_judge(api));
+    let mut supervisor = harness.start_supervisor(&assembly);
+    for pass in 0..70 {
+        supervisor.tick(1_000 + pass * 10).unwrap();
+        if readme.exists() {
+            break;
+        }
+    }
+    assert!(readme.exists());
+    let store = &assembly.stores().agent_store;
+    let goals = store
+        .reconciliation_goals_for_agent(STEWARD_AGENT_ID)
+        .unwrap();
+    assert_eq!(goals.len(), 1);
+    let goal_id = &goals[0].goal.goal_id;
+    let plan = store.current_reconciliation_plan(goal_id).unwrap().unwrap();
+    assert!(store
+        .goal_disposition_for_plan(&plan.plan_revision_id)
+        .unwrap()
+        .is_none());
+    // The owner has new source and the repaired document is gone before confirmation.
+    std::fs::write(
+        &source,
+        "pub fn run() {}\n// changed while the first repair awaited confirmation\n",
+    )
+    .unwrap();
+    std::fs::remove_file(&readme).unwrap();
+    for pass in 0..100 {
+        supervisor.tick(2_000 + pass * 10).unwrap();
+    }
+    assert_eq!(
+        std::fs::read_to_string(&readme).ok().as_deref(),
+        Some(super::super::docs_fixture::README)
+    );
+    let plan = store.current_reconciliation_plan(goal_id).unwrap().unwrap();
+    assert!(store
+        .goal_disposition_for_plan(&plan.plan_revision_id)
+        .unwrap()
+        .is_some());
+    let drafts = provider
+        .calls()
+        .iter()
+        .filter(|call| call.as_str() == "draft")
+        .count();
+    assert_eq!(
+        drafts, 2,
+        "new knowledge permits one new repair; old completed work remains history"
+    );
+}

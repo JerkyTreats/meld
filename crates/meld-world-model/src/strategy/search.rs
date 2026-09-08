@@ -278,8 +278,32 @@ pub(super) fn confirmation_is_current(
         })
 }
 
+/// Curation's own return is not new input authorizing repeated effects.
+pub(super) fn task_source_basis(problem: &StrategyProblem) -> Option<String> {
+    let owners = &problem
+        .theory
+        .settlement_rules
+        .iter()
+        .find(|rule| unify(&rule.goal_pattern, &problem.goal.target).is_some())?
+        .repeat_on_changed_owners;
+    let source_basis = problem
+        .planner_cut
+        .traversal_cut
+        .receipts
+        .iter()
+        .filter(|receipt| {
+            owners.contains(&receipt.owner_id)
+                && (receipt.owner_id != crate::curation::CURATION_OWNER_ID
+                    || receipt.scope != problem.planner_cut.traversal_cut.scope)
+        })
+        .map(|receipt| receipt.semantic_basis())
+        .collect::<Vec<_>>();
+    (!source_basis.is_empty()).then(|| stable_id("strategy-task-source-v1", &source_basis))
+}
+
 pub(super) fn same_work(left: &StrategyTask, right: &StrategyTask) -> bool {
-    left.composition == right.composition
+    left.source_basis_id == right.source_basis_id
+        && left.composition == right.composition
         && left.bindings == right.bindings
         && left.initial_inputs == right.initial_inputs
         && left.execution_subject == right.execution_subject
@@ -1254,6 +1278,7 @@ fn complete_task(
         task_id: task_id.clone(),
     };
     let task = StrategyTask {
+        source_basis_id: task_source_basis(&request.problem),
         effect_visibility,
         execution_subject: Some(request.problem.planner_cut.context.subject.clone()),
         initial_inputs,

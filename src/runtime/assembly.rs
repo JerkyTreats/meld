@@ -9022,6 +9022,7 @@ mod tests {
                 curation_authorization: None,
                 product: AgentAuthorizedProduct::Task(Box::new(
                     meld_world_model::strategy::StrategyTask {
+                        source_basis_id: None,
                         effect_visibility: None,
                         return_milestone: None,
                         task_id: task_id.clone(),
@@ -10026,6 +10027,7 @@ mod tests {
                     .claims
                     .iter()
                     .map(|claim| ProviderClaimAssessment {
+                        execution: None,
                         claim_id: claim.claim_id.clone(),
                         verdict: ClaimVerdict::Supported,
                         confidence: 1.0,

@@ -27,13 +27,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 
-/// Marker identifying a gate violation in propagated error text. The claim
-/// route matches on it to record a terminal failed outcome instead of
-/// refencing the claim: a gate failure that survived the declared execute
-/// retry budget is deterministic given the recorded artifacts, so re-ticking
-/// the claim would loop without bound.
-pub const GATE_FAILURE_MARKER: &str = "Workflow gate '";
-
 const PREPARE_CAPABILITY_TYPE_ID: &str = "context_generate_prepare";
 const FINALIZE_CAPABILITY_TYPE_ID: &str = "context_generate_finalize";
 const CAPABILITY_VERSION: u32 = 1;
@@ -1107,10 +1100,12 @@ impl CapabilityInvoker for ContextGenerateFinalizeCapability {
                 api.emit_progress_event(ctx, "workflow_gate_evaluated", verdict.clone())?;
             }
             if !gate_result.is_pass() && gate.fail_on_violation {
-                return Err(ApiError::GenerationFailed(format!(
-                    "{GATE_FAILURE_MARKER}{}' failed: {}",
-                    gate.gate_id,
-                    gate_result.reasons.join(" | ")
+                return Err(ApiError::TerminalCapabilityFailure(Box::new(
+                    ApiError::GenerationFailed(format!(
+                        "Workflow gate '{}' failed: {}",
+                        gate.gate_id,
+                        gate_result.reasons.join(" | ")
+                    )),
                 )));
             }
             gate_record_artifact = Some(verdict);

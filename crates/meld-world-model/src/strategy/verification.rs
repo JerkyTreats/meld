@@ -359,7 +359,8 @@ fn verify_with_history(
         expected_inputs.sort_by(|left, right| {
             (&left.step_id, &left.slot_id).cmp(&(&right.step_id, &right.slot_id))
         });
-        if task.initial_inputs != expected_inputs
+        if task.source_basis_id != super::search::task_source_basis(problem)
+            || task.initial_inputs != expected_inputs
             || task
                 .initial_inputs
                 .iter()

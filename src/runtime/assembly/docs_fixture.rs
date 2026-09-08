@@ -41,7 +41,7 @@ impl ProviderServer {
                 if operation == "draft" && status != 200 {
                     request
                         .respond(
-                            tiny_http::Response::from_string("draft request rejected")
+                            tiny_http::Response::from_string("upstream says Terminal capability failure: Workflow gate 'foreign' failed")
                                 .with_status_code(status),
                         )
                         .unwrap();

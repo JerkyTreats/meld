@@ -3,6 +3,7 @@
 
 use super::capability::{DirectoryEvidence, DocsEvidenceBundle};
 use super::claim_validation::ReadmeClaim;
+use super::scope::DocsScopePolicy;
 use crate::error::ApiError;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
@@ -16,6 +17,8 @@ pub(crate) const MAX_DIRECTORY_EVIDENCE_BYTES: usize = 24 * 1024;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocsScopeObservation {
     pub revision_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<DocsScopePolicy>,
     pub sources: Vec<ObservedSource>,
     pub readmes: Vec<ObservedReadme>,
     /// Entries outside the inspected textual scope, with their selection reason.
@@ -64,8 +67,70 @@ fn io_error(error: std::io::Error) -> ApiError {
     ApiError::StorageError(crate::error::StorageError::IoError(error))
 }
 
+pub fn inspect_scope_selected(
+    root: &Path,
+    scope: &DocsScopePolicy,
+) -> Result<DocsEvidenceBundle, ApiError> {
+    scope.validate()?;
+    inspect_scope_with_selected_read(root, scope, |path| std::fs::read(path).map_err(io_error))
+}
+
+#[cfg(test)]
 pub fn inspect_scope(root: &Path) -> Result<DocsEvidenceBundle, ApiError> {
-    inspect_scope_with_read(root, |path| std::fs::read(path).map_err(io_error))
+    inspect_scope_selected(
+        root,
+        super::claim_observation::test_support::policy()
+            .semantics()?
+            .scope()?,
+    )
+}
+
+#[cfg(test)]
+fn inspect_scope_with_read(
+    root: &Path,
+    read: impl FnMut(&Path) -> Result<Vec<u8>, ApiError>,
+) -> Result<DocsEvidenceBundle, ApiError> {
+    inspect_scope_with_selected_read(
+        root,
+        super::claim_observation::test_support::policy()
+            .semantics()?
+            .scope()?,
+        read,
+    )
+}
+
+pub(crate) fn validate_selected_scope(
+    policy: &super::claim_validation::DocsClaimPolicy,
+    bundle: &DocsEvidenceBundle,
+) -> Result<(), ApiError> {
+    validate_observation(bundle)?;
+    if bundle
+        .observation
+        .as_ref()
+        .and_then(|capture| capture.scope.as_ref())
+        != Some(policy.semantics()?.scope()?)
+    {
+        return Err(ApiError::ConfigError(
+            "Docs capture belongs to another scope selection".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Stored captures without scope use the original document naming contract.
+/// This reader preserves their identities; new capture and judgment require selection.
+pub(crate) fn document_path(bundle: &DocsEvidenceBundle, directory: &str) -> String {
+    if let Some(scope) = bundle
+        .observation
+        .as_ref()
+        .and_then(|capture| capture.scope.as_ref())
+    {
+        scope.document_path(directory)
+    } else if directory == "." {
+        "README.md".into()
+    } else {
+        format!("{directory}/README.md")
+    }
 }
 
 /// Verify captured bytes and their complete native observation identity without rereading files.
@@ -101,7 +166,7 @@ pub fn validate_observation(bundle: &DocsEvidenceBundle) -> Result<(), ApiError>
             }
         }
     }
-    let seed = serde_json::to_vec(&(
+    let mut seed = serde_json::to_vec(&(
         &bundle.source_fingerprint,
         &bundle.directories,
         &observed.sources,
@@ -110,6 +175,12 @@ pub fn validate_observation(bundle: &DocsEvidenceBundle) -> Result<(), ApiError>
         &observed.coverage_gaps,
     ))
     .map_err(|error| ApiError::ConfigError(error.to_string()))?;
+    if let Some(scope) = &observed.scope {
+        scope.validate()?;
+        seed.extend(
+            serde_json::to_vec(scope).map_err(|error| ApiError::ConfigError(error.to_string()))?,
+        );
+    }
     if observed.revision_id != format!("docs-observation::{}", blake3::hash(&seed).to_hex()) {
         return Err(ApiError::ConfigError(
             "Docs observation identity is invalid".into(),
@@ -118,8 +189,9 @@ pub fn validate_observation(bundle: &DocsEvidenceBundle) -> Result<(), ApiError>
     Ok(())
 }
 
-fn inspect_scope_with_read(
+fn inspect_scope_with_selected_read(
     root: &Path,
+    scope: &DocsScopePolicy,
     mut read: impl FnMut(&Path) -> Result<Vec<u8>, ApiError>,
 ) -> Result<DocsEvidenceBundle, ApiError> {
     let root = root.canonicalize().map_err(|error| {
@@ -142,7 +214,7 @@ fn inspect_scope_with_read(
         .sort_by_file_name()
         .into_iter()
         .filter_entry(|entry| {
-            let included = include_entry(entry);
+            let included = include_entry(entry, scope);
             if !included {
                 excluded_directories.push(ObservationExclusion {
                     path: relative_display(
@@ -157,7 +229,7 @@ fn inspect_scope_with_read(
         let entry = entry.map_err(|error| ApiError::ConfigError(error.to_string()))?;
         let path = entry.path();
         if entry.file_type().is_dir() {
-            if is_managed_readme(path) {
+            if scope.excludes_document(path) {
                 excluded.push(ObservationExclusion {
                     path: relative_display(path.strip_prefix(&root).unwrap_or(path)),
                     reason: "README_is_directory".into(),
@@ -185,7 +257,7 @@ fn inspect_scope_with_read(
             continue;
         };
         let bytes = read(path)?;
-        if is_managed_readme(path) {
+        if scope.excludes_document(path) {
             captured.insert(path.to_path_buf(), bytes);
             continue;
         }
@@ -305,7 +377,7 @@ fn inspect_scope_with_read(
             }
             rendered.push_str(&section);
         }
-        let readme_path = directory.join("README.md");
+        let readme_path = directory.join(&scope.document_name);
         let path = relative_display(readme_path.strip_prefix(&root).unwrap_or(&readme_path));
         let readme = match captured.get(&readme_path) {
             Some(bytes) => match std::str::from_utf8(bytes) {
@@ -349,7 +421,7 @@ fn inspect_scope_with_read(
     excluded.sort_by(|a, b| a.path.cmp(&b.path));
     sources.sort_by(|a, b| a.path.cmp(&b.path));
     readmes.sort_by(|a, b| a.path.cmp(&b.path));
-    let seed = serde_json::to_vec(&(
+    let mut seed = serde_json::to_vec(&(
         &source_fingerprint,
         &evidence,
         &sources,
@@ -358,11 +430,15 @@ fn inspect_scope_with_read(
         &coverage_gaps,
     ))
     .map_err(|error| ApiError::ConfigError(error.to_string()))?;
+    seed.extend(
+        serde_json::to_vec(scope).map_err(|error| ApiError::ConfigError(error.to_string()))?,
+    );
     Ok(DocsEvidenceBundle {
         source_fingerprint,
         directories: evidence,
         observation: Some(DocsScopeObservation {
             revision_id: format!("docs-observation::{}", blake3::hash(&seed).to_hex()),
+            scope: Some(scope.clone()),
             sources,
             readmes,
             exclusions: excluded,
@@ -371,35 +447,10 @@ fn inspect_scope_with_read(
     })
 }
 
-fn include_entry(entry: &DirEntry) -> bool {
-    if entry.depth() == 0 {
-        return true;
-    }
-    if !entry.file_type().is_dir() {
-        return true;
-    }
-    let name = entry.file_name().to_string_lossy();
-    if name.starts_with('.') {
-        return false;
-    }
-    !matches!(
-        name.as_ref(),
-        ".git"
-            | ".venv"
-            | ".tox"
-            | ".mypy_cache"
-            | ".pytest_cache"
-            | ".ruff_cache"
-            | "node_modules"
-            | "target"
-            | "__pycache__"
-    )
-}
-
-fn is_managed_readme(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.eq_ignore_ascii_case("README.md"))
+fn include_entry(entry: &DirEntry, scope: &DocsScopePolicy) -> bool {
+    entry.depth() == 0
+        || !entry.file_type().is_dir()
+        || scope.includes_directory(&entry.file_name().to_string_lossy())
 }
 
 fn relative_display(path: &Path) -> String {

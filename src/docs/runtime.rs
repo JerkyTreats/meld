@@ -138,52 +138,66 @@ impl DocsObservationActor {
 
     fn observe_and_publish(&self) -> Result<(bool, Option<String>), String> {
         let previous = self.binding.store.head(&self.binding_id)?;
-        let (mut revision, source_error) = if let Some(head) =
-            previous.as_ref().filter(|head| head.publication.is_none())
-        {
-            (
-                self.binding
-                    .store
-                    .revision(&head.revision_id)?
-                    .ok_or("pending Docs revision is absent")?,
-                None,
-            )
-        } else {
-            let (evidence, error) = match super::observation::inspect_scope(&self.binding.root) {
-                Ok(evidence) => (evidence, None),
-                Err(error) => {
-                    let message = error.to_string();
-                    let observation = super::observation::DocsScopeObservation {
-                        revision_id: identity("docs-source-failure", &message)?,
-                        sources: vec![],
-                        readmes: vec![],
-                        exclusions: vec![],
-                        coverage_gaps: vec![super::observation::ObservationExclusion {
-                            path: ".".into(),
-                            reason: message.clone(),
-                        }],
-                    };
-                    (
-                        super::capability::DocsEvidenceBundle {
-                            source_fingerprint: String::new(),
-                            directories: vec![],
-                            observation: Some(observation),
-                        },
-                        Some(message),
-                    )
-                }
+        let (mut revision, source_error) =
+            if let Some(head) = previous.as_ref().filter(|head| head.publication.is_none()) {
+                (
+                    self.binding
+                        .store
+                        .revision(&head.revision_id)?
+                        .ok_or("pending Docs revision is absent")?,
+                    None,
+                )
+            } else {
+                let (evidence, error) = match self
+                    .binding
+                    .claim_policy
+                    .as_ref()
+                    .ok_or_else(|| {
+                        crate::error::ApiError::ConfigError(
+                            "Docs observation requires an installed scope policy".into(),
+                        )
+                    })
+                    .and_then(|policy| {
+                        super::observation::inspect_scope_selected(
+                            &self.binding.root,
+                            policy.policy.semantics()?.scope()?,
+                        )
+                    }) {
+                    Ok(evidence) => (evidence, None),
+                    Err(error) => {
+                        let message = error.to_string();
+                        let observation = super::observation::DocsScopeObservation {
+                            revision_id: identity("docs-source-failure", &message)?,
+                            scope: None,
+                            sources: vec![],
+                            readmes: vec![],
+                            exclusions: vec![],
+                            coverage_gaps: vec![super::observation::ObservationExclusion {
+                                path: ".".into(),
+                                reason: message.clone(),
+                            }],
+                        };
+                        (
+                            super::capability::DocsEvidenceBundle {
+                                source_fingerprint: String::new(),
+                                directories: vec![],
+                                observation: Some(observation),
+                            },
+                            Some(message),
+                        )
+                    }
+                };
+                (
+                    self.binding.store.prepare(
+                        &self.binding_id,
+                        self.binding.events.ledger_identity(),
+                        &self.binding.subject,
+                        &self.binding.scope,
+                        evidence,
+                    )?,
+                    error,
+                )
             };
-            (
-                self.binding.store.prepare(
-                    &self.binding_id,
-                    self.binding.events.ledger_identity(),
-                    &self.binding.subject,
-                    &self.binding.scope,
-                    evidence,
-                )?,
-                error,
-            )
-        };
         if previous.as_ref().is_some_and(|head| {
             head.revision_id == revision.revision_id && head.publication.is_some()
         }) {
@@ -797,7 +811,14 @@ mod tests {
             store: Arc::new(DocsObservationStore::new(sled::open(db).unwrap()).unwrap()),
             events: authority.append_capability(),
             route: super::super::publication::graph_route(),
-            claim_policy: None,
+            claim_policy: Some({
+                let policy = super::super::claim_observation::test_support::policy();
+                super::super::claim_validation::DocsClaimPolicyRevision {
+                    content_identity: policy.content_identity(),
+                    policy,
+                    installed_at_seq: 1,
+                }
+            }),
             claim_config: None,
             claim_judge: Default::default(),
         });

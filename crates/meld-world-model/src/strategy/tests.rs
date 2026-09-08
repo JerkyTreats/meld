@@ -260,6 +260,7 @@ fn problem() -> StrategyProblem {
         theory: StrategyTheorySnapshot {
             theory_id: "theory-docs-v1".into(),
             settlement_rules: vec![StrategySettlementRule {
+                repeat_on_changed_owners: Vec::new(),
                 task_ordering: Vec::new(),
                 epistemic_placement: StrategyEpistemicPlacement::Prerequisite,
                 goal_pattern: goal_pattern(),
@@ -785,6 +786,14 @@ fn unsuccessful_confirmation_stops_unchanged_work_but_allows_source_advance_and_
         matches!(verify_successor_plan(&request, &StrategySuccessorPlan {
         plan: repeated, completed_history: request.completed_history.clone(),
     }), PlanVerification::Invalid { grounds } if grounds.contains(&StrategyRejectionGround::UnchangedCompletedWork))
+    );
+
+    let mut forged_basis = search(&request.search).recommendation.unwrap();
+    forged_basis.tasks[0].source_basis_id = Some("foreign-source-basis".into());
+    forged_basis.plan_revision_id = super::search::plan_revision_identity(&forged_basis);
+    assert!(
+        matches!(verify_plan(&request.search.problem, &forged_basis),
+        PlanVerification::Invalid { grounds } if grounds.contains(&StrategyRejectionGround::InvalidComposition))
     );
 
     let mut alternative = request.clone();
@@ -1367,4 +1376,34 @@ fn successor_verification_retains_completed_task_as_its_causal_predecessor() {
         verify_successor_plan(&successor_request, &successor),
         PlanVerification::Invalid { .. }
     ));
+}
+
+#[test]
+fn completed_work_repetition_uses_only_the_installed_owner_selection() {
+    let mut problem = problem();
+    assert!(super::search::task_source_basis(&problem).is_none());
+    assert!(!problem.planner_cut.traversal_cut.receipts.is_empty());
+    let owner = problem.planner_cut.traversal_cut.receipts[0]
+        .owner_id
+        .clone();
+    assert_ne!(owner, crate::curation::CURATION_OWNER_ID);
+    problem.theory.settlement_rules[0].repeat_on_changed_owners = vec![owner];
+    let selected = super::search::task_source_basis(&problem).unwrap();
+    let mut unrelated = problem.planner_cut.traversal_cut.receipts[0].clone();
+    unrelated.owner_id = "unselected-owner".into();
+    unrelated.revision_id = "unrelated-result".into();
+    problem.planner_cut.traversal_cut.receipts.push(unrelated);
+    assert_eq!(
+        super::search::task_source_basis(&problem).as_ref(),
+        Some(&selected)
+    );
+    problem.planner_cut.traversal_cut.receipts[0].revision_id = "changed-owner-evidence".into();
+    assert_ne!(
+        super::search::task_source_basis(&problem).as_ref(),
+        Some(&selected)
+    );
+    problem.theory.settlement_rules[0]
+        .repeat_on_changed_owners
+        .clear();
+    assert!(super::search::task_source_basis(&problem).is_none());
 }

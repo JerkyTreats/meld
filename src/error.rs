@@ -210,6 +210,10 @@ pub enum ApiError {
         new_path: std::path::PathBuf,
     },
 
+    /// An owner has determined that this invocation cannot complete by retrying.
+    #[error("Terminal capability failure: {0}")]
+    TerminalCapabilityFailure(#[source] Box<ApiError>),
+
     #[error("Generation failed: {0}")]
     GenerationFailed(String),
 
@@ -338,6 +342,9 @@ impl Clone for ApiError {
                     old_path: old_path.clone(),
                     new_path: new_path.clone(),
                 }
+            }
+            ApiError::TerminalCapabilityFailure(error) => {
+                ApiError::TerminalCapabilityFailure(error.clone())
             }
             ApiError::GenerationFailed(message) => ApiError::GenerationFailed(message.clone()),
             ApiError::PathNotInTree(path) => ApiError::PathNotInTree(path.clone()),

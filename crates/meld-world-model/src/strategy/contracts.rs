@@ -15,6 +15,10 @@ pub struct StrategyTheorySnapshot {
 /// Declared settlement meaning for one class of Goals.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StrategySettlementRule {
+    /// Installed permission to repeat complete work after these owners' input changes.
+    /// Empty keeps repetition dependent on a different operation or explicit inputs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub repeat_on_changed_owners: Vec<String>,
     /// When both contracts are selected, their distinct complete Tasks must progress in this order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub task_ordering: Vec<StrategyTaskOrdering>,
@@ -232,6 +236,10 @@ pub enum PlanMilestoneRequirement {
 /// One independently complete executable product retained by Agent only.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StrategyTask {
+    /// Non-Curation owner knowledge against which this work was constructed.
+    /// Confirmation of an old effect does not complete work over changed source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_basis_id: Option<String>,
     /// Exact producer publication that may enable confirmation before operational return.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effect_visibility:

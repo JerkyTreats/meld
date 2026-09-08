@@ -125,6 +125,11 @@ impl DocsClaimPolicy {
 
     fn accepts(&self, assessments: &[ClaimAssessment]) -> Result<bool, ApiError> {
         validate_assessment_integrity(assessments, None)?;
+        for assessment in assessments {
+            if let Some(execution) = &assessment.execution {
+                execution.validate(Some(&self.content_identity()))?;
+            }
+        }
         Ok(!assessments.is_empty()
             && assessments
                 .iter()
@@ -217,6 +222,8 @@ pub struct ClaimCitation {
 /// Durable verdict for one deterministically extracted claim.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ClaimAssessment {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<super::judgment::DocsJudgmentExecution>,
     pub claim: ReadmeClaim,
     pub verdict: ClaimVerdict,
     pub confidence: f64,
@@ -387,6 +394,8 @@ struct ProviderAssessmentBatch {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProviderClaimAssessment {
+    #[serde(skip)]
+    pub execution: Option<super::judgment::DocsJudgmentExecution>,
     pub claim_id: String,
     pub verdict: ClaimVerdict,
     pub confidence: f64,
@@ -486,6 +495,7 @@ pub async fn validate_patch_set<P: ProviderValidationPort + ProviderExecutionPor
     event_context: Option<&ExecutionEventContext>,
 ) -> Result<ValidatedDocsPatchSet, ApiError> {
     policy.validate()?;
+    super::observation::validate_selected_scope(policy, bundle)?;
     if bundle.source_fingerprint != patches.source_fingerprint {
         return Err(ApiError::ConfigError(
             "docs evidence and patch source fingerprints do not match".to_string(),
@@ -507,7 +517,7 @@ pub async fn validate_patch_set<P: ProviderValidationPort + ProviderExecutionPor
     let mut accepted_patches = Vec::new();
     let mut reports = Vec::new();
     for directory in &bundle.directories {
-        let path = readme_path(&directory.path);
+        let path = super::observation::document_path(bundle, &directory.path);
         let mut patch = pending.remove(&path).ok_or_else(|| {
             ApiError::ConfigError(format!(
                 "docs patch set is missing expected README '{path}'"
@@ -715,6 +725,7 @@ async fn assess_claim_batch<P: ProviderValidationPort + ProviderExecutionPort + 
             "directory": directory.path,
             "readme_path": patch.path,
             "readme_content_hash": patch.content_hash,
+            "readme_context": patch.content,
             "claims": claims,
             "inventory": evidence.inventory,
             "direct_evidence": evidence.direct,
@@ -732,7 +743,17 @@ async fn assess_claim_batch<P: ProviderValidationPort + ProviderExecutionPort + 
         event_context,
     )
     .await?;
-    decode_provider_assessments(&response.content)
+    let execution = super::judgment::DocsJudgmentExecution::capture(
+        policy.content_identity(),
+        &generation.request,
+        &preparation,
+        &response,
+    )?;
+    let mut assessments = decode_provider_assessments(&response.content)?;
+    for assessment in &mut assessments {
+        assessment.execution = Some(execution.clone());
+    }
+    Ok(assessments)
 }
 
 fn decode_provider_assessments(content: &str) -> Result<Vec<ProviderClaimAssessment>, ApiError> {
@@ -857,6 +878,7 @@ fn reconcile_provider_assessments(
             )));
         }
         assessments.push(ClaimAssessment {
+            execution: assessment.execution,
             claim: claim.clone(),
             verdict: assessment.verdict,
             confidence: assessment.confidence,
@@ -883,6 +905,9 @@ fn validate_assessment_integrity(
     evidence: Option<&EvidencePartitions>,
 ) -> Result<(), ApiError> {
     for assessment in assessments {
+        if let Some(execution) = &assessment.execution {
+            execution.validate(None)?;
+        }
         if !assessment.confidence.is_finite() || !(0.0..=1.0).contains(&assessment.confidence) {
             return Err(ApiError::ConfigError(
                 "claim verdict confidence is invalid".into(),
@@ -1268,7 +1293,7 @@ pub(crate) fn verify_publication_evidence(
 ) -> Result<(), ApiError> {
     let mut descendants = BTreeMap::new();
     for directory in &bundle.directories {
-        let path = readme_path(&directory.path);
+        let path = super::observation::document_path(bundle, &directory.path);
         let report = validated
             .reports
             .iter()
@@ -1574,14 +1599,6 @@ fn rejection_summary(policy: &DocsClaimPolicy, report: &ReadmeClaimReport) -> St
         .join(" | ")
 }
 
-fn readme_path(directory: &str) -> String {
-    if directory == "." {
-        "README.md".to_string()
-    } else {
-        format!("{directory}/README.md")
-    }
-}
-
 pub(crate) fn decode_json_response<T: serde::de::DeserializeOwned>(
     content: &str,
     label: &str,
@@ -1674,6 +1691,7 @@ mod tests {
             literal_requirements: vec!["invented.yaml".to_string()],
         };
         let mut assessments = vec![ClaimAssessment {
+            execution: None,
             claim,
             verdict: ClaimVerdict::Supported,
             confidence: 0.9,
@@ -1707,6 +1725,7 @@ mod tests {
             literal_requirements: Vec::new(),
         }];
         let provider = vec![ProviderClaimAssessment {
+            execution: None,
             claim_id: "claim".to_string(),
             verdict: ClaimVerdict::Supported,
             confidence: 0.95,
@@ -1739,6 +1758,7 @@ mod tests {
             literal_requirements: Vec::new(),
         };
         let mut assessments = vec![ClaimAssessment {
+            execution: None,
             claim,
             verdict: ClaimVerdict::Supported,
             confidence: 0.95,
@@ -1779,6 +1799,7 @@ mod tests {
             descendant: String::new(),
         };
         let mut assessments = vec![ClaimAssessment {
+                        execution: None,
             claim: extract_claims("README.md", "- `pricing.py` defines two module-level integer constants: `SHIPPING_CENTS = 500` and `FREE_SHIPPING_MINIMUM_CENTS = 7000`.\n").remove(0),
             verdict: ClaimVerdict::Supported, confidence: 1.0,
             citations: evidence.direct.lines().map(|line| ClaimCitation { scope: CitationScope::Direct, quote: line.into() }).collect(),
@@ -1822,6 +1843,7 @@ mod tests {
     fn provider_must_assess_every_extracted_claim_exactly_once() {
         let claims = extract_claims("README.md", "# Tool\n\nIt runs.\n");
         let one = ProviderClaimAssessment {
+            execution: None,
             claim_id: claims[0].claim_id.clone(),
             verdict: ClaimVerdict::Supported,
             confidence: 0.9,
@@ -1836,6 +1858,7 @@ mod tests {
         assert!(reconcile_provider_assessments(&claims, vec![one.clone(), one]).is_err());
 
         let unknown = ProviderClaimAssessment {
+            execution: None,
             claim_id: "unknown".to_string(),
             verdict: ClaimVerdict::Supported,
             confidence: 0.9,
@@ -1849,6 +1872,7 @@ mod tests {
     fn singleton_assessment_rejects_another_claim_identity() {
         let claims = extract_claims("README.md", "# Tool\n");
         let provider = vec![ProviderClaimAssessment {
+            execution: None,
             claim_id: "wrong-opaque-id".to_string(),
             verdict: ClaimVerdict::Supported,
             confidence: 0.9,
@@ -1935,6 +1959,7 @@ mod tests {
                         ClaimVerdict::Supported
                     };
                     ProviderClaimAssessment {
+                        execution: None,
                         claim_id: claim.claim_id.clone(),
                         verdict,
                         confidence: 1.0,
@@ -2111,6 +2136,7 @@ mod tests {
     #[test]
     fn hard_failures_are_not_hidden_by_weighted_support() {
         let supported = |id: &str| ClaimAssessment {
+            execution: None,
             claim: ReadmeClaim {
                 claim_id: id.to_string(),
                 statement: "supported".to_string(),
@@ -2146,6 +2172,7 @@ mod tests {
         let mut assessments = extract_claims(&patch.path, &patch.content)
             .into_iter()
             .map(|claim| ClaimAssessment {
+                execution: None,
                 claim,
                 verdict: ClaimVerdict::Supported,
                 confidence: 0.9,
@@ -2193,6 +2220,7 @@ mod tests {
         let mut assessments = extract_claims(&patch.path, &patch.content)
             .into_iter()
             .map(|claim| ClaimAssessment {
+                execution: None,
                 claim,
                 verdict: ClaimVerdict::Supported,
                 confidence: 0.9,

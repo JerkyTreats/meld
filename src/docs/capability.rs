@@ -24,7 +24,6 @@ use crate::execution::{ExecutionEventContext, ExecutionRuntimeContext};
 use crate::provider::executor::{execute_completion, prepare_provider_for_request};
 use crate::provider::ProviderExecutionBinding;
 use crate::task::{ArtifactProducerRef, ArtifactRecord};
-use meld_execution::error::TERMINAL_CAPABILITY_FAILURE_MARKER;
 
 pub const INSPECT_SCOPE: &str = "docs.inspect_scope";
 pub const DRAFT_PATCH_SET: &str = "docs.draft_patch_set";
@@ -98,6 +97,7 @@ pub struct DocsPublicationReceipt {
 #[derive(Debug, Clone)]
 pub struct InspectScopeCapability {
     config: DocsCapabilityConfig,
+    policy: DocsClaimPolicy,
 }
 
 #[derive(Debug, Clone)]
@@ -119,8 +119,8 @@ pub struct PublishPatchSetCapability {
 }
 
 impl InspectScopeCapability {
-    pub fn new(config: DocsCapabilityConfig) -> Self {
-        Self { config }
+    pub fn new(config: DocsCapabilityConfig, policy: DocsClaimPolicy) -> Self {
+        Self { config, policy }
     }
 }
 
@@ -159,7 +159,11 @@ impl CapabilityInvoker for InspectScopeCapability {
         _event_context: Option<&ExecutionEventContext>,
     ) -> Result<CapabilityInvocationResult, ApiError> {
         payload.validate_against(runtime_init)?;
-        let bundle = inspect_scope(&self.config.target_root).map_err(terminalize_docs_error)?;
+        let bundle = super::observation::inspect_scope_selected(
+            &self.config.target_root,
+            self.policy.semantics()?.scope()?,
+        )
+        .map_err(terminalize_docs_error)?;
         Ok(single_artifact(
             payload,
             runtime_init,
@@ -427,7 +431,7 @@ pub fn register_exact_contracts(
     claim_policy.validate()?;
     let mut registered = 0;
     registered += register_exact(
-        InspectScopeCapability::new(config.clone()),
+        InspectScopeCapability::new(config.clone(), claim_policy.clone()),
         exact_contracts,
         catalog,
         registry,
@@ -490,9 +494,8 @@ fn terminalize_docs_error(error: ApiError) -> ApiError {
         | ApiError::ProviderRateLimit(_)
         | ApiError::StorageError(_)
         | ApiError::GenerationFailed(_)) => retryable,
-        terminal => {
-            ApiError::ConfigError(format!("{TERMINAL_CAPABILITY_FAILURE_MARKER}: {terminal}"))
-        }
+        terminal @ ApiError::TerminalCapabilityFailure(_) => terminal,
+        terminal => ApiError::TerminalCapabilityFailure(Box::new(terminal)),
     }
 }
 
@@ -548,6 +551,7 @@ fn single_artifact(
     }
 }
 
+#[cfg(test)]
 pub use super::observation::inspect_scope;
 
 pub(crate) async fn draft_patch_set<
@@ -559,6 +563,7 @@ pub(crate) async fn draft_patch_set<
     bundle: &DocsEvidenceBundle,
     event_context: Option<&ExecutionEventContext>,
 ) -> Result<DocsPatchSet, ApiError> {
+    super::observation::validate_selected_scope(policy, bundle)?;
     policy.validate()?;
     let mut child_readmes = BTreeMap::<String, String>::new();
     let mut patches = Vec::new();
@@ -574,11 +579,7 @@ pub(crate) async fn draft_patch_set<
                 )
             })
             .collect::<String>();
-        let readme_path = if directory.path == "." {
-            "README.md".to_string()
-        } else {
-            format!("{}/README.md", directory.path)
-        };
+        let readme_path = policy.semantics()?.scope()?.document_path(&directory.path);
         let current_readme = bundle.observation.as_ref().and_then(|observation| {
             observation.readmes.iter().find_map(|readme| {
                 if readme.path != readme_path {
@@ -720,7 +721,7 @@ pub(super) fn publish_patch_set(
 ) -> Result<DocsPublicationReceipt, ApiError> {
     verify_validated_patch_set(policy, patches)?;
     let root = root.canonicalize().map_err(io_error)?;
-    let bundle = inspect_scope(&root)?;
+    let bundle = super::observation::inspect_scope_selected(&root, policy.semantics()?.scope()?)?;
     if bundle.source_fingerprint != patches.source_fingerprint {
         return Err(ApiError::ConfigError(
             "docs source changed after claim validation".into(),
@@ -729,7 +730,7 @@ pub(super) fn publish_patch_set(
     super::claim_validation::verify_publication_evidence(&bundle, patches)?;
     let mut published = Vec::new();
     for patch in &patches.patches {
-        let relative = safe_readme_path(&patch.path)?;
+        let relative = safe_document_path(&patch.path, policy.semantics()?.scope()?)?;
         let destination = root.join(&relative);
         let parent = destination.parent().ok_or_else(|| {
             ApiError::ConfigError(format!("README path '{}' has no parent", patch.path))
@@ -826,13 +827,16 @@ fn replace_readme(
     Ok(())
 }
 
-fn safe_readme_path(path: &str) -> Result<PathBuf, ApiError> {
+fn safe_document_path(
+    path: &str,
+    scope: &super::scope::DocsScopePolicy,
+) -> Result<PathBuf, ApiError> {
     let relative = PathBuf::from(path);
     if relative.is_absolute()
         || relative
             .components()
             .any(|component| !matches!(component, Component::Normal(_)))
-        || relative.file_name().and_then(|name| name.to_str()) != Some("README.md")
+        || relative.file_name().and_then(|name| name.to_str()) != Some(scope.document_name.as_str())
     {
         return Err(ApiError::ConfigError(format!(
             "invalid managed README path '{path}'"
@@ -907,6 +911,7 @@ mod tests {
         let assessments = extract_claims("README.md", &content)
             .into_iter()
             .map(|claim| ClaimAssessment {
+                execution: None,
                 claim,
                 verdict: ClaimVerdict::Supported,
                 confidence: 1.0,
@@ -1274,8 +1279,16 @@ mod tests {
 
     #[test]
     fn publication_rejects_paths_outside_the_target() {
-        assert!(safe_readme_path("../README.md").is_err());
-        assert!(safe_readme_path("docs/notes.md").is_err());
+        assert!(safe_document_path(
+            "../README.md",
+            claim_policy().semantics().unwrap().scope().unwrap()
+        )
+        .is_err());
+        assert!(safe_document_path(
+            "docs/notes.md",
+            claim_policy().semantics().unwrap().scope().unwrap()
+        )
+        .is_err());
     }
 
     #[test]
@@ -1288,15 +1301,12 @@ mod tests {
     #[test]
     fn deterministic_docs_failure_is_terminal_but_provider_transport_can_retry() {
         let terminal = terminalize_docs_error(ApiError::ConfigError("invalid claims".to_string()));
-        assert!(terminal
-            .to_string()
-            .contains(TERMINAL_CAPABILITY_FAILURE_MARKER));
+        assert!(matches!(terminal, ApiError::TerminalCapabilityFailure(_)));
 
-        let retryable =
-            terminalize_docs_error(ApiError::ProviderRequestFailed("offline".to_string()));
-        assert!(!retryable
-            .to_string()
-            .contains(TERMINAL_CAPABILITY_FAILURE_MARKER));
+        let retryable = terminalize_docs_error(ApiError::ProviderRequestFailed(
+            "upstream says Terminal capability failure: Workflow gate 'foreign' failed".into(),
+        ));
+        assert!(matches!(retryable, ApiError::ProviderRequestFailed(_)));
     }
 
     #[test]

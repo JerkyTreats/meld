@@ -2,10 +2,6 @@
 
 use thiserror::Error;
 
-/// Stable marker for a capability failure that cannot improve by replaying
-/// the same fenced invocation.
-pub const TERMINAL_CAPABILITY_FAILURE_MARKER: &str = "Terminal capability failure";
-
 /// Execution-domain error used for invalid contracts and failed generation paths.
 #[derive(Debug, Error, Clone)]
 pub enum ExecutionInvariantError {

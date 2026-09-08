@@ -109,6 +109,16 @@ impl meld_execution::ProviderExecutionPort for RecordingProvider {
                     .to_string()
             }
             "docs-claim-validation" => {
+                let context = input["readme_context"]
+                    .as_str()
+                    .expect("full captured README context");
+                assert_eq!(
+                    blake3::hash(context.as_bytes()).to_hex().as_str(),
+                    input["readme_content_hash"].as_str().unwrap()
+                );
+                for claim in input["claims"].as_array().unwrap() {
+                    assert!(context.contains(claim["statement"].as_str().unwrap()));
+                }
                 let supported = !(instruction.contains("reject all")
                     || self.reject_first && request.retry_count == 0);
                 let assessments = input["claims"].as_array().unwrap().iter().map(|claim| serde_json::json!({
@@ -336,6 +346,38 @@ async fn installed_instructions_reach_real_provider_paths_and_change_judgments()
         .await
         .unwrap();
         products.push((sources, claims, correspondence));
+    }
+    for (source, readmes, correspondence) in &products {
+        let source_execution = source.files[0].execution.as_ref().unwrap();
+        assert_eq!(source_execution.reported_model, "recording-model");
+        assert_eq!(source_execution.requested_model, "recording-model");
+        source_execution
+            .validate(Some(&source.policy_identity))
+            .unwrap();
+        let crate::docs::claim_observation::ObservedClaimDisposition::Assessed { report } =
+            &readmes.readmes[0].disposition
+        else {
+            panic!("expected assessed README")
+        };
+        let claim_execution = report.assessments[0].execution.as_ref().unwrap();
+        let correspondence_execution = correspondence.readmes[0].execution.as_ref().unwrap();
+        assert_ne!(
+            source_execution.request_identity,
+            claim_execution.request_identity
+        );
+        assert_ne!(
+            source_execution.execution_id,
+            correspondence_execution.execution_id
+        );
+        let restored = serde_json::from_slice::<crate::docs::source_claims::DocsSourceClaimReport>(
+            &serde_json::to_vec(source).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(&restored, source);
+        restored.validate_capture(&bundle).unwrap();
+        let mut tampered = restored;
+        tampered.files[0].execution.as_mut().unwrap().reported_model = "foreign-model".into();
+        assert!(tampered.validate_capture(&bundle).is_err());
     }
     assert_eq!(products[0].0.files[0].claims.len(), 1);
     assert_eq!(products[1].0.files[0].claims.len(), 2);
@@ -607,4 +649,146 @@ async fn installed_repair_responses_choose_refusal_revision_or_pruning() {
     unsupported["semantic_theory"]["repair_actions"] =
         serde_json::json!(["unimplemented_response"]);
     assert!(serde_json::from_value::<DocsClaimPolicy>(unsupported).is_err());
+}
+
+#[tokio::test]
+async fn installed_scope_controls_capture_comparison_and_publication() {
+    use crate::docs::observation::{inspect_scope_selected, validate_selected_scope};
+    use crate::docs::scope::DocsSourceComparison;
+    let root = tempfile::tempdir().unwrap();
+    for directory in ["child", ".visible", "excluded"] {
+        std::fs::create_dir(root.path().join(directory)).unwrap();
+        std::fs::write(
+            root.path().join(directory).join("lib.rs"),
+            "pub fn run() {}\n",
+        )
+        .unwrap();
+    }
+    std::fs::write(root.path().join("lib.rs"), "pub fn run() {}\n").unwrap();
+    let mut selected = policy();
+    let scope = selected
+        .semantic_theory
+        .as_mut()
+        .unwrap()
+        .scope
+        .as_mut()
+        .unwrap();
+    scope.document_name = "GUIDE.md".into();
+    scope.exclude_hidden_directories = false;
+    scope.excluded_directory_names.insert("excluded".into());
+    scope.comparison = DocsSourceComparison::DirectDirectoryV1;
+    let store =
+        DocsClaimPolicyRegistryStore::new(sled::Config::new().temporary(true).open().unwrap())
+            .unwrap();
+    let (_, revision) = store.install(selected, 1).unwrap();
+    let selected = &revision.policy;
+    let bundle =
+        inspect_scope_selected(root.path(), selected.semantics().unwrap().scope().unwrap())
+            .unwrap();
+    let paths = bundle
+        .observation
+        .as_ref()
+        .unwrap()
+        .readmes
+        .iter()
+        .map(|readme| readme.path.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(paths, [".visible/GUIDE.md", "GUIDE.md", "child/GUIDE.md"]);
+    assert!(validate_selected_scope(&policy(), &bundle).is_err());
+    let config = config(root.path());
+    let api = RecordingProvider::default();
+    let judge = ProviderDocsClaimJudge {
+        api: &api,
+        config: &config,
+        event_context: None,
+    };
+    let sources = crate::docs::source_claims::advance_source_claims(
+        &judge,
+        selected,
+        &bundle,
+        None,
+        usize::MAX,
+    )
+    .await
+    .unwrap();
+    let correspondence = crate::docs::correspondence::advance_correspondence(
+        &judge,
+        selected,
+        &bundle,
+        &sources,
+        None,
+        usize::MAX,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        correspondence
+            .readmes
+            .iter()
+            .find(|readme| readme.path == "GUIDE.md")
+            .unwrap()
+            .claims
+            .len(),
+        1
+    );
+    let patches = draft_patch_set(&api, &config, selected, &bundle, None)
+        .await
+        .unwrap();
+    let validated = validate_patch_set(&api, &config, selected, &bundle, &patches, None)
+        .await
+        .unwrap();
+    let receipt =
+        crate::docs::capability::publish_patch_set(root.path(), selected, &validated).unwrap();
+    assert_eq!(receipt.published.len(), 3);
+    for published in &receipt.published {
+        assert!(published.path.ends_with("GUIDE.md"));
+        assert!(root.path().join(&published.path).is_file());
+    }
+    assert!(!root.path().join("README.md").exists());
+    assert!(!root.path().join("excluded/GUIDE.md").exists());
+    assert!(
+        crate::docs::capability::publish_patch_set(root.path(), &policy(), &validated).is_err()
+    );
+    let captured =
+        inspect_scope_selected(root.path(), selected.semantics().unwrap().scope().unwrap())
+            .unwrap();
+    let reopened = serde_json::from_slice(&serde_json::to_vec(&captured).unwrap()).unwrap();
+    validate_selected_scope(selected, &reopened).unwrap();
+    assert_eq!(captured, reopened);
+}
+
+#[test]
+fn scope_changes_invalidate_observation_identity_and_missing_selection_cannot_write() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("lib.rs"), "pub fn run() {}\n").unwrap();
+    let first = inspect_scope(root.path()).unwrap();
+    let mut selected = policy();
+    selected
+        .semantic_theory
+        .as_mut()
+        .unwrap()
+        .scope
+        .as_mut()
+        .unwrap()
+        .comparison = crate::docs::scope::DocsSourceComparison::DirectDirectoryV1;
+    let second = crate::docs::observation::inspect_scope_selected(
+        root.path(),
+        selected.semantics().unwrap().scope().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(first.source_fingerprint, second.source_fingerprint);
+    assert_ne!(
+        first.observation.unwrap().revision_id,
+        second.observation.unwrap().revision_id
+    );
+    selected.semantic_theory.as_mut().unwrap().scope = None;
+    assert!(selected.validate().is_err());
+}
+
+#[test]
+fn model_output_cannot_author_execution_provenance() {
+    let fake = serde_json::json!({"complete":true,"claims":[],"no_claims_reason":"empty source", "execution":{"reported_model":"trusted-model"}});
+    assert!(
+        serde_json::from_value::<crate::docs::source_claims::ProposedSourceClaims>(fake).is_err()
+    );
 }

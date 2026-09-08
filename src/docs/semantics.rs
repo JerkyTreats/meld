@@ -11,6 +11,9 @@ use crate::provider::{ChatMessage, MessageRole};
 #[serde(deny_unknown_fields)]
 pub struct DocsSemanticTheory {
     pub schema_version: u32,
+    /// Historical revisions can be read, but cannot author new observations without scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<super::scope::DocsScopePolicy>,
     pub source_extraction: String,
     pub readme_judgment: String,
     pub correspondence: String,
@@ -74,6 +77,7 @@ impl DocsJudgmentOperation {
 impl DocsSemanticTheory {
     pub fn validate(&self) -> Result<(), ApiError> {
         self.repair_actions()?;
+        self.scope()?.validate()?;
         if self.schema_version != 1 {
             return Err(invalid("unsupported Docs semantic theory schema"));
         }
@@ -95,6 +99,12 @@ impl DocsSemanticTheory {
             return Err(invalid("Docs semantic theory repeats a guard operator"));
         }
         Ok(())
+    }
+
+    pub(crate) fn scope(&self) -> Result<&super::scope::DocsScopePolicy, ApiError> {
+        self.scope
+            .as_ref()
+            .ok_or_else(|| invalid("Docs theory requires an explicit scope selection"))
     }
 
     pub(crate) fn repair_actions(&self) -> Result<&[DocsRepairAction], ApiError> {

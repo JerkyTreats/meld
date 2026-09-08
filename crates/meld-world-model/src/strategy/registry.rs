@@ -171,6 +171,21 @@ pub fn validate_strategy_theory_package(
         }
     }
     for rule in &package.snapshot.settlement_rules {
+        if rule
+            .repeat_on_changed_owners
+            .iter()
+            .any(|owner| owner.trim().is_empty())
+            || rule
+                .repeat_on_changed_owners
+                .iter()
+                .collect::<BTreeSet<_>>()
+                .len()
+                != rule.repeat_on_changed_owners.len()
+        {
+            return Err(StorageError::InvalidPath(
+                "Repeated-work owner selection must name distinct nonempty owners".into(),
+            ));
+        }
         let mut ordering = BTreeSet::new();
         for constraint in &rule.task_ordering {
             if constraint.before_contract_id == constraint.after_contract_id

@@ -34,7 +34,10 @@
           "outcome_contract_id": "docs.patch_set_published.v1",
           "evidence_schema_id": "docs_required_coverage_v1"
         },
-        "epistemic_placement": "confirmation"
+        "epistemic_placement": "confirmation",
+        "repeat_on_changed_owners": [
+          "docs"
+        ]
       }
     ]
   },

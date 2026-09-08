@@ -9,6 +9,7 @@ pub mod claim_observation;
 pub mod claim_validation;
 pub mod contribution;
 pub mod correspondence;
+pub mod judgment;
 pub mod observation;
 pub mod observation_store;
 /// Regression fixture for the retired hand-composed docs image.
@@ -17,6 +18,7 @@ pub mod pds;
 pub mod publication;
 pub(crate) mod publication_return;
 pub(crate) mod runtime;
+pub mod scope;
 pub mod semantics;
 pub mod source_claims;
 pub mod theory;

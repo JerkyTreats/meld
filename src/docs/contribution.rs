@@ -161,7 +161,10 @@ impl CapabilityInvokerFactory for DocsInvokerFactory {
         let invoker: Arc<
             dyn CapabilityInvoker<Error = ApiError, ExecutionApi = dyn ExecutionRuntimeContext>,
         > = match self.capability_type_id.as_str() {
-            INSPECT_SCOPE => Arc::new(InspectScopeCapability::new(config)),
+            INSPECT_SCOPE => Arc::new(InspectScopeCapability::new(
+                config,
+                selected_claim_policy(bindings)?,
+            )),
             DRAFT_PATCH_SET => Arc::new(DraftPatchSetCapability::new(
                 config,
                 selected_claim_policy(bindings)?,
@@ -212,6 +215,12 @@ mod tests {
             .unwrap()
             .revision_ref();
         let implementation = format!("docs.in-process.v1::{INSPECT_SCOPE}");
+        let policy = crate::docs::claim_observation::test_support::policy();
+        let revision = DocsClaimPolicyRevision {
+            content_identity: policy.content_identity(),
+            policy,
+            installed_at_seq: 1,
+        };
         let closure = inventory
             .prepare(
                 ExactCapabilityActivationRequest {
@@ -221,11 +230,15 @@ mod tests {
                     selected_implementations: BTreeMap::from([(contract, implementation)]),
                     compatibility_policy_revision: "capability-compatibility.v1".into(),
                 },
-                &OwnerBindingView::new(BTreeMap::from([
-                    (WORKSPACE_BINDING.to_string(), "/tmp".to_string()),
-                    (SUBJECT_BINDING.to_string(), "docs".to_string()),
-                    (AGENT_BINDING.to_string(), "agent".to_string()),
-                ])),
+                &bind_claim_policy(
+                    OwnerBindingView::new(BTreeMap::from([
+                        (WORKSPACE_BINDING.to_string(), "/tmp".to_string()),
+                        (SUBJECT_BINDING.to_string(), "docs".to_string()),
+                        (AGENT_BINDING.to_string(), "agent".to_string()),
+                    ])),
+                    &revision,
+                )
+                .unwrap(),
             )
             .unwrap();
 

@@ -233,9 +233,5 @@ fn receipt_result(
 }
 
 fn invalid(message: impl Into<String>) -> ApiError {
-    ApiError::ConfigError(format!(
-        "{}: {}",
-        meld_execution::error::TERMINAL_CAPABILITY_FAILURE_MARKER,
-        message.into()
-    ))
+    ApiError::TerminalCapabilityFailure(Box::new(ApiError::ConfigError(message.into())))
 }
