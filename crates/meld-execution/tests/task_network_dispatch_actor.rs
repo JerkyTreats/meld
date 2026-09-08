@@ -50,6 +50,14 @@ impl TaskNetworkCommandPort for ReadOnlyNetwork {
 }
 
 impl AdmissionGenerationObserver for MutableGenerationObserver {
+    fn admission_closed(&self, attribution: &TaskAdmissionAttribution) -> Result<bool, String> {
+        Ok(self
+            .generation
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|generation| generation != &attribution.activation_generation))
+    }
     fn active_generation(&self, _agent_id: &str) -> Result<Option<String>, String> {
         Ok(self.generation.lock().unwrap().clone())
     }
@@ -705,7 +713,7 @@ fn admitted_task_with_stale_generation_is_denied_before_claim() {
 }
 
 #[test]
-fn existing_actor_observes_activation_generation_change_before_claim() {
+fn closed_admission_returns_unstarted_work_without_invocation() {
     let fixture = DispatchFixture::new();
     let policy = authority_policy();
     let generation = Arc::new(Mutex::new(Some("generation-v1".to_string())));
@@ -722,11 +730,22 @@ fn existing_actor_observes_activation_generation_change_before_claim() {
 
     let report = block_on(actor.tick(&mut store, tick_request(1, 1))).unwrap();
 
-    assert!(report.fatal_errors.iter().any(|issue| {
-        issue.code == "effective_authority_denied"
-            && issue.message.contains("activation generation")
-    }));
-    assert!(store.state().claims.is_empty());
+    assert!(report.fatal_errors.is_empty(), "{report:?}");
+    assert_eq!(store.state().claims.len(), 1);
+    let claim = store.state().claims.values().next().unwrap();
+    assert!(claim.refusal.is_some());
+    assert!(fixture.claim_invocations().is_empty());
+    let outcome = store.state().outcomes.values().next().unwrap();
+    assert_eq!(outcome.status, OutcomeStatus::Failed);
+    assert_eq!(
+        outcome.error.as_deref(),
+        Some(claim.refusal.as_ref().unwrap().reason())
+    );
+    assert!(outcome.artifact_records.is_empty());
+    assert!(outcome.task_events.is_empty());
+    let revision = store.state().revision;
+    block_on(actor.tick(&mut store, tick_request(2, 1))).unwrap();
+    assert_eq!(store.state().revision, revision);
 }
 
 #[test]
@@ -748,4 +767,79 @@ fn admitted_task_requires_matching_live_policy_and_generation() {
     assert_eq!(fixture.claim_invocations(), vec![task_instance_id]);
     let outcome = store.state().outcomes.values().next().unwrap();
     assert_eq!(outcome.admission, expected_admission);
+}
+
+#[test]
+fn refusal_resumes_after_reopen_and_cannot_become_execution_evidence() {
+    use meld_execution::task_network::store::SledTaskNetworkStore;
+    let root = tempfile::tempdir().unwrap();
+    let fixture = DispatchFixture::new();
+    let actor = fixture.actor(open_db());
+    {
+        let mut store = task_network_support::sled_store_with_one_committed_task(&root);
+        let id = store.state().tasks.keys().next().unwrap().clone();
+        let command = task_network_support::apply_sled_command(
+            &store,
+            "refuse",
+            Command::RefuseReadyTask(DispatchRequest {
+                claim_id: "refusal".into(),
+                task_instance_id: id,
+                worker_id: "worker-a".into(),
+                idempotency_key: "refusal".into(),
+            }),
+        );
+        assert!(matches!(
+            store.submit(command).unwrap(),
+            Response::Accepted { .. }
+        ));
+    }
+    let mut store =
+        SledTaskNetworkStore::open(sled::open(root.path()).unwrap(), "network-docs").unwrap();
+    let claim = store.state().claims["refusal"].clone();
+    let mut forged =
+        task_network_support::outcome_for_claim("forged", &claim.task_instance_id, &claim);
+    let command = task_network_support::apply_sled_command(
+        &store,
+        "forged-success",
+        Command::RecordTaskOutcome(forged.clone()),
+    );
+    assert!(matches!(
+        store.submit(command).unwrap(),
+        Response::Rejected(_)
+    ));
+    forged.status = OutcomeStatus::Failed;
+    forged.error = Some(claim.refusal.as_ref().unwrap().reason().into());
+    forged.artifact_records = vec![claim_artifact(&claim)];
+    let command = task_network_support::apply_sled_command(
+        &store,
+        "forged-artifact",
+        Command::RecordTaskOutcome(forged),
+    );
+    assert!(matches!(
+        store.submit(command).unwrap(),
+        Response::Rejected(_)
+    ));
+    assert!(
+        meld_execution::task_network::dispatch::build_executor_for_claim(
+            &store.state().tasks[&claim.task_instance_id],
+            &claim,
+            meld_execution::task_network::initialization::materialize_task_initialization(
+                store.state(),
+                &claim.task_instance_id,
+            )
+            .unwrap()
+            .payload,
+            "refused",
+        )
+        .is_err()
+    );
+    let returned = block_on(actor.tick(&mut store, tick_request(1, 1))).unwrap();
+    assert!(returned.fatal_errors.is_empty(), "{returned:?}");
+    assert!(fixture.claim_invocations().is_empty());
+    assert_eq!(store.state().outcomes.len(), 1);
+    let accepted = store.state().clone();
+    drop(store);
+    let reopened =
+        SledTaskNetworkStore::open(sled::open(root.path()).unwrap(), "network-docs").unwrap();
+    assert_eq!(reopened.state(), &accepted);
 }

@@ -7,6 +7,7 @@ mod verification;
 
 pub use contracts::*;
 pub use registry::*;
+pub(crate) use search::interrupted_history_entry;
 pub use search::{search, search_successor};
 pub use verification::{verify_plan, verify_successor_plan};
 

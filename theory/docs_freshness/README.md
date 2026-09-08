@@ -39,6 +39,8 @@ The policy's `response_formats` declare the provider response contracts. `x-meld
 
 `x-meld-map-from-field` requires one response slot per captured claim identity, and `x-meld-enum-from-field` limits references to the captured claim set. Required-field order supplies generation order to grammar-backed providers without changing durable JSON identity. Drafting and revision receive the frozen current README so repairs can retain correct content. Low-confidence judgments remain unaccepted evidence; they do not become successful claims through response formatting.
 
+The selected guards check exact literals and code lines. Semantic entailment belongs to the configured judge with exact citations. The package does not select word-overlap scoring: that heuristic rejected accurate descriptions even when every constant had an exact source quotation. Required coverage and all declared acceptance thresholds still apply.
+
 The old bundled `docs_writer_thread_v1` Workflow and `docs_writer` task package are no longer installed by `meld init` or embedded as an Execution fallback. This package is their maintained-Docs successor. Legacy Workflow execution is retired. Existing profiles remain inspectable, but CLI, context, watch and control no longer execute their turns. Their stored output does not establish native Docs satisfaction. Arbitrary profiles are not automatically translated into this maintained intent.
 
 You can also request an independent reconciliation of the installed intent:

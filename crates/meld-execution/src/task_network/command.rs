@@ -57,6 +57,9 @@ pub enum Command {
     ApplyMutationSet(mutation::Set),
     /// Claims one ready task before task runtime execution.
     ClaimReadyTask(dispatch::Request),
+    /// Reserve an unstarted Task only to record refusal under a closed admission.
+    /// This reservation cannot invoke capabilities or produce successful output.
+    RefuseReadyTask(dispatch::Request),
     /// Attach ready work after proving exact materialized input compatibility.
     ShareReadyWork(Box<super::sharing::ReadyWorkSharing>),
     /// Records a fenced task runtime outcome.

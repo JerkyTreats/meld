@@ -156,6 +156,15 @@ pub trait AdmissionGenerationObserver: Send + Sync {
     /// Return the currently active generation for one attributed Agent.
     fn active_generation(&self, agent_id: &str) -> Result<Option<String>, String>;
 
+    /// Prove permanent closure of this exact admission. Unavailable or missing
+    /// authority is not proof of closure and must keep work unresolved.
+    fn admission_closed(
+        &self,
+        _attribution: &crate::task_network::TaskAdmissionAttribution,
+    ) -> Result<bool, String> {
+        Ok(false)
+    }
+
     /// Recheck the whole admission fence in one owner observation.
     fn validates_admission(
         &self,
@@ -586,6 +595,27 @@ where
         )
     }
 
+    /// Only the bound lifecycle observer can establish a closed admission.
+    /// Missing observers, foreign attribution and observation errors remain unresolved.
+    fn admission_is_closed(&self, state: &NetworkState, node: &TaskNode) -> Result<bool, String> {
+        let Some(observer) = &self.admission_generation_observer else {
+            return Ok(false);
+        };
+        let mut closed = false;
+        for member in std::iter::once(node).chain(state.shared_steps.values().filter_map(|step| {
+            step.sharing
+                .as_ref()
+                .filter(|decision| decision.shared_node_id == node.task_instance_id)
+                .map(|_| &step.task_node)
+        })) {
+            validate_task_admission_attribution(state, member)?;
+            if let Some(admission) = &member.lineage.admission {
+                closed |= observer.admission_closed(admission)?;
+            }
+        }
+        Ok(closed)
+    }
+
     /// Returns the stable actor id used in reports.
     pub fn actor_id(&self) -> &str {
         &self.actor_id
@@ -698,17 +728,25 @@ where
                 .get(task_instance_id)
                 .ok_or_else(|| format!("ready task '{task_instance_id}' is absent"))
                 .and_then(|node| self.validate_task_authority(state, node));
+            let refuse = authority_check.is_err()
+                && state
+                    .tasks
+                    .get(task_instance_id)
+                    .is_some_and(|node| self.admission_is_closed(state, node) == Ok(true));
             if let Err(error) = authority_check {
-                report.fatal(
-                    Some(task_instance_id.clone()),
-                    "effective_authority_denied",
-                    error,
-                );
-                continue;
+                if !refuse {
+                    report.fatal(
+                        Some(task_instance_id.clone()),
+                        "effective_authority_denied",
+                        error,
+                    );
+                    continue;
+                }
             }
             *remaining -= 1;
             report.items_attempted += 1;
-            let Some(claim) = self.claim_ready_task(network, task_instance_id, report) else {
+            let Some(claim) = self.claim_ready_task(network, task_instance_id, refuse, report)
+            else {
                 continue;
             };
             self.execute_claimed_task(network, &claim, false, report)
@@ -813,6 +851,7 @@ where
         &self,
         network: &mut N,
         task_instance_id: &str,
+        refuse: bool,
         report: &mut DispatchTickReport,
     ) -> Option<Claim> {
         let (claim_id, command) = {
@@ -840,7 +879,11 @@ where
             let command = command_request(
                 state,
                 format!("{claim_id}::rev{}", state.revision),
-                Command::ClaimReadyTask(request),
+                if refuse {
+                    Command::RefuseReadyTask(request)
+                } else {
+                    Command::ClaimReadyTask(request)
+                },
             );
             (claim_id, command)
         };
@@ -942,19 +985,34 @@ where
             );
             return;
         }
-        let invocation = match self.validate_task_authority(network.network_state(), &node) {
-            Ok(()) => {
-                self.claim_invoker
-                    .invoke_claimed_task(&node, claim, &init_payload)
+        let invocation = if let Some(refusal) = &claim.refusal {
+            Ok(ClaimedInvocationOutcome::Failed {
+                error: refusal.reason().into(),
+            })
+        } else {
+            match self.validate_task_authority(network.network_state(), &node) {
+                Ok(()) => {
+                    self.claim_invoker
+                        .invoke_claimed_task(&node, claim, &init_payload)
+                        .await
+                }
+                Err(error) if resumed => match self
+                    .claim_invoker
+                    .recover_claimed_task(&node, claim, &init_payload)
                     .await
-            }
-            Err(error) if resumed => match self
-                .claim_invoker
-                .recover_claimed_task(&node, claim, &init_payload)
-                .await
-            {
-                Ok(Some(outcome)) => Ok(outcome),
-                Ok(None) => {
+                {
+                    Ok(Some(outcome)) => Ok(outcome),
+                    Ok(None) => {
+                        report.fatal(
+                            Some(claim.task_instance_id.clone()),
+                            "effective_authority_denied",
+                            error,
+                        );
+                        return;
+                    }
+                    Err(error) => Err(error),
+                },
+                Err(error) => {
                     report.fatal(
                         Some(claim.task_instance_id.clone()),
                         "effective_authority_denied",
@@ -962,15 +1020,6 @@ where
                     );
                     return;
                 }
-                Err(error) => Err(error),
-            },
-            Err(error) => {
-                report.fatal(
-                    Some(claim.task_instance_id.clone()),
-                    "effective_authority_denied",
-                    error,
-                );
-                return;
             }
         };
         let outcome = match invocation {

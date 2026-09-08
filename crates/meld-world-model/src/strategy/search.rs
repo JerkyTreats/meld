@@ -374,6 +374,9 @@ pub(crate) fn completed_task_history(
     history
         .iter()
         .filter(|entry| {
+            if interrupted_history_entry(entry, history) {
+                return false;
+            }
             matches!(&entry.product, Some(StrategyProduct::Task(task))
             if entry.product_id == task.task_id
                 && !entry.owner_position_id.is_empty()
@@ -381,6 +384,21 @@ pub(crate) fn completed_task_history(
                 && seen.insert(&entry.product_id)
         })
         .collect()
+}
+
+/// A later, more specific owner return can qualify a previously recorded terminal
+/// position without rewriting that immutable history as completed work.
+pub(crate) fn interrupted_history_entry(
+    entry: &StrategyCompletedHistoryEntry,
+    history: &[StrategyCompletedHistoryEntry],
+) -> bool {
+    matches!(entry.accepted_milestone, PlanMilestoneRequirement::ExecutionTerminal { .. })
+        && history.iter().any(|returned| {
+            returned.source_plan_revision_id == entry.source_plan_revision_id
+                && returned.product_id == entry.product_id
+                && matches!(&returned.accepted_milestone,
+                    PlanMilestoneRequirement::ExecutionInterrupted { task_id } if task_id == &entry.product_id)
+        })
 }
 
 pub(crate) fn confirmation_history<'a>(

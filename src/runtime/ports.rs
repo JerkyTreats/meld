@@ -929,6 +929,17 @@ impl ProductAgentExecutionPort {
             });
             let account = admission_discharge_account(network.state(), &admission.admission_id);
             let outcome_id = account.as_ref().map(|account| account.outcome_id.clone());
+            let interrupted_outcome_id = outcome_id
+                .as_ref()
+                .filter(|id| {
+                    network
+                        .state()
+                        .outcomes
+                        .get(*id)
+                        .and_then(|outcome| network.state().claims.get(&outcome.claim_id))
+                        .is_some_and(|claim| claim.refusal.is_some())
+                })
+                .cloned();
             let execution_publication_position_id = outcome_id.as_ref().and_then(|outcome_id| {
                 network
                     .state()
@@ -959,10 +970,16 @@ impl ProductAgentExecutionPort {
                 network_commit_revision,
                 outcome_id,
                 execution_publication_position_id,
+                interrupted_outcome_id,
             )
         };
-        let (admission, network_commit_revision, outcome_id, execution_publication_position_id) =
-            snapshot;
+        let (
+            admission,
+            network_commit_revision,
+            outcome_id,
+            execution_publication_position_id,
+            interrupted_outcome_id,
+        ) = snapshot;
         let decision = match admission.decision {
             TaskAdmissionDecision::Admitted => AgentExecutionAdmissionDecision::Admitted,
             TaskAdmissionDecision::Rejected { grounds } => {
@@ -971,6 +988,7 @@ impl ProductAgentExecutionPort {
             TaskAdmissionDecision::StaleFence { .. } => AgentExecutionAdmissionDecision::StaleFence,
         };
         Ok(Some(AgentExecutionPosition {
+            interrupted_outcome_id,
             authorization_id: authorization.authorization_id.clone(),
             admission_id: admission.admission_id,
             admission_decision: decision,
@@ -1037,6 +1055,34 @@ impl ProductAdmissionGenerationObserver {
 }
 
 impl AdmissionGenerationObserver for ProductAdmissionGenerationObserver {
+    fn admission_closed(
+        &self,
+        attribution: &meld_execution::task_network::TaskAdmissionAttribution,
+    ) -> Result<bool, String> {
+        let receipts = self
+            .agent_store
+            .genesis_receipts_for_assignment(&self.assignment_id)
+            .map_err(|error| error.to_string())?;
+        if !receipts
+            .iter()
+            .any(|receipt| receipt.agent_id == attribution.agent_id)
+        {
+            return Ok(false);
+        }
+        let Some(generation) = self
+            .lifecycle
+            .generation(&self.assignment_id, &attribution.activation_generation)
+            .map_err(|error| error.to_string())?
+        else {
+            return Ok(false);
+        };
+        Ok(generation.admission_epochs.iter().any(|epoch| {
+            Some(&epoch.epoch_id) == attribution.admission_epoch.as_ref()
+                && epoch.generation_id == attribution.activation_generation
+                && epoch.status == crate::runtime::lifecycle::AdmissionEpochStatus::Closed
+        }))
+    }
+
     fn active_generation(&self, agent_id: &str) -> Result<Option<String>, String> {
         Ok(self
             .observe_epoch(agent_id)?

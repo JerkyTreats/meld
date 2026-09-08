@@ -44,6 +44,9 @@ pub struct Request {
 /// Fenced dispatch claim persisted before task execution.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Claim {
+    /// A return-only reservation, never an operational attempt or effect grant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<UnstartedTaskRefusal>,
     /// Exact compatibility decisions frozen before this one operational attempt.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub shared_action_decision_ids: Vec<String>,
@@ -66,6 +69,29 @@ pub struct Claim {
     pub admission: Option<crate::task_network::state::TaskAdmissionAttribution>,
 }
 
+/// Native dispatch refusal before any capability invocation in this node.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UnstartedTaskRefusal {
+    /// The native lifecycle observer no longer permits this admitted work.
+    AdmissionClosed,
+}
+
+impl UnstartedTaskRefusal {
+    /// Stable explanation for a refusal return with no operational evidence.
+    pub fn reason(&self) -> &'static str {
+        match self {
+            Self::AdmissionClosed => "Task was not started because its admission epoch closed",
+        }
+    }
+
+    pub(crate) fn accepts_return(&self, outcome: &Outcome) -> bool {
+        outcome.status == OutcomeStatus::Failed
+            && outcome.error.as_deref() == Some(self.reason())
+            && outcome.artifact_records.is_empty()
+            && outcome.task_events.is_empty()
+    }
+}
+
 impl Claim {
     /// Builds the claim record for an accepted claim command.
     pub fn accepted(
@@ -76,6 +102,7 @@ impl Claim {
         admission: Option<crate::task_network::state::TaskAdmissionAttribution>,
     ) -> Self {
         Self {
+            refusal: None,
             shared_action_decision_ids: Vec::new(),
             claim_id: request.claim_id.clone(),
             network_id: network_id.into(),
@@ -156,6 +183,11 @@ pub fn build_executor_for_claim_with_artifact_repo(
 }
 
 fn validate_claim_matches_node(node: &TaskNode, claim: &Claim) -> Result<(), ApiError> {
+    if claim.refusal.is_some() {
+        return Err(ApiError::ConfigError(
+            "refused Task cannot execute capabilities".into(),
+        ));
+    }
     if node.task_instance_id != claim.task_instance_id
         || node.lifecycle_epoch != claim.lifecycle_epoch
     {

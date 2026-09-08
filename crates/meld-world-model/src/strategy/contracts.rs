@@ -223,6 +223,10 @@ pub enum PlanMilestoneRequirement {
     ExecutionNotAdmitted {
         task_id: String,
     },
+    /// Remaining admitted work was refused without invocation. No complete effect is proved.
+    ExecutionInterrupted {
+        task_id: String,
+    },
 }
 
 /// One independently complete executable product retained by Agent only.
@@ -254,6 +258,7 @@ impl StrategyTask {
     pub(crate) fn accounts_for_return(&self, milestone: &PlanMilestoneRequirement) -> bool {
         self.return_milestone.as_ref() == Some(milestone)
             || matches!(milestone, PlanMilestoneRequirement::ExecutionNotAdmitted { task_id }
+                | PlanMilestoneRequirement::ExecutionInterrupted { task_id }
                 if task_id == &self.task_id)
     }
 

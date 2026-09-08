@@ -332,11 +332,16 @@ where
             (node.clone(), init_payload.payload)
         };
 
-        let outcome = match self
-            .invoker
-            .invoke_composition_task(&node, claim, &init_payload)
-            .await
-        {
+        let invocation = if let Some(refusal) = &claim.refusal {
+            Ok(CompositionInvocationOutcome::Failed {
+                error: refusal.reason().into(),
+            })
+        } else {
+            self.invoker
+                .invoke_composition_task(&node, claim, &init_payload)
+                .await
+        };
+        let outcome = match invocation {
             Ok(CompositionInvocationOutcome::Completed(artifacts)) => {
                 match self.persist_claim_artifacts(claim, &artifacts)? {
                     ArtifactPersistence::Persisted => succeeded_outcome(claim, artifacts),

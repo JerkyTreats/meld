@@ -934,7 +934,8 @@ impl AgentReconciliationActor {
                         fence.activation_generation == authorization.activation_generation
                             && fence.admission_epoch == authorization.admission_epoch
                     })
-                    || authorization_completed(&authorization, &history)
+                    || (authorization_completed(&authorization, &history)
+                        && !matches!(authorization.product, AgentAuthorizedProduct::Task(_)))
                 {
                     continue;
                 }
@@ -984,6 +985,19 @@ impl AgentReconciliationActor {
                         let Some(position) = self.execution.observe(&authorization)? else {
                             continue;
                         };
+                        if authorization_completed(&authorization, &history)
+                            && (position.interrupted_outcome_id.is_none()
+                                || history.iter().any(|entry| {
+                                    entry.source_plan_revision_id == authorization.plan_revision_id
+                                        && entry.product_id == authorization.product_id
+                                        && matches!(
+                                            entry.accepted_milestone,
+                                            PlanMilestoneRequirement::ExecutionInterrupted { .. }
+                                        )
+                                }))
+                        {
+                            continue;
+                        }
                         if position.outcome_id.is_none()
                             && position.admission_decision
                                 == AgentExecutionAdmissionDecision::Admitted
@@ -2847,6 +2861,12 @@ impl GoalReconciliation<'_, '_> {
         report: &mut AgentReconciliationReport,
     ) -> Result<(), StorageError> {
         let refused = position.admission_decision != AgentExecutionAdmissionDecision::Admitted;
+        let interrupted = position.interrupted_outcome_id.is_some();
+        if interrupted && (refused || position.interrupted_outcome_id != position.outcome_id) {
+            return Err(StorageError::InvalidPath(
+                "Execution interruption has no exact admitted terminal return".into(),
+            ));
+        }
         match &position.admission_decision {
             AgentExecutionAdmissionDecision::Rejected { grounds } => {
                 report.waiting_on.push(waiting(
@@ -2864,7 +2884,11 @@ impl GoalReconciliation<'_, '_> {
             }
             AgentExecutionAdmissionDecision::Admitted => {}
         }
-        let state = if refused {
+        let state = if interrupted {
+            AgentProductState::Blocked {
+                reason: "Execution refused remaining unstarted work".into(),
+            }
+        } else if refused {
             AgentProductState::Blocked {
                 reason: "Execution refused Task intake".into(),
             }
@@ -2888,7 +2912,11 @@ impl GoalReconciliation<'_, '_> {
             },
             state,
         )?;
-        let required_return = if refused {
+        let required_return = if interrupted {
+            Some(PlanMilestoneRequirement::ExecutionInterrupted {
+                task_id: task.task_id.clone(),
+            })
+        } else if refused {
             Some(PlanMilestoneRequirement::ExecutionNotAdmitted {
                 task_id: task.task_id.clone(),
             })
@@ -2904,6 +2932,11 @@ impl GoalReconciliation<'_, '_> {
             return Ok(());
         };
         let return_position = match requirement {
+            PlanMilestoneRequirement::ExecutionInterrupted { task_id }
+                if interrupted && task_id == &task.task_id =>
+            {
+                position.interrupted_outcome_id.as_ref()
+            }
             PlanMilestoneRequirement::ExecutionTerminal { task_id } if task_id == &task.task_id => {
                 position.outcome_id.as_ref()
             }
@@ -3078,7 +3111,8 @@ fn product_completed(
     history: &[crate::strategy::StrategyCompletedHistoryEntry],
 ) -> bool {
     history.iter().any(|entry| {
-        entry.product_id == product_id
+        !crate::strategy::interrupted_history_entry(entry, history)
+            && entry.product_id == product_id
             && (plan.tasks.iter().any(|task| {
                 task.task_id == product_id
                     && task.accounts_for_return(&entry.accepted_milestone)
@@ -3087,6 +3121,7 @@ fn product_completed(
                     && (!matches!(
                         entry.accepted_milestone,
                         PlanMilestoneRequirement::ExecutionNotAdmitted { .. }
+                            | PlanMilestoneRequirement::ExecutionInterrupted { .. }
                     ) || entry.source_plan_revision_id == plan.plan_revision_id)
             }) || plan.epistemic_operations.iter().any(|operation| {
                 operation.product_id == product_id
@@ -3284,6 +3319,7 @@ mod tests {
                 ));
             }
             Ok(AgentExecutionPosition {
+                interrupted_outcome_id: None,
                 authorization_id: authorization.authorization_id.clone(),
                 admission_id: format!("admission::{}", authorization.authorization_id),
                 admission_decision: AgentExecutionAdmissionDecision::Admitted,
@@ -3745,6 +3781,13 @@ mod tests {
         history[0].accepted_milestone = task.return_milestone.clone().unwrap();
         history[0].owner_position_id = "native-execution-outcome".into();
         assert!(product_completed(&successor, &task.task_id, &history));
+        let mut interrupted = history[0].clone();
+        interrupted.accepted_milestone = PlanMilestoneRequirement::ExecutionInterrupted {
+            task_id: task.task_id.clone(),
+        };
+        history.push(interrupted);
+        assert!(product_completed(&predecessor, &task.task_id, &history));
+        assert!(!product_completed(&successor, &task.task_id, &history));
     }
 
     #[test]

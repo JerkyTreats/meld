@@ -166,8 +166,14 @@ impl InMemoryTaskNetworkStore {
                 )
             }
             command::Command::ClaimReadyTask(claim_request) => {
-                self.claim_ready_task(request.command_id, request_hash, claim_request)
+                self.claim_ready_task(request.command_id, request_hash, claim_request, None)
             }
+            command::Command::RefuseReadyTask(claim_request) => self.claim_ready_task(
+                request.command_id,
+                request_hash,
+                claim_request,
+                Some(dispatch::UnstartedTaskRefusal::AdmissionClosed),
+            ),
             command::Command::RecordTaskOutcome(outcome) => {
                 self.record_task_outcome(request.command_id, request_hash, outcome)
             }
@@ -444,6 +450,7 @@ impl InMemoryTaskNetworkStore {
         command_id: String,
         request_hash: String,
         request: dispatch::Request,
+        refusal: Option<dispatch::UnstartedTaskRefusal>,
     ) -> command::Response {
         let Some(node) = self.state.tasks.get(&request.task_instance_id) else {
             return self.record_response(
@@ -514,6 +521,7 @@ impl InMemoryTaskNetworkStore {
             revision,
             node.lineage.admission.clone(),
         );
+        claim.refusal = refusal;
         claim.shared_action_decision_ids =
             super::super::sharing::decision_ids_for_node(&self.state, &request.task_instance_id);
         self.state.statuses.insert(
@@ -552,6 +560,19 @@ impl InMemoryTaskNetworkStore {
                 }),
             );
         };
+        if claim
+            .refusal
+            .as_ref()
+            .is_some_and(|refusal| !refusal.accepts_return(&outcome))
+        {
+            return self.record_response(
+                command_id,
+                request_hash,
+                command::Response::Rejected(Rejection::InvalidLifecycleTransition(
+                    "refused Task cannot establish execution or artifact evidence".into(),
+                )),
+            );
+        }
 
         if claim.task_instance_id != outcome.task_instance_id
             || claim.lifecycle_epoch != outcome.lifecycle_epoch
@@ -937,6 +958,17 @@ impl InMemoryTaskNetworkStore {
                     return Err(decode_error("outcome journal record metadata mismatch"));
                 }
                 let outcome = &publication.outcome;
+                if self
+                    .state
+                    .claims
+                    .get(&outcome.claim_id)
+                    .and_then(|claim| claim.refusal.as_ref())
+                    .is_some_and(|refusal| !refusal.accepts_return(outcome))
+                {
+                    return Err(decode_error(
+                        "refused Task journal invents execution evidence",
+                    ));
+                }
                 match outcome.status {
                     OutcomeStatus::Succeeded => {
                         self.state.statuses.insert(
@@ -1207,6 +1239,7 @@ mod tests {
     #[test]
     fn replay_rejects_claim_record_network_mismatch_even_when_hash_matches_mutated_state() {
         let mismatched_claim = dispatch::Claim {
+            refusal: None,
             shared_action_decision_ids: Vec::new(),
             claim_id: "claim-alpha".to_string(),
             network_id: "other-network".to_string(),

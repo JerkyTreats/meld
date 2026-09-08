@@ -197,6 +197,9 @@ pub struct AgentConsumerReceipt {
 /// Exact Execution positions observed by Agent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentExecutionPosition {
+    /// Exact terminal return where Execution refused remaining, unstarted work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interrupted_outcome_id: Option<String>,
     pub authorization_id: String,
     pub admission_id: String,
     pub admission_decision: AgentExecutionAdmissionDecision,

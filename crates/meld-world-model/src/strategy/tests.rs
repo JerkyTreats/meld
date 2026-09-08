@@ -619,6 +619,25 @@ fn prove_confirmation_successor(placement: StrategyEpistemicPlacement, compound:
         search_successor(&request).recommendation,
         Some(successor.clone())
     );
+    if placement == StrategyEpistemicPlacement::Confirmation {
+        let mut interrupted = request.clone();
+        let mut return_history = interrupted.completed_history.clone();
+        for entry in &mut return_history {
+            entry.accepted_milestone = PlanMilestoneRequirement::ExecutionInterrupted {
+                task_id: entry.product_id.clone(),
+            };
+        }
+        // Preserve an earlier generic terminal receipt while applying the exact
+        // owner disposition that remaining work never ran.
+        interrupted.completed_history.extend(return_history);
+        let replacement = search_successor(&interrupted).recommendation.unwrap();
+        assert!(!replacement.plan.tasks.is_empty());
+        assert_ne!(replacement.plan.origin, StrategyPlanOrigin::Confirmation);
+        assert!(matches!(
+            verify_successor_plan(&interrupted, &replacement),
+            PlanVerification::Valid { .. }
+        ));
+    }
     if placement == StrategyEpistemicPlacement::GraphConfirmation {
         let mut terminal_only = request.clone();
         terminal_only.completed_history[0].accepted_milestone =

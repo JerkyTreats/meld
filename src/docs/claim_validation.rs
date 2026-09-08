@@ -1749,7 +1749,7 @@ mod tests {
             rationale: "supported".to_string(),
         }];
         apply_deterministic_guards(
-            &policy().semantics().unwrap().claim_guards,
+            &[DocsClaimGuard::ClauseTermCoverageV1],
             &EvidencePartitions {
                 inventory: String::new(),
                 direct: "Assumed that it is being run from the root\nset -e\nset +e\nwait"
@@ -1761,6 +1761,43 @@ mod tests {
 
         assert_eq!(assessments[0].verdict, ClaimVerdict::Unsupported);
         assert!(assessments[0].rationale.contains("every independent"));
+    }
+
+    #[test]
+    fn installed_theory_retains_exactly_cited_constants_without_lexical_overlap_policy() {
+        let installed: DocsClaimPolicy = serde_json::from_str(
+            &std::fs::read_to_string(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("theory/docs_freshness/claim_policy.docs-claims-strict-v1.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let evidence = EvidencePartitions {
+            inventory: "pricing.py".into(),
+            direct: "SHIPPING_CENTS = 500\nFREE_SHIPPING_MINIMUM_CENTS = 7000".into(),
+            descendant: String::new(),
+        };
+        let mut assessments = vec![ClaimAssessment {
+            claim: extract_claims("README.md", "- `pricing.py` defines two module-level integer constants: `SHIPPING_CENTS = 500` and `FREE_SHIPPING_MINIMUM_CENTS = 7000`.\n").remove(0),
+            verdict: ClaimVerdict::Supported, confidence: 1.0,
+            citations: evidence.direct.lines().map(|line| ClaimCitation { scope: CitationScope::Direct, quote: line.into() }).collect(),
+            rationale: "Both constants are exactly defined in the captured source".into(),
+        }];
+        validate_assessment_integrity(&assessments, Some(&evidence)).unwrap();
+        let mut lexical = assessments.clone();
+        apply_deterministic_guards(
+            &[DocsClaimGuard::ClauseTermCoverageV1],
+            &evidence,
+            &mut lexical,
+        );
+        assert_eq!(lexical[0].verdict, ClaimVerdict::Unsupported);
+        apply_deterministic_guards(
+            &installed.semantics().unwrap().claim_guards,
+            &evidence,
+            &mut assessments,
+        );
+        assert!(installed.accepts(&assessments).unwrap());
     }
 
     #[test]
