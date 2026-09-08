@@ -1,7 +1,7 @@
 //! CLI adapter for the world initialization command surface.
 //!
 //! Owner: root init. Parses the stage selection, resolves stage 0 inputs
-//! from XDG configuration, physical bindings, and the selected native package,
+//! from the selected CLI configuration, physical bindings, and the native package,
 //! guards that the addressed target workspace and the open product stores
 //! belong to the configured selection, and delegates to the crate-private
 //! world initialization pipeline. No runtime state is created under the target
@@ -17,7 +17,7 @@ use meld_world_model::PerspectiveKey;
 
 use crate::capability::{OwnerBindingView, ProductCapabilityInventory};
 use crate::config::{
-    AdapterPlacement, AssignedAgentPositionV1, ConfigLoader, OperationalLimits, PhysicalBinding,
+    AdapterPlacement, AssignedAgentPositionV1, MerkleConfig, OperationalLimits, PhysicalBinding,
     RuntimeIsolationRequirements, StewardshipActivationV1, StewardshipAssignmentV1,
 };
 use crate::error::ApiError;
@@ -50,13 +50,14 @@ const INIT_PROVENANCE: &str = "meld world init";
 
 /// Run world initialization stages 2 through 5 for the addressed target.
 ///
-/// Configuration resolves through the XDG config home only. The explicit
+/// Configuration is the same resolved value used to open the CLI runtime. The explicit
 /// `target_path` selects a declared workspace when one is required.
 /// The open product stores must belong to the selection's
 /// storage root, so the command can never initialize a world other than
 /// the one it addressed.
 pub fn run_world_init(
     assembly: &ProductRuntimeAssembly,
+    config: &MerkleConfig,
     target_path: &Path,
     stage_args: &[String],
     theory_source: Option<&Path>,
@@ -66,9 +67,7 @@ pub fn run_world_init(
         stages: parse_stage_args(stage_args)?,
     };
 
-    // Stage 0 inputs: XDG-only configuration and the physical binding.
-    let config = ConfigLoader::load_global()?;
-    let binding = PhysicalBinding::resolve_for_target(&config, target_path)?.ok_or_else(|| {
+    let binding = PhysicalBinding::resolve_for_target(config, target_path)?.ok_or_else(|| {
         ApiError::ConfigError(format!(
             "no stewardship declaration targets '{}'",
             target_path.display()

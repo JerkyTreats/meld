@@ -166,6 +166,120 @@ fn policy() -> DocsClaimPolicy {
     policy
 }
 
+#[test]
+fn keyed_response_contracts_bind_exact_input_identities() {
+    let format = serde_json::json!({"x-meld-map-from-field":{
+        "array":"/claims", "field":"/id", "value_schema":{
+            "type":"object", "properties":{"matches":{"type":"array","items":{
+                "type":"string","x-meld-enum-from-field":{"array":"/targets","field":"/id"}
+            }}}, "required":["matches"]
+        }
+    }});
+    let input = serde_json::json!({"claims":[{"id":"b"},{"id":"a"}],"targets":[{"id":"target"}]});
+    let bound = bind_evidence_choices(&format, &input).unwrap();
+    assert_eq!(bound["required"], serde_json::json!(["b", "a"]));
+    assert_eq!(bound["properties"].as_object().unwrap().len(), 2);
+    assert_eq!(
+        bound["properties"]["a"]["properties"]["matches"]["items"]["enum"],
+        serde_json::json!(["target"])
+    );
+    let duplicate =
+        serde_json::json!({"claims":[{"id":"a"},{"id":"a"}],"targets":[{"id":"target"}]});
+    assert!(bind_evidence_choices(&format, &duplicate).is_err());
+}
+
+#[test]
+fn evidence_choice_contracts_preserve_exact_text_without_inventing_citations() {
+    let format = serde_json::json!({"type":"string","maxLength":5,
+        "x-meld-enum-from-lines":["/source", "/empty"]});
+    let input = serde_json::json!({"source":"    αβγδεζη\nshort\nshort", "empty":""});
+    let bound = bind_evidence_choices(&format, &input).unwrap();
+    let choices = bound["enum"].as_array().unwrap();
+    assert_eq!(choices.len(), 3);
+    for choice in choices {
+        let quote = choice.as_str().unwrap();
+        assert!(input["source"].as_str().unwrap().contains(quote));
+        assert!(quote.chars().count() <= 5);
+    }
+    assert!(bound.get("x-meld-enum-from-lines").is_none());
+    assert!(bind_evidence_choices(&format, &serde_json::json!({"source":""})).is_err());
+    assert!(bind_evidence_choices(&format, &serde_json::json!({"source":"","empty":""})).is_err());
+    let missing_selection = serde_json::json!({"type":"string"});
+    assert_eq!(
+        bind_evidence_choices(&missing_selection, &input).unwrap(),
+        missing_selection
+    );
+    let conditional = serde_json::json!({"anyOf":[
+        {"x-meld-if-text":"/source", "type":"object", "properties":{
+            "scope":{"const":"source"},
+            "quote":{"x-meld-enum-from-lines":["/source"]}
+        }},
+        {"x-meld-if-text":"/empty", "type":"object", "properties":{
+            "scope":{"const":"empty"},
+            "quote":{"x-meld-enum-from-lines":["/empty"]}
+        }}
+    ]});
+    let bound = bind_evidence_choices(&conditional, &input).unwrap();
+    assert_eq!(bound["anyOf"].as_array().unwrap().len(), 1);
+    assert_eq!(bound["anyOf"][0]["properties"]["scope"]["const"], "source");
+    let boolean_enum = serde_json::json!({"enum":[true,false]});
+    assert_eq!(
+        bind_evidence_choices(&boolean_enum, &input).unwrap(),
+        boolean_enum
+    );
+}
+
+#[test]
+fn installed_response_formats_travel_with_the_exact_judgment_request() {
+    let root = tempfile::tempdir().unwrap();
+    let mut policy = policy();
+    let config = config(root.path());
+    let operation = DocsJudgmentOperation::SourceExtraction;
+    let format = serde_json::json!({"type":"json_schema","json_schema":{
+        "name":"source_claims", "strict":true, "schema":{"type":"object"}
+    }});
+    let semantics = policy.semantic_theory.as_mut().unwrap();
+    semantics.response_formats.insert(operation, format.clone());
+    let first = semantics
+        .generation(&config, "policy", operation, serde_json::json!({}), 0, 0)
+        .unwrap();
+    assert_eq!(
+        first.request.provider.runtime_overrides.extra_body_fields["response_format"],
+        format
+    );
+    semantics.response_formats.clear();
+    let second = semantics
+        .generation(&config, "policy", operation, serde_json::json!({}), 0, 0)
+        .unwrap();
+    assert!(!second
+        .request
+        .provider
+        .runtime_overrides
+        .extra_body_fields
+        .contains_key("response_format"));
+    assert_ne!(first.request.request_id, second.request.request_id);
+    semantics.response_formats.insert(operation, format);
+    let mut conflicting = config;
+    conflicting
+        .provider
+        .runtime_overrides
+        .extra_body_fields
+        .insert(
+            "response_format".into(),
+            serde_json::json!({"type":"json_object"}),
+        );
+    assert!(semantics
+        .generation(
+            &conflicting,
+            "policy",
+            operation,
+            serde_json::json!({}),
+            0,
+            0
+        )
+        .is_err());
+}
+
 #[tokio::test]
 async fn installed_instructions_reach_real_provider_paths_and_change_judgments() {
     let root = tempfile::tempdir().unwrap();
@@ -285,6 +399,7 @@ async fn draft_and_revision_use_selected_instructions_without_rewriting_the_mode
     let root = tempfile::tempdir().unwrap();
     std::fs::create_dir(root.path().join("child")).unwrap();
     std::fs::write(root.path().join("child/lib.rs"), "pub fn run() {}\n").unwrap();
+    std::fs::write(root.path().join("child/README.md"), "`run` exists.\n").unwrap();
     let config = config(root.path());
     let mut policy = policy();
     policy.maximum_revision_attempts = 2;
@@ -302,6 +417,10 @@ async fn draft_and_revision_use_selected_instructions_without_rewriting_the_mode
         .patches
         .iter()
         .all(|patch| patch.content.starts_with("# Installed theory title")));
+    assert!(api.calls.lock().unwrap().iter().any(|(_, messages)| {
+        let input: serde_json::Value = serde_json::from_str(&messages[1].content).unwrap();
+        input["directory"] == "child" && input["current_readme"] == "`run` exists.\n"
+    }));
     assert!(api
         .calls
         .lock()

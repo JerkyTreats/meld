@@ -22,6 +22,7 @@ pub struct RunContext {
     assembly: CliRuntimeAssembly,
     workspace_root: PathBuf,
     config_path: Option<PathBuf>,
+    config: crate::config::MerkleConfig,
     #[allow(dead_code)]
     store_path: PathBuf,
     frame_storage_path: PathBuf,
@@ -174,6 +175,7 @@ impl RunContext {
             assembly,
             workspace_root,
             config_path,
+            config,
             store_path,
             frame_storage_path,
             artifact_storage_path,
@@ -409,6 +411,7 @@ impl RunContext {
                 crate::cli::presentation::validate_world_init_format(format)?;
                 let report = crate::init::world::tooling::run_world_init(
                     self.assembly.product_runtime().as_ref(),
+                    &self.config,
                     path,
                     stages,
                     theory_source.as_deref(),

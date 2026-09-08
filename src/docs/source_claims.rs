@@ -236,8 +236,11 @@ impl DocsSourceClaimReport {
 fn reconcile_source_claims(
     source: &ObservedSource,
     policy: &DocsClaimPolicy,
-    proposed: ProposedSourceClaims,
+    mut proposed: ProposedSourceClaims,
 ) -> Result<SourceFileClaims, ApiError> {
+    proposed.no_claims_reason = proposed
+        .no_claims_reason
+        .filter(|reason| !reason.trim().is_empty());
     if !proposed.complete {
         return Err(invalid("Docs source extraction is incomplete"));
     }
@@ -427,6 +430,27 @@ mod tests {
             }],
         };
         let accepted = reconcile_source_claims(&source, &policy(), proposal()).unwrap();
+        for empty_reason in ["", " \n\t"] {
+            let mut with_empty_reason = proposal();
+            with_empty_reason.no_claims_reason = Some(empty_reason.into());
+            assert_eq!(
+                reconcile_source_claims(&source, &policy(), with_empty_reason).unwrap(),
+                accepted
+            );
+            assert!(reconcile_source_claims(
+                &source,
+                &policy(),
+                ProposedSourceClaims {
+                    complete: true,
+                    claims: vec![],
+                    no_claims_reason: Some(empty_reason.into()),
+                }
+            )
+            .is_err());
+        }
+        let mut contradictory = proposal();
+        contradictory.no_claims_reason = Some("No claims can be extracted".into());
+        assert!(reconcile_source_claims(&source, &policy(), contradictory).is_err());
         let citation = &accepted.claims[0].citations[0];
         assert_eq!(citation.start_byte, "// π\n".len());
         assert_eq!(

@@ -360,6 +360,39 @@ fn runtime_run_publishes_durable_lifecycle_snapshots() {
 }
 
 #[test]
+fn world_init_uses_the_explicit_config_that_opened_the_product() {
+    let temp_dir = TempDir::new().unwrap();
+    with_xdg_env(&temp_dir, || {
+        let workspace_root = workspace(&temp_dir);
+        std::fs::write(workspace_root.join("lib.rs"), "pub fn run() {}\n").unwrap();
+        write_stewardship_config(&workspace_root, "http://127.0.0.1:1");
+        let selected_config = temp_dir.path().join("selected.toml");
+        std::fs::rename(workspace_root.join("config/config.toml"), &selected_config).unwrap();
+        let global = Path::new(&std::env::var("XDG_CONFIG_HOME").unwrap()).join("meld/config.toml");
+        std::fs::write(global, "").unwrap();
+        let run_context = RunContext::new(workspace_root.clone(), Some(selected_config)).unwrap();
+        let output = run_context
+            .execute(&Commands::World {
+                command: WorldCommands::Init {
+                    path: workspace_root,
+                    stages: Vec::new(),
+                    theory_source: Some(
+                        Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/docs_freshness"),
+                    ),
+                    format: "json".into(),
+                },
+            })
+            .unwrap();
+        let report: meld::init::world::WorldInitReport = serde_json::from_str(&output).unwrap();
+        assert_eq!(report.stage_reports.len(), 4);
+        assert!(report
+            .stage_reports
+            .iter()
+            .all(|stage| { stage.disposition == meld::init::world::StageDisposition::Applied }));
+    });
+}
+
+#[test]
 fn prepared_product_activates_routes_and_ignores_loose_owner_heads() {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {

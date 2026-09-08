@@ -2,7 +2,7 @@
 
 This package maintains README existence and configured claims supported by workspace evidence through native owner observations, Agent judgment, Strategy planning, Execution, and confirmation after publication. A current README can satisfy the maintained condition without a Task. A completed write alone does not establish correctness or Goal satisfaction.
 
-Add a declaration to your Meld configuration. Bind `docs-provider` to an existing configured provider and keep the product storage outside the target workspace.
+Add a declaration to your Meld configuration. Bind `docs-provider` to a configured provider that supports JSON Schema response formats and keep the product storage outside the target workspace. An explicit `--config` selects the same configuration for initialization and runtime execution.
 
 ```toml
 [system.storage]
@@ -34,6 +34,10 @@ cargo run --bin meld -- runtime run
 ```
 
 Preparation remains inert. Activation opens the native owner lifecycle and admission path. The installed claim policy supplies the questions, acceptance rules and drafting instructions. The runtime observes current workspace evidence before deciding on work and returns published results through Docs observations, Curation, Belief and Agent judgment.
+
+The policy's `response_formats` declare the provider response contracts. `x-meld-enum-from-lines` binds quotation choices from the named input text using JSON pointers, retaining exact source substrings within the declared length bound. `x-meld-if-text` enables a response alternative only when that evidence partition contains text. Native owners still verify identity, exact citations, policy acceptance and required coverage after generation. A schema-conforming response alone does not establish freshness.
+
+`x-meld-map-from-field` requires one response slot per captured claim identity, and `x-meld-enum-from-field` limits references to the captured claim set. Required-field order supplies generation order to grammar-backed providers without changing durable JSON identity. Drafting and revision receive the frozen current README so repairs can retain correct content. Low-confidence judgments remain unaccepted evidence; they do not become successful claims through response formatting.
 
 The old bundled `docs_writer_thread_v1` Workflow and `docs_writer` task package are no longer installed by `meld init` or embedded as an Execution fallback. This package is their maintained-Docs successor. Legacy Workflow execution is retired. Existing profiles remain inspectable, but CLI, context, watch and control no longer execute their turns. Their stored output does not establish native Docs satisfaction. Arbitrary profiles are not automatically translated into this maintained intent.
 

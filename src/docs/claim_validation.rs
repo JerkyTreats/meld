@@ -124,9 +124,17 @@ impl DocsClaimPolicy {
     }
 
     fn accepts(&self, assessments: &[ClaimAssessment]) -> Result<bool, ApiError> {
-        validate_assessment_integrity(self, assessments, None)?;
+        validate_assessment_integrity(assessments, None)?;
         Ok(!assessments.is_empty()
+            && assessments
+                .iter()
+                .all(|assessment| assessment.confidence >= self.minimum_claim_confidence)
             && self.accepts_metrics(aggregate_assessments(self, assessments))?)
+    }
+
+    fn retains_claim(&self, assessment: &ClaimAssessment) -> bool {
+        assessment.verdict == ClaimVerdict::Supported
+            && assessment.confidence >= self.minimum_claim_confidence
     }
 
     pub(crate) fn accepts_metrics(&self, metrics: (f64, f64, f64)) -> Result<bool, ApiError> {
@@ -549,7 +557,7 @@ pub async fn validate_patch_set<P: ProviderValidationPort + ProviderExecutionPor
             return Err(ApiError::ConfigError(format!(
                 "installed Docs repair responses did not establish acceptance for '{}': {}",
                 patch.path,
-                rejection_summary(&report)
+                rejection_summary(policy, &report)
             )));
         }
         accepted_by_directory.insert(
@@ -664,7 +672,7 @@ async fn assess_readme(
         batch_attempt += 1;
     }
     assessments.sort_by(|left, right| left.claim.claim_id.cmp(&right.claim.claim_id));
-    validate_assessment_integrity(context.policy, &assessments, Some(context.evidence))?;
+    validate_assessment_integrity(&assessments, Some(context.evidence))?;
     apply_deterministic_guards(
         &context.policy.semantics()?.claim_guards,
         context.evidence,
@@ -728,6 +736,9 @@ async fn assess_claim_batch<P: ProviderValidationPort + ProviderExecutionPort + 
 }
 
 fn decode_provider_assessments(content: &str) -> Result<Vec<ProviderClaimAssessment>, ApiError> {
+    if let Some(assessments) = decode_keyed_claims(content, "assessments", "claim_id")? {
+        return Ok(assessments);
+    }
     if let Ok(batch) = decode_json_response::<ProviderAssessmentBatch>(content, "claim assessment")
     {
         return Ok(batch.assessments);
@@ -739,6 +750,78 @@ fn decode_provider_assessments(content: &str) -> Result<Vec<ProviderClaimAssessm
     }
     decode_json_response::<ProviderClaimAssessment>(content, "claim assessment")
         .map(|assessment| vec![assessment])
+}
+
+pub(crate) fn decode_keyed_claims<T: serde::de::DeserializeOwned>(
+    content: &str,
+    container: &str,
+    identity: &str,
+) -> Result<Option<Vec<T>>, ApiError> {
+    let value: serde_json::Value = decode_json_response(content, "keyed claim response")?;
+    let Some(_) = value.get(container).and_then(serde_json::Value::as_object) else {
+        return Ok(None);
+    };
+    if value.as_object().is_none_or(|object| object.len() != 1) {
+        return Err(ApiError::ConfigError(
+            "keyed claim response has unexpected fields".into(),
+        ));
+    }
+    let mut unique: UniqueClaimMap<UniqueClaimMap<serde_json::Value>> =
+        decode_json_response(content, "keyed claim response")?;
+    let records = unique
+        .0
+        .remove(container)
+        .ok_or_else(|| ApiError::ConfigError("keyed claim container is absent".into()))?;
+    records
+        .0
+        .iter()
+        .map(|(key, body)| {
+            let mut body = body
+                .as_object()
+                .cloned()
+                .ok_or_else(|| ApiError::ConfigError("keyed claim is not an object".into()))?;
+            if body
+                .insert(identity.into(), serde_json::Value::String(key.clone()))
+                .is_some()
+            {
+                return Err(ApiError::ConfigError(
+                    "keyed claim repeats its enclosing identity".into(),
+                ));
+            }
+            serde_json::from_value(serde_json::Value::Object(body))
+                .map_err(|error| ApiError::ConfigError(error.to_string()))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
+}
+
+struct UniqueClaimMap<T>(BTreeMap<String, T>);
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for UniqueClaimMap<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visitor<T>(std::marker::PhantomData<T>);
+        impl<'de, T: Deserialize<'de>> serde::de::Visitor<'de> for Visitor<T> {
+            type Value = UniqueClaimMap<T>;
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("an object with unique claim identities")
+            }
+            fn visit_map<M: serde::de::MapAccess<'de>>(
+                self,
+                mut map: M,
+            ) -> Result<Self::Value, M::Error> {
+                let mut values = BTreeMap::new();
+                while let Some((key, value)) = map.next_entry::<String, T>()? {
+                    if values.insert(key, value).is_some() {
+                        return Err(serde::de::Error::custom(
+                            "keyed claim response repeats an identity",
+                        ));
+                    }
+                }
+                Ok(UniqueClaimMap(values))
+            }
+        }
+        deserializer.deserialize_map(Visitor(std::marker::PhantomData))
+    }
 }
 
 fn reconcile_provider_assessments(
@@ -796,17 +879,13 @@ fn reconcile_provider_assessments(
 }
 
 fn validate_assessment_integrity(
-    policy: &DocsClaimPolicy,
     assessments: &[ClaimAssessment],
     evidence: Option<&EvidencePartitions>,
 ) -> Result<(), ApiError> {
     for assessment in assessments {
-        if !assessment.confidence.is_finite()
-            || !(0.0..=1.0).contains(&assessment.confidence)
-            || assessment.confidence < policy.minimum_claim_confidence
-        {
+        if !assessment.confidence.is_finite() || !(0.0..=1.0).contains(&assessment.confidence) {
             return Err(ApiError::ConfigError(
-                "claim verdict confidence is unresolved or invalid".into(),
+                "claim verdict confidence is invalid".into(),
             ));
         }
         if assessment.verdict != ClaimVerdict::Unsupported && assessment.citations.is_empty() {
@@ -899,11 +978,14 @@ async fn revise_readme<P: ProviderValidationPort + ProviderExecutionPort + ?Size
     let rejected = report
         .assessments
         .iter()
-        .filter(|assessment| assessment.verdict != ClaimVerdict::Supported)
+        .filter(|assessment| !policy.retains_claim(assessment))
         .map(|assessment| {
             format!(
-                "- {}: {}\n  reason: {}",
-                assessment.claim.claim_id, assessment.claim.statement, assessment.rationale
+                "- {}: {}\n  confidence: {}\n  reason: {}",
+                assessment.claim.claim_id,
+                assessment.claim.statement,
+                assessment.confidence,
+                assessment.rationale
             )
         })
         .collect::<Vec<_>>()
@@ -933,7 +1015,7 @@ async fn revise_readme<P: ProviderValidationPort + ProviderExecutionPort + ?Size
     )
     .await?;
     let content = normalize_markdown(&response.content);
-    if !content.starts_with('#') || content.len() < 32 {
+    if content.trim().is_empty() {
         return Err(ApiError::ConfigError(format!(
             "README revision for '{}' is invalid or empty",
             patch.path
@@ -955,7 +1037,7 @@ fn prune_rejected_claims(
     let rejected_lines = report
         .assessments
         .iter()
-        .filter(|assessment| assessment.verdict != ClaimVerdict::Supported)
+        .filter(|assessment| !policy.retains_claim(assessment))
         .flat_map(|assessment| {
             assessment.claim.source_line_start..=assessment.claim.source_line_end
         })
@@ -969,7 +1051,7 @@ fn prune_rejected_claims(
         .collect::<Vec<_>>()
         .join("\n");
     content = normalize_pruned_markdown(&content);
-    if !content.starts_with('#') || content.len() < 32 || content == patch.content {
+    if content.trim().is_empty() || content == patch.content {
         return Err(ApiError::ConfigError(format!(
             "deterministic README pruning made no valid progress for '{}'",
             patch.path
@@ -983,7 +1065,7 @@ fn prune_rejected_claims(
     let mut supported_by_statement = report
         .assessments
         .iter()
-        .filter(|assessment| assessment.verdict == ClaimVerdict::Supported)
+        .filter(|assessment| policy.retains_claim(assessment))
         .cloned()
         .fold(
             BTreeMap::<String, VecDeque<ClaimAssessment>>::new(),
@@ -1181,7 +1263,6 @@ pub(crate) fn supported_readme_evidence(report: &ReadmeClaimReport, content: &st
 
 /// Recheck citation provenance for the entire proposed publication before any write.
 pub(crate) fn verify_publication_evidence(
-    policy: &DocsClaimPolicy,
     bundle: &DocsEvidenceBundle,
     validated: &ValidatedDocsPatchSet,
 ) -> Result<(), ApiError> {
@@ -1203,7 +1284,7 @@ pub(crate) fn verify_publication_evidence(
                 ApiError::ConfigError("docs publication is missing a managed README patch".into())
             })?;
         let evidence = evidence_partitions(directory, &descendants);
-        validate_assessment_integrity(policy, &report.assessments, Some(&evidence))?;
+        validate_assessment_integrity(&report.assessments, Some(&evidence))?;
         descendants.insert(
             directory.path.clone(),
             supported_readme_evidence(report, &patch.content),
@@ -1477,11 +1558,11 @@ fn aggregate_reports(policy: &DocsClaimPolicy, reports: &[ReadmeClaimReport]) ->
     aggregate_assessments(policy, &assessments)
 }
 
-fn rejection_summary(report: &ReadmeClaimReport) -> String {
+fn rejection_summary(policy: &DocsClaimPolicy, report: &ReadmeClaimReport) -> String {
     report
         .assessments
         .iter()
-        .filter(|assessment| assessment.verdict != ClaimVerdict::Supported)
+        .filter(|assessment| !policy.retains_claim(assessment))
         .take(6)
         .map(|assessment| {
             format!(
@@ -1641,8 +1722,7 @@ mod tests {
             direct: "@app.get(\"/healthz\")".to_string(),
             descendant: String::new(),
         };
-        let error =
-            validate_assessment_integrity(&policy(), &assessments, Some(&evidence)).unwrap_err();
+        let error = validate_assessment_integrity(&assessments, Some(&evidence)).unwrap_err();
         assert!(error.to_string().contains("absent"));
         assert_eq!(assessments[0].verdict, ClaimVerdict::Supported);
     }
@@ -1754,6 +1834,16 @@ mod tests {
         assert_eq!(decode_provider_assessments(&wrapped).unwrap().len(), 1);
         assert_eq!(decode_provider_assessments(&array).unwrap().len(), 1);
         assert_eq!(decode_provider_assessments(assessment).unwrap().len(), 1);
+        let mut body: serde_json::Value = serde_json::from_str(assessment).unwrap();
+        body.as_object_mut().unwrap().remove("claim_id");
+        let mut keyed = serde_json::json!({"assessments":{"claim":body}});
+        let decoded = decode_provider_assessments(&keyed.to_string()).unwrap();
+        assert_eq!(decoded[0].claim_id, "claim");
+        assert_eq!(decoded[0].verdict, ClaimVerdict::Supported);
+        let duplicate = format!(r#"{{"assessments":{{"claim":{body},"claim":{body}}}}}"#);
+        assert!(decode_provider_assessments(&duplicate).is_err());
+        keyed["assessments"]["claim"]["claim_id"] = serde_json::json!("foreign");
+        assert!(decode_provider_assessments(&keyed.to_string()).is_err());
     }
 
     #[tokio::test]
@@ -1924,7 +2014,10 @@ mod tests {
         let mut corrupt = validated.clone();
         corrupt.reports[0].assessments[0].claim.claim_id = "foreign-claim".into();
         assert!(verify_validated_patch_set(&permissive.policy, &corrupt).is_err());
-        for confidence in [0.1, f64::NAN, f64::INFINITY] {
+        let mut uncertain = validated.reports[0].assessments.clone();
+        uncertain[0].confidence = 0.1;
+        assert!(!permissive.policy.accepts(&uncertain).unwrap());
+        for confidence in [f64::NAN, f64::INFINITY] {
             let mut uncertain = validated.reports[0].assessments.clone();
             uncertain[0].confidence = confidence;
             assert!(permissive.policy.accepts(&uncertain).is_err());
@@ -1936,10 +2029,7 @@ mod tests {
             .unwrap()
             .citations[0]
             .quote = "foreign evidence".into();
-        assert!(
-            validate_assessment_integrity(&permissive.policy, &false_quote, Some(&evidence))
-                .is_err()
-        );
+        assert!(validate_assessment_integrity(&false_quote, Some(&evidence)).is_err());
         let mut forged = validated.clone();
         forged.reports[0].assessments = false_quote;
         forged.validation_fingerprint = blake3::hash(
@@ -2056,7 +2146,7 @@ mod tests {
     }
 
     #[test]
-    fn pruning_cannot_replace_a_rejected_title_or_author_new_evidence() {
+    fn pruning_removes_a_rejected_title_without_authoring_replacement_evidence() {
         let content = "# Invented product\n\nThe tool runs.\n";
         let patch = ReadmePatch {
             path: "README.md".to_string(),
@@ -2089,7 +2179,26 @@ mod tests {
             accepted: false,
         };
 
-        assert!(prune_rejected_claims(&policy(), &patch, &report, 1).is_err());
+        let (pruned, accepted) = prune_rejected_claims(&policy(), &patch, &report, 1).unwrap();
+        assert_eq!(pruned.content, "The tool runs.\n");
+        assert!(accepted.accepted);
+        assert_eq!(accepted.assessments.len(), 1);
+        assert_eq!(accepted.assessments[0].claim.statement, "The tool runs.");
+        assert_eq!(
+            accepted.assessments[0].citations,
+            report.assessments[1].citations
+        );
+        let mut uncertain = report.clone();
+        uncertain.assessments[0].verdict = ClaimVerdict::Supported;
+        uncertain.assessments[0].confidence = 0.2;
+        uncertain.assessments[0].citations = report.assessments[1].citations.clone();
+        assert!(!policy().accepts(&uncertain.assessments).unwrap());
+        let (without_uncertain, accepted) =
+            prune_rejected_claims(&policy(), &patch, &uncertain, 1).unwrap();
+        assert_eq!(without_uncertain, pruned);
+        assert!(accepted.accepted);
+        assert_eq!(uncertain.assessments[0].verdict, ClaimVerdict::Supported);
+        assert_eq!(uncertain.assessments[0].confidence, 0.2);
     }
 
     #[test]

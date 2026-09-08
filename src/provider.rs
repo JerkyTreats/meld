@@ -23,6 +23,7 @@ pub mod executor;
 pub(crate) mod frame_metadata_keys;
 pub mod generation;
 pub mod profile;
+mod response_format;
 pub mod storage;
 pub mod summary;
 pub mod tooling;
@@ -105,7 +106,7 @@ struct ChatCompletionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     stop: Option<Vec<String>>,
     stream: bool,
-    #[serde(flatten)]
+    #[serde(flatten, serialize_with = "response_format::serialize_extra_fields")]
     additional_json: BTreeMap<String, Value>,
 }
 

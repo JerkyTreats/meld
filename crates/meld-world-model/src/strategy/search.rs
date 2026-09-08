@@ -156,7 +156,21 @@ pub fn search_successor(request: &StrategySuccessorRequest) -> StrategySuccessor
                     .iter()
                     .any(|prior| prior.same_source_as(operation))
             });
-    let confirmation = if source_changed_after_confirmation {
+    // Changed source may require new work, but a currently satisfied condition
+    // does not discharge this Goal's outstanding confirmation of prior effects.
+    let confirmation = if source_changed_after_confirmation
+        && !matches!(
+            evaluate(
+                &request
+                    .search
+                    .problem
+                    .planner_cut
+                    .world_model_view
+                    .world_state,
+                &request.search.problem.goal.target,
+            ),
+            EvalResult::Satisfied
+        ) {
         None
     } else {
         confirmation_successor(request)

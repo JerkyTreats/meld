@@ -34,8 +34,8 @@ pub struct ProposedCorrespondence {
     pub claims: Vec<SourceCorrespondence>,
 }
 
-/// Empty matches explicitly mean that the observed README does not express the
-/// source assertion. A match is not a correctness or materiality decision.
+/// Empty matches mean no representation was established. A proposed match is
+/// not a correctness or materiality decision.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourceCorrespondence {
@@ -402,7 +402,8 @@ fn validate_readme(
             || matches.len() != claim.readme_claim_ids.len()
             || claim.rationale.trim().is_empty()
             || !claim.confidence.is_finite()
-            || !(minimum_confidence..=1.0).contains(&claim.confidence)
+            || !(0.0..=1.0).contains(&claim.confidence)
+            || (!matches.is_empty() && claim.confidence < minimum_confidence)
         {
             return Err(invalid(
                 "Docs correspondence names unknown claims or invalid evidence",
@@ -434,6 +435,14 @@ pub(crate) async fn provider_correspondence<
         None,
     )
     .await?;
+    if let Some(claims) =
+        super::claim_validation::decode_keyed_claims(&result.content, "claims", "source_claim_id")?
+    {
+        return Ok(ProposedCorrespondence {
+            complete: true,
+            claims,
+        });
+    }
     decode_json_response(&result.content, "claim correspondence")
 }
 
@@ -616,6 +625,10 @@ mod tests {
                     .push(request.readme_claims[0].claim_id.clone()),
                 "incomplete" => proposal.complete = false,
                 "uncertain" => proposal.claims[0].confidence = 0.01,
+                "uncertain_missing" => {
+                    proposal.claims[0].confidence = 0.01;
+                    proposal.claims[0].readme_claim_ids.clear();
+                }
                 "unreasoned" => proposal.claims[0].rationale.clear(),
                 _ => unreachable!(),
             }
@@ -656,5 +669,11 @@ mod tests {
                 "{defect}"
             );
         }
+        let unresolved = advance_correspondence(
+            &BadJudge("uncertain_missing"), &policy, &bundle, &sources, None, 1,
+        ).await.unwrap();
+        assert!(unresolved.complete);
+        assert!(unresolved.readmes[0].claims[0].readme_claim_ids.is_empty());
+        assert_eq!(unresolved.readmes[0].claims[0].confidence, 0.01);
     }
 }

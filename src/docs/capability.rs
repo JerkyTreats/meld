@@ -574,6 +574,24 @@ pub(crate) async fn draft_patch_set<
                 )
             })
             .collect::<String>();
+        let readme_path = if directory.path == "." {
+            "README.md".to_string()
+        } else {
+            format!("{}/README.md", directory.path)
+        };
+        let current_readme = bundle.observation.as_ref().and_then(|observation| {
+            observation.readmes.iter().find_map(|readme| {
+                if readme.path != readme_path {
+                    return None;
+                }
+                match &readme.state {
+                    super::observation::ObservedReadmeState::Present { content, .. } => {
+                        Some(content.as_str())
+                    }
+                    _ => None,
+                }
+            })
+        });
         let content = generate_readme(
             api,
             config,
@@ -581,14 +599,10 @@ pub(crate) async fn draft_patch_set<
             directory,
             &directory.evidence,
             &child_context,
+            current_readme,
             event_context,
         )
         .await?;
-        let readme_path = if directory.path == "." {
-            "README.md".to_string()
-        } else {
-            format!("{}/README.md", directory.path)
-        };
         child_readmes.insert(directory.path.clone(), content.clone());
         patches.push(ReadmePatch {
             path: readme_path,
@@ -613,6 +627,7 @@ async fn generate_readme<
     directory: &DirectoryEvidence,
     direct_evidence: &str,
     child_evidence: &str,
+    current_readme: Option<&str>,
     event_context: Option<&ExecutionEventContext>,
 ) -> Result<String, ApiError> {
     let mut evidence_limit = MAX_DIRECTORY_EVIDENCE_BYTES + MAX_CHILD_README_BYTES;
@@ -622,7 +637,13 @@ async fn generate_readme<
             config,
             &policy.content_identity(),
             DocsJudgmentOperation::Drafting,
-            readme_input(directory, direct_evidence, child_evidence, evidence_limit),
+            readme_input(
+                directory,
+                direct_evidence,
+                child_evidence,
+                current_readme,
+                evidence_limit,
+            ),
             retry,
             0,
         )?;
@@ -638,7 +659,7 @@ async fn generate_readme<
         {
             Ok(response) => {
                 let content = normalize_markdown(&response.content);
-                if content.starts_with('#') && content.len() >= 32 {
+                if !content.trim().is_empty() {
                     return Ok(content);
                 }
                 last_error = Some("provider returned an invalid or empty README".to_string());
@@ -664,6 +685,7 @@ fn readme_input(
     directory: &DirectoryEvidence,
     direct_evidence: &str,
     child_evidence: &str,
+    current_readme: Option<&str>,
     evidence_limit: usize,
 ) -> serde_json::Value {
     let direct_limit = evidence_limit.min(MAX_DIRECTORY_EVIDENCE_BYTES);
@@ -674,6 +696,7 @@ fn readme_input(
         "child_directories": directory.child_directories,
         "direct_evidence": truncate_chars(direct_evidence, direct_limit),
         "descendant_drafts": truncate_chars(child_evidence, child_limit),
+        "current_readme": current_readme,
     })
 }
 
@@ -703,7 +726,7 @@ pub(super) fn publish_patch_set(
             "docs source changed after claim validation".into(),
         ));
     }
-    super::claim_validation::verify_publication_evidence(policy, &bundle, patches)?;
+    super::claim_validation::verify_publication_evidence(&bundle, patches)?;
     let mut published = Vec::new();
     for patch in &patches.patches {
         let relative = safe_readme_path(&patch.path)?;
@@ -1332,10 +1355,12 @@ mod tests {
             &directory,
             "",
             "child draft",
+            Some("Existing documented behavior."),
             MAX_DIRECTORY_EVIDENCE_BYTES + MAX_CHILD_README_BYTES,
         );
         assert_eq!(input["directory"], "production");
         assert_eq!(input["direct_files"], serde_json::json!([]));
         assert_eq!(input["descendant_drafts"], "child draft");
+        assert_eq!(input["current_readme"], "Existing documented behavior.");
     }
 }

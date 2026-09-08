@@ -831,6 +831,30 @@ fn unsuccessful_confirmation_stops_unchanged_work_but_allows_source_advance_and_
         verify_successor_plan(&advanced, &fresh),
         PlanVerification::Valid { .. }
     ));
+
+    // Current owner evidence can satisfy the condition while this Goal still
+    // owes its independently authorized confirmation of completed work.
+    advanced
+        .search
+        .problem
+        .planner_cut
+        .world_model_view
+        .world_state = meld_lang::WorldState::new(vec![Proposition::Holds {
+        subject: subject(),
+        dimension: Term::Dimension("docs_freshness".into()),
+        condition: Condition::Equals(Term::Literal(meld_lang::Literal::Number(1.0))),
+    }])
+    .unwrap();
+    let remaining_confirmation = search_successor(&advanced).recommendation.unwrap();
+    assert_eq!(
+        remaining_confirmation.plan.origin,
+        StrategyPlanOrigin::Confirmation
+    );
+    assert!(remaining_confirmation.plan.tasks.is_empty());
+    assert!(matches!(
+        verify_successor_plan(&advanced, &remaining_confirmation),
+        PlanVerification::Valid { .. }
+    ));
 }
 
 #[test]

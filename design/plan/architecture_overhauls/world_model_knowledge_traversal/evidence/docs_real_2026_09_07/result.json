@@ -1,0 +1,26 @@
+{
+  "provider_request_model": "local",
+  "verified_backing_model": "qwen3-coder-next",
+  "runtime": "rebuilt native meld CLI",
+  "product_package": "documentation_maintenance 1.11.0",
+  "initial_reconciliation": {
+    "request": {
+      "request_id": "agent-request-v1::a4c9582c54cd907d3a418a31b9c4748cb7f5ed09a1ed32f55706788ec128dd06",
+      "agent_id": "docs-writer",
+      "genesis_intent_id": "8441ad0fd5ea7499a33c521a648688494a613a750f8408addaca73e8a96b9778",
+      "request_key": "verify-current-docs"
+    },
+    "completed": true
+  },
+  "artifacts": {
+    "pricing.py": "f88003cd454e7e0eef1e2eeb1c73baf45dc4cf2330cec5600c04371d48930c72",
+    "README.before.txt": "792d427b8d4150a61dec6634f0d3af747ab0ca3c430b2bf1d977d0a47be28b02",
+    "README.accepted.txt": "92addafa61369d2dc005870e83468341e787a16fd4d43f543efeb20a880b8ec4"
+  },
+  "limitations": [
+    "Initial incomplete README repaired and native request completed.",
+    "Subsequent 7000-cent source-change reconciliation is not yet accepted.",
+    "Restart during unfinished work exposed unstarted Tasks stranded behind a closed admission epoch.",
+    "Private wire capture and native stores are retained outside the repository."
+  ]
+}
