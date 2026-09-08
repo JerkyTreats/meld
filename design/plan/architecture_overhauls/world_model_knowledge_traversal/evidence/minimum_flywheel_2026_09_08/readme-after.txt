@@ -1,0 +1,8 @@
+- `SHIPPING_CENTS` is defined as `500` in `pricing.py`.  
+- `FREE_SHIPPING_MINIMUM_CENTS` is defined as `9000` in `pricing.py`.  
+- The `total_cents` function accepts a single integer parameter `subtotal_cents` and returns an integer.  
+- The function raises `ValueError("subtotal must be nonnegative")` if `subtotal_cents` is negative.  
+- When `subtotal_cents` is at least `9000`, the shipping cost is `0` cents.  
+- When `subtotal_cents` is less than `9000` but nonnegative, the shipping cost is `500` cents.  
+- The function computes `shipping` as `0` if `subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS`, otherwise `SHIPPING_CENTS`.  
+- The function returns `subtotal_cents + shipping`, where `shipping` is determined by the threshold `FREE_SHIPPING_MINIMUM_CENTS`.

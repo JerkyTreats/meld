@@ -1,0 +1,128 @@
+{
+  "source_commit": "0ee564c615ecb237170a14ebfa17c40f14435977",
+  "release_binary_sha256": "e773662065a0fdffb9e88a884aef50f9a6c6cd362a976cc1606e41ca79d8b5a5",
+  "docs_package": "meld.docs-freshness@1.15.0",
+  "model_service_observation": {
+    "context_size": 262144,
+    "error": null,
+    "observed_at": "2026-09-08T04:07:40.556684Z",
+    "public_alias": "local",
+    "ready": true,
+    "selected_model": "qwen3-coder-next",
+    "served_model": "qwen3-coder-next",
+    "service_state": "active",
+    "transitioning": false
+  },
+  "docs": {
+    "initial_correct_request_completed": true,
+    "initial_readme_unchanged": true,
+    "source_change": "FREE_SHIPPING_MINIMUM_CENTS and docstring: 8000 -> 9000",
+    "changed_request_completed": true,
+    "repair_goal_lifecycle": {
+      "Satisfied": {
+        "at_seq": 73
+      }
+    },
+    "accepted_owner_revision": "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe",
+    "reopened_request_completed": true,
+    "reopened_exact_owner_revision_equal": true,
+    "reopen_before": {
+      "readme_sha256": "5cd08e68cf702d6c4bdafed8782a08119334bbcb280b5638355852d313b28b7a",
+      "mtime_ns": 1788840138590132935,
+      "wire_requests": 306
+    },
+    "reopen_after": {
+      "readme_sha256": "5cd08e68cf702d6c4bdafed8782a08119334bbcb280b5638355852d313b28b7a",
+      "mtime_ns": 1788840138590132935,
+      "wire_requests": 306
+    },
+    "reopened_task_nodes_unchanged": true,
+    "reopened_authorizations_unchanged": true,
+    "reopened_goals_unchanged": true,
+    "reopened_history_unchanged": true
+  },
+  "nonce": {
+    "entrypoint": "release CLI world init, runtime run, startup-account, runtime run, startup-account with exact historical generation and epoch",
+    "first_and_successor_nonces_distinct": true,
+    "both_goals_satisfied": true,
+    "workspace_created": false
+  },
+  "validation": [
+    {
+      "suite": "Docs",
+      "passed": 76,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "76f6b43bd386904255059df5fda243fd72d71327d87c85f9d97670740c28c767"
+    },
+    {
+      "suite": "World model",
+      "passed": 105,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "7504606934fc1f7b78e428a211b5fcd4ebb3604933963ece9c7561ce859ed9b1"
+    },
+    {
+      "suite": "Docs confirmation race",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "e18cadd363b61064983a4a59b79abb3d992b5cfbb2b0fc0cda691a2127844c07"
+    },
+    {
+      "suite": "Native CVE mitigation and recovery",
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "0010d63e6ce7f8c849e8366cd1970bf348cc499f166bdfa2fbadd96d3b48f5f8"
+    },
+    {
+      "suite": "Shared work",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "a16e8f0dcc85b23d84535caea4ad5477f002dbba6a076308b6bffe403cb57829"
+    },
+    {
+      "suite": "Startup CLI",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "a07e085456e58de33eeec48f802b0b91984dff467b94417515950f7c4bbb3f49"
+    },
+    {
+      "suite": "Startup Graph lag and reopen",
+      "passed": 2,
+      "failed": 0,
+      "ignored": 0,
+      "log_sha256": "fc72b6d5bdfb96651df1295dac55b68091b85b50816a3130bc2afef674857aad"
+    }
+  ],
+  "static_checks": {
+    "workspace_all_target_clippy": "passed with warnings denied and the established clippy::result_large_err allowance",
+    "formatting": "passed",
+    "diff_hygiene": "passed",
+    "docs_package_source_hashes": 9
+  },
+  "limits": [
+    "Docs uses real coder-next inference against a bounded pricing fixture. The initial correct README was produced by an earlier native run; the 9000-cent repair was produced by this release.",
+    "CVE uses controlled advisory input and a declared code-change proposal through native production composition, including real file mutation and independent verification. It is not a live advisory-feed or arbitrary patch-generation claim.",
+    "Nonce uses the actual release CLI and isolated external state, with no workspace or provider. Historical closed generations are selected explicitly for offline inspection.",
+    "Existing Agent genesis is not automatically migrated to revised theory. This run used a fresh preparation; ordinary reopen reused that exact preparation.",
+    "Earlier comprehensive regression runs remain credited in the outcome audit. The final Task source-basis change received the focused tests listed here and all-target static analysis, not another complete workspace test run."
+  ],
+  "artifact_sha256": {
+    "docs-accepted-owner.json": "d9f9e837d25770012843588d049f9a8033664da18e8d42ba567cc36952a53cee",
+    "docs-agent-acceptance.json": "dea5a60e3a445a629b74407ed825d3f7154164a29b28840d8e5eca7aa15a4c4f",
+    "docs-changed-request.json": "8547677f868a09d4ef28a682eea05d81580e2b7e819d4d3d33d2f2d43da3fdf1",
+    "docs-initial-owner.json": "30f8c1da115942ec0798896a1b3cebc9b0c4c2194e1e9937d716b3670b829dcf",
+    "docs-initial-request.json": "589ea1a158dcabf3d177cc1e437a8d690cd9e8adcf690c98d55f1cbad1773950",
+    "docs-reopened-request.json": "2c07b1225c7eb70070c0b505bcab50f1488226018daee6daaaee3b1882651588",
+    "nonce-first-account.json": "0727f4b8fa7c7d36f5d0b3b42df3b58d54031d8f96b91e9c15ee31c0b405b95b",
+    "nonce-successor-account.json": "b65910ce836f31d11e95c7bef75b4a6e3221f147544993cfc60bdce4230cd728",
+    "readme-after.txt": "5cd08e68cf702d6c4bdafed8782a08119334bbcb280b5638355852d313b28b7a",
+    "readme-before.txt": "9c8bf02c05d942230bad969c55b3e6100e9f8429106f7043d0928b521ec2b2ca",
+    "source-after.py.txt": "4d4d327564bc17540c7cdfb782ad0a8a5cea4f14316a9c5a991abc0decf54a49",
+    "source-before.py.txt": "ad7ed6e33344b69dd06c104d6f3769c98d43b14b4b33b827c7514c1da0fe3298"
+  }
+}

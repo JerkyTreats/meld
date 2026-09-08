@@ -1,0 +1,9 @@
+{
+  "request": {
+    "request_id": "agent-request-v1::7f8f31f175c817f074962d00161fb0b5db7a075ecada9fce1685813e928d58f4",
+    "agent_id": "docs-writer",
+    "genesis_intent_id": "f11c7a31575142726e0002c028420d020d829b3331878d715a2bf42d5045ca20",
+    "request_key": "reopen-no-action"
+  },
+  "completed": true
+}

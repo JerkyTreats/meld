@@ -1,0 +1,990 @@
+{
+  "goal": {
+    "activation_generation": "cc3ebde77b5126ea7c83bfa586c03b1c2065e94efbecae4c74e7ae17a804320f",
+    "authority_scope_id": "docs_workspace_local",
+    "context_id": "agent-context::agent-goal::docs-writer::docs_freshness::agent-request-v1::f578116f6cb815ecb493c20456fb6bdf83fd92ead420c2cbbb99dd01be868f22",
+    "created_at_seq": 26,
+    "goal": {
+      "agent_id": "docs-writer",
+      "goal_id": "agent-goal::docs-writer::docs_freshness::agent-request-v1::f578116f6cb815ecb493c20456fb6bdf83fd92ead420c2cbbb99dd01be868f22",
+      "lifecycle": "Proposed",
+      "priority": {
+        "cost_ceiling": null,
+        "urgency": 50
+      },
+      "source": {
+        "MaintainedConditionBreach": {
+          "desired": "confidence>0.7",
+          "dimension": "docs_freshness",
+          "maintained_condition_id": "docs_freshness",
+          "observed": "{\"Unsatisfied\":{\"gap\":[{\"Holds\":{\"subject\":{\"Object\":{\"domain_id\":\"workspace_fs\",\"object_kind\":\"node\",\"object_id\":\"docs\"}},\"dimension\":{\"Dimension\":\"docs_freshness\"},\"condition\":{\"Above\":{\"Literal\":{\"Number\":0.7}}}}}]}}"
+        }
+      },
+      "target": {
+        "Holds": {
+          "condition": {
+            "Above": {
+              "Literal": {
+                "Number": 0.7
+              }
+            }
+          },
+          "dimension": {
+            "Dimension": "docs_freshness"
+          },
+          "subject": {
+            "Object": {
+              "domain_id": "workspace_fs",
+              "object_id": "docs",
+              "object_kind": "node"
+            }
+          }
+        }
+      }
+    },
+    "maintained_condition_revision": {
+      "content_hash": "39ea8646a5cf3ccfa9e490336823097c4acca7072d22613ecfcd9df335332294",
+      "id": "docs_freshness",
+      "registry": "agent_maintained_condition"
+    }
+  },
+  "disposition": {
+    "accepted_milestone_ids": [
+      "agent-belief-return-v1::de68f2ae13b7d3af97743fe0c0f72c7a006d1bc61a84c5c8976c83298295b180",
+      "agent-milestone-acceptance-v1::aa8c3bb727b9ebcf1a63ed0e09e57e29747f4ae7ee5825bc1b2eeecb4943ca3e",
+      "agent-task-milestone-acceptance-v1::4cab9cdb048ba5602943613f7f334808736ebb9fade4903852a2d31113502491"
+    ],
+    "activation_generation": "cc3ebde77b5126ea7c83bfa586c03b1c2065e94efbecae4c74e7ae17a804320f",
+    "agent_id": "docs-writer",
+    "disposition_id": "agent-goal-disposition-v2::d9b5eb41c498209560e1e10ac0c4e01c5b1fe7c68bc7d8d988df10115e0f522f",
+    "goal_id": "agent-goal::docs-writer::docs_freshness::agent-request-v1::f578116f6cb815ecb493c20456fb6bdf83fd92ead420c2cbbb99dd01be868f22",
+    "lifecycle": {
+      "Satisfied": {
+        "at_seq": 73
+      }
+    },
+    "plan_revision_id": "strategy-plan-v1::7fcd2db053d68d01caa10d66152c0bcb7bf3da350f24dcc1ea53d28b3e186300",
+    "planner_cut_id": "planner-cut-v1::b91484796d8a3d6006504ff2165731baa9fd04f8eb693a5e2b31e862344c6015"
+  },
+  "completed_history": [
+    {
+      "accepted_milestone": {
+        "execution_terminal": {
+          "task_id": "strategy-task-subject-v1::3040dd016668763c2281abb72ba22234eb627a9ce26b5ca2b93287e4d31005be"
+        }
+      },
+      "owner_position_id": "dispatch-outcome::dispatch-claim::stewardship.documentation_maintenance::task-admission-node-66d0e38dfb1d1ab5907fe7d3f8f968b96c7d1b0b3c2d7d5a7b4624a0acbfccb1::0::runtime-worker::fffcc1c2-204a-4243-ac2a-ee4533c8aed7",
+      "product": {
+        "task": {
+          "authority_requirements": [
+            "docs.draft_patch_set",
+            "docs.inspect_scope",
+            "docs.publish_patch_set",
+            "docs.validate_patch_set"
+          ],
+          "bindings": {
+            "entries": {
+              "?subject": {
+                "Object": {
+                  "domain_id": "workspace_fs",
+                  "object_id": "docs",
+                  "object_kind": "node"
+                }
+              },
+              "?threshold": {
+                "Literal": {
+                  "Number": 0.7
+                }
+              }
+            }
+          },
+          "capability_contract_ids": [
+            "capability-contract-4c6515ebde60cb02c31bed6d6f01512ff1090c3ed1ba44ecaf049bda0af06146",
+            "capability-contract-8a51c6c1d8268d71b0e8a7c8e5c4498e4fdb6d52cbf9c69c543d51d315c5b031",
+            "capability-contract-be6d8d1ddbcf0f2a1e5605b31777db71b7ac081286189912b18a4b90495e79c8",
+            "capability-contract-c0b9c79f582bdca4fc627eb19b85465ffb6dc24109e13b95659aaf881dc65e80"
+          ],
+          "composition": {
+            "edges": [
+              {
+                "from": "inspect-docs-scope",
+                "kind": {
+                  "DataFlow": {
+                    "artifact_type": {
+                      "ArtifactType": "docs_evidence_bundle"
+                    }
+                  }
+                },
+                "to": "validate-docs-patch-set"
+              },
+              {
+                "from": "inspect-docs-scope",
+                "kind": {
+                  "DataFlow": {
+                    "artifact_type": {
+                      "ArtifactType": "docs_evidence_bundle"
+                    }
+                  }
+                },
+                "to": "draft-docs-patch-set"
+              },
+              {
+                "from": "draft-docs-patch-set",
+                "kind": {
+                  "DataFlow": {
+                    "artifact_type": {
+                      "ArtifactType": "docs_patch_set"
+                    }
+                  }
+                },
+                "to": "validate-docs-patch-set"
+              },
+              {
+                "from": "validate-docs-patch-set",
+                "kind": {
+                  "DataFlow": {
+                    "artifact_type": {
+                      "ArtifactType": "docs_validated_patch_set"
+                    }
+                  }
+                },
+                "to": "publish-docs-patch-set"
+              }
+            ],
+            "steps": [
+              {
+                "kind": {
+                  "Op": {
+                    "cost": {
+                      "money_microdollars": 0,
+                      "provider_calls": 0,
+                      "time_ms": 100
+                    },
+                    "effects": [
+                      {
+                        "Assert": {
+                          "Exists": {
+                            "artifact_type": {
+                              "ArtifactType": "docs_publication_receipt"
+                            },
+                            "scope": {
+                              "Object": {
+                                "domain_id": "workspace_fs",
+                                "object_id": "docs",
+                                "object_kind": "node"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ],
+                    "operator_id": "publish-docs-patch-set",
+                    "preconditions": [],
+                    "resolution": {
+                      "requires_inputs": [
+                        {
+                          "artifact_type": {
+                            "ArtifactType": "docs_validated_patch_set"
+                          },
+                          "required": true
+                        }
+                      ],
+                      "requires_outputs": [
+                        {
+                          "artifact_type": {
+                            "ArtifactType": "docs_publication_receipt"
+                          },
+                          "required": true
+                        }
+                      ],
+                      "scope_kind": "repository",
+                      "specific": {
+                        "capability_type_id": "docs.publish_patch_set",
+                        "capability_version": 1
+                      },
+                      "tags": [
+                        "docs"
+                      ]
+                    }
+                  }
+                },
+                "step_id": "publish-docs-patch-set"
+              },
+              {
+                "kind": {
+                  "Op": {
+                    "cost": {
+                      "money_microdollars": 0,
+                      "provider_calls": 1,
+                      "time_ms": 60000
+                    },
+                    "effects": [],
+                    "operator_id": "validate-docs-patch-set",
+                    "preconditions": [],
+                    "resolution": {
+                      "requires_inputs": [
+                        {
+                          "artifact_type": {
+                            "ArtifactType": "docs_evidence_bundle"
+                          },
+                          "required": true
+                        },
+                        {
+                          "artifact_type": {
+                            "ArtifactType": "docs_patch_set"
+                          },
+                          "required": true
+                        }
+                      ],
+                      "requires_outputs": [
+                        {
+                          "artifact_type": {
+                            "ArtifactType": "docs_validated_patch_set"
+                          },
+                          "required": true
+                        }
+                      ],
+                      "scope_kind": "repository",
+                      "specific": {
+                        "capability_type_id": "docs.validate_patch_set",
+                        "capability_version": 1
+                      },
+                      "tags": [
+                        "docs"
+                      ]
+                    }
+                  }
+                },
+                "step_id": "validate-docs-patch-set"
+              },
+              {
+                "kind": {
+                  "Op": {
+                    "cost": {
+                      "money_microdollars": 0,
+                      "provider_calls": 0,
+                      "time_ms": 100
+                    },
+                    "effects": [],
+                    "operator_id": "inspect-docs-scope",
+                    "preconditions": [],
+                    "resolution": {
+                      "requires_inputs": [],
+                      "requires_outputs": [
+                        {
+                          "artifact_type": {
+                            "ArtifactType": "docs_evidence_bundle"
+                          },
+                          "required": true
+                        }
+                      ],
+                      "scope_kind": "repository",
+                      "specific": {
+                        "capability_type_id": "docs.inspect_scope",
+                        "capability_version": 1
+                      },
+                      "tags": [
+                        "docs"
+                      ]
+                    }
+                  }
+                },
+                "step_id": "inspect-docs-scope"
+              },
+              {
+                "kind": {
+                  "Op": {
+                    "cost": {
+                      "money_microdollars": 0,
+                      "provider_calls": 1,
+                      "time_ms": 60000
+                    },
+                    "effects": [],
+                    "operator_id": "draft-docs-patch-set",
+                    "preconditions": [],
+                    "resolution": {
+                      "requires_inputs": [
+                        {
+                          "artifact_type": {
+                            "ArtifactType": "docs_evidence_bundle"
+                          },
+                          "required": true
+                        }
+                      ],
+                      "requires_outputs": [
+                        {
+                          "artifact_type": {
+                            "ArtifactType": "docs_patch_set"
+                          },
+                          "required": true
+                        }
+                      ],
+                      "scope_kind": "repository",
+                      "specific": {
+                        "capability_type_id": "docs.draft_patch_set",
+                        "capability_version": 1
+                      },
+                      "tags": [
+                        "docs"
+                      ]
+                    }
+                  }
+                },
+                "step_id": "draft-docs-patch-set"
+              }
+            ]
+          },
+          "execution_subject": {
+            "domain_id": "workspace_fs",
+            "object_id": "docs",
+            "object_kind": "node"
+          },
+          "expected_outcome_contract_id": "docs.patch_set_published.v1",
+          "idempotency_key": "task::strategy-task-subject-v1::3040dd016668763c2281abb72ba22234eb627a9ce26b5ca2b93287e4d31005be",
+          "return_milestone": {
+            "execution_terminal": {
+              "task_id": "strategy-task-subject-v1::3040dd016668763c2281abb72ba22234eb627a9ce26b5ca2b93287e4d31005be"
+            }
+          },
+          "source_basis_id": "strategy-task-source-v1::bb2dea4eeaeff2aa7bcf89cc211fe6af3fa38989ab123d26a862198bd6a12d34",
+          "task_id": "strategy-task-subject-v1::3040dd016668763c2281abb72ba22234eb627a9ce26b5ca2b93287e4d31005be"
+        }
+      },
+      "product_id": "strategy-task-subject-v1::3040dd016668763c2281abb72ba22234eb627a9ce26b5ca2b93287e4d31005be",
+      "source_plan_revision_id": "strategy-plan-v1::66ab54c5aab3d3c4d605ed269b4ffbcc69f1eec5c8b5ac0ba8a1288059be2816"
+    },
+    {
+      "accepted_milestone": {
+        "belief_revision": {
+          "belief_key": "workspace_fs::node::docs::docs_freshness::confidence::default::default::main::default_policy",
+          "revision_id": "revision-ddef40ad363c1692"
+        }
+      },
+      "owner_position_id": "revision-ddef40ad363c1692",
+      "product": {
+        "epistemic": {
+          "authority_requirements": [
+            "docs-writer"
+          ],
+          "idempotency_key": "curation::strategy-epistemic-return-v1::37ee972ce53a35c3b4233e3d17f5de43f4e5a5e5fd3137e6b0c031b54844c89e",
+          "operation": {
+            "authority": {
+              "activation_generation": "cc3ebde77b5126ea7c83bfa586c03b1c2065e94efbecae4c74e7ae17a804320f",
+              "admission_epoch": "469a5012992899aadb468c27d638936d75e5b069f6a3a592835299c0e7549b77",
+              "agent_id": "docs-writer",
+              "branch_scope": {
+                "branch_id": "main"
+              },
+              "perspective": {
+                "perspective_id": "default",
+                "perspective_kind": "default"
+              },
+              "subject": {
+                "domain_id": "workspace_fs",
+                "object_id": "docs",
+                "object_kind": "node"
+              }
+            },
+            "operation_id": "requested-curation-operation-v1::2d90c87fb5c0a90165bff91346271d7c5f009a2aa6a24884e08af4e031b36461",
+            "request_id": "agent-curation-request-v1::ca11a74036a808528eff13c11ee3feb80da18836c95d7bb0b4ab36018fe3cb2e",
+            "rule_revision": {
+              "content_hash": "standing-curation-rule-v1::48784d6e2692a1c600fff62fdd96813e7c21b66933a62d7c6dc86e1ca7e7afd5",
+              "id": "docs-standing-curation",
+              "registry": "epistemic_curation_rule"
+            },
+            "selection_id": "requested-curation-selection-v1::00f4e20a653cfff87a71741fc405fe5966b5346d79b36fcdf7857622bb28186b",
+            "source_cut": {
+              "currentness": "latest_complete",
+              "cut_id": "traversal-cut-v1::b3eb5bb620a8b05bd63fa104a76ba029a8632e2c2b574a8472b1e89808ba71e1",
+              "event_position": {
+                "after_seq": 71,
+                "ledger_id": "fffcc1c2-204a-4243-ac2a-ee4533c8aed7"
+              },
+              "graph_position": {
+                "after_seq": 71,
+                "ledger_id": "fffcc1c2-204a-4243-ac2a-ee4533c8aed7"
+              },
+              "issues": [],
+              "owners": [
+                {
+                  "owner_id": "curation",
+                  "required": false,
+                  "scope": {
+                    "branch_id": "main",
+                    "perspective_id": "default",
+                    "scope_id": "docs",
+                    "valid_at": null
+                  }
+                },
+                {
+                  "owner_id": "docs",
+                  "required": true,
+                  "scope": {
+                    "branch_id": "main",
+                    "perspective_id": "default",
+                    "scope_id": "docs",
+                    "valid_at": null
+                  }
+                }
+              ],
+              "receipts": [
+                {
+                  "completeness": {
+                    "exclusions": [],
+                    "failures": [],
+                    "included_ids": [
+                      "curation-coverage-publication-v1::762ff6d5754b4916019bbf453f7aa1457a112d13bf977bd3ed4fa32d26a9d8db",
+                      "curation-coverage-relation-v1::03140d66af3c5368f407383d7c017c38af632442e7070d96e4fbc48faf5671a5",
+                      "curation-coverage-relation-v1::04ec83d9072d2d51ef7e3a070251feee63ce6ce3e121a5920a9f9c92276d6ce5",
+                      "curation-coverage-relation-v1::43361928cac143f84d89661d1aad2b271d0ed087d6e92407884e7b878c9bbfdd",
+                      "curation-coverage-relation-v1::492c9b68b166e8a3bf3564b8d180572d25377faece2a0407321d8481330d6cb6",
+                      "curation-coverage-relation-v1::4e93105467a008c5e9766c11932c29d783f83905027ce696a0b4a8ccae4e7989",
+                      "curation-coverage-relation-v1::7c751acbf57521178d7390783b2c8f7ec1047056ca29531dfb51131b74ac63ff",
+                      "curation-coverage-relation-v1::8055bdec788127cd8b1ab3149b8469afe2bee53e6a5d6e22fcd2073516eb691d",
+                      "curation-coverage-relation-v1::9e385fc93dd92c5fe20111cb11cc442cc135115e41654265b317400a31677f7d",
+                      "curation-coverage-relation-v1::b8b6521808687f67e9b728074c69594a48ab59ebd7840657da9a9e556ed9bb69",
+                      "curation-coverage-relation-v1::cb69bad1182a9770e8d447e134e6cfb651f13d66ee3594f379da7dd661c3ab2e",
+                      "curation-coverage-relation-v1::d166f88a976a7e20d44be1642b4b32c0ffce010c10a8026bf83ee685e838c6da",
+                      "curation-coverage-relation-v1::e1b916ac06e8c960bae98ae48f988b8acd563a168597e8e1e52c3929312e1e12",
+                      "curation-coverage-relation-v1::e486dbb4a366bd89f5cea8f1626507cfde68c1c07a0a9658a9e9fdfdb71f13ad",
+                      "curation-coverage-relation-v1::ed9c982dce038e2b59efe69bc045dbdfef20472ebfbe986b6709df9ab2c46c7f",
+                      "curation-coverage-relation-v1::f5d9c60495fa68c41633ad113e5d167d8662afa7244c55b3663c2c63841f9012",
+                      "curation-expected-publication-v1::ca1c96877a6f232f257b362f4d6f2a0427da4958c47e26595ed5f54a0dfaec53",
+                      "curation-relation-occurrence-v1::23f008d8f950114dad6fccc0a9c67de5086f36bfdd34cbc3ee0a6901feb72e42",
+                      "curation-required-publication-v1::9fab35c9699085bab25577730a5ea0c7466e081fe451cc96de7047484b0b6816",
+                      "curation-required-publication-v1::a9fdf33283a9c173406da46eabd0328844239e66a6121e656dddbe67477509e0",
+                      "curation-required-publication-v1::ac4026e6f1fe9c52a33a44a13408ffb112c92c4dc56d95c48472add78c7da5bc",
+                      "curation-required-publication-v1::c356ce90c6d96945a30d761e882b79f218c52aaf1f5380152a59ccb6dd815fa4",
+                      "curation-required-publication-v1::c70297c2b2a680d7b9f258dd1d7d4c53cfd0a8eca5a3e7d8cffb47b30e54434b",
+                      "curation-required-publication-v1::da1fee4eb136162ecd6a6193299dfdedb02f48409c0854b8b043d1e5b996ce00",
+                      "curation-required-publication-v1::fde796a1a8e7d2604c7950c08f731156225d0e7d6f7cea8b54ba796b084b54d5"
+                    ],
+                    "receipt_id": "curation-completeness-v1::4a4bcc9410ee7ca36596d05b8bbd9cef872bb4639c40edf635e0a2e75884edd4",
+                    "scope": {
+                      "branch_id": "main",
+                      "perspective_id": "default",
+                      "scope_id": "docs",
+                      "valid_at": null
+                    },
+                    "status": "complete"
+                  },
+                  "owner_id": "curation",
+                  "projection_position": {
+                    "after_seq": 69,
+                    "ledger_id": "fffcc1c2-204a-4243-ac2a-ee4533c8aed7"
+                  },
+                  "revision_id": "standing-curation-result-v1::fcf3ca7d500e8c03d67c5ec5ce7cd139a1199ab4b1eec30ef8c37fdb210215b7",
+                  "scope": {
+                    "branch_id": "main",
+                    "perspective_id": "default",
+                    "scope_id": "docs",
+                    "valid_at": null
+                  },
+                  "source_event": {
+                    "ledger_id": "fffcc1c2-204a-4243-ac2a-ee4533c8aed7",
+                    "seq": 69
+                  }
+                },
+                {
+                  "completeness": {
+                    "exclusions": [],
+                    "failures": [],
+                    "included_ids": [
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-2a5d2738ac10b0a3ef583641b6df8b47b9df2cf50de5fcc0ad51680dc62aa2c2",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-2bef98b4232f62f60237123f54a56d471c319b5b5ece341241bb6fc3ce68236c",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-385c3cc02530d88e7dcc950a4b9e90403ab428a5c11d176b4abb67684ec21d5c",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-4bccf28f3661515c81bca960d7e267072468802f4d01f97b0cb90f9acd598684",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-6b121497c77a995ca6e4f3df34da0c9b7546ce77273d51a20b1f290de98e0bb0",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-6b21afe7ed4fcdd2dfc2b960479d183676b08585e09e5ab032bf8f78b95874eb",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-73db8b4cffd98c21f096c8aeaaf25adb6c61a31f2856de78759c8cd0b67e9bd8",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-d2c597e444b6c8a2dd3bf982c86c08769f327d414680f5f2e99bc6362767d342",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::claim_correspondence_set::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-2a5d2738ac10b0a3ef583641b6df8b47b9df2cf50de5fcc0ad51680dc62aa2c2",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-2bef98b4232f62f60237123f54a56d471c319b5b5ece341241bb6fc3ce68236c",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-385c3cc02530d88e7dcc950a4b9e90403ab428a5c11d176b4abb67684ec21d5c",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-4bccf28f3661515c81bca960d7e267072468802f4d01f97b0cb90f9acd598684",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-6b121497c77a995ca6e4f3df34da0c9b7546ce77273d51a20b1f290de98e0bb0",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-6b21afe7ed4fcdd2dfc2b960479d183676b08585e09e5ab032bf8f78b95874eb",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-73db8b4cffd98c21f096c8aeaaf25adb6c61a31f2856de78759c8cd0b67e9bd8",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-d2c597e444b6c8a2dd3bf982c86c08769f327d414680f5f2e99bc6362767d342",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::observed_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::readme_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::scope_observation::docs",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_claim::docs-source-claim::038070247097c0e37cbfd102c56eba022e95c9603dbe6170cb137df769ff7b58",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_claim::docs-source-claim::0a9b6d2b2204b6b3f9a34457b76568293b2d65916331973fc7e983e1bef20451",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_claim::docs-source-claim::11ec784f344f589d17bd7e7c8510e6b444c238b36d858c881986fdcb5ade511a",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_claim::docs-source-claim::299b7b6f8faf68e7672417782ff1bd5c051ce3419a313dddaed5d9f544895109",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_claim::docs-source-claim::3e2c746b87a20d6ad8d1b566eb404ab4e1b73044566bfda3e4e471e3c24b33bf",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_claim::docs-source-claim::d278cc81c4e37e3ab5ad20158daf939036aa302a515dac83e966b657ca2756d7",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_claim::docs-source-claim::fe832347432d3a7457dda03800bb3ad234b346ac3b49fdc016d026e66401dbb7",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_claim_set::docs-source-claims::04981746a16f604cb904516a1a240ab0b738ab25e61cd011c141eaa2356c6169",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_file_claims::docs-source-claims::04981746a16f604cb904516a1a240ab0b738ab25e61cd011c141eaa2356c6169::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_observation::docs::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::038070247097c0e37cbfd102c56eba022e95c9603dbe6170cb137df769ff7b58",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::0a9b6d2b2204b6b3f9a34457b76568293b2d65916331973fc7e983e1bef20451",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::11ec784f344f589d17bd7e7c8510e6b444c238b36d858c881986fdcb5ade511a",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::299b7b6f8faf68e7672417782ff1bd5c051ce3419a313dddaed5d9f544895109",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::3e2c746b87a20d6ad8d1b566eb404ab4e1b73044566bfda3e4e471e3c24b33bf",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::d278cc81c4e37e3ab5ad20158daf939036aa302a515dac83e966b657ca2756d7",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::fe832347432d3a7457dda03800bb3ad234b346ac3b49fdc016d026e66401dbb7",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_from_source::docs::source_claim::docs-source-claim::038070247097c0e37cbfd102c56eba022e95c9603dbe6170cb137df769ff7b58::docs::source_observation::docs::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_from_source::docs::source_claim::docs-source-claim::0a9b6d2b2204b6b3f9a34457b76568293b2d65916331973fc7e983e1bef20451::docs::source_observation::docs::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_from_source::docs::source_claim::docs-source-claim::11ec784f344f589d17bd7e7c8510e6b444c238b36d858c881986fdcb5ade511a::docs::source_observation::docs::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_from_source::docs::source_claim::docs-source-claim::299b7b6f8faf68e7672417782ff1bd5c051ce3419a313dddaed5d9f544895109::docs::source_observation::docs::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_from_source::docs::source_claim::docs-source-claim::3e2c746b87a20d6ad8d1b566eb404ab4e1b73044566bfda3e4e471e3c24b33bf::docs::source_observation::docs::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_from_source::docs::source_claim::docs-source-claim::d278cc81c4e37e3ab5ad20158daf939036aa302a515dac83e966b657ca2756d7::docs::source_observation::docs::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_from_source::docs::source_claim::docs-source-claim::fe832347432d3a7457dda03800bb3ad234b346ac3b49fdc016d026e66401dbb7::docs::source_observation::docs::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_in_readme::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-2a5d2738ac10b0a3ef583641b6df8b47b9df2cf50de5fcc0ad51680dc62aa2c2::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_in_readme::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-2bef98b4232f62f60237123f54a56d471c319b5b5ece341241bb6fc3ce68236c::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_in_readme::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-385c3cc02530d88e7dcc950a4b9e90403ab428a5c11d176b4abb67684ec21d5c::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_in_readme::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-4bccf28f3661515c81bca960d7e267072468802f4d01f97b0cb90f9acd598684::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_in_readme::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-6b121497c77a995ca6e4f3df34da0c9b7546ce77273d51a20b1f290de98e0bb0::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_in_readme::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-6b21afe7ed4fcdd2dfc2b960479d183676b08585e09e5ab032bf8f78b95874eb::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_in_readme::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-73db8b4cffd98c21f096c8aeaaf25adb6c61a31f2856de78759c8cd0b67e9bd8::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_in_readme::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-d2c597e444b6c8a2dd3bf982c86c08769f327d414680f5f2e99bc6362767d342::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_judgment_in_readme::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-2a5d2738ac10b0a3ef583641b6df8b47b9df2cf50de5fcc0ad51680dc62aa2c2::docs::readme_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_judgment_in_readme::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-2bef98b4232f62f60237123f54a56d471c319b5b5ece341241bb6fc3ce68236c::docs::readme_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_judgment_in_readme::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-385c3cc02530d88e7dcc950a4b9e90403ab428a5c11d176b4abb67684ec21d5c::docs::readme_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_judgment_in_readme::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-4bccf28f3661515c81bca960d7e267072468802f4d01f97b0cb90f9acd598684::docs::readme_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_judgment_in_readme::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-6b121497c77a995ca6e4f3df34da0c9b7546ce77273d51a20b1f290de98e0bb0::docs::readme_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_judgment_in_readme::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-6b21afe7ed4fcdd2dfc2b960479d183676b08585e09e5ab032bf8f78b95874eb::docs::readme_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_judgment_in_readme::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-73db8b4cffd98c21f096c8aeaaf25adb6c61a31f2856de78759c8cd0b67e9bd8::docs::readme_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_judgment_in_readme::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-d2c597e444b6c8a2dd3bf982c86c08769f327d414680f5f2e99bc6362767d342::docs::readme_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claims_source_scope::docs::source_claim_set::docs-source-claims::04981746a16f604cb904516a1a240ab0b738ab25e61cd011c141eaa2356c6169::docs::scope_observation::docs",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_compares_source_to_readme::docs::claim_correspondence_set::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::docs::scope_observation::docs",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_in_set::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::038070247097c0e37cbfd102c56eba022e95c9603dbe6170cb137df769ff7b58::docs::claim_correspondence_set::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_in_set::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::0a9b6d2b2204b6b3f9a34457b76568293b2d65916331973fc7e983e1bef20451::docs::claim_correspondence_set::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_in_set::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::11ec784f344f589d17bd7e7c8510e6b444c238b36d858c881986fdcb5ade511a::docs::claim_correspondence_set::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_in_set::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::299b7b6f8faf68e7672417782ff1bd5c051ce3419a313dddaed5d9f544895109::docs::claim_correspondence_set::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_in_set::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::3e2c746b87a20d6ad8d1b566eb404ab4e1b73044566bfda3e4e471e3c24b33bf::docs::claim_correspondence_set::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_in_set::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::d278cc81c4e37e3ab5ad20158daf939036aa302a515dac83e966b657ca2756d7::docs::claim_correspondence_set::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_in_set::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::fe832347432d3a7457dda03800bb3ad234b346ac3b49fdc016d026e66401dbb7::docs::claim_correspondence_set::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_match::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::038070247097c0e37cbfd102c56eba022e95c9603dbe6170cb137df769ff7b58::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-6b21afe7ed4fcdd2dfc2b960479d183676b08585e09e5ab032bf8f78b95874eb",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_match::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::0a9b6d2b2204b6b3f9a34457b76568293b2d65916331973fc7e983e1bef20451::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-6b21afe7ed4fcdd2dfc2b960479d183676b08585e09e5ab032bf8f78b95874eb",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_match::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::11ec784f344f589d17bd7e7c8510e6b444c238b36d858c881986fdcb5ade511a::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-2bef98b4232f62f60237123f54a56d471c319b5b5ece341241bb6fc3ce68236c",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_match::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::299b7b6f8faf68e7672417782ff1bd5c051ce3419a313dddaed5d9f544895109::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-385c3cc02530d88e7dcc950a4b9e90403ab428a5c11d176b4abb67684ec21d5c",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_match::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::299b7b6f8faf68e7672417782ff1bd5c051ce3419a313dddaed5d9f544895109::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-73db8b4cffd98c21f096c8aeaaf25adb6c61a31f2856de78759c8cd0b67e9bd8",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_match::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::3e2c746b87a20d6ad8d1b566eb404ab4e1b73044566bfda3e4e471e3c24b33bf::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-2a5d2738ac10b0a3ef583641b6df8b47b9df2cf50de5fcc0ad51680dc62aa2c2",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_match::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::d278cc81c4e37e3ab5ad20158daf939036aa302a515dac83e966b657ca2756d7::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-6b121497c77a995ca6e4f3df34da0c9b7546ce77273d51a20b1f290de98e0bb0",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_match::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::fe832347432d3a7457dda03800bb3ad234b346ac3b49fdc016d026e66401dbb7::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-d2c597e444b6c8a2dd3bf982c86c08769f327d414680f5f2e99bc6362767d342",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_readme::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::038070247097c0e37cbfd102c56eba022e95c9603dbe6170cb137df769ff7b58::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_readme::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::0a9b6d2b2204b6b3f9a34457b76568293b2d65916331973fc7e983e1bef20451::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_readme::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::11ec784f344f589d17bd7e7c8510e6b444c238b36d858c881986fdcb5ade511a::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_readme::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::299b7b6f8faf68e7672417782ff1bd5c051ce3419a313dddaed5d9f544895109::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_readme::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::3e2c746b87a20d6ad8d1b566eb404ab4e1b73044566bfda3e4e471e3c24b33bf::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_readme::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::d278cc81c4e37e3ab5ad20158daf939036aa302a515dac83e966b657ca2756d7::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_readme::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::fe832347432d3a7457dda03800bb3ad234b346ac3b49fdc016d026e66401dbb7::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_source::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::038070247097c0e37cbfd102c56eba022e95c9603dbe6170cb137df769ff7b58::docs::source_claim::docs-source-claim::038070247097c0e37cbfd102c56eba022e95c9603dbe6170cb137df769ff7b58",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_source::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::0a9b6d2b2204b6b3f9a34457b76568293b2d65916331973fc7e983e1bef20451::docs::source_claim::docs-source-claim::0a9b6d2b2204b6b3f9a34457b76568293b2d65916331973fc7e983e1bef20451",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_source::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::11ec784f344f589d17bd7e7c8510e6b444c238b36d858c881986fdcb5ade511a::docs::source_claim::docs-source-claim::11ec784f344f589d17bd7e7c8510e6b444c238b36d858c881986fdcb5ade511a",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_source::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::299b7b6f8faf68e7672417782ff1bd5c051ce3419a313dddaed5d9f544895109::docs::source_claim::docs-source-claim::299b7b6f8faf68e7672417782ff1bd5c051ce3419a313dddaed5d9f544895109",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_source::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::3e2c746b87a20d6ad8d1b566eb404ab4e1b73044566bfda3e4e471e3c24b33bf::docs::source_claim::docs-source-claim::3e2c746b87a20d6ad8d1b566eb404ab4e1b73044566bfda3e4e471e3c24b33bf",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_source::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::d278cc81c4e37e3ab5ad20158daf939036aa302a515dac83e966b657ca2756d7::docs::source_claim::docs-source-claim::d278cc81c4e37e3ab5ad20158daf939036aa302a515dac83e966b657ca2756d7",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_source::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::fe832347432d3a7457dda03800bb3ad234b346ac3b49fdc016d026e66401dbb7::docs::source_claim::docs-source-claim::fe832347432d3a7457dda03800bb3ad234b346ac3b49fdc016d026e66401dbb7",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_judges_claim::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-2a5d2738ac10b0a3ef583641b6df8b47b9df2cf50de5fcc0ad51680dc62aa2c2::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-2a5d2738ac10b0a3ef583641b6df8b47b9df2cf50de5fcc0ad51680dc62aa2c2",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_judges_claim::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-2bef98b4232f62f60237123f54a56d471c319b5b5ece341241bb6fc3ce68236c::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-2bef98b4232f62f60237123f54a56d471c319b5b5ece341241bb6fc3ce68236c",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_judges_claim::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-385c3cc02530d88e7dcc950a4b9e90403ab428a5c11d176b4abb67684ec21d5c::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-385c3cc02530d88e7dcc950a4b9e90403ab428a5c11d176b4abb67684ec21d5c",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_judges_claim::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-4bccf28f3661515c81bca960d7e267072468802f4d01f97b0cb90f9acd598684::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-4bccf28f3661515c81bca960d7e267072468802f4d01f97b0cb90f9acd598684",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_judges_claim::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-6b121497c77a995ca6e4f3df34da0c9b7546ce77273d51a20b1f290de98e0bb0::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-6b121497c77a995ca6e4f3df34da0c9b7546ce77273d51a20b1f290de98e0bb0",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_judges_claim::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-6b21afe7ed4fcdd2dfc2b960479d183676b08585e09e5ab032bf8f78b95874eb::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-6b21afe7ed4fcdd2dfc2b960479d183676b08585e09e5ab032bf8f78b95874eb",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_judges_claim::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-73db8b4cffd98c21f096c8aeaaf25adb6c61a31f2856de78759c8cd0b67e9bd8::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-73db8b4cffd98c21f096c8aeaaf25adb6c61a31f2856de78759c8cd0b67e9bd8",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_judges_claim::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-d2c597e444b6c8a2dd3bf982c86c08769f327d414680f5f2e99bc6362767d342::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-d2c597e444b6c8a2dd3bf982c86c08769f327d414680f5f2e99bc6362767d342",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_judges_observed_claims::docs::observed_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::docs::scope_observation::docs",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_judges_readme::docs::readme_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_observes::docs::scope_observation::docs::workspace_fs::node::docs",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_readme_in_scope::docs::readme_observation::docs::README.md::docs::scope_observation::docs",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_readme_judgment_in_scope::docs::readme_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::docs::observed_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_source_claim_file_in_set::docs::source_file_claims::docs-source-claims::04981746a16f604cb904516a1a240ab0b738ab25e61cd011c141eaa2356c6169::pricing.py::docs::source_claim_set::docs-source-claims::04981746a16f604cb904516a1a240ab0b738ab25e61cd011c141eaa2356c6169",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_source_claim_in_file::docs::source_claim::docs-source-claim::038070247097c0e37cbfd102c56eba022e95c9603dbe6170cb137df769ff7b58::docs::source_file_claims::docs-source-claims::04981746a16f604cb904516a1a240ab0b738ab25e61cd011c141eaa2356c6169::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_source_claim_in_file::docs::source_claim::docs-source-claim::0a9b6d2b2204b6b3f9a34457b76568293b2d65916331973fc7e983e1bef20451::docs::source_file_claims::docs-source-claims::04981746a16f604cb904516a1a240ab0b738ab25e61cd011c141eaa2356c6169::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_source_claim_in_file::docs::source_claim::docs-source-claim::11ec784f344f589d17bd7e7c8510e6b444c238b36d858c881986fdcb5ade511a::docs::source_file_claims::docs-source-claims::04981746a16f604cb904516a1a240ab0b738ab25e61cd011c141eaa2356c6169::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_source_claim_in_file::docs::source_claim::docs-source-claim::299b7b6f8faf68e7672417782ff1bd5c051ce3419a313dddaed5d9f544895109::docs::source_file_claims::docs-source-claims::04981746a16f604cb904516a1a240ab0b738ab25e61cd011c141eaa2356c6169::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_source_claim_in_file::docs::source_claim::docs-source-claim::3e2c746b87a20d6ad8d1b566eb404ab4e1b73044566bfda3e4e471e3c24b33bf::docs::source_file_claims::docs-source-claims::04981746a16f604cb904516a1a240ab0b738ab25e61cd011c141eaa2356c6169::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_source_claim_in_file::docs::source_claim::docs-source-claim::d278cc81c4e37e3ab5ad20158daf939036aa302a515dac83e966b657ca2756d7::docs::source_file_claims::docs-source-claims::04981746a16f604cb904516a1a240ab0b738ab25e61cd011c141eaa2356c6169::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_source_claim_in_file::docs::source_claim::docs-source-claim::fe832347432d3a7457dda03800bb3ad234b346ac3b49fdc016d026e66401dbb7::docs::source_file_claims::docs-source-claims::04981746a16f604cb904516a1a240ab0b738ab25e61cd011c141eaa2356c6169::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_source_in_scope::docs::source_observation::docs::pricing.py::docs::scope_observation::docs"
+                    ],
+                    "receipt_id": "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::coverage",
+                    "scope": {
+                      "branch_id": "main",
+                      "perspective_id": "default",
+                      "scope_id": "docs",
+                      "valid_at": null
+                    },
+                    "status": "complete"
+                  },
+                  "owner_id": "docs",
+                  "projection_position": {
+                    "after_seq": 68,
+                    "ledger_id": "fffcc1c2-204a-4243-ac2a-ee4533c8aed7"
+                  },
+                  "revision_id": "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe",
+                  "scope": {
+                    "branch_id": "main",
+                    "perspective_id": "default",
+                    "scope_id": "docs",
+                    "valid_at": null
+                  },
+                  "source_event": {
+                    "ledger_id": "fffcc1c2-204a-4243-ac2a-ee4533c8aed7",
+                    "seq": 68
+                  }
+                }
+              ],
+              "scope": {
+                "branch_id": "main",
+                "perspective_id": "default",
+                "scope_id": "docs",
+                "valid_at": null
+              },
+              "status": "complete"
+            },
+            "traversal_request": {
+              "bounds": {
+                "max_depth": 12,
+                "max_objects": 4096,
+                "max_occurrences": 8192,
+                "max_paths": 8192
+              },
+              "direction": "Incoming",
+              "relation_types": null,
+              "roots": [
+                {
+                  "domain_id": "docs",
+                  "object_id": "docs",
+                  "object_kind": "scope_observation"
+                }
+              ]
+            }
+          },
+          "product_id": "strategy-epistemic-return-v1::37ee972ce53a35c3b4233e3d17f5de43f4e5a5e5fd3137e6b0c031b54844c89e",
+          "return_evidence": {
+            "dimension_id": "docs_freshness",
+            "evidence_schema_id": "docs_required_coverage_v1",
+            "outcome_contract_id": "docs.patch_set_published.v1",
+            "route_id": "docs-required-coverage-return-v1"
+          }
+        }
+      },
+      "product_id": "strategy-epistemic-return-v1::37ee972ce53a35c3b4233e3d17f5de43f4e5a5e5fd3137e6b0c031b54844c89e",
+      "source_plan_revision_id": "strategy-plan-v1::ec2756e3ce172b77ed6fa7e81b3cd5aa9db2bc2414a4b0d96af3c9a98dfcb913"
+    },
+    {
+      "accepted_milestone": {
+        "curation_terminal": {
+          "operation_id": "requested-curation-operation-v1::2d90c87fb5c0a90165bff91346271d7c5f009a2aa6a24884e08af4e031b36461"
+        }
+      },
+      "owner_position_id": "standing-curation-result-v1::d29f0829e633e112ffce16f1487a9e7a99018d27229f355c00e650f6aebb3f63",
+      "product": {
+        "epistemic": {
+          "authority_requirements": [
+            "docs-writer"
+          ],
+          "idempotency_key": "curation::strategy-epistemic-return-v1::37ee972ce53a35c3b4233e3d17f5de43f4e5a5e5fd3137e6b0c031b54844c89e",
+          "operation": {
+            "authority": {
+              "activation_generation": "cc3ebde77b5126ea7c83bfa586c03b1c2065e94efbecae4c74e7ae17a804320f",
+              "admission_epoch": "469a5012992899aadb468c27d638936d75e5b069f6a3a592835299c0e7549b77",
+              "agent_id": "docs-writer",
+              "branch_scope": {
+                "branch_id": "main"
+              },
+              "perspective": {
+                "perspective_id": "default",
+                "perspective_kind": "default"
+              },
+              "subject": {
+                "domain_id": "workspace_fs",
+                "object_id": "docs",
+                "object_kind": "node"
+              }
+            },
+            "operation_id": "requested-curation-operation-v1::2d90c87fb5c0a90165bff91346271d7c5f009a2aa6a24884e08af4e031b36461",
+            "request_id": "agent-curation-request-v1::ca11a74036a808528eff13c11ee3feb80da18836c95d7bb0b4ab36018fe3cb2e",
+            "rule_revision": {
+              "content_hash": "standing-curation-rule-v1::48784d6e2692a1c600fff62fdd96813e7c21b66933a62d7c6dc86e1ca7e7afd5",
+              "id": "docs-standing-curation",
+              "registry": "epistemic_curation_rule"
+            },
+            "selection_id": "requested-curation-selection-v1::00f4e20a653cfff87a71741fc405fe5966b5346d79b36fcdf7857622bb28186b",
+            "source_cut": {
+              "currentness": "latest_complete",
+              "cut_id": "traversal-cut-v1::b3eb5bb620a8b05bd63fa104a76ba029a8632e2c2b574a8472b1e89808ba71e1",
+              "event_position": {
+                "after_seq": 71,
+                "ledger_id": "fffcc1c2-204a-4243-ac2a-ee4533c8aed7"
+              },
+              "graph_position": {
+                "after_seq": 71,
+                "ledger_id": "fffcc1c2-204a-4243-ac2a-ee4533c8aed7"
+              },
+              "issues": [],
+              "owners": [
+                {
+                  "owner_id": "curation",
+                  "required": false,
+                  "scope": {
+                    "branch_id": "main",
+                    "perspective_id": "default",
+                    "scope_id": "docs",
+                    "valid_at": null
+                  }
+                },
+                {
+                  "owner_id": "docs",
+                  "required": true,
+                  "scope": {
+                    "branch_id": "main",
+                    "perspective_id": "default",
+                    "scope_id": "docs",
+                    "valid_at": null
+                  }
+                }
+              ],
+              "receipts": [
+                {
+                  "completeness": {
+                    "exclusions": [],
+                    "failures": [],
+                    "included_ids": [
+                      "curation-coverage-publication-v1::762ff6d5754b4916019bbf453f7aa1457a112d13bf977bd3ed4fa32d26a9d8db",
+                      "curation-coverage-relation-v1::03140d66af3c5368f407383d7c017c38af632442e7070d96e4fbc48faf5671a5",
+                      "curation-coverage-relation-v1::04ec83d9072d2d51ef7e3a070251feee63ce6ce3e121a5920a9f9c92276d6ce5",
+                      "curation-coverage-relation-v1::43361928cac143f84d89661d1aad2b271d0ed087d6e92407884e7b878c9bbfdd",
+                      "curation-coverage-relation-v1::492c9b68b166e8a3bf3564b8d180572d25377faece2a0407321d8481330d6cb6",
+                      "curation-coverage-relation-v1::4e93105467a008c5e9766c11932c29d783f83905027ce696a0b4a8ccae4e7989",
+                      "curation-coverage-relation-v1::7c751acbf57521178d7390783b2c8f7ec1047056ca29531dfb51131b74ac63ff",
+                      "curation-coverage-relation-v1::8055bdec788127cd8b1ab3149b8469afe2bee53e6a5d6e22fcd2073516eb691d",
+                      "curation-coverage-relation-v1::9e385fc93dd92c5fe20111cb11cc442cc135115e41654265b317400a31677f7d",
+                      "curation-coverage-relation-v1::b8b6521808687f67e9b728074c69594a48ab59ebd7840657da9a9e556ed9bb69",
+                      "curation-coverage-relation-v1::cb69bad1182a9770e8d447e134e6cfb651f13d66ee3594f379da7dd661c3ab2e",
+                      "curation-coverage-relation-v1::d166f88a976a7e20d44be1642b4b32c0ffce010c10a8026bf83ee685e838c6da",
+                      "curation-coverage-relation-v1::e1b916ac06e8c960bae98ae48f988b8acd563a168597e8e1e52c3929312e1e12",
+                      "curation-coverage-relation-v1::e486dbb4a366bd89f5cea8f1626507cfde68c1c07a0a9658a9e9fdfdb71f13ad",
+                      "curation-coverage-relation-v1::ed9c982dce038e2b59efe69bc045dbdfef20472ebfbe986b6709df9ab2c46c7f",
+                      "curation-coverage-relation-v1::f5d9c60495fa68c41633ad113e5d167d8662afa7244c55b3663c2c63841f9012",
+                      "curation-expected-publication-v1::ca1c96877a6f232f257b362f4d6f2a0427da4958c47e26595ed5f54a0dfaec53",
+                      "curation-relation-occurrence-v1::23f008d8f950114dad6fccc0a9c67de5086f36bfdd34cbc3ee0a6901feb72e42",
+                      "curation-required-publication-v1::9fab35c9699085bab25577730a5ea0c7466e081fe451cc96de7047484b0b6816",
+                      "curation-required-publication-v1::a9fdf33283a9c173406da46eabd0328844239e66a6121e656dddbe67477509e0",
+                      "curation-required-publication-v1::ac4026e6f1fe9c52a33a44a13408ffb112c92c4dc56d95c48472add78c7da5bc",
+                      "curation-required-publication-v1::c356ce90c6d96945a30d761e882b79f218c52aaf1f5380152a59ccb6dd815fa4",
+                      "curation-required-publication-v1::c70297c2b2a680d7b9f258dd1d7d4c53cfd0a8eca5a3e7d8cffb47b30e54434b",
+                      "curation-required-publication-v1::da1fee4eb136162ecd6a6193299dfdedb02f48409c0854b8b043d1e5b996ce00",
+                      "curation-required-publication-v1::fde796a1a8e7d2604c7950c08f731156225d0e7d6f7cea8b54ba796b084b54d5"
+                    ],
+                    "receipt_id": "curation-completeness-v1::4a4bcc9410ee7ca36596d05b8bbd9cef872bb4639c40edf635e0a2e75884edd4",
+                    "scope": {
+                      "branch_id": "main",
+                      "perspective_id": "default",
+                      "scope_id": "docs",
+                      "valid_at": null
+                    },
+                    "status": "complete"
+                  },
+                  "owner_id": "curation",
+                  "projection_position": {
+                    "after_seq": 69,
+                    "ledger_id": "fffcc1c2-204a-4243-ac2a-ee4533c8aed7"
+                  },
+                  "revision_id": "standing-curation-result-v1::fcf3ca7d500e8c03d67c5ec5ce7cd139a1199ab4b1eec30ef8c37fdb210215b7",
+                  "scope": {
+                    "branch_id": "main",
+                    "perspective_id": "default",
+                    "scope_id": "docs",
+                    "valid_at": null
+                  },
+                  "source_event": {
+                    "ledger_id": "fffcc1c2-204a-4243-ac2a-ee4533c8aed7",
+                    "seq": 69
+                  }
+                },
+                {
+                  "completeness": {
+                    "exclusions": [],
+                    "failures": [],
+                    "included_ids": [
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-2a5d2738ac10b0a3ef583641b6df8b47b9df2cf50de5fcc0ad51680dc62aa2c2",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-2bef98b4232f62f60237123f54a56d471c319b5b5ece341241bb6fc3ce68236c",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-385c3cc02530d88e7dcc950a4b9e90403ab428a5c11d176b4abb67684ec21d5c",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-4bccf28f3661515c81bca960d7e267072468802f4d01f97b0cb90f9acd598684",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-6b121497c77a995ca6e4f3df34da0c9b7546ce77273d51a20b1f290de98e0bb0",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-6b21afe7ed4fcdd2dfc2b960479d183676b08585e09e5ab032bf8f78b95874eb",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-73db8b4cffd98c21f096c8aeaaf25adb6c61a31f2856de78759c8cd0b67e9bd8",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-d2c597e444b6c8a2dd3bf982c86c08769f327d414680f5f2e99bc6362767d342",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::claim_correspondence_set::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-2a5d2738ac10b0a3ef583641b6df8b47b9df2cf50de5fcc0ad51680dc62aa2c2",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-2bef98b4232f62f60237123f54a56d471c319b5b5ece341241bb6fc3ce68236c",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-385c3cc02530d88e7dcc950a4b9e90403ab428a5c11d176b4abb67684ec21d5c",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-4bccf28f3661515c81bca960d7e267072468802f4d01f97b0cb90f9acd598684",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-6b121497c77a995ca6e4f3df34da0c9b7546ce77273d51a20b1f290de98e0bb0",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-6b21afe7ed4fcdd2dfc2b960479d183676b08585e09e5ab032bf8f78b95874eb",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-73db8b4cffd98c21f096c8aeaaf25adb6c61a31f2856de78759c8cd0b67e9bd8",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-d2c597e444b6c8a2dd3bf982c86c08769f327d414680f5f2e99bc6362767d342",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::observed_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::readme_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::scope_observation::docs",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_claim::docs-source-claim::038070247097c0e37cbfd102c56eba022e95c9603dbe6170cb137df769ff7b58",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_claim::docs-source-claim::0a9b6d2b2204b6b3f9a34457b76568293b2d65916331973fc7e983e1bef20451",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_claim::docs-source-claim::11ec784f344f589d17bd7e7c8510e6b444c238b36d858c881986fdcb5ade511a",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_claim::docs-source-claim::299b7b6f8faf68e7672417782ff1bd5c051ce3419a313dddaed5d9f544895109",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_claim::docs-source-claim::3e2c746b87a20d6ad8d1b566eb404ab4e1b73044566bfda3e4e471e3c24b33bf",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_claim::docs-source-claim::d278cc81c4e37e3ab5ad20158daf939036aa302a515dac83e966b657ca2756d7",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_claim::docs-source-claim::fe832347432d3a7457dda03800bb3ad234b346ac3b49fdc016d026e66401dbb7",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_claim_set::docs-source-claims::04981746a16f604cb904516a1a240ab0b738ab25e61cd011c141eaa2356c6169",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_file_claims::docs-source-claims::04981746a16f604cb904516a1a240ab0b738ab25e61cd011c141eaa2356c6169::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_observation::docs::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::038070247097c0e37cbfd102c56eba022e95c9603dbe6170cb137df769ff7b58",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::0a9b6d2b2204b6b3f9a34457b76568293b2d65916331973fc7e983e1bef20451",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::11ec784f344f589d17bd7e7c8510e6b444c238b36d858c881986fdcb5ade511a",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::299b7b6f8faf68e7672417782ff1bd5c051ce3419a313dddaed5d9f544895109",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::3e2c746b87a20d6ad8d1b566eb404ab4e1b73044566bfda3e4e471e3c24b33bf",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::d278cc81c4e37e3ab5ad20158daf939036aa302a515dac83e966b657ca2756d7",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::fe832347432d3a7457dda03800bb3ad234b346ac3b49fdc016d026e66401dbb7",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_from_source::docs::source_claim::docs-source-claim::038070247097c0e37cbfd102c56eba022e95c9603dbe6170cb137df769ff7b58::docs::source_observation::docs::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_from_source::docs::source_claim::docs-source-claim::0a9b6d2b2204b6b3f9a34457b76568293b2d65916331973fc7e983e1bef20451::docs::source_observation::docs::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_from_source::docs::source_claim::docs-source-claim::11ec784f344f589d17bd7e7c8510e6b444c238b36d858c881986fdcb5ade511a::docs::source_observation::docs::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_from_source::docs::source_claim::docs-source-claim::299b7b6f8faf68e7672417782ff1bd5c051ce3419a313dddaed5d9f544895109::docs::source_observation::docs::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_from_source::docs::source_claim::docs-source-claim::3e2c746b87a20d6ad8d1b566eb404ab4e1b73044566bfda3e4e471e3c24b33bf::docs::source_observation::docs::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_from_source::docs::source_claim::docs-source-claim::d278cc81c4e37e3ab5ad20158daf939036aa302a515dac83e966b657ca2756d7::docs::source_observation::docs::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_from_source::docs::source_claim::docs-source-claim::fe832347432d3a7457dda03800bb3ad234b346ac3b49fdc016d026e66401dbb7::docs::source_observation::docs::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_in_readme::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-2a5d2738ac10b0a3ef583641b6df8b47b9df2cf50de5fcc0ad51680dc62aa2c2::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_in_readme::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-2bef98b4232f62f60237123f54a56d471c319b5b5ece341241bb6fc3ce68236c::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_in_readme::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-385c3cc02530d88e7dcc950a4b9e90403ab428a5c11d176b4abb67684ec21d5c::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_in_readme::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-4bccf28f3661515c81bca960d7e267072468802f4d01f97b0cb90f9acd598684::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_in_readme::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-6b121497c77a995ca6e4f3df34da0c9b7546ce77273d51a20b1f290de98e0bb0::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_in_readme::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-6b21afe7ed4fcdd2dfc2b960479d183676b08585e09e5ab032bf8f78b95874eb::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_in_readme::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-73db8b4cffd98c21f096c8aeaaf25adb6c61a31f2856de78759c8cd0b67e9bd8::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_in_readme::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-d2c597e444b6c8a2dd3bf982c86c08769f327d414680f5f2e99bc6362767d342::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_judgment_in_readme::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-2a5d2738ac10b0a3ef583641b6df8b47b9df2cf50de5fcc0ad51680dc62aa2c2::docs::readme_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_judgment_in_readme::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-2bef98b4232f62f60237123f54a56d471c319b5b5ece341241bb6fc3ce68236c::docs::readme_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_judgment_in_readme::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-385c3cc02530d88e7dcc950a4b9e90403ab428a5c11d176b4abb67684ec21d5c::docs::readme_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_judgment_in_readme::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-4bccf28f3661515c81bca960d7e267072468802f4d01f97b0cb90f9acd598684::docs::readme_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_judgment_in_readme::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-6b121497c77a995ca6e4f3df34da0c9b7546ce77273d51a20b1f290de98e0bb0::docs::readme_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_judgment_in_readme::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-6b21afe7ed4fcdd2dfc2b960479d183676b08585e09e5ab032bf8f78b95874eb::docs::readme_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_judgment_in_readme::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-73db8b4cffd98c21f096c8aeaaf25adb6c61a31f2856de78759c8cd0b67e9bd8::docs::readme_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claim_judgment_in_readme::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-d2c597e444b6c8a2dd3bf982c86c08769f327d414680f5f2e99bc6362767d342::docs::readme_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_claims_source_scope::docs::source_claim_set::docs-source-claims::04981746a16f604cb904516a1a240ab0b738ab25e61cd011c141eaa2356c6169::docs::scope_observation::docs",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_compares_source_to_readme::docs::claim_correspondence_set::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::docs::scope_observation::docs",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_in_set::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::038070247097c0e37cbfd102c56eba022e95c9603dbe6170cb137df769ff7b58::docs::claim_correspondence_set::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_in_set::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::0a9b6d2b2204b6b3f9a34457b76568293b2d65916331973fc7e983e1bef20451::docs::claim_correspondence_set::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_in_set::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::11ec784f344f589d17bd7e7c8510e6b444c238b36d858c881986fdcb5ade511a::docs::claim_correspondence_set::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_in_set::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::299b7b6f8faf68e7672417782ff1bd5c051ce3419a313dddaed5d9f544895109::docs::claim_correspondence_set::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_in_set::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::3e2c746b87a20d6ad8d1b566eb404ab4e1b73044566bfda3e4e471e3c24b33bf::docs::claim_correspondence_set::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_in_set::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::d278cc81c4e37e3ab5ad20158daf939036aa302a515dac83e966b657ca2756d7::docs::claim_correspondence_set::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_in_set::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::fe832347432d3a7457dda03800bb3ad234b346ac3b49fdc016d026e66401dbb7::docs::claim_correspondence_set::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_match::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::038070247097c0e37cbfd102c56eba022e95c9603dbe6170cb137df769ff7b58::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-6b21afe7ed4fcdd2dfc2b960479d183676b08585e09e5ab032bf8f78b95874eb",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_match::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::0a9b6d2b2204b6b3f9a34457b76568293b2d65916331973fc7e983e1bef20451::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-6b21afe7ed4fcdd2dfc2b960479d183676b08585e09e5ab032bf8f78b95874eb",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_match::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::11ec784f344f589d17bd7e7c8510e6b444c238b36d858c881986fdcb5ade511a::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-2bef98b4232f62f60237123f54a56d471c319b5b5ece341241bb6fc3ce68236c",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_match::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::299b7b6f8faf68e7672417782ff1bd5c051ce3419a313dddaed5d9f544895109::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-385c3cc02530d88e7dcc950a4b9e90403ab428a5c11d176b4abb67684ec21d5c",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_match::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::299b7b6f8faf68e7672417782ff1bd5c051ce3419a313dddaed5d9f544895109::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-73db8b4cffd98c21f096c8aeaaf25adb6c61a31f2856de78759c8cd0b67e9bd8",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_match::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::3e2c746b87a20d6ad8d1b566eb404ab4e1b73044566bfda3e4e471e3c24b33bf::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-2a5d2738ac10b0a3ef583641b6df8b47b9df2cf50de5fcc0ad51680dc62aa2c2",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_match::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::d278cc81c4e37e3ab5ad20158daf939036aa302a515dac83e966b657ca2756d7::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-6b121497c77a995ca6e4f3df34da0c9b7546ce77273d51a20b1f290de98e0bb0",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_match::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::fe832347432d3a7457dda03800bb3ad234b346ac3b49fdc016d026e66401dbb7::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-d2c597e444b6c8a2dd3bf982c86c08769f327d414680f5f2e99bc6362767d342",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_readme::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::038070247097c0e37cbfd102c56eba022e95c9603dbe6170cb137df769ff7b58::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_readme::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::0a9b6d2b2204b6b3f9a34457b76568293b2d65916331973fc7e983e1bef20451::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_readme::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::11ec784f344f589d17bd7e7c8510e6b444c238b36d858c881986fdcb5ade511a::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_readme::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::299b7b6f8faf68e7672417782ff1bd5c051ce3419a313dddaed5d9f544895109::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_readme::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::3e2c746b87a20d6ad8d1b566eb404ab4e1b73044566bfda3e4e471e3c24b33bf::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_readme::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::d278cc81c4e37e3ab5ad20158daf939036aa302a515dac83e966b657ca2756d7::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_readme::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::fe832347432d3a7457dda03800bb3ad234b346ac3b49fdc016d026e66401dbb7::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_source::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::038070247097c0e37cbfd102c56eba022e95c9603dbe6170cb137df769ff7b58::docs::source_claim::docs-source-claim::038070247097c0e37cbfd102c56eba022e95c9603dbe6170cb137df769ff7b58",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_source::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::0a9b6d2b2204b6b3f9a34457b76568293b2d65916331973fc7e983e1bef20451::docs::source_claim::docs-source-claim::0a9b6d2b2204b6b3f9a34457b76568293b2d65916331973fc7e983e1bef20451",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_source::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::11ec784f344f589d17bd7e7c8510e6b444c238b36d858c881986fdcb5ade511a::docs::source_claim::docs-source-claim::11ec784f344f589d17bd7e7c8510e6b444c238b36d858c881986fdcb5ade511a",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_source::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::299b7b6f8faf68e7672417782ff1bd5c051ce3419a313dddaed5d9f544895109::docs::source_claim::docs-source-claim::299b7b6f8faf68e7672417782ff1bd5c051ce3419a313dddaed5d9f544895109",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_source::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::3e2c746b87a20d6ad8d1b566eb404ab4e1b73044566bfda3e4e471e3c24b33bf::docs::source_claim::docs-source-claim::3e2c746b87a20d6ad8d1b566eb404ab4e1b73044566bfda3e4e471e3c24b33bf",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_source::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::d278cc81c4e37e3ab5ad20158daf939036aa302a515dac83e966b657ca2756d7::docs::source_claim::docs-source-claim::d278cc81c4e37e3ab5ad20158daf939036aa302a515dac83e966b657ca2756d7",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_correspondence_source::docs::source_readme_correspondence::docs-correspondence::081b09553546134306c113d595ccb5500cbc62a3a90c107f9d9e0f752755060d::README.md::docs-source-claim::fe832347432d3a7457dda03800bb3ad234b346ac3b49fdc016d026e66401dbb7::docs::source_claim::docs-source-claim::fe832347432d3a7457dda03800bb3ad234b346ac3b49fdc016d026e66401dbb7",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_judges_claim::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-2a5d2738ac10b0a3ef583641b6df8b47b9df2cf50de5fcc0ad51680dc62aa2c2::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-2a5d2738ac10b0a3ef583641b6df8b47b9df2cf50de5fcc0ad51680dc62aa2c2",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_judges_claim::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-2bef98b4232f62f60237123f54a56d471c319b5b5ece341241bb6fc3ce68236c::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-2bef98b4232f62f60237123f54a56d471c319b5b5ece341241bb6fc3ce68236c",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_judges_claim::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-385c3cc02530d88e7dcc950a4b9e90403ab428a5c11d176b4abb67684ec21d5c::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-385c3cc02530d88e7dcc950a4b9e90403ab428a5c11d176b4abb67684ec21d5c",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_judges_claim::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-4bccf28f3661515c81bca960d7e267072468802f4d01f97b0cb90f9acd598684::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-4bccf28f3661515c81bca960d7e267072468802f4d01f97b0cb90f9acd598684",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_judges_claim::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-6b121497c77a995ca6e4f3df34da0c9b7546ce77273d51a20b1f290de98e0bb0::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-6b121497c77a995ca6e4f3df34da0c9b7546ce77273d51a20b1f290de98e0bb0",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_judges_claim::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-6b21afe7ed4fcdd2dfc2b960479d183676b08585e09e5ab032bf8f78b95874eb::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-6b21afe7ed4fcdd2dfc2b960479d183676b08585e09e5ab032bf8f78b95874eb",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_judges_claim::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-73db8b4cffd98c21f096c8aeaaf25adb6c61a31f2856de78759c8cd0b67e9bd8::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-73db8b4cffd98c21f096c8aeaaf25adb6c61a31f2856de78759c8cd0b67e9bd8",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_judges_claim::docs::claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::claim-d2c597e444b6c8a2dd3bf982c86c08769f327d414680f5f2e99bc6362767d342::docs::observed_claim::docs::README.md::8e3896137fc3e8f27b1ffd15a8db3dad47376a65ceb4b13f4d7d9d0946ac22f7::claim-d2c597e444b6c8a2dd3bf982c86c08769f327d414680f5f2e99bc6362767d342",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_judges_observed_claims::docs::observed_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::docs::scope_observation::docs",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_judges_readme::docs::readme_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::docs::readme_observation::docs::README.md",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_observes::docs::scope_observation::docs::workspace_fs::node::docs",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_readme_in_scope::docs::readme_observation::docs::README.md::docs::scope_observation::docs",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_readme_judgment_in_scope::docs::readme_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155::README.md::docs::observed_claim_assessment::docs-observed-claims::04fd0aef38d99af9cbf2740e7a39653fe485cb6777eb3d076a9493a159a48155",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_source_claim_file_in_set::docs::source_file_claims::docs-source-claims::04981746a16f604cb904516a1a240ab0b738ab25e61cd011c141eaa2356c6169::pricing.py::docs::source_claim_set::docs-source-claims::04981746a16f604cb904516a1a240ab0b738ab25e61cd011c141eaa2356c6169",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_source_claim_in_file::docs::source_claim::docs-source-claim::038070247097c0e37cbfd102c56eba022e95c9603dbe6170cb137df769ff7b58::docs::source_file_claims::docs-source-claims::04981746a16f604cb904516a1a240ab0b738ab25e61cd011c141eaa2356c6169::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_source_claim_in_file::docs::source_claim::docs-source-claim::0a9b6d2b2204b6b3f9a34457b76568293b2d65916331973fc7e983e1bef20451::docs::source_file_claims::docs-source-claims::04981746a16f604cb904516a1a240ab0b738ab25e61cd011c141eaa2356c6169::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_source_claim_in_file::docs::source_claim::docs-source-claim::11ec784f344f589d17bd7e7c8510e6b444c238b36d858c881986fdcb5ade511a::docs::source_file_claims::docs-source-claims::04981746a16f604cb904516a1a240ab0b738ab25e61cd011c141eaa2356c6169::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_source_claim_in_file::docs::source_claim::docs-source-claim::299b7b6f8faf68e7672417782ff1bd5c051ce3419a313dddaed5d9f544895109::docs::source_file_claims::docs-source-claims::04981746a16f604cb904516a1a240ab0b738ab25e61cd011c141eaa2356c6169::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_source_claim_in_file::docs::source_claim::docs-source-claim::3e2c746b87a20d6ad8d1b566eb404ab4e1b73044566bfda3e4e471e3c24b33bf::docs::source_file_claims::docs-source-claims::04981746a16f604cb904516a1a240ab0b738ab25e61cd011c141eaa2356c6169::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_source_claim_in_file::docs::source_claim::docs-source-claim::d278cc81c4e37e3ab5ad20158daf939036aa302a515dac83e966b657ca2756d7::docs::source_file_claims::docs-source-claims::04981746a16f604cb904516a1a240ab0b738ab25e61cd011c141eaa2356c6169::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_source_claim_in_file::docs::source_claim::docs-source-claim::fe832347432d3a7457dda03800bb3ad234b346ac3b49fdc016d026e66401dbb7::docs::source_file_claims::docs-source-claims::04981746a16f604cb904516a1a240ab0b738ab25e61cd011c141eaa2356c6169::pricing.py",
+                      "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::docs_source_in_scope::docs::source_observation::docs::pricing.py::docs::scope_observation::docs"
+                    ],
+                    "receipt_id": "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe::coverage",
+                    "scope": {
+                      "branch_id": "main",
+                      "perspective_id": "default",
+                      "scope_id": "docs",
+                      "valid_at": null
+                    },
+                    "status": "complete"
+                  },
+                  "owner_id": "docs",
+                  "projection_position": {
+                    "after_seq": 68,
+                    "ledger_id": "fffcc1c2-204a-4243-ac2a-ee4533c8aed7"
+                  },
+                  "revision_id": "docs-revision::6ae275b2e55e26860907844b4ef18b77e7d3927b6e08c2eb50ca170421b3fdfe",
+                  "scope": {
+                    "branch_id": "main",
+                    "perspective_id": "default",
+                    "scope_id": "docs",
+                    "valid_at": null
+                  },
+                  "source_event": {
+                    "ledger_id": "fffcc1c2-204a-4243-ac2a-ee4533c8aed7",
+                    "seq": 68
+                  }
+                }
+              ],
+              "scope": {
+                "branch_id": "main",
+                "perspective_id": "default",
+                "scope_id": "docs",
+                "valid_at": null
+              },
+              "status": "complete"
+            },
+            "traversal_request": {
+              "bounds": {
+                "max_depth": 12,
+                "max_objects": 4096,
+                "max_occurrences": 8192,
+                "max_paths": 8192
+              },
+              "direction": "Incoming",
+              "relation_types": null,
+              "roots": [
+                {
+                  "domain_id": "docs",
+                  "object_id": "docs",
+                  "object_kind": "scope_observation"
+                }
+              ]
+            }
+          },
+          "product_id": "strategy-epistemic-return-v1::37ee972ce53a35c3b4233e3d17f5de43f4e5a5e5fd3137e6b0c031b54844c89e",
+          "return_evidence": {
+            "dimension_id": "docs_freshness",
+            "evidence_schema_id": "docs_required_coverage_v1",
+            "outcome_contract_id": "docs.patch_set_published.v1",
+            "route_id": "docs-required-coverage-return-v1"
+          }
+        }
+      },
+      "product_id": "strategy-epistemic-return-v1::37ee972ce53a35c3b4233e3d17f5de43f4e5a5e5fd3137e6b0c031b54844c89e",
+      "source_plan_revision_id": "strategy-plan-v1::ec2756e3ce172b77ed6fa7e81b3cd5aa9db2bc2414a4b0d96af3c9a98dfcb913"
+    }
+  ]
+}
