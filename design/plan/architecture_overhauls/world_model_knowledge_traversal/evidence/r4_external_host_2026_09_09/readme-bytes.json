@@ -1,0 +1,10 @@
+{
+  "readme-after.txt": {
+    "sha256": "a599104a33548b023d7846f5b27e557c8d623b8edafa0860c8cb6ec56a1d4094",
+    "utf8": "- `pricing.py` defines `SHIPPING_CENTS` as `500` and `FREE_SHIPPING_MINIMUM_CENTS` as `9000`.  \n- The `total_cents` function accepts a single parameter `subtotal_cents` of type `int`.  \n- If `subtotal_cents` is negative, `total_cents` raises `ValueError(\"subtotal must be nonnegative\")`.  \n- When `subtotal_cents` is at least `9000`, the shipping cost is `0` cents.  \n- When `subtotal_cents` is less than `9000` but nonnegative, the shipping cost is `500` cents.  \n- The function returns `subtotal_cents + shipping`, where `shipping` is `0` if `subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS`, otherwise `SHIPPING_CENTS`.  \n- The return type of `total_cents` is `int`.\n"
+  },
+  "readme-before.txt": {
+    "sha256": "9c8bf02c05d942230bad969c55b3e6100e9f8429106f7043d0928b521ec2b2ca",
+    "utf8": "- `SHIPPING_CENTS` is defined as `500` in `pricing.py`.  \n- `FREE_SHIPPING_MINIMUM_CENTS` is defined as `8000` in `pricing.py`.  \n- The `total_cents` function accepts a single integer parameter `subtotal_cents`.  \n- The `total_cents` function raises `ValueError(\"subtotal must be nonnegative\")` if `subtotal_cents` is negative.  \n- When `subtotal_cents` is at least `8000`, shipping cost is `0` cents.  \n- When `subtotal_cents` is less than `8000` but nonnegative, shipping cost is `500` cents.  \n- The function returns `subtotal_cents` plus the computed shipping cost as an integer.  \n- The return computation is `subtotal_cents + shipping`, where `shipping` equals `0` if `subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS`, otherwise `SHIPPING_CENTS`.  \n- The function signature specifies `subtotal_cents` as `int` and returns `int`.\n"
+  }
+}

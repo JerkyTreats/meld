@@ -1,0 +1,678 @@
+{
+  "artifact_kind": "exact native scope publication object and decoded observation qualification",
+  "ledger_id": "0c88a10c-a095-480d-a75c-96867828832e",
+  "object": {
+    "hydration": {
+      "owner_id": "docs",
+      "product_id": "3a203b22c3d90e5e946b221b4ec71cb9283a32410df9f7a11a48a186c9522957",
+      "product_kind": "scope_observation",
+      "revision_id": "docs-revision::6e2e710f7195895dd5caed1fa84ee6807175d1537247912e04673676d33de8b4",
+      "role": "observed_docs_material"
+    },
+    "object_ref": {
+      "domain_id": "docs",
+      "object_id": "3a203b22c3d90e5e946b221b4ec71cb9283a32410df9f7a11a48a186c9522957",
+      "object_kind": "scope_observation"
+    },
+    "provenance_refs": [
+      "docs-observation::605bdead4a281e27d24f5a7677f48035397d7c97d01c9e0e6e651c8937116a2a"
+    ],
+    "publication_id": "docs-revision::6e2e710f7195895dd5caed1fa84ee6807175d1537247912e04673676d33de8b4::docs::scope_observation::3a203b22c3d90e5e946b221b4ec71cb9283a32410df9f7a11a48a186c9522957",
+    "qualifications": {
+      "comparison_complete": "true",
+      "observation": "{\"claim_report\":{\"acceptance_evaluator\":\"weighted_claim_mass_v1\",\"complete\":true,\"observation_revision_id\":\"docs-observation::605bdead4a281e27d24f5a7677f48035397d7c97d01c9e0e6e651c8937116a2a\",\"policy_identity\":\"docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5\",\"readmes\":[{\"disposition\":{\"disposition\":\"assessed\",\"report\":{\"accepted\":true,\"assessments\":[{\"citations\":[{\"quote\":\"if subtotal_cents < 0:\",\"scope\":\"direct\"},{\"quote\":\"raise ValueError(\\\"subtotal must be nonnegative\\\")\",\"scope\":\"direct\"}],\"claim\":{\"claim_id\":\"claim-0052970498b756492b624706ec8ab5a47c7553cc943e698541fa1892f557814a\",\"kind\":\"list_item\",\"literal_requirements\":[\"ValueError(\\\"subtotal must be nonnegative\\\")\",\"subtotal_cents\",\"total_cents\"],\"source_line_end\":3,\"source_line_start\":3,\"statement\":\"If `subtotal_cents` is negative, `total_cents` raises `ValueError(\\\"subtotal must be nonnegative\\\")`.\"},\"confidence\":1.0,\"execution\":{\"completion_tokens\":961,\"configuration_identity\":\"73b32d52a481f47b05c3a9c849447af89dd54efe086285f08a579e3e36c0818f\",\"execution_id\":\"ce1548cef6a5b900a14456f5e3f8180ea3091eaa1591be71d8cb484435ac3acd\",\"finish_reason\":\"stop\",\"policy_identity\":\"docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5\",\"prompt_tokens\":1489,\"provider_name\":\"steward-provider\",\"provider_type\":\"local\",\"reported_model\":\"local\",\"request_identity\":\"a0bdd72aef1351670d333572e41d99e46a0265ce34570f3dc71b320d781313cf\",\"requested_model\":\"local\",\"response_identity\":\"5c0e7e6b1b6c38d32256c683ad089379b2c89e87e9d3c082e2ee92005bc70b5f\"},\"rationale\":\"Condition and exception match claim exactly.\",\"verdict\":\"supported\"},{\"citations\":[{\"quote\":\"return subtotal_cents + shipping\",\"scope\":\"direct\"},{\"quote\":\"shipping = 0 if subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS else SHIPPING_CENTS\",\"scope\":\"direct\"}],\"claim\":{\"claim_id\":\"claim-467dbbe87a4af0b2ff317104b998d821687af50f43fdc56caf53814d454506fe\",\"kind\":\"list_item\",\"literal_requirements\":[\"0\",\"SHIPPING_CENTS\",\"shipping\",\"subtotal_cents + shipping\",\"subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS\"],\"source_line_end\":6,\"source_line_start\":6,\"statement\":\"The function returns `subtotal_cents + shipping`, where `shipping` is `0` if `subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS`, otherwise `SHIPPING_CENTS`.\"},\"confidence\":1.0,\"execution\":{\"completion_tokens\":961,\"configuration_identity\":\"73b32d52a481f47b05c3a9c849447af89dd54efe086285f08a579e3e36c0818f\",\"execution_id\":\"ce1548cef6a5b900a14456f5e3f8180ea3091eaa1591be71d8cb484435ac3acd\",\"finish_reason\":\"stop\",\"policy_identity\":\"docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5\",\"prompt_tokens\":1489,\"provider_name\":\"steward-provider\",\"provider_type\":\"local\",\"reported_model\":\"local\",\"request_identity\":\"a0bdd72aef1351670d333572e41d99e46a0265ce34570f3dc71b320d781313cf\",\"requested_model\":\"local\",\"response_identity\":\"5c0e7e6b1b6c38d32256c683ad089379b2c89e87e9d3c082e2ee92005bc70b5f\"},\"rationale\":\"Return expression and shipping logic match claim exactly.\",\"verdict\":\"supported\"},{\"citations\":[{\"quote\":\"def total_cents(subtotal_cents: int) -> int:\",\"scope\":\"direct\"}],\"claim\":{\"claim_id\":\"claim-5fd75f6e454758a4de1c629705878d700b4136c9571ce94b9048ee8570e8c7c7\",\"kind\":\"list_item\",\"literal_requirements\":[\"int\",\"total_cents\"],\"source_line_end\":7,\"source_line_start\":7,\"statement\":\"The return type of `total_cents` is `int`.\"},\"confidence\":1.0,\"execution\":{\"completion_tokens\":153,\"configuration_identity\":\"a9d95d19f17f58560dc0ee0f1f966319a67bfe9ac6090d276b3d2a3350747214\",\"execution_id\":\"7853ad910c4b61b6c27d610aa34146a49eb59fa0d37f0ab62921ec1eb725efe8\",\"finish_reason\":\"stop\",\"policy_identity\":\"docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5\",\"prompt_tokens\":802,\"provider_name\":\"steward-provider\",\"provider_type\":\"local\",\"reported_model\":\"local\",\"request_identity\":\"b51faa361ebca17923baf58e661c95acd83c60d8eb3d59a67bb438ac57d5b045\",\"requested_model\":\"local\",\"response_identity\":\"a570fb2253c1ca1f5964c4821ff8dfca949d14444508387e700fa4ac184264cb\"},\"rationale\":\"The function signature explicitly declares return type `int`.\",\"verdict\":\"supported\"},{\"citations\":[{\"quote\":\"shipping = 0 if subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS else SHIPPING_CENTS\",\"scope\":\"direct\"}],\"claim\":{\"claim_id\":\"claim-604dc5bf0386f5a6f7ba046495557595b5efe46f5f202308ef5ee5b70795b52d\",\"kind\":\"list_item\",\"literal_requirements\":[\"0\",\"9000\",\"subtotal_cents\"],\"source_line_end\":4,\"source_line_start\":4,\"statement\":\"When `subtotal_cents` is at least `9000`, the shipping cost is `0` cents.\"},\"confidence\":1.0,\"execution\":{\"completion_tokens\":961,\"configuration_identity\":\"73b32d52a481f47b05c3a9c849447af89dd54efe086285f08a579e3e36c0818f\",\"execution_id\":\"ce1548cef6a5b900a14456f5e3f8180ea3091eaa1591be71d8cb484435ac3acd\",\"finish_reason\":\"stop\",\"policy_identity\":\"docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5\",\"prompt_tokens\":1489,\"provider_name\":\"steward-provider\",\"provider_type\":\"local\",\"reported_model\":\"local\",\"request_identity\":\"a0bdd72aef1351670d333572e41d99e46a0265ce34570f3dc71b320d781313cf\",\"requested_model\":\"local\",\"response_identity\":\"5c0e7e6b1b6c38d32256c683ad089379b2c89e87e9d3c082e2ee92005bc70b5f\"},\"rationale\":\"When subtotal \u2265 9000, shipping is 0; FREE_SHIPPING_MINIMUM_CENTS = 9000.\",\"verdict\":\"supported\"},{\"citations\":[{\"quote\":\"SHIPPING_CENTS = 500\",\"scope\":\"direct\"},{\"quote\":\"FREE_SHIPPING_MINIMUM_CENTS = 9000\",\"scope\":\"direct\"}],\"claim\":{\"claim_id\":\"claim-99bb10864c1a4fa72ac6b66fe5b6351b402d401078364f82e9e39b5ac97f8734\",\"kind\":\"list_item\",\"literal_requirements\":[\"500\",\"9000\",\"FREE_SHIPPING_MINIMUM_CENTS\",\"SHIPPING_CENTS\",\"pricing.py\"],\"source_line_end\":1,\"source_line_start\":1,\"statement\":\"`pricing.py` defines `SHIPPING_CENTS` as `500` and `FREE_SHIPPING_MINIMUM_CENTS` as `9000`.\"},\"confidence\":1.0,\"execution\":{\"completion_tokens\":961,\"configuration_identity\":\"73b32d52a481f47b05c3a9c849447af89dd54efe086285f08a579e3e36c0818f\",\"execution_id\":\"ce1548cef6a5b900a14456f5e3f8180ea3091eaa1591be71d8cb484435ac3acd\",\"finish_reason\":\"stop\",\"policy_identity\":\"docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5\",\"prompt_tokens\":1489,\"provider_name\":\"steward-provider\",\"provider_type\":\"local\",\"reported_model\":\"local\",\"request_identity\":\"a0bdd72aef1351670d333572e41d99e46a0265ce34570f3dc71b320d781313cf\",\"requested_model\":\"local\",\"response_identity\":\"5c0e7e6b1b6c38d32256c683ad089379b2c89e87e9d3c082e2ee92005bc70b5f\"},\"rationale\":\"Evidence directly defines both constants with exact values.\",\"verdict\":\"supported\"},{\"citations\":[{\"quote\":\"def total_cents(subtotal_cents: int) -> int:\",\"scope\":\"direct\"}],\"claim\":{\"claim_id\":\"claim-b88e38a210f8849519af05caf88b89bcaf0069c32316236d1db5f0cec8b9b7f6\",\"kind\":\"list_item\",\"literal_requirements\":[\"int\",\"subtotal_cents\",\"total_cents\"],\"source_line_end\":2,\"source_line_start\":2,\"statement\":\"The `total_cents` function accepts a single parameter `subtotal_cents` of type `int`.\"},\"confidence\":1.0,\"execution\":{\"completion_tokens\":961,\"configuration_identity\":\"73b32d52a481f47b05c3a9c849447af89dd54efe086285f08a579e3e36c0818f\",\"execution_id\":\"ce1548cef6a5b900a14456f5e3f8180ea3091eaa1591be71d8cb484435ac3acd\",\"finish_reason\":\"stop\",\"policy_identity\":\"docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5\",\"prompt_tokens\":1489,\"provider_name\":\"steward-provider\",\"provider_type\":\"local\",\"reported_model\":\"local\",\"request_identity\":\"a0bdd72aef1351670d333572e41d99e46a0265ce34570f3dc71b320d781313cf\",\"requested_model\":\"local\",\"response_identity\":\"5c0e7e6b1b6c38d32256c683ad089379b2c89e87e9d3c082e2ee92005bc70b5f\"},\"rationale\":\"Function signature explicitly declares parameter type as `int`.\",\"verdict\":\"supported\"},{\"citations\":[{\"quote\":\"shipping = 0 if subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS else SHIPPING_CENTS\",\"scope\":\"direct\"}],\"claim\":{\"claim_id\":\"claim-c21f2bea80a25388175112d0665edabbdabacca667d66512c03a1aa26239a2f3\",\"kind\":\"list_item\",\"literal_requirements\":[\"500\",\"9000\",\"subtotal_cents\"],\"source_line_end\":5,\"source_line_start\":5,\"statement\":\"When `subtotal_cents` is less than `9000` but nonnegative, the shipping cost is `500` cents.\"},\"confidence\":1.0,\"execution\":{\"completion_tokens\":961,\"configuration_identity\":\"73b32d52a481f47b05c3a9c849447af89dd54efe086285f08a579e3e36c0818f\",\"execution_id\":\"ce1548cef6a5b900a14456f5e3f8180ea3091eaa1591be71d8cb484435ac3acd\",\"finish_reason\":\"stop\",\"policy_identity\":\"docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5\",\"prompt_tokens\":1489,\"provider_name\":\"steward-provider\",\"provider_type\":\"local\",\"reported_model\":\"local\",\"request_identity\":\"a0bdd72aef1351670d333572e41d99e46a0265ce34570f3dc71b320d781313cf\",\"requested_model\":\"local\",\"response_identity\":\"5c0e7e6b1b6c38d32256c683ad089379b2c89e87e9d3c082e2ee92005bc70b5f\"},\"rationale\":\"When subtotal < 9000 and nonnegative, shipping = SHIPPING_CENTS = 500.\",\"verdict\":\"supported\"}],\"content_hash\":\"21a73cb5371d3cbd2fef5b50097bf24f099490781ec1ee3b74a349af961551fc\",\"contradiction_claim_mass\":-0.0,\"path\":\"README.md\",\"revision_attempts\":0,\"unsupported_claim_mass\":-0.0,\"weighted_groundedness\":1.0}},\"path\":\"README.md\"}],\"report_id\":\"docs-observed-claims::74a233c5d36269b7f013b5283dd03d6ae5ca7353d200d2ad5d67fde949188c04\",\"source_fingerprint\":\"8e08697e841c29602e8b7d4b15977cc6162368bae4a4c34726279b496d6a33be\"},\"correspondence\":{\"complete\":true,\"contract_revision\":\"docs.claim-correspondence.v2\",\"input_id\":\"docs-correspondence-input::1c90470508b97b7b9263ae90297b977f48d9b4acf5f97fc52fefd9caa9fe0638\",\"policy_identity\":\"docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5\",\"readmes\":[{\"claims\":[{\"confidence\":1.0,\"rationale\":\"Both assert SHIPPING_CENTS = 500 in pricing.py.\",\"readme_claim_ids\":[\"claim-99bb10864c1a4fa72ac6b66fe5b6351b402d401078364f82e9e39b5ac97f8734\"],\"source_claim_id\":\"docs-source-claim::0aab88b356b2a51552676e3d891ff15bc6b40433c463ae40e27b71f76ead07bd\"},{\"confidence\":1.0,\"rationale\":\"Both assert FREE_SHIPPING_MINIMUM_CENTS = 9000 in pricing.py.\",\"readme_claim_ids\":[\"claim-99bb10864c1a4fa72ac6b66fe5b6351b402d401078364f82e9e39b5ac97f8734\"],\"source_claim_id\":\"docs-source-claim::23fcef1c9a4328cc8fccde36c9bfd09b4dc9e6e07fcb232698ec7f8725504d30\"},{\"confidence\":1.0,\"rationale\":\"Both state shipping is 0 when subtotal_cents >= 9000.\",\"readme_claim_ids\":[\"claim-604dc5bf0386f5a6f7ba046495557595b5efe46f5f202308ef5ee5b70795b52d\"],\"source_claim_id\":\"docs-source-claim::299b7b6f8faf68e7672417782ff1bd5c051ce3419a313dddaed5d9f544895109\"},{\"confidence\":1.0,\"rationale\":\"Both specify ValueError with exact message for negative subtotal.\",\"readme_claim_ids\":[\"claim-0052970498b756492b624706ec8ab5a47c7553cc943e698541fa1892f557814a\"],\"source_claim_id\":\"docs-source-claim::48dd1572ab4ab128aece31924faefba83b1e6e99dc5c8e5ef36a2ff5f3250185\"},{\"confidence\":1.0,\"rationale\":\"Both state return is subtotal_cents + shipping.\",\"readme_claim_ids\":[\"claim-467dbbe87a4af0b2ff317104b998d821687af50f43fdc56caf53814d454506fe\"],\"source_claim_id\":\"docs-source-claim::c5823c70e38942d26eb2ce8070d7bbc5ce127d74414e3772ea2e48446812fac4\"},{\"confidence\":1.0,\"rationale\":\"Both assert shipping is 500 when subtotal < 9000 and nonnegative.\",\"readme_claim_ids\":[\"claim-c21f2bea80a25388175112d0665edabbdabacca667d66512c03a1aa26239a2f3\"],\"source_claim_id\":\"docs-source-claim::f392d7eafb2db794781ccc2804846d5bcdd3b555027801f8a62a2ce06911625d\"}],\"content_hash\":\"21a73cb5371d3cbd2fef5b50097bf24f099490781ec1ee3b74a349af961551fc\",\"execution\":{\"completion_tokens\":997,\"configuration_identity\":\"f300bfb47f503ef65ca051cb3803eda0de1dbef921fdfbba015dfbca910af4ac\",\"execution_id\":\"009112eff039eedbb5e60c0fbd5177758f8fa2336bebd2e6c917bb51cbaa7a02\",\"finish_reason\":\"stop\",\"policy_identity\":\"docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5\",\"prompt_tokens\":1940,\"provider_name\":\"steward-provider\",\"provider_type\":\"local\",\"reported_model\":\"local\",\"request_identity\":\"4c8739d486ba98019d3a11743747a16b8dd5d0f2242a9555bac4220f5ba3b14e\",\"requested_model\":\"local\",\"response_identity\":\"f7e53d7e3d3a4764fd9c61d197fbb98266b96115efc83f66a28c69defa5935a7\"},\"path\":\"README.md\"}],\"report_id\":\"docs-correspondence::46541accfaffab52a811953398d5b74223aef1b334c7ca48b4e6b891e4d0460a\"},\"evidence\":{\"directories\":[{\"child_directories\":[],\"direct_files\":[\"pricing.py\"],\"evidence\":\"\\n--- pricing.py ---\\n\\\"\\\"\\\"Calculate order totals in integer cents.\\\"\\\"\\\"\\n\\nSHIPPING_CENTS = 500\\nFREE_SHIPPING_MINIMUM_CENTS = 9000\\n\\n\\ndef total_cents(subtotal_cents: int) -> int:\\n    \\\"\\\"\\\"Reject negative subtotals; shipping is free at 9000 cents or more.\\\"\\\"\\\"\\n    if subtotal_cents < 0:\\n        raise ValueError(\\\"subtotal must be nonnegative\\\")\\n    shipping = 0 if subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS else SHIPPING_CENTS\\n    return subtotal_cents + shipping\\n\\n\",\"path\":\".\"}],\"observation\":{\"coverage_gaps\":[],\"exclusions\":[],\"readmes\":[{\"path\":\"README.md\",\"state\":{\"claims\":[{\"claim_id\":\"claim-99bb10864c1a4fa72ac6b66fe5b6351b402d401078364f82e9e39b5ac97f8734\",\"kind\":\"list_item\",\"literal_requirements\":[\"500\",\"9000\",\"FREE_SHIPPING_MINIMUM_CENTS\",\"SHIPPING_CENTS\",\"pricing.py\"],\"source_line_end\":1,\"source_line_start\":1,\"statement\":\"`pricing.py` defines `SHIPPING_CENTS` as `500` and `FREE_SHIPPING_MINIMUM_CENTS` as `9000`.\"},{\"claim_id\":\"claim-b88e38a210f8849519af05caf88b89bcaf0069c32316236d1db5f0cec8b9b7f6\",\"kind\":\"list_item\",\"literal_requirements\":[\"int\",\"subtotal_cents\",\"total_cents\"],\"source_line_end\":2,\"source_line_start\":2,\"statement\":\"The `total_cents` function accepts a single parameter `subtotal_cents` of type `int`.\"},{\"claim_id\":\"claim-0052970498b756492b624706ec8ab5a47c7553cc943e698541fa1892f557814a\",\"kind\":\"list_item\",\"literal_requirements\":[\"ValueError(\\\"subtotal must be nonnegative\\\")\",\"subtotal_cents\",\"total_cents\"],\"source_line_end\":3,\"source_line_start\":3,\"statement\":\"If `subtotal_cents` is negative, `total_cents` raises `ValueError(\\\"subtotal must be nonnegative\\\")`.\"},{\"claim_id\":\"claim-604dc5bf0386f5a6f7ba046495557595b5efe46f5f202308ef5ee5b70795b52d\",\"kind\":\"list_item\",\"literal_requirements\":[\"0\",\"9000\",\"subtotal_cents\"],\"source_line_end\":4,\"source_line_start\":4,\"statement\":\"When `subtotal_cents` is at least `9000`, the shipping cost is `0` cents.\"},{\"claim_id\":\"claim-c21f2bea80a25388175112d0665edabbdabacca667d66512c03a1aa26239a2f3\",\"kind\":\"list_item\",\"literal_requirements\":[\"500\",\"9000\",\"subtotal_cents\"],\"source_line_end\":5,\"source_line_start\":5,\"statement\":\"When `subtotal_cents` is less than `9000` but nonnegative, the shipping cost is `500` cents.\"},{\"claim_id\":\"claim-467dbbe87a4af0b2ff317104b998d821687af50f43fdc56caf53814d454506fe\",\"kind\":\"list_item\",\"literal_requirements\":[\"0\",\"SHIPPING_CENTS\",\"shipping\",\"subtotal_cents + shipping\",\"subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS\"],\"source_line_end\":6,\"source_line_start\":6,\"statement\":\"The function returns `subtotal_cents + shipping`, where `shipping` is `0` if `subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS`, otherwise `SHIPPING_CENTS`.\"},{\"claim_id\":\"claim-5fd75f6e454758a4de1c629705878d700b4136c9571ce94b9048ee8570e8c7c7\",\"kind\":\"list_item\",\"literal_requirements\":[\"int\",\"total_cents\"],\"source_line_end\":7,\"source_line_start\":7,\"statement\":\"The return type of `total_cents` is `int`.\"}],\"content\":\"- `pricing.py` defines `SHIPPING_CENTS` as `500` and `FREE_SHIPPING_MINIMUM_CENTS` as `9000`.  \\n- The `total_cents` function accepts a single parameter `subtotal_cents` of type `int`.  \\n- If `subtotal_cents` is negative, `total_cents` raises `ValueError(\\\"subtotal must be nonnegative\\\")`.  \\n- When `subtotal_cents` is at least `9000`, the shipping cost is `0` cents.  \\n- When `subtotal_cents` is less than `9000` but nonnegative, the shipping cost is `500` cents.  \\n- The function returns `subtotal_cents + shipping`, where `shipping` is `0` if `subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS`, otherwise `SHIPPING_CENTS`.  \\n- The return type of `total_cents` is `int`.\\n\",\"content_hash\":\"21a73cb5371d3cbd2fef5b50097bf24f099490781ec1ee3b74a349af961551fc\",\"disposition\":\"present\"}}],\"revision_id\":\"docs-observation::605bdead4a281e27d24f5a7677f48035397d7c97d01c9e0e6e651c8937116a2a\",\"scope\":{\"comparison\":\"directory_subtree_v1\",\"document_name\":\"README.md\",\"exclude_document_names_case_insensitive\":true,\"exclude_hidden_directories\":true,\"excluded_directory_names\":[\".git\",\".mypy_cache\",\".pytest_cache\",\".ruff_cache\",\".tox\",\".venv\",\"__pycache__\",\"node_modules\",\"target\"],\"operator\":\"document_per_source_directory_v1\"},\"sources\":[{\"byte_length\":435,\"content_hash\":\"00f0bf9e5d7c9c1907f840049a5bae61f52fa0ec21cc80c921dbcdb8e3649af7\",\"path\":\"pricing.py\",\"text\":\"\\\"\\\"\\\"Calculate order totals in integer cents.\\\"\\\"\\\"\\n\\nSHIPPING_CENTS = 500\\nFREE_SHIPPING_MINIMUM_CENTS = 9000\\n\\n\\ndef total_cents(subtotal_cents: int) -> int:\\n    \\\"\\\"\\\"Reject negative subtotals; shipping is free at 9000 cents or more.\\\"\\\"\\\"\\n    if subtotal_cents < 0:\\n        raise ValueError(\\\"subtotal must be nonnegative\\\")\\n    shipping = 0 if subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS else SHIPPING_CENTS\\n    return subtotal_cents + shipping\\n\"}]},\"source_fingerprint\":\"8e08697e841c29602e8b7d4b15977cc6162368bae4a4c34726279b496d6a33be\"},\"predecessor\":\"docs-revision::dd794f7913bd939c25ec54765987f4406f3031017c92afec806e067aee94662e\",\"revision_id\":\"docs-revision::6e2e710f7195895dd5caed1fa84ee6807175d1537247912e04673676d33de8b4\",\"scope\":{\"branch_id\":\"main\",\"perspective_id\":\"default\",\"scope_id\":\"3a203b22c3d90e5e946b221b4ec71cb9283a32410df9f7a11a48a186c9522957\",\"valid_at\":null},\"sequence\":12,\"source_claims\":{\"complete\":true,\"contract_revision\":\"docs.source-claims.v1\",\"files\":[{\"claims\":[{\"citations\":[{\"end_byte\":68,\"quote\":\"SHIPPING_CENTS = 500\",\"start_byte\":48}],\"claim_id\":\"docs-source-claim::0aab88b356b2a51552676e3d891ff15bc6b40433c463ae40e27b71f76ead07bd\",\"confidence\":1.0,\"statement\":\"The module defines a constant SHIPPING_CENTS with value 500.\"},{\"citations\":[{\"end_byte\":103,\"quote\":\"FREE_SHIPPING_MINIMUM_CENTS = 9000\",\"start_byte\":69}],\"claim_id\":\"docs-source-claim::23fcef1c9a4328cc8fccde36c9bfd09b4dc9e6e07fcb232698ec7f8725504d30\",\"confidence\":1.0,\"statement\":\"The module defines a constant FREE_SHIPPING_MINIMUM_CENTS with value 9000.\"},{\"citations\":[{\"end_byte\":397,\"quote\":\"shipping = 0 if subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS else SHIPPING_CENTS\",\"start_byte\":316}],\"claim_id\":\"docs-source-claim::299b7b6f8faf68e7672417782ff1bd5c051ce3419a313dddaed5d9f544895109\",\"confidence\":1.0,\"statement\":\"The function total_cents sets shipping to 0 when subtotal_cents is greater than or equal to FREE_SHIPPING_MINIMUM_CENTS.\"},{\"citations\":[{\"end_byte\":254,\"quote\":\"if subtotal_cents < 0:\",\"start_byte\":232},{\"end_byte\":311,\"quote\":\"raise ValueError(\\\"subtotal must be nonnegative\\\")\",\"start_byte\":263}],\"claim_id\":\"docs-source-claim::48dd1572ab4ab128aece31924faefba83b1e6e99dc5c8e5ef36a2ff5f3250185\",\"confidence\":1.0,\"statement\":\"The function total_cents raises a ValueError with message 'subtotal must be nonnegative' when given a negative subtotal.\"},{\"citations\":[{\"end_byte\":434,\"quote\":\"return subtotal_cents + shipping\",\"start_byte\":402}],\"claim_id\":\"docs-source-claim::c5823c70e38942d26eb2ce8070d7bbc5ce127d74414e3772ea2e48446812fac4\",\"confidence\":1.0,\"statement\":\"The function total_cents returns the sum of subtotal_cents and shipping.\"},{\"citations\":[{\"end_byte\":397,\"quote\":\"shipping = 0 if subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS else SHIPPING_CENTS\",\"start_byte\":316}],\"claim_id\":\"docs-source-claim::f392d7eafb2db794781ccc2804846d5bcdd3b555027801f8a62a2ce06911625d\",\"confidence\":1.0,\"statement\":\"The function total_cents sets shipping to SHIPPING_CENTS when subtotal_cents is less than FREE_SHIPPING_MINIMUM_CENTS.\"}],\"content_hash\":\"00f0bf9e5d7c9c1907f840049a5bae61f52fa0ec21cc80c921dbcdb8e3649af7\",\"execution\":{\"completion_tokens\":407,\"configuration_identity\":\"0b748c395abd5bb8d7f291ad5c79bfa7efeff015a63d113c6ecb7ff120843561\",\"execution_id\":\"7aba7d7257c077e758e21ec7c5ecefea368c2ea0e67fe599a9d8c20fa8d8adc3\",\"finish_reason\":\"stop\",\"policy_identity\":\"docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5\",\"prompt_tokens\":527,\"provider_name\":\"steward-provider\",\"provider_type\":\"local\",\"reported_model\":\"local\",\"request_identity\":\"4161c4c37f7bc1bf84938b8ddc39594501767c1af588f1718d2a8b70c3637334\",\"requested_model\":\"local\",\"response_identity\":\"ac5e25f3f2b933edd2528e4b9325f0408650f8220559f158054a2b264343f743\"},\"no_claims_reason\":null,\"path\":\"pricing.py\"}],\"input_id\":\"docs-source-input::f3c3d08e5d36f9807702caf87ccf8ccc70bb9354115c22454819e6d77eb8e6ae\",\"policy_identity\":\"docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5\",\"report_id\":\"docs-source-claims::5226d511d07387afade491cd44cfae4168e407cdf39453d7f4b99c52927f7f6b\"},\"subject\":{\"domain_id\":\"workspace_fs\",\"object_id\":\"docs\",\"object_kind\":\"node\"},\"work_input_basis\":{\"basis_id\":\"docs-work-input-v1::b2932f3d0c79141f15ee93adefefa56e6d43ca1b671adb6aa3ff8f047bed6ffa\",\"policy_identity\":\"docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5\"}}"
+    },
+    "source_product_ref": "docs-revision::6e2e710f7195895dd5caed1fa84ee6807175d1537247912e04673676d33de8b4",
+    "state": "observed"
+  },
+  "observation": {
+    "claim_report": {
+      "acceptance_evaluator": "weighted_claim_mass_v1",
+      "complete": true,
+      "observation_revision_id": "docs-observation::605bdead4a281e27d24f5a7677f48035397d7c97d01c9e0e6e651c8937116a2a",
+      "policy_identity": "docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5",
+      "readmes": [
+        {
+          "disposition": {
+            "disposition": "assessed",
+            "report": {
+              "accepted": true,
+              "assessments": [
+                {
+                  "citations": [
+                    {
+                      "quote": "if subtotal_cents < 0:",
+                      "scope": "direct"
+                    },
+                    {
+                      "quote": "raise ValueError(\"subtotal must be nonnegative\")",
+                      "scope": "direct"
+                    }
+                  ],
+                  "claim": {
+                    "claim_id": "claim-0052970498b756492b624706ec8ab5a47c7553cc943e698541fa1892f557814a",
+                    "kind": "list_item",
+                    "literal_requirements": [
+                      "ValueError(\"subtotal must be nonnegative\")",
+                      "subtotal_cents",
+                      "total_cents"
+                    ],
+                    "source_line_end": 3,
+                    "source_line_start": 3,
+                    "statement": "If `subtotal_cents` is negative, `total_cents` raises `ValueError(\"subtotal must be nonnegative\")`."
+                  },
+                  "confidence": 1.0,
+                  "execution": {
+                    "completion_tokens": 961,
+                    "configuration_identity": "73b32d52a481f47b05c3a9c849447af89dd54efe086285f08a579e3e36c0818f",
+                    "execution_id": "ce1548cef6a5b900a14456f5e3f8180ea3091eaa1591be71d8cb484435ac3acd",
+                    "finish_reason": "stop",
+                    "policy_identity": "docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5",
+                    "prompt_tokens": 1489,
+                    "provider_name": "steward-provider",
+                    "provider_type": "local",
+                    "reported_model": "local",
+                    "request_identity": "a0bdd72aef1351670d333572e41d99e46a0265ce34570f3dc71b320d781313cf",
+                    "requested_model": "local",
+                    "response_identity": "5c0e7e6b1b6c38d32256c683ad089379b2c89e87e9d3c082e2ee92005bc70b5f"
+                  },
+                  "rationale": "Condition and exception match claim exactly.",
+                  "verdict": "supported"
+                },
+                {
+                  "citations": [
+                    {
+                      "quote": "return subtotal_cents + shipping",
+                      "scope": "direct"
+                    },
+                    {
+                      "quote": "shipping = 0 if subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS else SHIPPING_CENTS",
+                      "scope": "direct"
+                    }
+                  ],
+                  "claim": {
+                    "claim_id": "claim-467dbbe87a4af0b2ff317104b998d821687af50f43fdc56caf53814d454506fe",
+                    "kind": "list_item",
+                    "literal_requirements": [
+                      "0",
+                      "SHIPPING_CENTS",
+                      "shipping",
+                      "subtotal_cents + shipping",
+                      "subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS"
+                    ],
+                    "source_line_end": 6,
+                    "source_line_start": 6,
+                    "statement": "The function returns `subtotal_cents + shipping`, where `shipping` is `0` if `subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS`, otherwise `SHIPPING_CENTS`."
+                  },
+                  "confidence": 1.0,
+                  "execution": {
+                    "completion_tokens": 961,
+                    "configuration_identity": "73b32d52a481f47b05c3a9c849447af89dd54efe086285f08a579e3e36c0818f",
+                    "execution_id": "ce1548cef6a5b900a14456f5e3f8180ea3091eaa1591be71d8cb484435ac3acd",
+                    "finish_reason": "stop",
+                    "policy_identity": "docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5",
+                    "prompt_tokens": 1489,
+                    "provider_name": "steward-provider",
+                    "provider_type": "local",
+                    "reported_model": "local",
+                    "request_identity": "a0bdd72aef1351670d333572e41d99e46a0265ce34570f3dc71b320d781313cf",
+                    "requested_model": "local",
+                    "response_identity": "5c0e7e6b1b6c38d32256c683ad089379b2c89e87e9d3c082e2ee92005bc70b5f"
+                  },
+                  "rationale": "Return expression and shipping logic match claim exactly.",
+                  "verdict": "supported"
+                },
+                {
+                  "citations": [
+                    {
+                      "quote": "def total_cents(subtotal_cents: int) -> int:",
+                      "scope": "direct"
+                    }
+                  ],
+                  "claim": {
+                    "claim_id": "claim-5fd75f6e454758a4de1c629705878d700b4136c9571ce94b9048ee8570e8c7c7",
+                    "kind": "list_item",
+                    "literal_requirements": [
+                      "int",
+                      "total_cents"
+                    ],
+                    "source_line_end": 7,
+                    "source_line_start": 7,
+                    "statement": "The return type of `total_cents` is `int`."
+                  },
+                  "confidence": 1.0,
+                  "execution": {
+                    "completion_tokens": 153,
+                    "configuration_identity": "a9d95d19f17f58560dc0ee0f1f966319a67bfe9ac6090d276b3d2a3350747214",
+                    "execution_id": "7853ad910c4b61b6c27d610aa34146a49eb59fa0d37f0ab62921ec1eb725efe8",
+                    "finish_reason": "stop",
+                    "policy_identity": "docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5",
+                    "prompt_tokens": 802,
+                    "provider_name": "steward-provider",
+                    "provider_type": "local",
+                    "reported_model": "local",
+                    "request_identity": "b51faa361ebca17923baf58e661c95acd83c60d8eb3d59a67bb438ac57d5b045",
+                    "requested_model": "local",
+                    "response_identity": "a570fb2253c1ca1f5964c4821ff8dfca949d14444508387e700fa4ac184264cb"
+                  },
+                  "rationale": "The function signature explicitly declares return type `int`.",
+                  "verdict": "supported"
+                },
+                {
+                  "citations": [
+                    {
+                      "quote": "shipping = 0 if subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS else SHIPPING_CENTS",
+                      "scope": "direct"
+                    }
+                  ],
+                  "claim": {
+                    "claim_id": "claim-604dc5bf0386f5a6f7ba046495557595b5efe46f5f202308ef5ee5b70795b52d",
+                    "kind": "list_item",
+                    "literal_requirements": [
+                      "0",
+                      "9000",
+                      "subtotal_cents"
+                    ],
+                    "source_line_end": 4,
+                    "source_line_start": 4,
+                    "statement": "When `subtotal_cents` is at least `9000`, the shipping cost is `0` cents."
+                  },
+                  "confidence": 1.0,
+                  "execution": {
+                    "completion_tokens": 961,
+                    "configuration_identity": "73b32d52a481f47b05c3a9c849447af89dd54efe086285f08a579e3e36c0818f",
+                    "execution_id": "ce1548cef6a5b900a14456f5e3f8180ea3091eaa1591be71d8cb484435ac3acd",
+                    "finish_reason": "stop",
+                    "policy_identity": "docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5",
+                    "prompt_tokens": 1489,
+                    "provider_name": "steward-provider",
+                    "provider_type": "local",
+                    "reported_model": "local",
+                    "request_identity": "a0bdd72aef1351670d333572e41d99e46a0265ce34570f3dc71b320d781313cf",
+                    "requested_model": "local",
+                    "response_identity": "5c0e7e6b1b6c38d32256c683ad089379b2c89e87e9d3c082e2ee92005bc70b5f"
+                  },
+                  "rationale": "When subtotal \u2265 9000, shipping is 0; FREE_SHIPPING_MINIMUM_CENTS = 9000.",
+                  "verdict": "supported"
+                },
+                {
+                  "citations": [
+                    {
+                      "quote": "SHIPPING_CENTS = 500",
+                      "scope": "direct"
+                    },
+                    {
+                      "quote": "FREE_SHIPPING_MINIMUM_CENTS = 9000",
+                      "scope": "direct"
+                    }
+                  ],
+                  "claim": {
+                    "claim_id": "claim-99bb10864c1a4fa72ac6b66fe5b6351b402d401078364f82e9e39b5ac97f8734",
+                    "kind": "list_item",
+                    "literal_requirements": [
+                      "500",
+                      "9000",
+                      "FREE_SHIPPING_MINIMUM_CENTS",
+                      "SHIPPING_CENTS",
+                      "pricing.py"
+                    ],
+                    "source_line_end": 1,
+                    "source_line_start": 1,
+                    "statement": "`pricing.py` defines `SHIPPING_CENTS` as `500` and `FREE_SHIPPING_MINIMUM_CENTS` as `9000`."
+                  },
+                  "confidence": 1.0,
+                  "execution": {
+                    "completion_tokens": 961,
+                    "configuration_identity": "73b32d52a481f47b05c3a9c849447af89dd54efe086285f08a579e3e36c0818f",
+                    "execution_id": "ce1548cef6a5b900a14456f5e3f8180ea3091eaa1591be71d8cb484435ac3acd",
+                    "finish_reason": "stop",
+                    "policy_identity": "docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5",
+                    "prompt_tokens": 1489,
+                    "provider_name": "steward-provider",
+                    "provider_type": "local",
+                    "reported_model": "local",
+                    "request_identity": "a0bdd72aef1351670d333572e41d99e46a0265ce34570f3dc71b320d781313cf",
+                    "requested_model": "local",
+                    "response_identity": "5c0e7e6b1b6c38d32256c683ad089379b2c89e87e9d3c082e2ee92005bc70b5f"
+                  },
+                  "rationale": "Evidence directly defines both constants with exact values.",
+                  "verdict": "supported"
+                },
+                {
+                  "citations": [
+                    {
+                      "quote": "def total_cents(subtotal_cents: int) -> int:",
+                      "scope": "direct"
+                    }
+                  ],
+                  "claim": {
+                    "claim_id": "claim-b88e38a210f8849519af05caf88b89bcaf0069c32316236d1db5f0cec8b9b7f6",
+                    "kind": "list_item",
+                    "literal_requirements": [
+                      "int",
+                      "subtotal_cents",
+                      "total_cents"
+                    ],
+                    "source_line_end": 2,
+                    "source_line_start": 2,
+                    "statement": "The `total_cents` function accepts a single parameter `subtotal_cents` of type `int`."
+                  },
+                  "confidence": 1.0,
+                  "execution": {
+                    "completion_tokens": 961,
+                    "configuration_identity": "73b32d52a481f47b05c3a9c849447af89dd54efe086285f08a579e3e36c0818f",
+                    "execution_id": "ce1548cef6a5b900a14456f5e3f8180ea3091eaa1591be71d8cb484435ac3acd",
+                    "finish_reason": "stop",
+                    "policy_identity": "docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5",
+                    "prompt_tokens": 1489,
+                    "provider_name": "steward-provider",
+                    "provider_type": "local",
+                    "reported_model": "local",
+                    "request_identity": "a0bdd72aef1351670d333572e41d99e46a0265ce34570f3dc71b320d781313cf",
+                    "requested_model": "local",
+                    "response_identity": "5c0e7e6b1b6c38d32256c683ad089379b2c89e87e9d3c082e2ee92005bc70b5f"
+                  },
+                  "rationale": "Function signature explicitly declares parameter type as `int`.",
+                  "verdict": "supported"
+                },
+                {
+                  "citations": [
+                    {
+                      "quote": "shipping = 0 if subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS else SHIPPING_CENTS",
+                      "scope": "direct"
+                    }
+                  ],
+                  "claim": {
+                    "claim_id": "claim-c21f2bea80a25388175112d0665edabbdabacca667d66512c03a1aa26239a2f3",
+                    "kind": "list_item",
+                    "literal_requirements": [
+                      "500",
+                      "9000",
+                      "subtotal_cents"
+                    ],
+                    "source_line_end": 5,
+                    "source_line_start": 5,
+                    "statement": "When `subtotal_cents` is less than `9000` but nonnegative, the shipping cost is `500` cents."
+                  },
+                  "confidence": 1.0,
+                  "execution": {
+                    "completion_tokens": 961,
+                    "configuration_identity": "73b32d52a481f47b05c3a9c849447af89dd54efe086285f08a579e3e36c0818f",
+                    "execution_id": "ce1548cef6a5b900a14456f5e3f8180ea3091eaa1591be71d8cb484435ac3acd",
+                    "finish_reason": "stop",
+                    "policy_identity": "docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5",
+                    "prompt_tokens": 1489,
+                    "provider_name": "steward-provider",
+                    "provider_type": "local",
+                    "reported_model": "local",
+                    "request_identity": "a0bdd72aef1351670d333572e41d99e46a0265ce34570f3dc71b320d781313cf",
+                    "requested_model": "local",
+                    "response_identity": "5c0e7e6b1b6c38d32256c683ad089379b2c89e87e9d3c082e2ee92005bc70b5f"
+                  },
+                  "rationale": "When subtotal < 9000 and nonnegative, shipping = SHIPPING_CENTS = 500.",
+                  "verdict": "supported"
+                }
+              ],
+              "content_hash": "21a73cb5371d3cbd2fef5b50097bf24f099490781ec1ee3b74a349af961551fc",
+              "contradiction_claim_mass": -0.0,
+              "path": "README.md",
+              "revision_attempts": 0,
+              "unsupported_claim_mass": -0.0,
+              "weighted_groundedness": 1.0
+            }
+          },
+          "path": "README.md"
+        }
+      ],
+      "report_id": "docs-observed-claims::74a233c5d36269b7f013b5283dd03d6ae5ca7353d200d2ad5d67fde949188c04",
+      "source_fingerprint": "8e08697e841c29602e8b7d4b15977cc6162368bae4a4c34726279b496d6a33be"
+    },
+    "correspondence": {
+      "complete": true,
+      "contract_revision": "docs.claim-correspondence.v2",
+      "input_id": "docs-correspondence-input::1c90470508b97b7b9263ae90297b977f48d9b4acf5f97fc52fefd9caa9fe0638",
+      "policy_identity": "docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5",
+      "readmes": [
+        {
+          "claims": [
+            {
+              "confidence": 1.0,
+              "rationale": "Both assert SHIPPING_CENTS = 500 in pricing.py.",
+              "readme_claim_ids": [
+                "claim-99bb10864c1a4fa72ac6b66fe5b6351b402d401078364f82e9e39b5ac97f8734"
+              ],
+              "source_claim_id": "docs-source-claim::0aab88b356b2a51552676e3d891ff15bc6b40433c463ae40e27b71f76ead07bd"
+            },
+            {
+              "confidence": 1.0,
+              "rationale": "Both assert FREE_SHIPPING_MINIMUM_CENTS = 9000 in pricing.py.",
+              "readme_claim_ids": [
+                "claim-99bb10864c1a4fa72ac6b66fe5b6351b402d401078364f82e9e39b5ac97f8734"
+              ],
+              "source_claim_id": "docs-source-claim::23fcef1c9a4328cc8fccde36c9bfd09b4dc9e6e07fcb232698ec7f8725504d30"
+            },
+            {
+              "confidence": 1.0,
+              "rationale": "Both state shipping is 0 when subtotal_cents >= 9000.",
+              "readme_claim_ids": [
+                "claim-604dc5bf0386f5a6f7ba046495557595b5efe46f5f202308ef5ee5b70795b52d"
+              ],
+              "source_claim_id": "docs-source-claim::299b7b6f8faf68e7672417782ff1bd5c051ce3419a313dddaed5d9f544895109"
+            },
+            {
+              "confidence": 1.0,
+              "rationale": "Both specify ValueError with exact message for negative subtotal.",
+              "readme_claim_ids": [
+                "claim-0052970498b756492b624706ec8ab5a47c7553cc943e698541fa1892f557814a"
+              ],
+              "source_claim_id": "docs-source-claim::48dd1572ab4ab128aece31924faefba83b1e6e99dc5c8e5ef36a2ff5f3250185"
+            },
+            {
+              "confidence": 1.0,
+              "rationale": "Both state return is subtotal_cents + shipping.",
+              "readme_claim_ids": [
+                "claim-467dbbe87a4af0b2ff317104b998d821687af50f43fdc56caf53814d454506fe"
+              ],
+              "source_claim_id": "docs-source-claim::c5823c70e38942d26eb2ce8070d7bbc5ce127d74414e3772ea2e48446812fac4"
+            },
+            {
+              "confidence": 1.0,
+              "rationale": "Both assert shipping is 500 when subtotal < 9000 and nonnegative.",
+              "readme_claim_ids": [
+                "claim-c21f2bea80a25388175112d0665edabbdabacca667d66512c03a1aa26239a2f3"
+              ],
+              "source_claim_id": "docs-source-claim::f392d7eafb2db794781ccc2804846d5bcdd3b555027801f8a62a2ce06911625d"
+            }
+          ],
+          "content_hash": "21a73cb5371d3cbd2fef5b50097bf24f099490781ec1ee3b74a349af961551fc",
+          "execution": {
+            "completion_tokens": 997,
+            "configuration_identity": "f300bfb47f503ef65ca051cb3803eda0de1dbef921fdfbba015dfbca910af4ac",
+            "execution_id": "009112eff039eedbb5e60c0fbd5177758f8fa2336bebd2e6c917bb51cbaa7a02",
+            "finish_reason": "stop",
+            "policy_identity": "docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5",
+            "prompt_tokens": 1940,
+            "provider_name": "steward-provider",
+            "provider_type": "local",
+            "reported_model": "local",
+            "request_identity": "4c8739d486ba98019d3a11743747a16b8dd5d0f2242a9555bac4220f5ba3b14e",
+            "requested_model": "local",
+            "response_identity": "f7e53d7e3d3a4764fd9c61d197fbb98266b96115efc83f66a28c69defa5935a7"
+          },
+          "path": "README.md"
+        }
+      ],
+      "report_id": "docs-correspondence::46541accfaffab52a811953398d5b74223aef1b334c7ca48b4e6b891e4d0460a"
+    },
+    "evidence": {
+      "directories": [
+        {
+          "child_directories": [],
+          "direct_files": [
+            "pricing.py"
+          ],
+          "evidence": "\n--- pricing.py ---\n\"\"\"Calculate order totals in integer cents.\"\"\"\n\nSHIPPING_CENTS = 500\nFREE_SHIPPING_MINIMUM_CENTS = 9000\n\n\ndef total_cents(subtotal_cents: int) -> int:\n    \"\"\"Reject negative subtotals; shipping is free at 9000 cents or more.\"\"\"\n    if subtotal_cents < 0:\n        raise ValueError(\"subtotal must be nonnegative\")\n    shipping = 0 if subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS else SHIPPING_CENTS\n    return subtotal_cents + shipping\n\n",
+          "path": "."
+        }
+      ],
+      "observation": {
+        "coverage_gaps": [],
+        "exclusions": [],
+        "readmes": [
+          {
+            "path": "README.md",
+            "state": {
+              "claims": [
+                {
+                  "claim_id": "claim-99bb10864c1a4fa72ac6b66fe5b6351b402d401078364f82e9e39b5ac97f8734",
+                  "kind": "list_item",
+                  "literal_requirements": [
+                    "500",
+                    "9000",
+                    "FREE_SHIPPING_MINIMUM_CENTS",
+                    "SHIPPING_CENTS",
+                    "pricing.py"
+                  ],
+                  "source_line_end": 1,
+                  "source_line_start": 1,
+                  "statement": "`pricing.py` defines `SHIPPING_CENTS` as `500` and `FREE_SHIPPING_MINIMUM_CENTS` as `9000`."
+                },
+                {
+                  "claim_id": "claim-b88e38a210f8849519af05caf88b89bcaf0069c32316236d1db5f0cec8b9b7f6",
+                  "kind": "list_item",
+                  "literal_requirements": [
+                    "int",
+                    "subtotal_cents",
+                    "total_cents"
+                  ],
+                  "source_line_end": 2,
+                  "source_line_start": 2,
+                  "statement": "The `total_cents` function accepts a single parameter `subtotal_cents` of type `int`."
+                },
+                {
+                  "claim_id": "claim-0052970498b756492b624706ec8ab5a47c7553cc943e698541fa1892f557814a",
+                  "kind": "list_item",
+                  "literal_requirements": [
+                    "ValueError(\"subtotal must be nonnegative\")",
+                    "subtotal_cents",
+                    "total_cents"
+                  ],
+                  "source_line_end": 3,
+                  "source_line_start": 3,
+                  "statement": "If `subtotal_cents` is negative, `total_cents` raises `ValueError(\"subtotal must be nonnegative\")`."
+                },
+                {
+                  "claim_id": "claim-604dc5bf0386f5a6f7ba046495557595b5efe46f5f202308ef5ee5b70795b52d",
+                  "kind": "list_item",
+                  "literal_requirements": [
+                    "0",
+                    "9000",
+                    "subtotal_cents"
+                  ],
+                  "source_line_end": 4,
+                  "source_line_start": 4,
+                  "statement": "When `subtotal_cents` is at least `9000`, the shipping cost is `0` cents."
+                },
+                {
+                  "claim_id": "claim-c21f2bea80a25388175112d0665edabbdabacca667d66512c03a1aa26239a2f3",
+                  "kind": "list_item",
+                  "literal_requirements": [
+                    "500",
+                    "9000",
+                    "subtotal_cents"
+                  ],
+                  "source_line_end": 5,
+                  "source_line_start": 5,
+                  "statement": "When `subtotal_cents` is less than `9000` but nonnegative, the shipping cost is `500` cents."
+                },
+                {
+                  "claim_id": "claim-467dbbe87a4af0b2ff317104b998d821687af50f43fdc56caf53814d454506fe",
+                  "kind": "list_item",
+                  "literal_requirements": [
+                    "0",
+                    "SHIPPING_CENTS",
+                    "shipping",
+                    "subtotal_cents + shipping",
+                    "subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS"
+                  ],
+                  "source_line_end": 6,
+                  "source_line_start": 6,
+                  "statement": "The function returns `subtotal_cents + shipping`, where `shipping` is `0` if `subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS`, otherwise `SHIPPING_CENTS`."
+                },
+                {
+                  "claim_id": "claim-5fd75f6e454758a4de1c629705878d700b4136c9571ce94b9048ee8570e8c7c7",
+                  "kind": "list_item",
+                  "literal_requirements": [
+                    "int",
+                    "total_cents"
+                  ],
+                  "source_line_end": 7,
+                  "source_line_start": 7,
+                  "statement": "The return type of `total_cents` is `int`."
+                }
+              ],
+              "content": "- `pricing.py` defines `SHIPPING_CENTS` as `500` and `FREE_SHIPPING_MINIMUM_CENTS` as `9000`.  \n- The `total_cents` function accepts a single parameter `subtotal_cents` of type `int`.  \n- If `subtotal_cents` is negative, `total_cents` raises `ValueError(\"subtotal must be nonnegative\")`.  \n- When `subtotal_cents` is at least `9000`, the shipping cost is `0` cents.  \n- When `subtotal_cents` is less than `9000` but nonnegative, the shipping cost is `500` cents.  \n- The function returns `subtotal_cents + shipping`, where `shipping` is `0` if `subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS`, otherwise `SHIPPING_CENTS`.  \n- The return type of `total_cents` is `int`.\n",
+              "content_hash": "21a73cb5371d3cbd2fef5b50097bf24f099490781ec1ee3b74a349af961551fc",
+              "disposition": "present"
+            }
+          }
+        ],
+        "revision_id": "docs-observation::605bdead4a281e27d24f5a7677f48035397d7c97d01c9e0e6e651c8937116a2a",
+        "scope": {
+          "comparison": "directory_subtree_v1",
+          "document_name": "README.md",
+          "exclude_document_names_case_insensitive": true,
+          "exclude_hidden_directories": true,
+          "excluded_directory_names": [
+            ".git",
+            ".mypy_cache",
+            ".pytest_cache",
+            ".ruff_cache",
+            ".tox",
+            ".venv",
+            "__pycache__",
+            "node_modules",
+            "target"
+          ],
+          "operator": "document_per_source_directory_v1"
+        },
+        "sources": [
+          {
+            "byte_length": 435,
+            "content_hash": "00f0bf9e5d7c9c1907f840049a5bae61f52fa0ec21cc80c921dbcdb8e3649af7",
+            "path": "pricing.py",
+            "text": "\"\"\"Calculate order totals in integer cents.\"\"\"\n\nSHIPPING_CENTS = 500\nFREE_SHIPPING_MINIMUM_CENTS = 9000\n\n\ndef total_cents(subtotal_cents: int) -> int:\n    \"\"\"Reject negative subtotals; shipping is free at 9000 cents or more.\"\"\"\n    if subtotal_cents < 0:\n        raise ValueError(\"subtotal must be nonnegative\")\n    shipping = 0 if subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS else SHIPPING_CENTS\n    return subtotal_cents + shipping\n"
+          }
+        ]
+      },
+      "source_fingerprint": "8e08697e841c29602e8b7d4b15977cc6162368bae4a4c34726279b496d6a33be"
+    },
+    "predecessor": "docs-revision::dd794f7913bd939c25ec54765987f4406f3031017c92afec806e067aee94662e",
+    "revision_id": "docs-revision::6e2e710f7195895dd5caed1fa84ee6807175d1537247912e04673676d33de8b4",
+    "scope": {
+      "branch_id": "main",
+      "perspective_id": "default",
+      "scope_id": "3a203b22c3d90e5e946b221b4ec71cb9283a32410df9f7a11a48a186c9522957",
+      "valid_at": null
+    },
+    "sequence": 12,
+    "source_claims": {
+      "complete": true,
+      "contract_revision": "docs.source-claims.v1",
+      "files": [
+        {
+          "claims": [
+            {
+              "citations": [
+                {
+                  "end_byte": 68,
+                  "quote": "SHIPPING_CENTS = 500",
+                  "start_byte": 48
+                }
+              ],
+              "claim_id": "docs-source-claim::0aab88b356b2a51552676e3d891ff15bc6b40433c463ae40e27b71f76ead07bd",
+              "confidence": 1.0,
+              "statement": "The module defines a constant SHIPPING_CENTS with value 500."
+            },
+            {
+              "citations": [
+                {
+                  "end_byte": 103,
+                  "quote": "FREE_SHIPPING_MINIMUM_CENTS = 9000",
+                  "start_byte": 69
+                }
+              ],
+              "claim_id": "docs-source-claim::23fcef1c9a4328cc8fccde36c9bfd09b4dc9e6e07fcb232698ec7f8725504d30",
+              "confidence": 1.0,
+              "statement": "The module defines a constant FREE_SHIPPING_MINIMUM_CENTS with value 9000."
+            },
+            {
+              "citations": [
+                {
+                  "end_byte": 397,
+                  "quote": "shipping = 0 if subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS else SHIPPING_CENTS",
+                  "start_byte": 316
+                }
+              ],
+              "claim_id": "docs-source-claim::299b7b6f8faf68e7672417782ff1bd5c051ce3419a313dddaed5d9f544895109",
+              "confidence": 1.0,
+              "statement": "The function total_cents sets shipping to 0 when subtotal_cents is greater than or equal to FREE_SHIPPING_MINIMUM_CENTS."
+            },
+            {
+              "citations": [
+                {
+                  "end_byte": 254,
+                  "quote": "if subtotal_cents < 0:",
+                  "start_byte": 232
+                },
+                {
+                  "end_byte": 311,
+                  "quote": "raise ValueError(\"subtotal must be nonnegative\")",
+                  "start_byte": 263
+                }
+              ],
+              "claim_id": "docs-source-claim::48dd1572ab4ab128aece31924faefba83b1e6e99dc5c8e5ef36a2ff5f3250185",
+              "confidence": 1.0,
+              "statement": "The function total_cents raises a ValueError with message 'subtotal must be nonnegative' when given a negative subtotal."
+            },
+            {
+              "citations": [
+                {
+                  "end_byte": 434,
+                  "quote": "return subtotal_cents + shipping",
+                  "start_byte": 402
+                }
+              ],
+              "claim_id": "docs-source-claim::c5823c70e38942d26eb2ce8070d7bbc5ce127d74414e3772ea2e48446812fac4",
+              "confidence": 1.0,
+              "statement": "The function total_cents returns the sum of subtotal_cents and shipping."
+            },
+            {
+              "citations": [
+                {
+                  "end_byte": 397,
+                  "quote": "shipping = 0 if subtotal_cents >= FREE_SHIPPING_MINIMUM_CENTS else SHIPPING_CENTS",
+                  "start_byte": 316
+                }
+              ],
+              "claim_id": "docs-source-claim::f392d7eafb2db794781ccc2804846d5bcdd3b555027801f8a62a2ce06911625d",
+              "confidence": 1.0,
+              "statement": "The function total_cents sets shipping to SHIPPING_CENTS when subtotal_cents is less than FREE_SHIPPING_MINIMUM_CENTS."
+            }
+          ],
+          "content_hash": "00f0bf9e5d7c9c1907f840049a5bae61f52fa0ec21cc80c921dbcdb8e3649af7",
+          "execution": {
+            "completion_tokens": 407,
+            "configuration_identity": "0b748c395abd5bb8d7f291ad5c79bfa7efeff015a63d113c6ecb7ff120843561",
+            "execution_id": "7aba7d7257c077e758e21ec7c5ecefea368c2ea0e67fe599a9d8c20fa8d8adc3",
+            "finish_reason": "stop",
+            "policy_identity": "docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5",
+            "prompt_tokens": 527,
+            "provider_name": "steward-provider",
+            "provider_type": "local",
+            "reported_model": "local",
+            "request_identity": "4161c4c37f7bc1bf84938b8ddc39594501767c1af588f1718d2a8b70c3637334",
+            "requested_model": "local",
+            "response_identity": "ac5e25f3f2b933edd2528e4b9325f0408650f8220559f158054a2b264343f743"
+          },
+          "no_claims_reason": null,
+          "path": "pricing.py"
+        }
+      ],
+      "input_id": "docs-source-input::f3c3d08e5d36f9807702caf87ccf8ccc70bb9354115c22454819e6d77eb8e6ae",
+      "policy_identity": "docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5",
+      "report_id": "docs-source-claims::5226d511d07387afade491cd44cfae4168e407cdf39453d7f4b99c52927f7f6b"
+    },
+    "subject": {
+      "domain_id": "workspace_fs",
+      "object_id": "docs",
+      "object_kind": "node"
+    },
+    "work_input_basis": {
+      "basis_id": "docs-work-input-v1::b2932f3d0c79141f15ee93adefefa56e6d43ca1b671adb6aa3ff8f047bed6ffa",
+      "policy_identity": "docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5"
+    }
+  },
+  "record_id": "owner-publication::owner-publication-operation-v1::3eb6bdf184154c1cd6806b95a5ca3ade51c685dd456ca38e92d26926528ab0d7",
+  "seq": 101
+}

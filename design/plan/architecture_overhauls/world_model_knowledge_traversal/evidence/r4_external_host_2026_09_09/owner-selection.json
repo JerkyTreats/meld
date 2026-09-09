@@ -1,0 +1,16 @@
+{
+  "executable": {
+    "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/meld-docs-owner",
+    "content_hash": "89fbc214fe20ab7d80671229a3f56688705a8f31095a5043680945a6af59bda3"
+  },
+  "limits": {
+    "request_timeout_ms": 180000,
+    "max_message_bytes": 16777216
+  },
+  "binding_ids": [
+    "workspace",
+    "provider",
+    "agent",
+    "subject"
+  ]
+}

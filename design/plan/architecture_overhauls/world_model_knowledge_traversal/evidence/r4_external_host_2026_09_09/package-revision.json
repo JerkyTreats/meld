@@ -1,0 +1,109 @@
+{
+  "status": "passed",
+  "core_binary": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/meld",
+  "core_sha256_before": "046bed6d5745257198570c1120574a2c0d4cec84b3566c4b7b945ab5819d22f4",
+  "core_sha256_after": "046bed6d5745257198570c1120574a2c0d4cec84b3566c4b7b945ab5819d22f4",
+  "owner_executable": {
+    "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/meld-docs-owner",
+    "content_hash": "89fbc214fe20ab7d80671229a3f56688705a8f31095a5043680945a6af59bda3"
+  },
+  "base_v1": "b3df19f578ff8473d291e3730a341656628b11473266e98c88c254b42864a97d",
+  "base_v2": "4b3236d6cc5e8af067449324f4a4c9a3ee63329e2eac90399951f0638d1d4b3f",
+  "policy_min_confidence_before": 0.8,
+  "policy_min_confidence_after": 0.81,
+  "preparations": {
+    "first": {
+      "stage_reports": [
+        {
+          "stage": "InstallTheory",
+          "disposition": "Applied",
+          "record_ids": [
+            "pds_package_receipt::7f1231b39e7fd921b981ae813845de6d2378711528d59389235e5e57c0c7a4ca",
+            "pds_product_revision::0e7b339fc56145a0ca439fdf6c5bf60e12b4cded6d387b419cb3a7f6819e0820",
+            "pds_product_compilation::f4c5ae9db4a3b18328dde0431efc969545de88d04e134d0295084c62a18190b9"
+          ]
+        },
+        {
+          "stage": "GenesisIdentities",
+          "disposition": "Applied",
+          "record_ids": [
+            "agent::first-agent",
+            "agent_genesis_receipt::495c2ae005751a0cc037b3ddc0c7e7978e10437b0a896a80900ccf8d28c542c4",
+            "agent_genesis_publication::88b0829c69000a2e4d4d26eee7756ac2379bf6e2a3e270e165bdf9a364e7ca72",
+            "agent_genesis_event::agent-genesis::88b0829c69000a2e4d4d26eee7756ac2379bf6e2a3e270e165bdf9a364e7ca72",
+            "agent_topology_receipt::fa0a64025533309df13fa23be82cc1044a00b7d3b8dcbc48faddd1f7e34a33de"
+          ]
+        },
+        {
+          "stage": "PrepareActivation",
+          "disposition": "Applied",
+          "record_ids": [
+            "stewardship_assignment::6649e9dfe407873991ce1d049e86987120acb3f984f9cc3927635e15cea4c286",
+            "capability_preparation::e7248c82510635f2fefcee04591625e0d2b5e0d1ec131982ee5c972148e5e1aa",
+            "prepared_product::81e6ea73dd50148304d93eb8d66c46c57d12cc63902cb5e59e469e7c646efcf6"
+          ]
+        },
+        {
+          "stage": "SeedEpistemicFacts",
+          "disposition": "Applied",
+          "record_ids": [
+            "genesis::world_model::observation::workspace_fs::node::docs"
+          ]
+        }
+      ]
+    },
+    "second": {
+      "stage_reports": [
+        {
+          "stage": "InstallTheory",
+          "disposition": "Applied",
+          "record_ids": [
+            "pds_package_receipt::6c00bc149d8864e3e0214c300d6ecd7689b023646761610d371712d22bde8f46",
+            "pds_product_revision::802f90f11ede180cd7518c0ec0c40b41e1f21e19a8f43d63e667fadbcfee02b9",
+            "pds_product_compilation::8f6f63cc23a92274c20cd2f49d03662f4f09d66b67240b91ff27d90eb1359731"
+          ]
+        },
+        {
+          "stage": "GenesisIdentities",
+          "disposition": "Applied",
+          "record_ids": [
+            "agent::second-agent",
+            "agent_genesis_receipt::47453ae458bbac9d6183baaf20882bb62f7f410ec0effb7a555469af864cec40",
+            "agent_genesis_publication::e020e2b0ab5534c511221e1b79292a49f85e69087324d140414080c05a4fc1af",
+            "agent_genesis_event::agent-genesis::e020e2b0ab5534c511221e1b79292a49f85e69087324d140414080c05a4fc1af",
+            "agent_topology_receipt::670f727bfade287e15f8f0a1c778861a9017519d2829b7ce47e33f7f8ac9692d"
+          ]
+        },
+        {
+          "stage": "PrepareActivation",
+          "disposition": "Applied",
+          "record_ids": [
+            "stewardship_assignment::7f1fd12ea662a0aa7d5f931f8b11f358f280998c45f752dd73aed461a97a7a17",
+            "capability_preparation::dc7984b46fc9f4a6c289cd292a306e6fe99748540451978dc22ffb8f88cb336d",
+            "prepared_product::4c648d09f84cfd81a8e2dddaec37a0496b4d077591ffdfaf6834b759ea91fbb2"
+          ]
+        },
+        {
+          "stage": "SeedEpistemicFacts",
+          "disposition": "Unchanged",
+          "record_ids": [
+            "genesis::world_model::observation::workspace_fs::node::docs"
+          ]
+        }
+      ]
+    }
+  },
+  "semantic_change": {
+    "owner_decision": "source scope includes versus excludes ignored_by_revision/extra.rs",
+    "first_source_ids": [
+      "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::ignored_by_revision/extra.rs",
+      "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::lib.rs"
+    ],
+    "second_source_ids": [
+      "99c36da0a5c2d596973760b8086beeac1455c1ab087c04f5638f6115bc0436f4::lib.rs"
+    ],
+    "first_stream": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+    "second_stream": "99c36da0a5c2d596973760b8086beeac1455c1ab087c04f5638f6115bc0436f4",
+    "provider": "unavailable fixture endpoint; source classification requires no inference"
+  }
+}

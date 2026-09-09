@@ -1,0 +1,401 @@
+{
+  "seq": 27,
+  "envelope": {
+    "ts": "2026-09-09T15:44:22.252Z",
+    "recorded_at": "2026-09-09T15:44:22.252Z",
+    "record_id": "owner-publication::owner-publication-operation-v1::63cbcba7596b3d3370a42e440e5ab63e98c410413cfae130378ac2891cd57958",
+    "session": "stewardship::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+    "domain_id": "docs",
+    "stream_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+    "type": "docs.observation",
+    "occurred_at": null,
+    "content_hash": null,
+    "objects": [
+      {
+        "domain_id": "docs",
+        "object_kind": "readme_observation",
+        "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::README.md"
+      },
+      {
+        "domain_id": "docs",
+        "object_kind": "readme_observation",
+        "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::ignored_by_revision/README.md"
+      },
+      {
+        "domain_id": "docs",
+        "object_kind": "scope_observation",
+        "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620"
+      },
+      {
+        "domain_id": "docs",
+        "object_kind": "source_observation",
+        "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::ignored_by_revision/extra.rs"
+      },
+      {
+        "domain_id": "docs",
+        "object_kind": "source_observation",
+        "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::lib.rs"
+      },
+      {
+        "domain_id": "workspace_fs",
+        "object_kind": "node",
+        "object_id": "docs"
+      }
+    ],
+    "relations": [
+      {
+        "relation_type": "docs_observes",
+        "src": {
+          "domain_id": "docs",
+          "object_kind": "scope_observation",
+          "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620"
+        },
+        "dst": {
+          "domain_id": "workspace_fs",
+          "object_kind": "node",
+          "object_id": "docs"
+        }
+      },
+      {
+        "relation_type": "docs_readme_in_scope",
+        "src": {
+          "domain_id": "docs",
+          "object_kind": "readme_observation",
+          "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::README.md"
+        },
+        "dst": {
+          "domain_id": "docs",
+          "object_kind": "scope_observation",
+          "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620"
+        }
+      },
+      {
+        "relation_type": "docs_readme_in_scope",
+        "src": {
+          "domain_id": "docs",
+          "object_kind": "readme_observation",
+          "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::ignored_by_revision/README.md"
+        },
+        "dst": {
+          "domain_id": "docs",
+          "object_kind": "scope_observation",
+          "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620"
+        }
+      },
+      {
+        "relation_type": "docs_source_in_scope",
+        "src": {
+          "domain_id": "docs",
+          "object_kind": "source_observation",
+          "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::ignored_by_revision/extra.rs"
+        },
+        "dst": {
+          "domain_id": "docs",
+          "object_kind": "scope_observation",
+          "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620"
+        }
+      },
+      {
+        "relation_type": "docs_source_in_scope",
+        "src": {
+          "domain_id": "docs",
+          "object_kind": "source_observation",
+          "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::lib.rs"
+        },
+        "dst": {
+          "domain_id": "docs",
+          "object_kind": "scope_observation",
+          "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620"
+        }
+      }
+    ],
+    "data": {
+      "batch": {
+        "completeness": {
+          "exclusions": [],
+          "failures": [],
+          "included_ids": [
+            "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19::docs::readme_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::README.md",
+            "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19::docs::readme_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::ignored_by_revision/README.md",
+            "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19::docs::scope_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+            "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19::docs::source_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::ignored_by_revision/extra.rs",
+            "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19::docs::source_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::lib.rs",
+            "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19::docs_observes::docs::scope_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::workspace_fs::node::docs",
+            "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19::docs_readme_in_scope::docs::readme_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::README.md::docs::scope_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+            "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19::docs_readme_in_scope::docs::readme_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::ignored_by_revision/README.md::docs::scope_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+            "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19::docs_source_in_scope::docs::source_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::ignored_by_revision/extra.rs::docs::scope_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+            "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19::docs_source_in_scope::docs::source_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::lib.rs::docs::scope_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620"
+          ],
+          "receipt_id": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19::coverage",
+          "scope": {
+            "branch_id": "main",
+            "perspective_id": "default",
+            "scope_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+            "valid_at": null
+          },
+          "status": "complete"
+        },
+        "objects": [
+          {
+            "hydration": {
+              "owner_id": "docs",
+              "product_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+              "product_kind": "scope_observation",
+              "revision_id": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19",
+              "role": "observed_docs_material"
+            },
+            "object_ref": {
+              "domain_id": "docs",
+              "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::README.md",
+              "object_kind": "readme_observation"
+            },
+            "provenance_refs": [
+              "docs-observation::461b6a8ca917ea19fcbf53545b29556c73e4962608c8368e8ef6372b96458d6d"
+            ],
+            "publication_id": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19::docs::readme_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::README.md",
+            "qualifications": {
+              "observation": "{\"path\":\"README.md\",\"state\":{\"disposition\":\"missing\"}}"
+            },
+            "source_product_ref": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19",
+            "state": "observed"
+          },
+          {
+            "hydration": {
+              "owner_id": "docs",
+              "product_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+              "product_kind": "scope_observation",
+              "revision_id": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19",
+              "role": "observed_docs_material"
+            },
+            "object_ref": {
+              "domain_id": "docs",
+              "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::ignored_by_revision/README.md",
+              "object_kind": "readme_observation"
+            },
+            "provenance_refs": [
+              "docs-observation::461b6a8ca917ea19fcbf53545b29556c73e4962608c8368e8ef6372b96458d6d"
+            ],
+            "publication_id": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19::docs::readme_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::ignored_by_revision/README.md",
+            "qualifications": {
+              "observation": "{\"path\":\"ignored_by_revision/README.md\",\"state\":{\"disposition\":\"missing\"}}"
+            },
+            "source_product_ref": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19",
+            "state": "observed"
+          },
+          {
+            "hydration": {
+              "owner_id": "docs",
+              "product_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+              "product_kind": "scope_observation",
+              "revision_id": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19",
+              "role": "observed_docs_material"
+            },
+            "object_ref": {
+              "domain_id": "docs",
+              "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+              "object_kind": "scope_observation"
+            },
+            "provenance_refs": [
+              "docs-observation::461b6a8ca917ea19fcbf53545b29556c73e4962608c8368e8ef6372b96458d6d"
+            ],
+            "publication_id": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19::docs::scope_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+            "qualifications": {
+              "observation": "{\"evidence\":{\"directories\":[{\"child_directories\":[],\"direct_files\":[\"ignored_by_revision/extra.rs\"],\"evidence\":\"\\n--- ignored_by_revision/extra.rs ---\\npub const EXTERNAL_SCOPE: bool = true;\\n\\n\",\"path\":\"ignored_by_revision\"},{\"child_directories\":[\"ignored_by_revision\"],\"direct_files\":[\"lib.rs\"],\"evidence\":\"\\n--- lib.rs ---\\npub fn run() {}\\n\\n\",\"path\":\".\"}],\"observation\":{\"coverage_gaps\":[],\"exclusions\":[],\"readmes\":[{\"path\":\"README.md\",\"state\":{\"disposition\":\"missing\"}},{\"path\":\"ignored_by_revision/README.md\",\"state\":{\"disposition\":\"missing\"}}],\"revision_id\":\"docs-observation::461b6a8ca917ea19fcbf53545b29556c73e4962608c8368e8ef6372b96458d6d\",\"scope\":{\"comparison\":\"directory_subtree_v1\",\"document_name\":\"README.md\",\"exclude_document_names_case_insensitive\":true,\"exclude_hidden_directories\":true,\"excluded_directory_names\":[\".git\",\".mypy_cache\",\".pytest_cache\",\".ruff_cache\",\".tox\",\".venv\",\"__pycache__\",\"node_modules\",\"target\"],\"operator\":\"document_per_source_directory_v1\"},\"sources\":[{\"byte_length\":39,\"content_hash\":\"4860fbc9731ab3d869e5a0fa61c9e59708ebe6850d11926edc0f4b35e99d1898\",\"path\":\"ignored_by_revision/extra.rs\",\"text\":\"pub const EXTERNAL_SCOPE: bool = true;\\n\"},{\"byte_length\":16,\"content_hash\":\"4a448513623410536580ea06570237419d1bdd1d0ba82073418f4308dbf7625b\",\"path\":\"lib.rs\",\"text\":\"pub fn run() {}\\n\"}]},\"source_fingerprint\":\"97dd820570228884fb6d3da9c7d7aa9934f3d6a08cd267c5b33619d4f7165b1c\"},\"predecessor\":null,\"revision_id\":\"docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19\",\"scope\":{\"branch_id\":\"main\",\"perspective_id\":\"default\",\"scope_id\":\"ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620\",\"valid_at\":null},\"sequence\":1,\"subject\":{\"domain_id\":\"workspace_fs\",\"object_id\":\"docs\",\"object_kind\":\"node\"},\"work_input_basis\":{\"basis_id\":\"docs-work-input-v1::0f934fc744f42aa5c4a5d7915fce7b5039b087c0ba2753d3ca286206fef72844\",\"policy_identity\":\"docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5\"}}"
+            },
+            "source_product_ref": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19",
+            "state": "observed"
+          },
+          {
+            "hydration": {
+              "owner_id": "docs",
+              "product_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+              "product_kind": "scope_observation",
+              "revision_id": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19",
+              "role": "observed_docs_material"
+            },
+            "object_ref": {
+              "domain_id": "docs",
+              "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::ignored_by_revision/extra.rs",
+              "object_kind": "source_observation"
+            },
+            "provenance_refs": [
+              "docs-observation::461b6a8ca917ea19fcbf53545b29556c73e4962608c8368e8ef6372b96458d6d"
+            ],
+            "publication_id": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19::docs::source_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::ignored_by_revision/extra.rs",
+            "qualifications": {
+              "observation": "{\"byte_length\":39,\"content_hash\":\"4860fbc9731ab3d869e5a0fa61c9e59708ebe6850d11926edc0f4b35e99d1898\",\"path\":\"ignored_by_revision/extra.rs\",\"text\":\"pub const EXTERNAL_SCOPE: bool = true;\\n\"}"
+            },
+            "source_product_ref": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19",
+            "state": "observed"
+          },
+          {
+            "hydration": {
+              "owner_id": "docs",
+              "product_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+              "product_kind": "scope_observation",
+              "revision_id": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19",
+              "role": "observed_docs_material"
+            },
+            "object_ref": {
+              "domain_id": "docs",
+              "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::lib.rs",
+              "object_kind": "source_observation"
+            },
+            "provenance_refs": [
+              "docs-observation::461b6a8ca917ea19fcbf53545b29556c73e4962608c8368e8ef6372b96458d6d"
+            ],
+            "publication_id": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19::docs::source_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::lib.rs",
+            "qualifications": {
+              "observation": "{\"byte_length\":16,\"content_hash\":\"4a448513623410536580ea06570237419d1bdd1d0ba82073418f4308dbf7625b\",\"path\":\"lib.rs\",\"text\":\"pub fn run() {}\\n\"}"
+            },
+            "source_product_ref": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19",
+            "state": "observed"
+          }
+        ],
+        "owner_id": "docs",
+        "relations": [
+          {
+            "dst": {
+              "domain_id": "workspace_fs",
+              "object_id": "docs",
+              "object_kind": "node"
+            },
+            "hydration": {
+              "owner_id": "docs",
+              "product_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+              "product_kind": "scope_observation",
+              "revision_id": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19",
+              "role": "observed_docs_material"
+            },
+            "occurrence_id": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19::docs_observes::docs::scope_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::workspace_fs::node::docs",
+            "provenance_refs": [
+              "docs-observation::461b6a8ca917ea19fcbf53545b29556c73e4962608c8368e8ef6372b96458d6d"
+            ],
+            "qualifications": {},
+            "relation_type": "docs_observes",
+            "source_product_ref": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19",
+            "src": {
+              "domain_id": "docs",
+              "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+              "object_kind": "scope_observation"
+            }
+          },
+          {
+            "dst": {
+              "domain_id": "docs",
+              "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+              "object_kind": "scope_observation"
+            },
+            "hydration": {
+              "owner_id": "docs",
+              "product_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+              "product_kind": "scope_observation",
+              "revision_id": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19",
+              "role": "observed_docs_material"
+            },
+            "occurrence_id": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19::docs_readme_in_scope::docs::readme_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::README.md::docs::scope_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+            "provenance_refs": [
+              "docs-observation::461b6a8ca917ea19fcbf53545b29556c73e4962608c8368e8ef6372b96458d6d"
+            ],
+            "qualifications": {},
+            "relation_type": "docs_readme_in_scope",
+            "source_product_ref": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19",
+            "src": {
+              "domain_id": "docs",
+              "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::README.md",
+              "object_kind": "readme_observation"
+            }
+          },
+          {
+            "dst": {
+              "domain_id": "docs",
+              "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+              "object_kind": "scope_observation"
+            },
+            "hydration": {
+              "owner_id": "docs",
+              "product_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+              "product_kind": "scope_observation",
+              "revision_id": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19",
+              "role": "observed_docs_material"
+            },
+            "occurrence_id": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19::docs_readme_in_scope::docs::readme_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::ignored_by_revision/README.md::docs::scope_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+            "provenance_refs": [
+              "docs-observation::461b6a8ca917ea19fcbf53545b29556c73e4962608c8368e8ef6372b96458d6d"
+            ],
+            "qualifications": {},
+            "relation_type": "docs_readme_in_scope",
+            "source_product_ref": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19",
+            "src": {
+              "domain_id": "docs",
+              "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::ignored_by_revision/README.md",
+              "object_kind": "readme_observation"
+            }
+          },
+          {
+            "dst": {
+              "domain_id": "docs",
+              "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+              "object_kind": "scope_observation"
+            },
+            "hydration": {
+              "owner_id": "docs",
+              "product_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+              "product_kind": "scope_observation",
+              "revision_id": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19",
+              "role": "observed_docs_material"
+            },
+            "occurrence_id": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19::docs_source_in_scope::docs::source_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::ignored_by_revision/extra.rs::docs::scope_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+            "provenance_refs": [
+              "docs-observation::461b6a8ca917ea19fcbf53545b29556c73e4962608c8368e8ef6372b96458d6d"
+            ],
+            "qualifications": {},
+            "relation_type": "docs_source_in_scope",
+            "source_product_ref": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19",
+            "src": {
+              "domain_id": "docs",
+              "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::ignored_by_revision/extra.rs",
+              "object_kind": "source_observation"
+            }
+          },
+          {
+            "dst": {
+              "domain_id": "docs",
+              "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+              "object_kind": "scope_observation"
+            },
+            "hydration": {
+              "owner_id": "docs",
+              "product_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+              "product_kind": "scope_observation",
+              "revision_id": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19",
+              "role": "observed_docs_material"
+            },
+            "occurrence_id": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19::docs_source_in_scope::docs::source_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::lib.rs::docs::scope_observation::ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+            "provenance_refs": [
+              "docs-observation::461b6a8ca917ea19fcbf53545b29556c73e4962608c8368e8ef6372b96458d6d"
+            ],
+            "qualifications": {},
+            "relation_type": "docs_source_in_scope",
+            "source_product_ref": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19",
+            "src": {
+              "domain_id": "docs",
+              "object_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620::lib.rs",
+              "object_kind": "source_observation"
+            }
+          }
+        ],
+        "revision_id": "docs-revision::577a65b825fa91712493432e98213793382e7ba6d2b911f5565fcc3d4a838a19",
+        "scope": {
+          "branch_id": "main",
+          "perspective_id": "default",
+          "scope_id": "ccabb60fa0bde6aab63c6f3a36e453185b401b991265d531e16f8a90c2219620",
+          "valid_at": null
+        },
+        "work_input_basis_id": "docs-work-input-v1::0f934fc744f42aa5c4a5d7915fce7b5039b087c0ba2753d3ca286206fef72844"
+      },
+      "enumeration_rule_revision": "docs.observation.v1",
+      "operation_id": "owner-publication-operation-v1::63cbcba7596b3d3370a42e440e5ab63e98c410413cfae130378ac2891cd57958"
+    }
+  }
+}

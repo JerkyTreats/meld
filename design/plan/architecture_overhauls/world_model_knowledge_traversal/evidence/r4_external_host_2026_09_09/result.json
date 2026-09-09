@@ -1,0 +1,216 @@
+{
+  "artifacts": {
+    "agent-acceptance.json": "9983da2f8bba779cf3342b2e6c70b080f1ed47bee08b65a24703f6a85aa0498e",
+    "effect-publication.json": "d32069252ede93eaa02e9f9f4a4a205c3d9489b15557f53ea96d72a590e01098",
+    "model-status.json": "8d3d1c6b112c51074fe1e2298354accb9942d62802d452b3c510ed8a13b0448f",
+    "nonce-first-account.json": "9b17f1737cef85981a73cec1dba09e95a4b789c96b87d67f99e83691ccbb1906",
+    "nonce-first-history.json": "1e45553e6d3aa45d9b793058232197c03fb7d41d2fad925f8f2ca4b8ab5c987a",
+    "nonce-result.json": "56020db5ea56a3418dd12edc9a377ea11d3ed2405873d19561a5c96b7f18a240",
+    "nonce-source.json": "9ac950af09813a3877151f8fae3c992b89d8bdfa428219f2cb78048f37ed3b2f",
+    "nonce-successor-account.json": "c44397dd39afabb69ccc3ea4691b77b84fd5d50959a2e713eb97c779c5694f39",
+    "nonce-successor-history.json": "d90d616f84daa91199ece4c5555cd18041562cfa7c9af1679a4842ef35f752b1",
+    "owner-final.json": "7910ec5b8f3214aad66f2233cbe444f2b2a835c47ffb25b22b830981ac3310ed",
+    "owner-selection.json": "8bbf90746418788acec05b431ccac2807fdf6ec78a7d0561c067b3326d690ca1",
+    "package-revision.json": "b2e4b12282afb482dc9282baac501ad7cb4ae78c9e146e6fb175f0b3d27bdcea",
+    "qwen-result.json": "99eb41d095aeeb4518ee8aa2773ff6605edfe141e93f762cc337da72dbd8d4b8",
+    "readme-bytes.json": "855efb05fb5da233d02855d3329b65eecfe95bbd1ccac4c5af53bd26ece0a5f5",
+    "revision-first-observation.json": "14d5898141869ebbb94517dc27969ba3c7c9112f15c6d309ce55cb3b5e5c7e35",
+    "revision-second-observation.json": "c2ddb06955fab5c85b31f468f69e8319f729aa79d75ea1c5cb73e5de4a1acd56",
+    "source-after.py.txt": "4d4d327564bc17540c7cdfb782ad0a8a5cea4f14316a9c5a991abc0decf54a49"
+  },
+  "binary_sha256": "046bed6d5745257198570c1120574a2c0d4cec84b3566c4b7b945ab5819d22f4",
+  "limits": [
+    "One bound Agent per declaration; independent named assignments supported",
+    "Serialized local external owners; no network isolation or whole-runtime separate-process guarantee",
+    "Legacy compiled owner history and unscoped prepared heads explicitly refused; no importer",
+    "Same-workspace operational sharing retains native Execution contracts; no new cross-assignment shared-effect acceptance claim",
+    "Nonce live accounts preserve their native stale read_state while all 19 required positions are available; historical closed-generation accounts are retained intact",
+    "R5 correctness and R6 final soft-freeze proof remain open"
+  ],
+  "logs": {
+    "cli-final": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-cli-final.log",
+      "sha256": "b75908a4577964549d648c25eacf511f67ef9bead74ac94946986460d5ed4be6"
+    },
+    "config-final": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-config-final.log",
+      "sha256": "83bdb058841e5d164bfd7c064f96e8480e33d42324e1a73368e8539c3f7b5553"
+    },
+    "core-dependencies": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-core-dependencies.txt",
+      "sha256": "d39be4caca5cadf039b6a4b17c36809cde66cfd99fab3a5d65986deec316ade5"
+    },
+    "core-final": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-core-final.log",
+      "sha256": "e88040d7deed20e70a5a07e7f4167010e38516c5eafa39aae0622ee203779fe3"
+    },
+    "core-remaining-final": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-core-remaining-final.log",
+      "sha256": "8313200afd7cdc003230b3c1d853c8e78a59f50f22659418f407c342b2f6b716"
+    },
+    "expiry-final": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-expiry-final.log",
+      "sha256": "5fed701c45b8f43c090cb72d31e802723529adef36226b8a60439e58802babbb"
+    },
+    "hosting-final3": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-hosting-final3.log",
+      "sha256": "640d8b3c33e3be8f106f542521df1207102971fdf7a33f55fe8b7175368ba7e1"
+    },
+    "integration-final": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-integration-final.log",
+      "sha256": "068b879e806bc0337e8d7b1e5c32135eaf064c2411dd31bfebedb4dc530bcf12"
+    },
+    "lifecycle-tests": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-lifecycle-tests.log",
+      "sha256": "6acb76ec0eecef05ec702aed541af8a8e3bac7c60a825f411c5600e06fdbcf8a"
+    },
+    "native-scan": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-native-scan.log",
+      "sha256": "a9a7dd0da2cf8811048d25d595d925039737b47fd2f67bc8ffea42d7652a6c3c"
+    },
+    "nonce-final": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-nonce-final.log",
+      "sha256": "25c26fc09f32fb7ea596af33bfc77d0bb7db04694391b03b9ea2cac74383894d"
+    },
+    "observation-final2": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-observation-final2.log",
+      "sha256": "6acc447b2a328cabd3cefa4677aeea99afc4b8e71aafcd181a3ddfac1bbdb41a"
+    },
+    "observation-retired-final": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-observation-retired-final.log",
+      "sha256": "f147a866dc0200cd22ea44ec50ddd91e02dfa239f4c559db2eedfa62af610373"
+    },
+    "owner-tests-final2": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-owner-tests-final2.log",
+      "sha256": "0cf9aa9ecba99acb4096bae3a2e3d82ff94344cad891b7612461bb6704a2549d"
+    },
+    "owner-transport-final": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-owner-transport-final.log",
+      "sha256": "80d2118cee2f64a2040d875d9ee6352d5f8713313ec4322030c142018c17b195"
+    },
+    "placement-test": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-placement-test.log",
+      "sha256": "67ea9540648efee9735ec72f64e21f75384e80e0e2ee21862abfd17a64958f8b"
+    },
+    "qwen": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-qwen.log",
+      "sha256": "6aa9819d45d941a795d562b8a44ab875f2af351ff8734960dcbe51a7f5ec6065"
+    },
+    "qwen-final": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-qwen-final.log",
+      "sha256": "ab544cd76895a9469c46281152f9b3c3303113bfc378a31738dc166131918b37"
+    },
+    "qwen2": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-qwen2.log",
+      "sha256": "55ad199762ab8ab707434d24db611ac78185fa6e4448cfbc58a47cff04c8b0b9"
+    },
+    "qwen3": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-qwen3.log",
+      "sha256": "2a8fff8e420c16d18703f26ee0049cfe820dee5f9b35369d9f9c28b547d80157"
+    },
+    "retired-binaries": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-retired-binaries.log",
+      "sha256": "3bf9254886c2251891412fc6cabf9d02bea2f2e828fe6dfd1f68cca28defa619"
+    },
+    "retirement-check": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-retirement-check.log",
+      "sha256": "7d8818c58ab1d301d3a20e1b474837a146d8d242adbde77ab45101830c8ba426"
+    },
+    "retirement-clippy": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-retirement-clippy.log",
+      "sha256": "e6d19b1d270ff7e0b6c34b0a406eddb7fddec326e74755c9be421f5e92b28058"
+    },
+    "revision-final": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-revision-final.log",
+      "sha256": "d4ed1d1d6c381f8a3e113d83d991c144a080753f74f4346e4cd97964789cbcbf"
+    },
+    "revision-semantic": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-revision-semantic.log",
+      "sha256": "db56f88e4fa82541d848ba3fb7c060ab9ead0b10d5f324c23a5eae9fe1ae3c7a"
+    },
+    "routes-final": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-routes-final.log",
+      "sha256": "d4e0cfb51a5907080f7da79f966ecfe6cd5b9cd0f73fa4358259df543536f970"
+    },
+    "signal-test": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-signal-test.log",
+      "sha256": "35f6d30bfc5ccefc63c106449ead51838915587c42b766410106ab9db8bd1a08"
+    },
+    "supervisor-final": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-supervisor-final.log",
+      "sha256": "6f589bb21c6da889553440d359219a7f9286fe51873c52eb4c08cd81d10d1eed"
+    },
+    "theory-cli-final2": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/verification/meld-r4-theory-cli-final2.log",
+      "sha256": "cdb03759b122fc49361ed5b137eae999371239a6c1e0d5112d40ceb22888ba0a"
+    }
+  },
+  "owner_executable_blake3": "89fbc214fe20ab7d80671229a3f56688705a8f31095a5043680945a6af59bda3",
+  "owner_executable_sha256": "1a1722a280d72ddb25dcc27cf8f2b32c7c124447af5115a495174f3ab80d1c4e",
+  "qwen_outcome": {
+    "accepted_milestones": [
+      "execution_terminal",
+      "curation_terminal",
+      "belief_revision"
+    ],
+    "effect_publications": 1,
+    "event_counts": {
+      "command_summary": 3,
+      "docs.observation": 12,
+      "docs.patch_set_published.v1": 1,
+      "execution.task.artifact_emitted": 4,
+      "execution.task.progressed": 4,
+      "execution.task.requested": 4,
+      "execution.task.started": 4,
+      "execution.task.succeeded": 8,
+      "provider_request_sent": 14,
+      "provider_response_received": 14,
+      "scan_completed": 1,
+      "scan_progress": 1,
+      "scan_started": 1,
+      "session_ended": 3,
+      "session_started": 4,
+      "workspace_fs.node_observed": 3,
+      "workspace_fs.scan_completed": 1,
+      "workspace_fs.scan_started": 1,
+      "workspace_fs.snapshot_materialized": 1,
+      "workspace_fs.snapshot_selected": 1,
+      "workspace_fs.source_attached": 1,
+      "world-model.agent-genesis.v1": 1,
+      "world_model.curation.result.v1": 18,
+      "world_model.unobserved_scope": 1,
+      "world_state.owner_publication.v1": 7
+    },
+    "native_satisfied_goals": 1,
+    "provider_requests": {
+      "idle": 14,
+      "initial": 4,
+      "reopened": 14,
+      "repaired": 14
+    },
+    "task_and_curation_authorizations": 2
+  },
+  "raw_roots": {
+    "nonce": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-final-nonce-20260909T153629Z",
+    "qwen": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z",
+    "revision": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-revision-20260909T154416Z"
+  },
+  "source_commit": "375cc449bf1975ffee091714d2a83aad29f41b76",
+  "source_manifest": {
+    "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/source-manifest.json",
+    "sha256": "ca71fa3aaad091b69940f49bd415c2649a28fbb72050a28bd8a2f11bae280d48"
+  },
+  "status": "implementation complete; ready for user-directed R4 gate, not accepted",
+  "validation": {
+    "clippy": "completed; only result_large_err warnings, 77 root, 6 Security, 3 Docs unique sites; strict -D warnings does not pass",
+    "external_hosting": 3,
+    "integration": {
+      "ignored": 3,
+      "passed": 341
+    },
+    "root_current_cases_accounted": 550,
+    "root_evidence": "461 final non-assembly cases plus 89 assembly cases from broad run and targeted corrections; no uninterrupted all-green root run claimed",
+    "semantic_owner_libraries": 103,
+    "workspace_all_targets": "compiled"
+  }
+}

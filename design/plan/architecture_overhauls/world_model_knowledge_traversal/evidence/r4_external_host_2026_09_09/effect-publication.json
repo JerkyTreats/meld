@@ -1,0 +1,107 @@
+{
+  "ledger_id": "0c88a10c-a095-480d-a75c-96867828832e",
+  "record": {
+    "envelope": {
+      "content_hash": null,
+      "data": {
+        "binding": {
+          "agent_id": "docs-writer",
+          "fence": "d770f80176ec9dd904b2b0a01d555cc18c633e1343c47812d8ca3762615eaa4c",
+          "invocation_id": "publish-docs-patch-set::attempt::1",
+          "issuer": "docs-writer",
+          "lineage": {
+            "batch_index": null,
+            "capability_path": [
+              "publish-docs-patch-set"
+            ],
+            "node_index": null,
+            "repair_scope": null,
+            "task_id": "task-admission-node-753c737c5dc03af6d654e64abcb6e4c3f2073b72e36a28096be39036dd601c8c",
+            "task_run_id": "task-admission-run-b4093cae340cba68abe182a53fffee32ec3bd2c12431ae61f6ab5852e622e28f"
+          },
+          "policy_identity": "docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5",
+          "principal": "workspace-owner",
+          "runtime": {
+            "binding_values": [],
+            "capability_instance_id": "publish-docs-patch-set",
+            "capability_type_id": "docs.publish_patch_set",
+            "capability_version": 1,
+            "effect_contract": [
+              {
+                "effect_id": "docs.publish_patch_set.effect",
+                "exclusive": true,
+                "kind": "Write",
+                "target": "stewarded_repository"
+              }
+            ],
+            "execution_contract": {
+              "cancellation_supported": false,
+              "completion_semantics": "artifact_or_failure",
+              "execution_class": "Inline",
+              "retry_class": "deterministic_local"
+            },
+            "input_contract": [
+              {
+                "accepted_artifact_type_ids": [
+                  "docs_validated_patch_set"
+                ],
+                "cardinality": "One",
+                "required": true,
+                "schema_versions": {
+                  "max": 1,
+                  "min": 1
+                },
+                "slot_id": "docs_validated_patch_set"
+              }
+            ],
+            "output_contract": [
+              {
+                "artifact_type_id": "docs_publication_receipt",
+                "guaranteed": true,
+                "schema_version": 1,
+                "slot_id": "docs_publication_receipt"
+              }
+            ],
+            "scope_kind": "repository",
+            "scope_ref": "docs"
+          },
+          "session": "stewardship::3a203b22c3d90e5e946b221b4ec71cb9283a32410df9f7a11a48a186c9522957",
+          "subject": {
+            "domain_id": "workspace_fs",
+            "object_id": "docs",
+            "object_kind": "node"
+          },
+          "subject_id": "docs",
+          "target_root": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r4-qwen-20260909T153531Z/workspace",
+          "validation_fingerprint": "deba505dfd9b35ffbe087deb172c483d45706e3b9a5d657279cbd3451a4a88a6"
+        },
+        "receipt": {
+          "contradiction_claim_mass": -0.0,
+          "policy_identity": "docs-claim-policy-8b8c937bd8399108a4f79d7140a0690c9825ae759c86c29790bf1f86d805cfc5",
+          "published": [
+            {
+              "changed": true,
+              "content_hash": "21a73cb5371d3cbd2fef5b50097bf24f099490781ec1ee3b74a349af961551fc",
+              "path": "README.md"
+            }
+          ],
+          "source_fingerprint": "8e08697e841c29602e8b7d4b15977cc6162368bae4a4c34726279b496d6a33be",
+          "unsupported_claim_mass": -0.0,
+          "validation_fingerprint": "deba505dfd9b35ffbe087deb172c483d45706e3b9a5d657279cbd3451a4a88a6",
+          "weighted_groundedness": 1.0
+        }
+      },
+      "domain_id": "docs",
+      "objects": [],
+      "occurred_at": null,
+      "record_id": "docs-publication-return-v1::7502500c7c64c46b7b40621f4688e2f256646e8967c2f0eb5fc650432a8fad6d",
+      "recorded_at": "2026-09-09T15:38:13.649Z",
+      "relations": [],
+      "session": "stewardship::3a203b22c3d90e5e946b221b4ec71cb9283a32410df9f7a11a48a186c9522957",
+      "stream_id": "docs",
+      "ts": "2026-09-09T15:38:13.649Z",
+      "type": "docs.patch_set_published.v1"
+    },
+    "seq": 86
+  }
+}

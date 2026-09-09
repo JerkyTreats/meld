@@ -1,0 +1,9 @@
+{
+  "status": "passed",
+  "base_receipt": "2a356ffa261557406256f72664c9a7eac22e107e4a68917cc28cf4e257dfc81f",
+  "replacement_base_receipt": "91da7693594e8b6e795631b541c86f7ac07a2410f7036a5cd9f7592719d9555b",
+  "nonce_ids": [
+    "nonce-v1::e00bf073c0abd62fccc7fe909d17c3ce3bef1548c880370a4d4d71684ca6099c",
+    "nonce-v1::67b72f048cb99fd82eab80c86d1fc5f6e6747aabbcceb3a92d330352b7a2908e"
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "status": "passed",
+  "source_commit": "375cc449bf1975ffee091714d2a83aad29f41b76",
+  "binary_sha256": "046bed6d5745257198570c1120574a2c0d4cec84b3566c4b7b945ab5819d22f4",
+  "initial": {
+    "readmes": {
+      "README.md": {
+        "sha256": "9c8bf02c05d942230bad969c55b3e6100e9f8429106f7043d0928b521ec2b2ca",
+        "mtime_ns": 1788968131321986861
+      }
+    },
+    "provider_requests": 4,
+    "events": 40
+  },
+  "repaired": {
+    "readmes": {
+      "README.md": {
+        "sha256": "a599104a33548b023d7846f5b27e557c8d623b8edafa0860c8cb6ec56a1d4094",
+        "mtime_ns": 1788968293647446359
+      }
+    },
+    "provider_requests": 14,
+    "events": 104
+  },
+  "idle": {
+    "readmes": {
+      "README.md": {
+        "sha256": "a599104a33548b023d7846f5b27e557c8d623b8edafa0860c8cb6ec56a1d4094",
+        "mtime_ns": 1788968293647446359
+      }
+    },
+    "provider_requests": 14,
+    "events": 107
+  },
+  "reopened": {
+    "readmes": {
+      "README.md": {
+        "sha256": "a599104a33548b023d7846f5b27e557c8d623b8edafa0860c8cb6ec56a1d4094",
+        "mtime_ns": 1788968293647446359
+      }
+    },
+    "provider_requests": 14,
+    "events": 113
+  }
+}
