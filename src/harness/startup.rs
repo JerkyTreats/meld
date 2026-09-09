@@ -55,7 +55,7 @@ pub enum StartupPosition {
     GenerationCurrent,
     AdmissionOpen,
     NonceInstantiated,
-    StandingAssessment,
+    InitialAssessment,
     GoalIncepted,
     PlannerCut,
     PlanAdmitted,
@@ -78,7 +78,7 @@ impl StartupPosition {
         Self::GenerationCurrent,
         Self::AdmissionOpen,
         Self::NonceInstantiated,
-        Self::StandingAssessment,
+        Self::InitialAssessment,
         Self::GoalIncepted,
         Self::PlannerCut,
         Self::PlanAdmitted,
@@ -98,7 +98,7 @@ impl StartupPosition {
         match self {
             Self::ProductCompiled => "pds",
             Self::GenerationCurrent | Self::AdmissionOpen => "lifecycle",
-            Self::StandingAssessment | Self::Confirmation => "curation",
+            Self::InitialAssessment | Self::Confirmation => "curation",
             Self::PlannerCut => "planner",
             Self::ExecutionAdmission | Self::NetworkAttribution | Self::AttemptRecorded => {
                 "execution"
@@ -422,6 +422,15 @@ impl StartupAccountReader {
             return Err(invalid("nonce observation names another native lineage"));
         }
         let nonce = nonce.unwrap();
+        let event = self
+            .events
+            .committed_record(&nonce.expected_event_id().map_err(storage)?)
+            .map_err(storage)?;
+        if let Some(event) = &event {
+            if crate::nonce::hydrate(event).map_err(storage)? != nonce {
+                return Err(invalid("committed Event names another nonce"));
+            }
+        }
         let operations = self
             .curation
             .as_ref()
@@ -434,9 +443,15 @@ impl StartupAccountReader {
             .transpose()
             .map_err(storage)?
             .unwrap_or_default();
-        let standing: Vec<_> = operations
+        // Initial evidence may be standing or Agent-planned. Keep it separate
+        // from confirmation by the native source cut relative to the nonce.
+        let initial: Vec<_> = operations
             .iter()
-            .filter(|entry| entry.operation.request_id.is_none())
+            .filter(|entry| {
+                event.as_ref().is_none_or(|event| {
+                    entry.operation.source_cut.event_position.after_seq < event.seq
+                })
+            })
             .collect();
         for entry in &operations {
             if let Some(result) = &entry.result {
@@ -466,25 +481,25 @@ impl StartupAccountReader {
                 }
             }
         }
-        let standing_results: Vec<_> = standing
+        let initial_results: Vec<_> = initial
             .iter()
             .filter_map(|entry| entry.result.as_ref())
             .collect();
         account.add(
-            StartupPosition::StandingAssessment,
+            StartupPosition::InitialAssessment,
             self.curation.is_some(),
-            standing_results
+            initial_results
                 .iter()
                 .map(|r| r.result_id.clone())
                 .collect(),
         );
-        if !standing_results.is_empty()
-            && !standing_results
+        if !initial_results.is_empty()
+            && !initial_results
                 .iter()
                 .any(|r| successful_curation(r.disposition))
         {
             account.mark(
-                StartupPosition::StandingAssessment,
+                StartupPosition::InitialAssessment,
                 EvidenceState::Conflicted,
             );
         }
@@ -648,15 +663,6 @@ impl StartupAccountReader {
                         references: vec![claim.claim_id.clone(), claim.task_instance_id.clone()],
                     });
                 }
-            }
-        }
-        let event = self
-            .events
-            .committed_record(&nonce.expected_event_id().map_err(storage)?)
-            .map_err(storage)?;
-        if let Some(event) = &event {
-            if crate::nonce::hydrate(event).map_err(storage)? != nonce {
-                return Err(invalid("committed Event names another nonce"));
             }
         }
         account.add(

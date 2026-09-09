@@ -317,6 +317,22 @@ fn planned_nonce_observation_progresses_from_acquisition_through_confirmation() 
         }
     }
     assert_eq!((acquisition, tasks, confirmation), (1, 1, 1));
+    let account = crate::harness::startup::StartupAccountReader::over_assembly(&assembly)
+        .inspect(&crate::harness::startup::StartupAccountRequest {
+            agent_id: "startup-agent".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(account.first_missing, None, "{account:#?}");
+    let initial = account
+        .positions
+        .iter()
+        .find(|position| {
+            position.position == crate::harness::startup::StartupPosition::InitialAssessment
+        })
+        .unwrap();
+    assert_eq!(initial.references.len(), 1);
+
     let events = assembly
         .ports()
         .event_replay()
