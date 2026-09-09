@@ -2135,7 +2135,23 @@ fn missing_current_derived_evidence_allows_observation_but_not_executable_work()
             max_depth: 8,
         },
     };
+    let retained = request
+        .problem
+        .planner_cut
+        .world_model_view
+        .world_state
+        .propositions()
+        .iter()
+        .filter(|p| !matches!(p, Proposition::Holds { .. }))
+        .cloned()
+        .collect();
+    request.problem.planner_cut.world_model_view.world_state =
+        meld_lang::WorldState::new(retained).unwrap();
     let executable = search(&request).recommendation.unwrap();
+    assert!(matches!(
+        verify_plan(&request.problem, &executable),
+        PlanVerification::Valid { .. }
+    ));
     assert!(!executable.tasks.is_empty());
     request
         .problem
@@ -2150,11 +2166,10 @@ fn missing_current_derived_evidence_allows_observation_but_not_executable_work()
         },
         outcome_mappings: vec![],
     });
-    request.problem.planner_cut.world_model_view.world_state = meld_lang::WorldState::empty();
     assert!(search(&request).recommendation.is_none());
     assert!(matches!(
         verify_plan(&request.problem, &executable),
-        PlanVerification::Invalid { .. }
+        PlanVerification::Invalid { grounds } if grounds == vec![StrategyRejectionGround::InvalidComposition]
     ));
     let mut acquisition = request.problem.theory.settlement_rules[0].clone();
     acquisition.construction = StrategyConstruction::ObserveUnknown;
