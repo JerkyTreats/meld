@@ -332,6 +332,22 @@
         "content_hash": "da068b96a0ed048f3e4a28d8755138eaed62ac712c18bbdb1838f8e81e780bec"
       },
       "requires": []
+    },
+    {
+      "component_id": "product-topology",
+      "owner_component_id": "meld.docs-freshness.topology",
+      "route": {
+        "owner_domain": "runtime",
+        "component_kind": "product-topology",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "product_topology.json",
+        "content_hash": "1a014a22013629428f4b67119469957e53c16b0dfd0c31f9bf7cd5285d24b1f1"
+      },
+      "requires": []
     }
   ]
 }

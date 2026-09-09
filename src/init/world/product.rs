@@ -1,17 +1,12 @@
 //! Root structural product assembly over domain-owned package components.
 
-use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::runtime::storage::OpenProductStores;
 use crate::theory::{
-    ActivationParticipantPlanV1, ActivationParticipantSpec, ParticipantKind,
-    PdsPackageInstallationReceiptV1, PdsPackageManifestV1, ProductAgentPositionV1,
-    ProductAgentSubscriptionV1, ProductDeclarationV1, ProductPackageSelectionV1, TheoryRouter,
-    TheoryRouterDiagnostic, TheoryRouterError,
+    PdsPackageInstallationReceiptV1, PdsPackageManifestV1, ProductDeclarationV1, ProductTopologyV1,
+    TheoryRouter, TheoryRouterDiagnostic, TheoryRouterError,
 };
-
-const PRODUCT_COMPILATION_POLICY: &str = "pds-product-compilation.v1";
 
 /// Install through the compiled owner routes without interpreting product vocabulary.
 pub fn install_package(
@@ -43,119 +38,24 @@ fn source_error(message: impl Into<String>) -> TheoryRouterError {
     TheoryRouterDiagnostic::new("package_source_invalid", message).into()
 }
 
-/// Compose one assigned stewardship position over an exact routed package.
+/// Resolve the exact package-authored topology without synthesizing product roles.
 pub fn product_declaration(
     product_id: &str,
     principal_id: &str,
     package: &crate::theory::ResolvedPdsPackage,
-    observation_scope_component_id: &str,
-    directive: &str,
-    requested_authority_ref: &str,
-    source_owners: &BTreeSet<String>,
-    owners: &crate::runtime::owners::catalog::OwnerCatalog,
+    products: &crate::theory::PdsProductStore,
 ) -> Result<ProductDeclarationV1, TheoryRouterError> {
-    let receipt = &package.receipt;
-    let mut participants: Vec<_> = [
-        (
-            "workspace.source",
-            "workspace",
-            ParticipantKind::PassiveSource,
-        ),
-        (
-            "world_model.graph_replay",
-            "world-model",
-            ParticipantKind::BoundedActor,
-        ),
-        (
-            "world_model.belief_assessment",
-            "world-model",
-            ParticipantKind::BoundedActor,
-        ),
-        (
-            "world_model.evidence_ingestion",
-            "world-model",
-            ParticipantKind::BoundedActor,
-        ),
-        (
-            "world_model.standing_curation",
-            "world-model",
-            ParticipantKind::BoundedActor,
-        ),
-        (
-            "world_model.agent_reconciliation",
-            "world-model",
-            ParticipantKind::BoundedActor,
-        ),
-        (
-            "execution.task_admission",
-            "execution",
-            ParticipantKind::DurableOperationAdapter,
-        ),
-        (
-            "execution.task_dispatch",
-            "execution",
-            ParticipantKind::BoundedActor,
-        ),
-        (
-            "execution.publication",
-            "execution",
-            ParticipantKind::BoundedActor,
-        ),
-    ]
-    .into_iter()
-    .filter(|(participant_id, _, _)| match *participant_id {
-        "workspace.source" => source_owners.contains("workspace_fs"),
-        _ => true,
-    })
-    .map(
-        |(participant_id, owner_domain, kind)| ActivationParticipantSpec {
-            participant_id: participant_id.to_string(),
-            owner_domain: owner_domain.to_string(),
-            kind,
-            required: true,
-            depends_on: BTreeSet::new(),
-            readiness_contract_ref: format!("{owner_domain}.readiness.v1"),
-            wake_contract_ref: format!("{owner_domain}.wake.v1"),
-            safe_point_contract_ref: format!("{owner_domain}.safe-point.v1"),
-            stop_contract_ref: format!("{owner_domain}.stop.v1"),
-        },
-    )
-    .collect();
-    participants.extend(
-        owners
-            .descriptions()
-            .filter(|owner| source_owners.contains(&owner.owner_id))
-            .filter_map(|owner| owner.observation_participant.clone()),
-    );
-    let participant_plan = ActivationParticipantPlanV1::new(participants)?;
-    ProductDeclarationV1::new(
-        product_id.to_string(),
-        principal_id.to_string(),
-        vec![ProductPackageSelectionV1 {
-            package_id: receipt.package_id.clone(),
-            package_version: receipt.package_version.clone(),
-            package_content_hash: receipt.package_content_hash.clone(),
-        }],
-        vec![ProductAgentPositionV1 {
-            position_id: "steward".to_string(),
-            directive: directive.to_string(),
-            required_owner_routes: package
-                .components_by_route
-                .values()
-                .flatten()
-                .map(|component| component.route.clone())
-                .collect(),
-            observation_scope_component_id: observation_scope_component_id.to_string(),
-            required_subscriptions: vec![ProductAgentSubscriptionV1 {
-                source_owner: "belief".to_string(),
-                source_contract_component_id: observation_scope_component_id.to_string(),
-                initial_cursor_policy: "from_genesis".to_string(),
-            }],
-            participant_ref: "world_model.agent_reconciliation".to_string(),
-        }],
-        participant_plan,
-        requested_authority_ref.to_string(),
-        format!("principal-grant::{principal_id}"),
-        PRODUCT_COMPILATION_POLICY.to_string(),
-    )
+    let topologies = package.components_by_route.get(&ProductTopologyV1::route());
+    let component = match topologies.map(Vec::as_slice) {
+        Some([component]) => component,
+        _ => {
+            return Err(source_error(
+                "product requires exactly one installed topology in its package closure",
+            ))
+        }
+    };
+    let topology = products
+        .topology(&component.owner_revision)?
+        .ok_or_else(|| source_error("installed product topology is absent"))?;
+    topology.declare(product_id, principal_id, &package.receipt)
 }

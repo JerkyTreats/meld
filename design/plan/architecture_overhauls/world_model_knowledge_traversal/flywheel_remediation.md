@@ -630,6 +630,14 @@ The bounded composition review found three material integration defects: the abs
 
 R4 remains incomplete. Installed product topology, independently scoped assignment heads and semantic source scopes, complete historical handover and migration/refusal proof, unchanged-core package revision and final end-to-end validation remain open. Existing root and owner tests that reached into the retired compiled products still require migration. The root all-target check currently fails on those retired API references and cross-crate unit-test assumptions. The production libraries and focused external-host tests are not a substitute for that regression work. The user subsequently authorized natural checkpoint commits while requiring all R4 work to finish before a user-directed final gate readiness check. The source-extraction checkpoint retains the explicitly recorded test-migration failures; it is not final acceptance. If applied, this commit moves Docs and Security semantic implementations into runtime-selected executable packages and connects ordinary installation and preparation to their native adapters. No push or R4 acceptance is claimed.
 
+### R4 Installed Topology Checkpoint
+
+The root-created participant list and one-position product constructor are removed. Ordinary initialization resolves one exact `runtime.product-topology.v1` component from the installed package closure. The component supplies Agent positions, directives, participant selection and requested authority. Example application packages now author these components. The current physical binding supplies one Agent and explicitly refuses topologies requiring additional unbound positions; multi-assignment composition remains open.
+
+External Docs and Security hosting tests pass. The Docs fixture changes the authored position name and directive before installation and verifies that preparation consumes them. Three startup integration cases pass, including ordinary nonce progression and exact transitive import reopening. Formatting and diff checks pass. This checkpoint does not resolve the previously recorded root unit-test migration failures or claim R4 acceptance.
+
+If applied, this commit makes installed package topology drive ordinary product preparation and removes root-authored product role selection. Newly prepared products must supply a topology component. Assignment scoping, retained-state closure and final integrated proof remain required before the user-directed R4 gate.
+
 ## Evidence Baseline And Current Validation Status
 
 The prior audit's tracked source inventory contained 618 Rust files and 213,645 lines including tests. No tracked `mod.rs` files were found. The worktree was clean at the baseline. The implementation contains real native owner participation, durable Agent progression, complete-Task admission, shared operational work, and exact package receipts. Those are retained foundations, not candidates for wholesale replacement.

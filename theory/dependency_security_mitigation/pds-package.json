@@ -298,6 +298,22 @@
         "content_hash": "7c4d5b8e26ca93596326c17bb0bf9f23b300b46ebecbf02cd173a6d5578e5f43"
       },
       "requires": []
+    },
+    {
+      "component_id": "product-topology",
+      "owner_component_id": "meld.dependency-security-mitigation.topology",
+      "route": {
+        "owner_domain": "runtime",
+        "component_kind": "product-topology",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "product_topology.json",
+        "content_hash": "af6f597c004a985da126a5484f0edc0f42df526ddfa5a929e21e3b2013f85add"
+      },
+      "requires": []
     }
   ]
 }

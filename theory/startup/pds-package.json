@@ -196,6 +196,22 @@
         "content_hash": "14f6700b3ba04653e385593127376f460fead355b755c6abea4584a992faa421"
       },
       "requires": []
+    },
+    {
+      "component_id": "product-topology",
+      "owner_component_id": "meld.startup.topology",
+      "route": {
+        "owner_domain": "runtime",
+        "component_kind": "product-topology",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "product_topology.json",
+        "content_hash": "bdfbaf61b85381fe3c40e4752a436ba6c2b13456e4d9e9ee3c937a848c5f9ad2"
+      },
+      "requires": []
     }
   ]
 }

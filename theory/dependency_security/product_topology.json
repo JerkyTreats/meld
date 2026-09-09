@@ -1,0 +1,173 @@
+{
+  "topology_id": "meld.dependency-security-fixture.topology",
+  "agent_positions": [
+    {
+      "position_id": "steward",
+      "directive": "Maintain dependency security coverage and posture.",
+      "required_owner_routes": [
+        {
+          "owner_domain": "dependency-security",
+          "component_kind": "policy",
+          "route_version": 1
+        },
+        {
+          "owner_domain": "world-model",
+          "component_kind": "belief-family",
+          "route_version": 1
+        },
+        {
+          "owner_domain": "world-model",
+          "component_kind": "outcome-mapping",
+          "route_version": 1
+        },
+        {
+          "owner_domain": "world-model",
+          "component_kind": "agent-curation-rule",
+          "route_version": 1
+        },
+        {
+          "owner_domain": "world-model",
+          "component_kind": "agent-maintained-condition",
+          "route_version": 1
+        },
+        {
+          "owner_domain": "world-model",
+          "component_kind": "strategy-theory",
+          "route_version": 1
+        },
+        {
+          "owner_domain": "execution",
+          "component_kind": "authority-policy",
+          "route_version": 1
+        },
+        {
+          "owner_domain": "execution",
+          "component_kind": "capability-contract",
+          "route_version": 1
+        },
+        {
+          "owner_domain": "world-model",
+          "component_kind": "graph-owner-event-route",
+          "route_version": 1
+        },
+        {
+          "owner_domain": "world-model",
+          "component_kind": "epistemic-curation-rule",
+          "route_version": 1
+        }
+      ],
+      "observation_scope_component_id": "security-coverage-belief",
+      "required_subscriptions": [
+        {
+          "source_owner": "belief",
+          "source_contract_component_id": "security-coverage-belief",
+          "initial_cursor_policy": "from_genesis"
+        }
+      ],
+      "participant_ref": "world_model.agent_reconciliation"
+    }
+  ],
+  "participants": [
+    {
+      "participant_id": "world_model.graph_replay",
+      "owner_domain": "world-model",
+      "kind": "bounded_actor",
+      "required": true,
+      "depends_on": [],
+      "readiness_contract_ref": "world-model.readiness.v1",
+      "wake_contract_ref": "world-model.wake.v1",
+      "safe_point_contract_ref": "world-model.safe-point.v1",
+      "stop_contract_ref": "world-model.stop.v1"
+    },
+    {
+      "participant_id": "world_model.belief_assessment",
+      "owner_domain": "world-model",
+      "kind": "bounded_actor",
+      "required": true,
+      "depends_on": [],
+      "readiness_contract_ref": "world-model.readiness.v1",
+      "wake_contract_ref": "world-model.wake.v1",
+      "safe_point_contract_ref": "world-model.safe-point.v1",
+      "stop_contract_ref": "world-model.stop.v1"
+    },
+    {
+      "participant_id": "world_model.evidence_ingestion",
+      "owner_domain": "world-model",
+      "kind": "bounded_actor",
+      "required": true,
+      "depends_on": [],
+      "readiness_contract_ref": "world-model.readiness.v1",
+      "wake_contract_ref": "world-model.wake.v1",
+      "safe_point_contract_ref": "world-model.safe-point.v1",
+      "stop_contract_ref": "world-model.stop.v1"
+    },
+    {
+      "participant_id": "world_model.standing_curation",
+      "owner_domain": "world-model",
+      "kind": "bounded_actor",
+      "required": true,
+      "depends_on": [],
+      "readiness_contract_ref": "world-model.readiness.v1",
+      "wake_contract_ref": "world-model.wake.v1",
+      "safe_point_contract_ref": "world-model.safe-point.v1",
+      "stop_contract_ref": "world-model.stop.v1"
+    },
+    {
+      "participant_id": "world_model.agent_reconciliation",
+      "owner_domain": "world-model",
+      "kind": "bounded_actor",
+      "required": true,
+      "depends_on": [],
+      "readiness_contract_ref": "world-model.readiness.v1",
+      "wake_contract_ref": "world-model.wake.v1",
+      "safe_point_contract_ref": "world-model.safe-point.v1",
+      "stop_contract_ref": "world-model.stop.v1"
+    },
+    {
+      "participant_id": "execution.task_admission",
+      "owner_domain": "execution",
+      "kind": "durable_operation_adapter",
+      "required": true,
+      "depends_on": [],
+      "readiness_contract_ref": "execution.readiness.v1",
+      "wake_contract_ref": "execution.wake.v1",
+      "safe_point_contract_ref": "execution.safe-point.v1",
+      "stop_contract_ref": "execution.stop.v1"
+    },
+    {
+      "participant_id": "execution.task_dispatch",
+      "owner_domain": "execution",
+      "kind": "bounded_actor",
+      "required": true,
+      "depends_on": [],
+      "readiness_contract_ref": "execution.readiness.v1",
+      "wake_contract_ref": "execution.wake.v1",
+      "safe_point_contract_ref": "execution.safe-point.v1",
+      "stop_contract_ref": "execution.stop.v1"
+    },
+    {
+      "participant_id": "execution.publication",
+      "owner_domain": "execution",
+      "kind": "bounded_actor",
+      "required": true,
+      "depends_on": [],
+      "readiness_contract_ref": "execution.readiness.v1",
+      "wake_contract_ref": "execution.wake.v1",
+      "safe_point_contract_ref": "execution.safe-point.v1",
+      "stop_contract_ref": "execution.stop.v1"
+    },
+    {
+      "participant_id": "dependency_security.observation",
+      "owner_domain": "dependency-security",
+      "kind": "bounded_actor",
+      "required": true,
+      "depends_on": [],
+      "readiness_contract_ref": "dependency-security.readiness.v1",
+      "wake_contract_ref": "dependency-security.wake.v1",
+      "safe_point_contract_ref": "dependency-security.safe-point.v1",
+      "stop_contract_ref": "dependency-security.stop.v1"
+    }
+  ],
+  "requested_authority_ref": "dependency_security_fixture_read_only",
+  "compilation_policy_revision": "pds-product-compilation.v1"
+}

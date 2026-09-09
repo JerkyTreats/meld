@@ -202,76 +202,17 @@ pub(crate) fn compile_product_initialization<'a>(
     )
     .resolve(&package_receipt.receipt_id)
     .map_err(|error| world_init_error(error.to_string()))?;
-    let components = resolved_package
-        .components_by_route
-        .values()
-        .flatten()
-        .collect::<Vec<_>>();
-    let observation_components: Vec<_> = components
-        .iter()
-        .filter(|component| {
-            component.route.owner_domain == "world-model"
-                && component.route.component_kind == "belief-family"
-                && component.owner_revision.id == binding.package.belief_family_id
-        })
-        .collect();
-    if observation_components.len() != 1 {
-        return Err(world_init_error(
-            "selected observation family has no unique package component",
-        ));
-    }
-    let mut source_owners = std::collections::BTreeSet::from([binding.subject.domain_id.clone()]);
-    for component in &components {
-        if component.owner_revision.registry
-            == meld_world_model::curation::CURATION_TEMPLATE_REGISTRY_ID
-        {
-            let template = stores
-                .curation_store
-                .resolve_template(&meld_world_model::belief::TheoryRevisionRef {
-                    registry: component.owner_revision.registry.clone(),
-                    id: component.owner_revision.id.clone(),
-                    content_hash: component.owner_revision.content_hash.clone(),
-                })
-                .map_err(|error| world_init_error(error.to_string()))?
-                .ok_or_else(|| world_init_error("installed Curation template is absent"))?;
-            source_owners.insert(template.template.source_owner_id);
-        }
-    }
-    for component in &components {
-        if component.owner_revision.registry
-            == meld_world_model::world_state::graph::admission::OWNER_EVENT_ROUTE_REGISTRY
-        {
-            let routes = stores
-                .traversal_store
-                .owner_event_routes()
-                .map_err(|e| world_init_error(e.to_string()))?;
-            let route = routes
-                .into_iter()
-                .find(|route| {
-                    route.revision_ref().is_ok_and(|reference| {
-                        reference.id == component.owner_revision.id
-                            && reference.content_hash == component.owner_revision.content_hash
-                    })
-                })
-                .ok_or_else(|| world_init_error("prepared Graph owner route is absent"))?;
-            source_owners.insert(route.owner_id);
-        }
-    }
     let declaration = super::product::product_declaration(
         &binding.package.expression,
         &binding.package.principal_id,
         &resolved_package,
-        &observation_components[0].component_id,
-        &format!(
-            "steward '{}' for subject '{}'",
-            binding.package.expression,
-            binding.subject.index_key()
-        ),
-        &binding.package.authority_policy_id,
-        &source_owners,
-        &stores.owners,
+        &stores.pds_products,
     )
     .map_err(|error| world_init_error(error.to_string()))?;
+    let position = match declaration.agent_topology.as_slice() {
+        [position] => position,
+        _ => return Err(world_init_error("physical binding must supply one Agent for each declared position; this binding selects a single Agent")),
+    };
     let compilation = ProductCompilationReceiptV1::compile(
         &declaration,
         vec![package_receipt.clone()],
@@ -293,7 +234,7 @@ pub(crate) fn compile_product_initialization<'a>(
         BranchScope::main().branch_id,
         topology_id,
         vec![AssignedAgentPositionV1 {
-            position_id: "steward".to_string(),
+            position_id: position.position_id.clone(),
             agent_id: binding.agent_id.clone(),
         }],
         declaration.requested_authority_ref.clone(),

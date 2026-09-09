@@ -220,6 +220,22 @@
         "content_identity": "capability-contract-d50c1c2a36495aea31ccdd0958b262370f7fe5a22c26ef262804743dfba45b8f"
       },
       "requires": []
+    },
+    {
+      "component_id": "product-topology",
+      "owner_component_id": "meld.code-change.topology",
+      "route": {
+        "owner_domain": "runtime",
+        "component_kind": "product-topology",
+        "route_version": 1
+      },
+      "component_schema_version": 1,
+      "content": {
+        "kind": "relative_file",
+        "path": "product_topology.json",
+        "content_hash": "f56189e11f6493e541ee8d54f7580c872498c5566029c762694d5ad6a5f9e9f3"
+      },
+      "requires": []
     }
   ]
 }

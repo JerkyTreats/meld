@@ -344,17 +344,79 @@ fn ordinary_initialization_prepares_external_docs() {
         )
         .unwrap()
     };
+    let package = state.path().join("package");
+    std::fs::create_dir_all(&package).unwrap();
+    for entry in
+        std::fs::read_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../theory/docs_freshness"))
+            .unwrap()
+    {
+        let entry = entry.unwrap();
+        if entry.file_type().unwrap().is_file() {
+            std::fs::copy(entry.path(), package.join(entry.file_name())).unwrap();
+        }
+    }
+    let mut topology: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(package.join("product_topology.json")).unwrap())
+            .unwrap();
+    topology["agent_positions"][0]["position_id"] = "documentation-keeper".into();
+    topology["agent_positions"][0]["directive"] =
+        "Keep the authored documentation contract current.".into();
+    let bytes = serde_json::to_vec(&topology).unwrap();
+    std::fs::write(package.join("product_topology.json"), &bytes).unwrap();
+    let mut manifest: PdsPackageManifestV1 =
+        serde_json::from_slice(&std::fs::read(package.join("pds-package.json")).unwrap()).unwrap();
+    manifest
+        .components
+        .iter_mut()
+        .find(|component| component.route == ProductTopologyV1::route())
+        .unwrap()
+        .content = ComponentContentRef::RelativeFile {
+        path: "product_topology.json".into(),
+        content_hash: blake3::hash(&bytes).to_hex().to_string(),
+    };
+    std::fs::write(
+        package.join("pds-package.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
     let assembly = open();
     let report = meld::init::world::tooling::run_world_init(
         &assembly,
         &config,
         workspace.path(),
         &[],
-        Some(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../theory/docs_freshness")),
+        Some(&package),
         "external-init",
     )
     .unwrap();
     assert!(!format!("{report:?}").is_empty());
+    let head = assembly
+        .stores()
+        .pds_products
+        .prepared_head(&binding.package.expression)
+        .unwrap()
+        .unwrap();
+    let prepared = assembly
+        .stores()
+        .pds_products
+        .prepared_closure(&head.prepared_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        prepared.assignment.agent_positions[0].position_id,
+        "documentation-keeper"
+    );
+    let declaration = assembly
+        .stores()
+        .pds_products
+        .declaration(&prepared.assignment.product_revision_id)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        declaration.agent_topology[0].directive,
+        "Keep the authored documentation contract current."
+    );
+
     drop(assembly);
     let reopened = open();
     assert!(

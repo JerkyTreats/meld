@@ -493,6 +493,7 @@ pub struct PreparedProductHeadV1 {
 pub struct PdsProductStore {
     db: Db,
     declarations: Tree,
+    topologies: Tree,
     compilations: Tree,
     heads: Tree,
     assignments: Tree,
@@ -505,6 +506,9 @@ pub struct PdsProductStore {
 impl PdsProductStore {
     pub fn new(db: Db) -> Result<Self, TheoryRouterError> {
         Ok(Self {
+            topologies: db
+                .open_tree("pds_product_topologies_v1")
+                .map_err(|e| error("product_storage", e.to_string()))?,
             declarations: db
                 .open_tree(TREE_DECLARATIONS)
                 .map_err(|failure| error("product_storage", failure.to_string()))?,
@@ -531,6 +535,37 @@ impl PdsProductStore {
                 .map_err(|failure| error("product_storage", failure.to_string()))?,
             db,
         })
+    }
+
+    pub fn install_topology(
+        &self,
+        topology: &super::ProductTopologyV1,
+    ) -> Result<super::TheoryRevisionRef, TheoryRouterError> {
+        let reference = topology.revision_ref()?;
+        put_immutable(&self.topologies, &reference.content_hash, topology)?;
+        self.db
+            .flush()
+            .map_err(|e| error("product_storage", e.to_string()))?;
+        Ok(reference)
+    }
+
+    pub fn topology(
+        &self,
+        reference: &super::TheoryRevisionRef,
+    ) -> Result<Option<super::ProductTopologyV1>, TheoryRouterError> {
+        let topology: Option<super::ProductTopologyV1> =
+            get_immutable(&self.topologies, &reference.content_hash)?;
+        if topology.as_ref().is_some_and(|value| {
+            !value
+                .revision_ref()
+                .is_ok_and(|actual| &actual == reference)
+        }) {
+            return Err(error(
+                "product_storage_corrupt",
+                "installed topology differs from its exact revision",
+            ));
+        }
+        Ok(topology)
     }
 
     pub fn install(

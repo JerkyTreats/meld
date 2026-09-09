@@ -53,6 +53,7 @@ pub fn current_product_route_catalog(
         strategy_handler(opened(&stores.strategy_theory_registry)),
         capability_contract_handler(opened(&stores.capability_contract_registry)),
         authority_policy_handler(opened(&stores.authority_policy_registry)),
+        product_topology_handler(opened(&stores.pds_products)),
     ];
     handlers.extend(stores.owners.route_handlers());
     TheoryRouteCatalog::build(handlers)
@@ -524,4 +525,29 @@ mod tests {
             ]
         );
     }
+}
+
+fn product_topology_handler(
+    store: Arc<crate::theory::PdsProductStore>,
+) -> Arc<dyn TheoryRouteHandler> {
+    use crate::theory::ProductTopologyV1;
+    let install = store.clone();
+    Arc::new(PortBackedTheoryRouteHandler::new(
+        contract("runtime", "product-topology", RouteCardinality::Many),
+        Arc::new(|id, bytes| {
+            let topology: ProductTopologyV1 = decode(bytes)?;
+            require_id(id, &topology.topology_id)?;
+            topology.validate().map_err(owner_failure)
+        }),
+        Arc::new(move |id, bytes, _| {
+            let topology: ProductTopologyV1 = decode(bytes)?;
+            require_id(id, &topology.topology_id)?;
+            install.install_topology(&topology).map_err(owner_failure)
+        }),
+        Arc::new(move |reference| {
+            require_registry(reference, crate::theory::PRODUCT_TOPOLOGY_REGISTRY)?;
+            require_found(store.topology(reference).map_err(owner_failure)?.is_some())
+        }),
+        no_semantic_links(),
+    ))
 }

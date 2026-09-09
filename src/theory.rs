@@ -14,6 +14,8 @@ pub mod receipt;
 pub mod registry;
 pub mod resolution;
 pub mod router;
+pub mod topology;
+pub use topology::*;
 
 pub use activation::*;
 pub use contracts::*;

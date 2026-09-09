@@ -842,7 +842,7 @@ authority_policy_id = "startup_nonce_local"
             compilation.package_receipt_ids.len(),
             if imported { 3 } else { 1 }
         );
-        assert_eq!(compilation.installed_owner_revisions.len(), 9);
+        assert_eq!(compilation.installed_owner_revisions.len(), 10);
         if imported {
             let replacement_root = temp_dir.path().join("replacement-base");
             std::fs::create_dir_all(&replacement_root).unwrap();
