@@ -113,6 +113,7 @@ pub(crate) struct RoutedTheoryInstall {
 
 /// Exact product inputs supplied to the root composition adapter.
 pub(crate) struct CompleteProductInitialization<'a> {
+    pub(crate) owners: &'a crate::runtime::owners::catalog::OwnerCatalog,
     pub(crate) product_store: &'a PdsProductStore,
     pub(crate) maintained_conditions: &'a AgentMaintainedConditionRegistryStore,
     pub(crate) curation_store: &'a meld_world_model::CurationStore,
@@ -454,9 +455,12 @@ impl<'a> WorldInitPipeline<'a> {
                     .ok_or_else(|| {
                         WorldInitError::Identity("assigned Curation template absent".into())
                     })?;
-                let source =
-                    crate::runtime::theory::assigned_curation_source(&installed.template, &binding)
-                        .map_err(WorldInitError::Identity)?;
+                let source = crate::runtime::theory::assigned_curation_source(
+                    product.owners,
+                    &installed.template,
+                    &binding,
+                )
+                .map_err(WorldInitError::Identity)?;
                 let prepared = match source {
                     Some(source) => product.curation_store.prepare_rule_for_source(
                         template,

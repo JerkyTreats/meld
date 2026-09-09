@@ -16,7 +16,7 @@ use crate::theory::{OwnerRouteDiagnostic, PortBackedTheoryRouteHandler, TheoryRo
 /// prepare their assignment connection with the native supervisor's authority.
 pub struct RegisteredOwner {
     description: OwnerDescriptionV1,
-    connection: Arc<Mutex<OwnerConnection>>,
+    connection: Arc<InstallationConnection>,
 }
 
 impl RegisteredOwner {
@@ -37,20 +37,41 @@ impl RegisteredOwner {
         let description: OwnerDescriptionV1 =
             connection.call(OwnerCommandV1::Describe, &mut NoOwnerCallbacks)?;
         validate_description(expected_owner, &description)?;
-        connection.call::<()>(
-            OwnerCommandV1::OpenRevisionStore {
-                state_root: revision_root.into(),
-            },
-            &mut NoOwnerCallbacks,
-        )?;
         Ok(Self {
             description,
-            connection: Arc::new(Mutex::new(connection)),
+            connection: Arc::new(InstallationConnection {
+                connection: Mutex::new(connection),
+                revision_root: revision_root.into(),
+            }),
         })
     }
 
     pub fn description(&self) -> &OwnerDescriptionV1 {
         &self.description
+    }
+
+    pub fn prepare_bindings(
+        &self,
+        subject: meld_events::DomainObjectRef,
+        bindings: std::collections::BTreeMap<String, String>,
+        installed_revisions: Vec<crate::theory::InstalledTheoryComponentRef>,
+    ) -> Result<super::OwnerPreparedBindingsV1, OwnerDiagnosticV1> {
+        self.connection.call(OwnerCommandV1::PrepareBindings {
+            subject,
+            bindings,
+            installed_revisions,
+        })
+    }
+
+    pub fn curation_source(
+        &self,
+        template: meld_world_model::curation::CurationRuleTemplate,
+        binding: meld_world_model::curation::CurationRuleBinding,
+    ) -> Result<meld_world_model::curation::CurationSourceBinding, OwnerDiagnosticV1> {
+        self.connection.call(OwnerCommandV1::ResolveCurationSource {
+            template: Box::new(template),
+            binding,
+        })
     }
 
     /// Reuse the canonical Theory route adapter and installer. Owner bytes and
@@ -114,23 +135,65 @@ impl RegisteredOwner {
     }
 }
 
+struct InstallationConnection {
+    connection: Mutex<OwnerConnection>,
+    revision_root: std::path::PathBuf,
+}
+
+impl InstallationConnection {
+    fn call<T: DeserializeOwned>(&self, command: OwnerCommandV1) -> Result<T, OwnerDiagnosticV1> {
+        use fs2::FileExt;
+        std::fs::create_dir_all(&self.revision_root).map_err(installation_error)?;
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(self.revision_root.join("installation.lock"))
+            .map_err(installation_error)?;
+        lock.try_lock_exclusive()
+            .map_err(|error| OwnerDiagnosticV1::new("owner_revision_store_busy", error))?;
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| installation_error("owner connection lock poisoned"))?;
+        if let Err(error) = connection.call::<()>(
+            OwnerCommandV1::OpenRevisionStore {
+                state_root: self.revision_root.clone(),
+            },
+            &NoOwnerCallbacks,
+        ) {
+            connection.invalidate();
+            return Err(error);
+        }
+        let result = connection.call(command, &NoOwnerCallbacks);
+        let closed = connection.call::<()>(OwnerCommandV1::CloseRevisionStore, &NoOwnerCallbacks);
+        if closed.is_err() {
+            connection.invalidate();
+        }
+        // Closing the semantic store happens while the parent still holds its
+        // physical lease, including when the routed owner operation failed.
+        match (result, closed) {
+            (Err(error), _) | (_, Err(error)) => Err(error),
+            (Ok(value), Ok(())) => Ok(value),
+        }
+    }
+}
+
+fn installation_error(error: impl ToString) -> OwnerDiagnosticV1 {
+    OwnerDiagnosticV1::new("owner_revision_store_unavailable", error)
+}
+
 fn call<T: DeserializeOwned>(
-    connection: &Mutex<OwnerConnection>,
+    connection: &InstallationConnection,
     command: OwnerCommandV1,
 ) -> Result<T, OwnerRouteDiagnostic> {
     connection
-        .lock()
-        .map_err(|_| {
-            OwnerRouteDiagnostic::new(
-                "owner_connection_unavailable",
-                "owner installation connection lock poisoned",
-            )
-        })?
-        .call(command, &mut NoOwnerCallbacks)
+        .call(command)
         .map_err(|error| OwnerRouteDiagnostic::new(error.code, error.message))
 }
 
-fn validate_description(
+pub(crate) fn validate_description(
     expected_owner: &str,
     description: &OwnerDescriptionV1,
 ) -> Result<(), OwnerDiagnosticV1> {

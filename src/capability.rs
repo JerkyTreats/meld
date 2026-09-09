@@ -45,28 +45,24 @@ pub fn published_product_contracts() -> Vec<CapabilityTypeContract> {
         .unwrap_or_default()
 }
 
-/// Build the deterministic compiled product capability inventory.
+/// Native mechanism inventory. Product semantics require configured owners.
 pub fn product_capability_inventory(
 ) -> Result<ProductCapabilityInventory, CapabilityContributionDiagnostic> {
-    product_capability_inventory_with_security(std::sync::Arc::new(
-        crate::dependency_security::contribution::DependencySecurityCapabilityContributor::default(
-        ),
-    ))
+    product_capability_inventory_with_owners(&Default::default())
 }
 
-pub(crate) fn product_capability_inventory_with_security(
-    security: std::sync::Arc<
-        crate::dependency_security::contribution::DependencySecurityCapabilityContributor,
-    >,
+/// Combine native mechanism capabilities with configured executable owners.
+pub fn product_capability_inventory_with_owners(
+    owners: &crate::runtime::owners::catalog::OwnerCatalog,
 ) -> Result<ProductCapabilityInventory, CapabilityContributionDiagnostic> {
-    let mut contributors: Vec<std::sync::Arc<dyn ProductCapabilityContributor>> = vec![
-        std::sync::Arc::new(crate::nonce::capability::NonceCapabilityContributor),
-        std::sync::Arc::new(crate::docs::contribution::DocsCapabilityContributor),
-        security,
-    ];
+    let mut contributors: Vec<std::sync::Arc<dyn ProductCapabilityContributor>> =
+        vec![std::sync::Arc::new(
+            crate::nonce::capability::NonceCapabilityContributor,
+        )];
     #[cfg(unix)]
     contributors.push(std::sync::Arc::new(
         crate::code_change::capability::CodeChangeCapabilityContributor,
     ));
+    contributors.extend(owners.contributors());
     ProductCapabilityInventory::assemble(contributors)
 }

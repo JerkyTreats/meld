@@ -550,7 +550,7 @@ pub(super) mod tests {
             id: ACQUIRE_ADVISORIES.into(),
             subject,
             policy: serde_json::from_str(include_str!(
-                "../../theory/dependency_security/policy.cargo_fixture.json"
+                "../../../../theory/dependency_security/policy.cargo_fixture.json"
             ))
             .unwrap(),
             workspace: None,

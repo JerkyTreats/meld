@@ -70,7 +70,10 @@ pub fn curation_source(
     })
 }
 
-fn scope(subject: &DomainObjectRef, policy_hash: &str) -> Result<OwnerPublicationScope, String> {
+pub(crate) fn scope(
+    subject: &DomainObjectRef,
+    policy_hash: &str,
+) -> Result<OwnerPublicationScope, String> {
     Ok(OwnerPublicationScope {
         scope_id: format!(
             "security-condition::{}",
@@ -487,7 +490,7 @@ mod input_basis_tests {
     #[test]
     fn security_inputs_ignore_acquisition_churn_and_track_material_changes() {
         let policy: super::super::policy::DependencySecurityPolicyV1 = serde_json::from_str(
-            include_str!("../../theory/dependency_security/policy.cargo_fixture.json"),
+            include_str!("../../../../theory/dependency_security/policy.cargo_fixture.json"),
         )
         .unwrap();
         let subject = DependencySecuritySubjectV1 {

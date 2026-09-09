@@ -1,5 +1,8 @@
 //! Dependency-security owned exact policy registry.
 
+mod route;
+pub use route::{route_contract, route_handler};
+
 use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
 
@@ -117,6 +120,7 @@ mod tests {
             "graph_owner_event_route.condition.json",
         ] {
             let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
                 .join("theory/dependency_security")
                 .join(name);
             println!(
@@ -131,8 +135,9 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let stores =
             OpenProductStores::open(&ProductStorageLayout::from_root(root.path())).unwrap();
-        let package_root =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/dependency_security");
+        let package_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("theory/dependency_security");
         let receipt = super::install_package(&stores, &package_root, 1).unwrap();
         assert_eq!(receipt.package_id, super::PACKAGE_ID);
         assert_eq!(receipt.components.len(), 15);
@@ -154,8 +159,9 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let stores =
             OpenProductStores::open(&ProductStorageLayout::from_root(root.path())).unwrap();
-        let package_root =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/dependency_security");
+        let package_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("theory/dependency_security");
         let receipt = super::install_package(&stores, &package_root, 1).unwrap();
         let participant_plan = ActivationParticipantPlanV1::new(vec![ActivationParticipantSpec {
             participant_id: "world_model.security_reconciliation".to_string(),

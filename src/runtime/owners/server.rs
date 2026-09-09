@@ -15,6 +15,26 @@ pub trait PackageOwner {
     ) -> OwnerResult;
 }
 
+/// Serve an executable through the transport bounds supplied by its parent.
+pub fn serve_stdio(owner: &mut dyn PackageOwner) -> Result<(), OwnerDiagnosticV1> {
+    let limit = std::env::var("MELD_OWNER_MAX_MESSAGE_BYTES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| {
+            OwnerDiagnosticV1::new(
+                "owner_binding_invalid",
+                "parent transport bound is absent or invalid",
+            )
+        })?;
+    serve_owner(
+        owner,
+        std::io::BufReader::new(std::io::stdin()),
+        std::io::stdout(),
+        limit,
+    )
+}
+
 /// The child has no independent scheduler. Retained native capabilities use this
 /// connection only while the host has an outstanding command and callback grant.
 pub fn serve_owner(
@@ -217,4 +237,104 @@ pub(crate) fn write_message(
         .write_all(&bytes)
         .and_then(|_| writer.flush())
         .map_err(|error| OwnerDiagnosticV1::new("owner_transport_unavailable", error))
+}
+
+/// Translate native owner operations without inventing evidence in the transport.
+/// Readiness owns the active context used by later bounded observation steps.
+pub fn dispatch_observation(
+    actor: &mut dyn crate::runtime::lifecycle::NativeObservationOwner,
+    active: &mut Option<crate::runtime::lifecycle::ParticipantLifecycleContextV1>,
+    command: OwnerCommandV1,
+) -> OwnerResult {
+    use OwnerCommandV1::*;
+    let failure = |error: crate::runtime::error::RuntimeAssemblyError| {
+        OwnerDiagnosticV1::new("owner_lifecycle_failed", error)
+    };
+    match command {
+        Snapshot => encode_owner_result(actor.native_snapshot().map_err(failure)?),
+        ResolvesWake { wake_ref } => {
+            encode_owner_result(actor.native_resolves_wake(&wake_ref).map_err(failure)?)
+        }
+        Readiness { context } => {
+            let receipt = actor.native_readiness(&context).map_err(failure)?;
+            *active = Some(context);
+            encode_owner_result(receipt)
+        }
+        Observe { context, budget } => {
+            if active.as_ref() != Some(&context) {
+                return Err(OwnerDiagnosticV1::new(
+                    "owner_incarnation_mismatch",
+                    "observation does not name the ready native incarnation",
+                ));
+            }
+            encode_owner_result(actor.tick(budget))
+        }
+        Wait { context, report } => {
+            encode_owner_result(actor.native_wait(&context, &report).map_err(failure)?)
+        }
+        SafePoint { context } => {
+            encode_owner_result(actor.native_safe_point(&context).map_err(failure)?)
+        }
+        Stop { context } => {
+            let receipt = actor.native_stop(&context).map_err(failure)?;
+            *active = None;
+            encode_owner_result(receipt)
+        }
+        Release { context } => {
+            let receipt = actor.native_release(&context).map_err(failure)?;
+            *active = None;
+            encode_owner_result(receipt)
+        }
+        _ => Err(OwnerDiagnosticV1::new(
+            "owner_operation_unsupported",
+            "operation is not an observation lifecycle request",
+        )),
+    }
+}
+
+/// Installation executes the same narrow semantic ports as native Theory routing.
+/// The parent retains package receipts, validation-token ownership and selection.
+pub fn dispatch_theory(
+    handler: &crate::theory::PortBackedTheoryRouteHandler,
+    command: OwnerCommandV1,
+) -> OwnerResult {
+    use crate::theory::TheoryRouteHandler;
+    use OwnerCommandV1::*;
+    let failure = |error: crate::theory::OwnerRouteDiagnostic| {
+        OwnerDiagnosticV1::new(&error.code, error.message)
+    };
+    let expected = handler.contract().route;
+    match command {
+        ValidateTheory {
+            route,
+            owner_component_id,
+            canonical_bytes,
+        } if route == expected => encode_owner_result(
+            handler
+                .validate_body(&owner_component_id, &canonical_bytes)
+                .map_err(failure)?,
+        ),
+        InstallTheory {
+            route,
+            owner_component_id,
+            canonical_bytes,
+            installed_at_seq,
+        } if route == expected => encode_owner_result(
+            handler
+                .install_body(&owner_component_id, &canonical_bytes, installed_at_seq)
+                .map_err(failure)?,
+        ),
+        VerifyTheory { route, reference } if route == expected => {
+            encode_owner_result(handler.verify_revision(&reference).map_err(failure)?)
+        }
+        ValidateLinks { component, package } if component.route == expected => encode_owner_result(
+            handler
+                .validate_links(&component, &package)
+                .map_err(failure)?,
+        ),
+        _ => Err(OwnerDiagnosticV1::new(
+            "owner_route_unavailable",
+            "command does not address this owner's exact route",
+        )),
+    }
 }

@@ -85,7 +85,7 @@ impl RunContext {
         use crate::runtime::ports::ProductionDispatchRouteContext;
 
         let product = self.assembly.product_runtime();
-        product.bind_observation_provider(self.assembly.api().clone());
+        product.bind_owner_provider(self.assembly.api().clone());
         let Some(seed) = product.dispatch_route_seed() else {
             return;
         };

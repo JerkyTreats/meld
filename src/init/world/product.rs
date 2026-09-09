@@ -30,7 +30,7 @@ pub fn install_package(
             "package identity differs from the requested owner package",
         ));
     }
-    let inventory = crate::capability::product_capability_inventory()
+    let inventory = crate::capability::product_capability_inventory_with_owners(&stores.owners)
         .map_err(|error| source_error(error.to_string()))?;
     let package = manifest.materialize_with_published(package_root, Some(&inventory))?;
     let catalog = super::routes::current_product_route_catalog(stores)?;
@@ -52,15 +52,10 @@ pub fn product_declaration(
     directive: &str,
     requested_authority_ref: &str,
     source_owners: &BTreeSet<String>,
+    owners: &crate::runtime::owners::catalog::OwnerCatalog,
 ) -> Result<ProductDeclarationV1, TheoryRouterError> {
     let receipt = &package.receipt;
-    let participants = [
-        (
-            "dependency_security.observation",
-            "dependency-security",
-            ParticipantKind::BoundedActor,
-        ),
-        ("docs.observation", "docs", ParticipantKind::BoundedActor),
+    let mut participants: Vec<_> = [
         (
             "workspace.source",
             "workspace",
@@ -110,8 +105,6 @@ pub fn product_declaration(
     .into_iter()
     .filter(|(participant_id, _, _)| match *participant_id {
         "workspace.source" => source_owners.contains("workspace_fs"),
-        "docs.observation" => source_owners.contains("docs"),
-        "dependency_security.observation" => source_owners.contains("dependency-security"),
         _ => true,
     })
     .map(
@@ -128,6 +121,12 @@ pub fn product_declaration(
         },
     )
     .collect();
+    participants.extend(
+        owners
+            .descriptions()
+            .filter(|owner| source_owners.contains(&owner.owner_id))
+            .filter_map(|owner| owner.observation_participant.clone()),
+    );
     let participant_plan = ActivationParticipantPlanV1::new(participants)?;
     ProductDeclarationV1::new(
         product_id.to_string(),

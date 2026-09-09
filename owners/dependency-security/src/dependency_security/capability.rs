@@ -122,74 +122,8 @@ impl meld_execution::capability::CapabilityInvoker for SecurityCapability {
         payload: &CapabilityInvocationPayload,
         event_context: Option<&ExecutionEventContext>,
     ) -> Result<CapabilityInvocationResult, ApiError> {
-        let _owner = self.publication_gate.lock().await;
-        let publication =
-            super::publication::Publication::new(self, runtime_init, payload, event_context)?;
-        let events = api
-            .durable_event_append()
-            .ok_or_else(|| invalid("Security invocation has no durable Event authority"))?;
-        super::observation::resume_pending(self, &events).map_err(invalid)?;
-        if let Some(result) = publication.resume(&events)? {
-            return Ok(result);
-        }
-        let reference_time = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|error| invalid(error.to_string()))?
-            .as_secs();
-        let (artifact_type, content) = match self.id.as_str() {
-            OBSERVE_INVENTORY => {
-                let inventory = super::inventory::cargo::observe(
-                    self.workspace
-                        .as_deref()
-                        .ok_or_else(|| invalid("inventory workspace is absent"))?,
-                    self.cargo
-                        .as_deref()
-                        .ok_or_else(|| invalid("inventory executable is absent"))?,
-                    self.subject.clone(),
-                    reference_time,
-                    &self.limits,
-                )
-                .await
-                .map_err(invalid)?;
-                (INVENTORY, encode(inventory)?)
-            }
-            ACQUIRE_ADVISORIES => (
-                ADVISORIES,
-                encode(super::observation::acquire(self).map_err(invalid)?)?,
-            ),
-            ASSESS => {
-                let inventory = decode(payload, INVENTORY)?;
-                let advisories = decode(payload, ADVISORIES)?;
-                let assessment = super::assessment::assess(
-                    &self.subject,
-                    Some(&inventory),
-                    Some(&advisories),
-                    &self.policy,
-                    reference_time,
-                )
-                .map_err(invalid)?;
-                (ASSESSMENT, encode(assessment)?)
-            }
-            VERIFY => {
-                let inventory: DependencyInventorySnapshotV1 = decode(payload, INVENTORY)?;
-                let advisories = decode(payload, ADVISORIES)?;
-                let assessment: DependencySecurityAssessmentV1 = decode(payload, ASSESSMENT)?;
-                if assessment.subject != self.subject || inventory.subject != self.subject {
-                    return Err(invalid(
-                        "verification products name a foreign assigned subject",
-                    ));
-                }
-                let verification =
-                    super::verification::verify(&assessment, &inventory, &advisories, &self.policy)
-                        .map_err(invalid)?;
-                (VERIFICATION, encode(verification)?)
-            }
-            _ => return Err(invalid("unknown dependency-security action")),
-        };
-        publication.publish(
-            &events,
-            result(runtime_init, payload, artifact_type, content),
-        )
+        self.invoke_owned(api, runtime_init, payload, event_context)
+            .await
     }
 
     async fn recover(
@@ -364,6 +298,87 @@ fn encode(value: impl Serialize) -> Result<serde_json::Value, ApiError> {
 
 fn invalid(message: impl Into<String>) -> ApiError {
     ApiError::ConfigError(format!("dependency-security: {}", message.into()))
+}
+
+impl SecurityCapability {
+    pub(crate) async fn invoke_owned<
+        P: crate::runtime::owners::execution::OwnerExecutionPorts + ?Sized,
+    >(
+        &self,
+        api: &P,
+        runtime_init: &CapabilityRuntimeInit,
+        payload: &CapabilityInvocationPayload,
+        event_context: Option<&ExecutionEventContext>,
+    ) -> Result<CapabilityInvocationResult, ApiError> {
+        let _owner = self.publication_gate.lock().await;
+        let publication =
+            super::publication::Publication::new(self, runtime_init, payload, event_context)?;
+        let events = api
+            .owner_events()
+            .ok_or_else(|| invalid("Security invocation has no durable Event authority"))?;
+        super::observation::resume_pending(self, &events).map_err(invalid)?;
+        if let Some(result) = publication.resume(&events)? {
+            return Ok(result);
+        }
+        let reference_time = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|error| invalid(error.to_string()))?
+            .as_secs();
+        let (artifact_type, content) = match self.id.as_str() {
+            OBSERVE_INVENTORY => {
+                let inventory = super::inventory::cargo::observe(
+                    self.workspace
+                        .as_deref()
+                        .ok_or_else(|| invalid("inventory workspace is absent"))?,
+                    self.cargo
+                        .as_deref()
+                        .ok_or_else(|| invalid("inventory executable is absent"))?,
+                    self.subject.clone(),
+                    reference_time,
+                    &self.limits,
+                )
+                .await
+                .map_err(invalid)?;
+                (INVENTORY, encode(inventory)?)
+            }
+            ACQUIRE_ADVISORIES => (
+                ADVISORIES,
+                encode(super::observation::acquire(self).map_err(invalid)?)?,
+            ),
+            ASSESS => {
+                let inventory = decode(payload, INVENTORY)?;
+                let advisories = decode(payload, ADVISORIES)?;
+                let assessment = super::assessment::assess(
+                    &self.subject,
+                    Some(&inventory),
+                    Some(&advisories),
+                    &self.policy,
+                    reference_time,
+                )
+                .map_err(invalid)?;
+                (ASSESSMENT, encode(assessment)?)
+            }
+            VERIFY => {
+                let inventory: DependencyInventorySnapshotV1 = decode(payload, INVENTORY)?;
+                let advisories = decode(payload, ADVISORIES)?;
+                let assessment: DependencySecurityAssessmentV1 = decode(payload, ASSESSMENT)?;
+                if assessment.subject != self.subject || inventory.subject != self.subject {
+                    return Err(invalid(
+                        "verification products name a foreign assigned subject",
+                    ));
+                }
+                let verification =
+                    super::verification::verify(&assessment, &inventory, &advisories, &self.policy)
+                        .map_err(invalid)?;
+                (VERIFICATION, encode(verification)?)
+            }
+            _ => return Err(invalid("unknown dependency-security action")),
+        };
+        publication.publish(
+            &events,
+            result(runtime_init, payload, artifact_type, content),
+        )
+    }
 }
 
 #[cfg(test)]

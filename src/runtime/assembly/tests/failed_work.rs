@@ -31,7 +31,7 @@ fn assert_draft_recovery(status: u16) {
         .write()
         .load_from_config(&config)
         .unwrap();
-    assert!(assembly.bind_observation_provider(api));
+    assert!(assembly.bind_owner_provider(api));
     let mut supervisor = harness.start_supervisor(&assembly);
     let RuntimeSemanticHandleFactory::TaskAdmission(execution) = &assembly
         .handle_factories()
@@ -205,7 +205,7 @@ fn assert_changed_input_repair(change_source: bool) {
         .write()
         .load_from_config(&config)
         .unwrap();
-    assert!(assembly.bind_observation_provider(api));
+    assert!(assembly.bind_owner_provider(api));
     let mut supervisor = harness.start_supervisor(&assembly);
     for pass in 0..70 {
         supervisor.tick(1_000 + pass * 10).unwrap();

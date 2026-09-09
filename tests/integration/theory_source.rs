@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use meld::config::SelectedStewardshipPackage;
 use meld::init::world::source::provision_theory_source;
 use meld::init::world::theory::{
-    load_authority_policy, load_belief_family_config, load_claim_policy, load_curation_rule_config,
+    load_authority_policy, load_belief_family_config, load_curation_rule_config,
     load_maintained_condition, load_outcome_mapping_config, load_strategy_theory_package,
 };
 use meld_events::DomainObjectRef;
@@ -63,7 +63,6 @@ fn shipped_theory_provisions_and_loads_through_every_selection_identity() {
         assert!(kinds.contains(&"maintained_condition"));
         assert!(kinds.contains(&"strategy_theory"));
         assert!(kinds.contains(&"authority_policy"));
-        assert!(kinds.contains(&"claim_policy"));
         assert_eq!(kinds.len(), 7);
         assert!(report.bodies.iter().all(|body| body.changed));
 
@@ -115,9 +114,6 @@ fn shipped_theory_provisions_and_loads_through_every_selection_identity() {
 
         let authority = load_authority_policy("docs_workspace_local").unwrap();
         assert_eq!(authority.principal_id, "workspace-owner");
-
-        let claim_policy = load_claim_policy("docs-claims-strict-v1").unwrap();
-        assert_eq!(claim_policy.policy_id, "docs-claims-strict-v1");
     });
 }
 

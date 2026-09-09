@@ -75,7 +75,7 @@ pub(super) fn repeat_for_new_advisory(
     )
     .unwrap();
     let source_path = harness._external.path().join("advisories.json");
-    let mut source: crate::dependency_security::advisory::AdvisorySourceDocumentV1 =
+    let mut source: meld_dependency_security_owner::dependency_security::advisory::AdvisorySourceDocumentV1 =
         serde_json::from_slice(&std::fs::read(&source_path).unwrap()).unwrap();
     source.source_revision = "new-exposure-after-successful-mitigation".into();
     source.advisories[0].source_advisory_id = "replacement-advisory".into();
@@ -312,7 +312,7 @@ pub(super) fn declare(harness: &StewardshipHarness, original: &[u8]) {
 pub(super) fn admit_coverage(
     harness: &StewardshipHarness,
     assembly: &ProductRuntimeAssembly,
-    subject: crate::dependency_security::contracts::DependencySecuritySubjectV1,
+    subject: meld_dependency_security_owner::dependency_security::contracts::DependencySecuritySubjectV1,
 ) {
     let store = &assembly.stores().agent_store;
     let goals = store
@@ -326,26 +326,29 @@ pub(super) fn admit_coverage(
         .enable_all()
         .build()
         .unwrap()
-        .block_on(crate::dependency_security::inventory::cargo::observe(
-            harness._workspace.path(),
-            Path::new(env!("CARGO")),
-            subject,
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-            &Default::default(),
-        ))
+        .block_on(
+            meld_dependency_security_owner::dependency_security::inventory::cargo::observe(
+                harness._workspace.path(),
+                Path::new(env!("CARGO")),
+                subject,
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+                &Default::default(),
+            ),
+        )
         .unwrap();
     let path = harness._external.path().join("advisories.json");
-    let mut source: crate::dependency_security::advisory::AdvisorySourceDocumentV1 =
+    let mut source: meld_dependency_security_owner::dependency_security::advisory::AdvisorySourceDocumentV1 =
         serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     source.source_revision = "coverage-for-current-and-repaired-inventory".into();
     for component in inventory.components {
-        let coverage = crate::dependency_security::contracts::ComponentCoverageV1 {
-            package_name: component.package_name,
-            source_identity: component.source_identity,
-        };
+        let coverage =
+            meld_dependency_security_owner::dependency_security::contracts::ComponentCoverageV1 {
+                package_name: component.package_name,
+                source_identity: component.source_identity,
+            };
         if !source.covered_components.contains(&coverage) {
             source.covered_components.push(coverage);
         }

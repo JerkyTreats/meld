@@ -115,7 +115,7 @@ mod tests {
 
     fn policy() -> DocsClaimPolicy {
         serde_json::from_str(include_str!(
-            "../../../theory/docs_freshness/claim_policy.docs-claims-strict-v1.json"
+            "../../../../../theory/docs_freshness/claim_policy.docs-claims-strict-v1.json"
         ))
         .unwrap()
     }

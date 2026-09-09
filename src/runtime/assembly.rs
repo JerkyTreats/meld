@@ -58,9 +58,7 @@ use meld_world_model::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::capability::{
-    ExactCapabilityActivationRequest, OwnerBindingView, ProductCapabilityInventory,
-};
+use crate::capability::ExactCapabilityActivationRequest;
 use crate::config::MerkleConfig;
 use crate::config::PhysicalBinding;
 use crate::runtime::contracts::{
@@ -407,7 +405,8 @@ pub struct ProductCapabilityRuntime {
     pub catalog: CapabilityCatalog,
     /// Matching executable invokers visible to dispatch.
     pub registry: crate::capability::CapabilityExecutorRegistry,
-    security_observation: Vec<crate::dependency_security::capability::SecurityCapability>,
+    owner_observations: BTreeMap<String, Arc<dyn NativeObservationOwnerFactory>>,
+    owner_runtimes: Vec<Arc<crate::runtime::owners::runtime::PreparedOwnerRuntime>>,
 }
 
 /// Execution route ports injected for the dispatch actor.
@@ -555,22 +554,17 @@ fn hydrate_prepared_stewardship_theory(
         .prepared_closure
         .as_ref()
         .expect("prepared-product resolution must retain its closure");
-    let capability_runtime = match activate_exact_capabilities(
-        stores,
-        binding,
-        &contracts,
-        prepared_closure,
-        resolved.claim_policy.as_ref(),
-    ) {
-        Ok(runtime) => runtime,
-        Err(error) => {
-            diagnostics.push(AssemblyDiagnostic {
-                code: "theory_image_inconsistent".to_string(),
-                message: error.to_string(),
-            });
-            return theory;
-        }
-    };
+    let capability_runtime =
+        match activate_exact_capabilities(stores, binding, &contracts, prepared_closure) {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                diagnostics.push(AssemblyDiagnostic {
+                    code: "theory_image_inconsistent".to_string(),
+                    message: error.to_string(),
+                });
+                return theory;
+            }
+        };
     let mut strategy = match meld_world_model::AgentStrategyRuntimeConfig::activate_installed(
         resolved.strategy_theory.package.clone(),
         subject,
@@ -615,7 +609,6 @@ fn activate_exact_capabilities(
     binding: &PhysicalBinding,
     contracts: &[crate::capability::CapabilityTypeContract],
     closure: &crate::theory::PreparedActivationClosureV1,
-    claim_policy: Option<&crate::docs::claim_validation::DocsClaimPolicyRevision>,
 ) -> Result<ProductCapabilityRuntime, crate::error::ApiError> {
     if closure.assignment.principal_id != binding.package.principal_id
         || closure.assignment.subject != binding.subject
@@ -648,23 +641,14 @@ fn activate_exact_capabilities(
                     .to_string(),
             )
         })?;
-    let security_owner = Arc::new(
-        crate::dependency_security::contribution::DependencySecurityCapabilityContributor::default(
-        ),
-    );
-    let inventory: ProductCapabilityInventory =
-        crate::capability::product_capability_inventory_with_security(security_owner.clone())
-            .map_err(|error| crate::error::ApiError::ConfigError(error.to_string()))?;
+    let inventory = crate::capability::product_capability_inventory_with_owners(&stores.owners)
+        .map_err(|error| crate::error::ApiError::ConfigError(error.to_string()))?;
     let selected_contracts = closure
         .activation
         .selected_implementations
         .keys()
         .cloned()
         .collect::<Vec<_>>();
-    let mut owner_bindings = OwnerBindingView::new(binding.owner_binding_values());
-    if let Some(policy) = claim_policy {
-        owner_bindings = crate::docs::contribution::bind_claim_policy(owner_bindings, policy)?;
-    }
     let compilation = stores
         .pds_products
         .compilation(&closure.assignment.product_compilation_receipt_id)
@@ -672,26 +656,12 @@ fn activate_exact_capabilities(
         .ok_or_else(|| {
             crate::error::ApiError::ConfigError("prepared product compilation is absent".into())
         })?;
-    owner_bindings = crate::dependency_security::contribution::bind_selected_policy(
-        owner_bindings,
-        &crate::dependency_security::theory::DependencySecurityPolicyRegistry::new(
-            stores
-                .theory_db
-                .opened()
-                .ok_or_else(|| {
-                    crate::error::ApiError::ConfigError("theory database is not open".into())
-                })?
-                .clone(),
-        )
-        .map_err(crate::error::ApiError::ConfigError)?,
-        &compilation
-            .installed_owner_revisions
-            .iter()
-            .map(|component| component.owner_revision.clone())
-            .collect::<Vec<_>>(),
-        &binding.subject,
+    let owner_bindings = crate::runtime::owners::preparation::prepare_owner_bindings(
+        stores,
+        binding,
+        &compilation.installed_owner_revisions,
     )
-    .map_err(crate::error::ApiError::ConfigError)?;
+    .map_err(|error| crate::error::ApiError::ConfigError(error.to_string()))?;
     let prepared = inventory
         .prepare(
             ExactCapabilityActivationRequest {
@@ -722,8 +692,22 @@ fn activate_exact_capabilities(
         }
     }
     Ok(ProductCapabilityRuntime {
-        security_observation: security_owner
-            .observation_sources(&owner_bindings, contracts)
+        owner_runtimes: stores
+            .owners
+            .runtimes(
+                &closure.assignment.assignment_id,
+                &closure.activation.activation_id,
+                &owner_bindings,
+            )
+            .map_err(|error| crate::error::ApiError::ConfigError(error.to_string()))?,
+        owner_observations: stores
+            .owners
+            .observations(
+                &closure.assignment.assignment_id,
+                &closure.activation.activation_id,
+                &owner_bindings,
+                &closure.participant_plan,
+            )
             .map_err(|error| crate::error::ApiError::ConfigError(error.to_string()))?,
         catalog: prepared.contracts,
         registry: prepared.invokers,
@@ -732,8 +716,6 @@ fn activate_exact_capabilities(
 
 /// Stewardship values shared by the composed actor factories.
 struct ComposedStewardship {
-    provider_id: Option<String>,
-    workspace_root: Option<PathBuf>,
     lifecycle: Option<ActivationLifecycleStore>,
     bindings: StewardshipActorBindings,
     theory: HydratedStewardshipTheory,
@@ -932,8 +914,7 @@ struct PublicationFactory {
 
 #[derive(Clone)]
 enum RuntimeSemanticHandleFactory {
-    DocsObservation(Box<crate::docs::runtime::DocsObservationBinding>),
-    SecurityObservation(Box<crate::dependency_security::runtime::SecurityObservationBinding>),
+    OwnerObservation(Arc<dyn NativeObservationOwnerFactory>),
     None,
     GraphReplay { graph_runtime: Arc<GraphRuntime> },
     EventAppend { port: ProductEventAppendPort },
@@ -1319,7 +1300,36 @@ impl ProductRuntimeAssembly {
         let has_stewardship = stewardship.is_some();
         let product_root = ProductStorageRoot::new(config.product_root);
         let layout = product_root.layout();
-        let registry = RuntimeFactoryRegistry::first_proof_registry()?;
+        let mut registry = RuntimeFactoryRegistry::first_proof_registry()?;
+        let owners = physical_binding
+            .as_ref()
+            .map(|binding| {
+                crate::runtime::owners::catalog::OwnerCatalog::open(binding, &event_authority)
+            })
+            .transpose()
+            .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?
+            .unwrap_or_default();
+        for description in owners.descriptions() {
+            if let Some(participant) = &description.observation_participant {
+                let descriptor = RuntimeFactoryDescriptor::new(
+                    &participant.participant_id,
+                    vec![
+                        RuntimeResource::EventAppend,
+                        RuntimeResource::Theory,
+                        RuntimeResource::WorldModel,
+                    ],
+                )?;
+                if registry
+                    .descriptors
+                    .insert(participant.participant_id.clone(), descriptor)
+                    .is_some()
+                {
+                    return Err(RuntimeAssemblyError::Config(
+                        "external participant replaces a native runtime authority".into(),
+                    ));
+                }
+            }
+        }
         validate_runtime_selection(&config.enabled_runtime_ids)?;
         validate_runtime_selection(&config.disabled_runtime_ids)?;
 
@@ -1332,7 +1342,9 @@ impl ProductRuntimeAssembly {
             scope.theory = true;
         }
 
-        let stores = Arc::new(OpenProductStores::open_scoped(&layout, &scope)?);
+        let mut stores = OpenProductStores::open_scoped(&layout, &scope)?;
+        stores.owners = owners;
+        let stores = Arc::new(stores);
         let supervisor_store_path = config
             .supervisor_store_path
             .unwrap_or_else(|| layout.root.join("supervisor.sled"));
@@ -1398,8 +1410,6 @@ impl ProductRuntimeAssembly {
                     })
                     .transpose()?;
                 Some(ComposedStewardship {
-                    provider_id: composition.binding.provider_id.clone(),
-                    workspace_root: composition.binding.workspace_root.clone(),
                     lifecycle,
                     dispatch_slot: DispatchRouteSlot::default(),
                     network,
@@ -1622,7 +1632,7 @@ impl ProductRuntimeAssembly {
     #[cfg(test)]
     fn bind_docs_claim_judge(
         &self,
-        judge: Arc<dyn crate::docs::claim_validation::DocsClaimJudge>,
+        judge: Arc<dyn meld_docs_owner::docs::claim_validation::DocsClaimJudge>,
     ) -> bool {
         match self
             .handle_factories
@@ -1637,18 +1647,15 @@ impl ProductRuntimeAssembly {
     }
 
     /// Supply the selected operational provider without choosing owner semantics.
-    pub fn bind_observation_provider(
+    pub fn bind_owner_provider(
         &self,
         provider: Arc<dyn crate::provider::ProviderCompletionPort>,
     ) -> bool {
         let mut bound = false;
-        for factory in self.handle_factories.factories.values() {
-            let owner: &dyn NativeObservationOwnerFactory = match &factory.semantic {
-                RuntimeSemanticHandleFactory::DocsObservation(binding) => binding.as_ref(),
-                RuntimeSemanticHandleFactory::SecurityObservation(binding) => binding.as_ref(),
-                _ => continue,
-            };
-            bound |= owner.bind_provider(provider.clone());
+        if let Some(runtime) = &self.capability_runtime {
+            for owner in &runtime.owner_runtimes {
+                bound |= owner.bind_provider(provider.clone());
+            }
         }
         bound
     }
@@ -1767,9 +1774,13 @@ impl RetirementRuntimeRecovery for ProductRuntimeAssembly {
                 ))
             }
         };
+        let mut historical_stores = self.stores.as_ref().clone();
+        historical_stores.owners =
+            crate::runtime::owners::catalog::OwnerCatalog::open(&binding, &self.event_authority)
+                .map_err(|error| invalid(error.to_string()))?;
         let mut diagnostics = Vec::new();
         let theory = hydrate_prepared_stewardship_theory(
-            self.stores(),
+            &historical_stores,
             &binding,
             Some(prepared.clone()),
             &mut diagnostics,
@@ -1788,8 +1799,6 @@ impl RetirementRuntimeRecovery for ProductRuntimeAssembly {
                 _ => None,
             });
         let composed = ComposedStewardship {
-            provider_id: binding.provider_id.clone(),
-            workspace_root: binding.workspace_root.clone(),
             lifecycle: self.lifecycle_store.clone(),
             dispatch_slot: self.dispatch_route_slot.clone().unwrap_or_default(),
             network: current_network,
@@ -1802,7 +1811,7 @@ impl RetirementRuntimeRecovery for ProductRuntimeAssembly {
         let factories = RuntimeHandleFactoryRegistry::from_registry(
             &self.registry,
             &self.ports,
-            &self.stores,
+            &historical_stores,
             self.graph_runtime.as_ref(),
             Some(&composed),
             &mut diagnostics,
@@ -1870,14 +1879,6 @@ impl RuntimeFactoryRegistry {
             RuntimeFactoryDescriptor::new("event.append", vec![EventAppend])?,
             RuntimeFactoryDescriptor::new("event.replay", vec![EventReplay])?,
             RuntimeFactoryDescriptor::new("workspace.source", vec![EventAppend, Workspace])?,
-            RuntimeFactoryDescriptor::new(
-                "dependency_security.observation",
-                vec![EventAppend, Theory, WorldModel],
-            )?,
-            RuntimeFactoryDescriptor::new(
-                "docs.observation",
-                vec![EventAppend, Workspace, Theory, WorldModel],
-            )?,
             RuntimeFactoryDescriptor::new(
                 "world_model.graph_replay",
                 vec![EventAppend, EventReplay, EventConsumerRegistry, WorldModel],
@@ -2260,113 +2261,13 @@ impl RuntimeSemanticHandleFactory {
             });
             Ok(RuntimeSemanticHandleFactory::None)
         }
+        if let Some(owner) = stewardship
+            .and_then(|composed| composed.theory.capability_runtime.as_ref())
+            .and_then(|runtime| runtime.owner_observations.get(runtime_id))
+        {
+            return Ok(Self::OwnerObservation(owner.clone()));
+        }
         match runtime_id {
-            "dependency_security.observation" => {
-                let Some(composed) = stewardship else {
-                    return Ok(Self::None);
-                };
-                let Some(sources) = composed
-                    .theory
-                    .capability_runtime
-                    .as_ref()
-                    .map(|runtime| runtime.security_observation.clone())
-                    .filter(|sources| !sources.is_empty())
-                else {
-                    return Ok(Self::None);
-                };
-                let Some(authority) = composed.theory.authority_policy.clone() else {
-                    return Ok(Self::None);
-                };
-                let Some(route) = stores
-                    .traversal_store
-                    .owner_event_route(
-                        "dependency-security",
-                        crate::dependency_security::condition::EVENT,
-                    )
-                    .map_err(|e| RuntimeAssemblyError::RuntimeHandleConstruction(e.to_string()))?
-                else {
-                    return Ok(Self::None);
-                };
-                Ok(Self::SecurityObservation(Box::new(
-                    crate::dependency_security::runtime::SecurityObservationBinding {
-                        sources,
-                        authority,
-                        events: ports.event_append().append_capability(),
-                        clock: Arc::new(crate::dependency_security::observation::now),
-                        route,
-                    },
-                )))
-            }
-            "docs.observation" => {
-                let Some(composed) = stewardship else {
-                    return Ok(Self::None);
-                };
-                let Some(root) = &composed.workspace_root else {
-                    return Ok(Self::None);
-                };
-                let Some(resolved) = composed.theory.resolved.as_ref() else {
-                    return Ok(Self::None);
-                };
-                let Some(store) = stores.docs_observations.opened() else {
-                    return Ok(Self::None);
-                };
-                let Some(agent) = stores
-                    .agent_store
-                    .get_agent(&composed.bindings.agent_id)
-                    .map_err(|e| RuntimeAssemblyError::RuntimeHandleConstruction(e.to_string()))?
-                else {
-                    return Ok(Self::None);
-                };
-                let Some(crate::runtime::theory::PreparedCurationSelection::Installed(rule)) =
-                    resolved
-                        .native_curation_selection(stores, &agent)
-                        .map_err(|e| {
-                            RuntimeAssemblyError::RuntimeHandleConstruction(e.to_string())
-                        })?
-                else {
-                    return Ok(Self::None);
-                };
-                let Some(route) = stores
-                    .traversal_store
-                    .owner_event_route("docs", crate::docs::publication::OBSERVATION_EVENT)
-                    .map_err(|e| RuntimeAssemblyError::RuntimeHandleConstruction(e.to_string()))?
-                else {
-                    return Ok(Self::None);
-                };
-                Ok(Self::DocsObservation(Box::new(
-                    crate::docs::runtime::DocsObservationBinding {
-                        root: root.clone(),
-                        claim_policy: resolved.claim_policy.clone(),
-                        claim_config: composed
-                            .provider_id
-                            .as_ref()
-                            .map(|provider| {
-                                Ok::<_, RuntimeAssemblyError>(
-                                    crate::docs::capability::DocsCapabilityConfig {
-                                        target_root: root.clone(),
-                                        subject_id: composed.bindings.subject.object_id.clone(),
-                                        agent_id: composed.bindings.agent_id.clone(),
-                                        provider: crate::execution::ProviderExecutionBinding::new(
-                                            provider,
-                                            Default::default(),
-                                        )
-                                        .map_err(|error| {
-                                            RuntimeAssemblyError::Config(error.to_string())
-                                        })?,
-                                    },
-                                )
-                            })
-                            .transpose()?,
-                        claim_judge: Default::default(),
-                        subject: composed.bindings.subject.clone(),
-                        scope: rule.rule.scope.clone(),
-                        session_id: composed.bindings.session_id.clone(),
-                        store: Arc::clone(store),
-                        events: ports.event_append().append_capability(),
-                        route,
-                    },
-                )))
-            }
             "world_model.graph_replay" => match graph_runtime {
                 Some(graph_runtime) => Ok(Self::GraphReplay {
                     graph_runtime: Arc::clone(graph_runtime),
@@ -2422,9 +2323,9 @@ impl RuntimeSemanticHandleFactory {
                     .resolved
                     .as_ref()
                     .ok_or_else(|| {
-                        RuntimeAssemblyError::RuntimeHandleConstruction(
-                            "Curation requires prepared product theory".into(),
-                        )
+                        RuntimeAssemblyError::RuntimeHandleConstruction(format!(
+                            "Curation requires prepared product theory: {diagnostics:?}"
+                        ))
                     })?
                     .native_curation_selection(stores, &agent)
                 {
@@ -3161,10 +3062,7 @@ impl RuntimeSemanticHandleFactory {
 
     fn build_handle(&self) -> RuntimeSemanticHandle {
         match self {
-            Self::SecurityObservation(binding) => {
-                RuntimeSemanticHandle::OwnerObservation(binding.build())
-            }
-            Self::DocsObservation(binding) => {
+            Self::OwnerObservation(binding) => {
                 RuntimeSemanticHandle::OwnerObservation(binding.build())
             }
             Self::None => RuntimeSemanticHandle::None,
@@ -7177,7 +7075,7 @@ mod tests {
             let drafting = meld_lang::Proposition::Exists {
                 scope: meld_lang::Term::Variable("?subject".into()),
                 artifact_type: meld_lang::Term::ArtifactType(
-                    crate::docs::capability::PATCH_SET.into(),
+                    meld_docs_owner::docs::capability::PATCH_SET.into(),
                 ),
             };
             strategy
@@ -7210,7 +7108,7 @@ mod tests {
         fn run_world_genesis_with_claim_policy(
             &self,
             assembly: &ProductRuntimeAssembly,
-            policy: &crate::docs::claim_validation::DocsClaimPolicy,
+            policy: &meld_docs_owner::docs::claim_validation::DocsClaimPolicy,
         ) {
             let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/docs_freshness");
             let package = tempfile::tempdir().unwrap();
@@ -7313,7 +7211,7 @@ mod tests {
     #[test]
     fn docs_capabilities_reopen_with_prepared_policy_and_reject_substitution() {
         let harness = StewardshipHarness::new();
-        let mut policy = crate::docs::claim_observation::test_support::policy();
+        let mut policy = meld_docs_owner::docs::claim_observation::test_support::policy();
         policy.minimum_claim_confidence = 0.93;
         let newer;
         {
@@ -7356,11 +7254,11 @@ mod tests {
         .unwrap();
         assert!(runtime
             .registry
-            .get(crate::docs::capability::VALIDATE_PATCH_SET, 1)
+            .get(meld_docs_owner::docs::capability::VALIDATE_PATCH_SET, 1)
             .is_some());
         assert!(runtime
             .registry
-            .get(crate::docs::capability::PUBLISH_PATCH_SET, 1)
+            .get(meld_docs_owner::docs::capability::PUBLISH_PATCH_SET, 1)
             .is_some());
         assert!(activate_exact_capabilities(
             assembly.stores(),
@@ -7482,7 +7380,7 @@ mod tests {
         assert_eq!(next.predecessor, Some(first.revision_id.clone()));
         assert!(matches!(
             next.evidence.observation.as_ref().unwrap().readmes[0].state,
-            crate::docs::observation::ObservedReadmeState::Missing
+            meld_docs_owner::docs::observation::ObservedReadmeState::Missing
         ));
         let cursor = assembly.graph_runtime().durable_event_cursor().unwrap();
         let cut = meld_world_model::TraversalQuery::new(assembly.stores().traversal_store.as_ref())
@@ -7643,7 +7541,7 @@ mod tests {
         finding: bool,
         advance: SecuritySourceAdvance,
     ) {
-        use crate::dependency_security::{
+        use meld_dependency_security_owner::dependency_security::{
             advisory::AdvisorySourceDocumentV1, contracts::*, inventory::cargo,
         };
         let mut harness = StewardshipHarness::new();
@@ -7747,11 +7645,12 @@ mod tests {
                 "dependency_security_declared_mitigation".into();
         }
         harness.binding.bindings.insert(
-            crate::dependency_security::contribution::CARGO.into(),
+            meld_dependency_security_owner::dependency_security::contribution::CARGO.into(),
             crate::config::PhysicalBindingRef::ExecutableRef(env!("CARGO").into()),
         );
         harness.binding.bindings.insert(
-            crate::dependency_security::contribution::ADVISORY_SOURCE.into(),
+            meld_dependency_security_owner::dependency_security::contribution::ADVISORY_SOURCE
+                .into(),
             crate::config::PhysicalBindingRef::EndpointRef(source.display().to_string()),
         );
         #[cfg(unix)]
@@ -7868,9 +7767,12 @@ mod tests {
         let condition_event = events
             .iter()
             .rev()
-            .find(|record| record.event_type == crate::dependency_security::condition::EVENT)
+            .find(|record| {
+                record.event_type
+                    == meld_dependency_security_owner::dependency_security::condition::EVENT
+            })
             .unwrap();
-        let condition: crate::dependency_security::condition::CurrentSecurityCondition =
+        let condition: meld_dependency_security_owner::dependency_security::condition::CurrentSecurityCondition =
             serde_json::from_str(
                 condition_event.data["batch"]["objects"][0]["qualifications"]["condition"]
                     .as_str()
@@ -8311,7 +8213,7 @@ mod tests {
             .write()
             .load_from_config(&config)
             .unwrap();
-        assert!(assembly.bind_observation_provider(api));
+        assert!(assembly.bind_owner_provider(api));
         let mut supervisor = harness.start_supervisor(&assembly);
         assert!(assembly
             .capability_runtime()
@@ -8669,7 +8571,7 @@ mod tests {
             .write()
             .load_from_config(&config)
             .unwrap();
-        assert!(assembly.bind_observation_provider(api));
+        assert!(assembly.bind_owner_provider(api));
         let mut supervisor = harness.start_supervisor(&assembly);
         let RuntimeSemanticHandleFactory::AgentActor(agent) = &assembly
             .handle_factories()
@@ -8733,17 +8635,25 @@ mod tests {
                 .collect(),
             edges: if complete_repair {
                 [
-                    ("inspect", "draft", crate::docs::capability::EVIDENCE_BUNDLE),
+                    (
+                        "inspect",
+                        "draft",
+                        meld_docs_owner::docs::capability::EVIDENCE_BUNDLE,
+                    ),
                     (
                         "inspect",
                         "validate",
-                        crate::docs::capability::EVIDENCE_BUNDLE,
+                        meld_docs_owner::docs::capability::EVIDENCE_BUNDLE,
                     ),
-                    ("draft", "validate", crate::docs::capability::PATCH_SET),
+                    (
+                        "draft",
+                        "validate",
+                        meld_docs_owner::docs::capability::PATCH_SET,
+                    ),
                     (
                         "validate",
                         "publish",
-                        crate::docs::capability::VALIDATED_PATCH_SET,
+                        meld_docs_owner::docs::capability::VALIDATED_PATCH_SET,
                     ),
                 ]
                 .into_iter()
@@ -8788,7 +8698,8 @@ mod tests {
         let authority =
             meld_lang::evaluate_authority(policy, &actions, &composition, &agent.strategy.subject)
                 .unwrap();
-        let evidence = crate::docs::capability::inspect_scope(harness._workspace.path()).unwrap();
+        let evidence =
+            meld_docs_owner::docs::capability::inspect_scope(harness._workspace.path()).unwrap();
         let mut admissions = Vec::new();
         let mut authorizations = Vec::new();
         for name in ["first", "second"] {
@@ -8819,8 +8730,9 @@ mod tests {
                         } else {
                             vec![meld_lang::TaskInput {
                                 step_id: "draft".into(),
-                                slot_id: crate::docs::capability::EVIDENCE_BUNDLE.into(),
-                                artifact_type_id: crate::docs::capability::EVIDENCE_BUNDLE.into(),
+                                slot_id: meld_docs_owner::docs::capability::EVIDENCE_BUNDLE.into(),
+                                artifact_type_id:
+                                    meld_docs_owner::docs::capability::EVIDENCE_BUNDLE.into(),
                                 schema_version: 1,
                                 content: serde_json::to_value(&evidence).unwrap(),
                             }]
@@ -9039,7 +8951,7 @@ mod tests {
                 .values()
                 .find(|outcome| {
                     outcome.artifact_records.iter().any(|artifact| {
-                        artifact.artifact_type_id == crate::docs::capability::PATCH_SET
+                        artifact.artifact_type_id == meld_docs_owner::docs::capability::PATCH_SET
                     })
                 })
                 .unwrap();
@@ -9051,9 +8963,11 @@ mod tests {
             let artifact = outcome
                 .artifact_records
                 .iter()
-                .find(|artifact| artifact.artifact_type_id == crate::docs::capability::PATCH_SET)
+                .find(|artifact| {
+                    artifact.artifact_type_id == meld_docs_owner::docs::capability::PATCH_SET
+                })
                 .unwrap();
-            let patches: crate::docs::capability::DocsPatchSet =
+            let patches: meld_docs_owner::docs::capability::DocsPatchSet =
                 serde_json::from_value(artifact.content.clone()).unwrap();
             assert_eq!(patches.source_fingerprint, evidence.source_fingerprint);
             assert_eq!(patches.patches[0].content, super::docs_fixture::README);
@@ -9196,7 +9110,9 @@ mod tests {
             assert_eq!(page.next_cursor.after_seq, watermark.committed_seq);
             page.records
                 .into_iter()
-                .filter(|record| record.event_type == crate::docs::publication_return::EVENT_TYPE)
+                .filter(|record| {
+                    record.event_type == meld_docs_owner::docs::publication_return::EVENT_TYPE
+                })
                 .collect()
         }
         let provider = super::docs_fixture::ProviderServer::new();
@@ -9223,7 +9139,7 @@ mod tests {
             .write()
             .load_from_config(&config)
             .unwrap();
-        assert!(assembly.bind_observation_provider(api));
+        assert!(assembly.bind_owner_provider(api));
         let mut supervisor = harness.start_supervisor(&assembly);
         for pass in 0..60 {
             supervisor.tick(1_000 + pass * 10).unwrap();
@@ -9438,7 +9354,7 @@ mod tests {
         let assembly = harness.assembly();
         harness.bind_production_routes(&assembly);
         assert!(assembly.bind_docs_claim_judge(Arc::new(
-            crate::docs::claim_observation::test_support::FixtureJudge::default()
+            meld_docs_owner::docs::claim_observation::test_support::FixtureJudge::default()
         )));
         let mut supervisor = harness.start_supervisor(&assembly);
         for pass in 0..16 {
@@ -9656,7 +9572,7 @@ mod tests {
 
     #[test]
     fn native_docs_no_action_obeys_installed_acceptance_with_an_unsupported_extra_assertion() {
-        let mut policy = crate::docs::claim_observation::test_support::policy();
+        let mut policy = meld_docs_owner::docs::claim_observation::test_support::policy();
         policy.minimum_groundedness = 0.4;
         policy.maximum_unsupported_claim_mass = 0.6;
         assert_native_docs_acceptance(
@@ -9677,7 +9593,7 @@ mod tests {
 
     fn assert_native_docs_acceptance(
         content: &str,
-        policy: Option<&crate::docs::claim_validation::DocsClaimPolicy>,
+        policy: Option<&meld_docs_owner::docs::claim_validation::DocsClaimPolicy>,
         expect_no_action: bool,
     ) {
         let harness = StewardshipHarness::new();
@@ -9698,7 +9614,7 @@ mod tests {
         let assembly = harness.assembly();
         harness.bind_production_routes(&assembly);
         assert!(assembly.bind_docs_claim_judge(Arc::new(
-            crate::docs::claim_observation::test_support::FixtureJudge::default()
+            meld_docs_owner::docs::claim_observation::test_support::FixtureJudge::default()
         )));
         let mut supervisor = harness.start_supervisor(&assembly);
         for pass in 0..16 {
@@ -9787,24 +9703,28 @@ mod tests {
 
     #[test]
     fn native_docs_curation_requires_source_claims_and_revises_coverage_from_observation() {
-        use crate::docs::claim_observation::test_support::FixtureJudge;
-        use crate::docs::claim_validation::*;
+        use meld_docs_owner::docs::claim_observation::test_support::FixtureJudge;
+        use meld_docs_owner::docs::claim_validation::*;
         use meld_world_model::world_state::graph::contracts::*;
         struct Judge(FixtureJudge);
         #[async_trait::async_trait]
         impl DocsClaimJudge for Judge {
             async fn extract_source(
                 &self,
-                request: &crate::docs::source_claims::DocsSourceClaimRequest<'_>,
-            ) -> Result<crate::docs::source_claims::ProposedSourceClaims, crate::error::ApiError>
-            {
+                request: &meld_docs_owner::docs::source_claims::DocsSourceClaimRequest<'_>,
+            ) -> Result<
+                meld_docs_owner::docs::source_claims::ProposedSourceClaims,
+                crate::error::ApiError,
+            > {
                 self.0.extract_source(request).await
             }
             async fn correspond(
                 &self,
-                request: &crate::docs::correspondence::DocsCorrespondenceRequest<'_>,
-            ) -> Result<crate::docs::correspondence::ProposedCorrespondence, crate::error::ApiError>
-            {
+                request: &meld_docs_owner::docs::correspondence::DocsCorrespondenceRequest<'_>,
+            ) -> Result<
+                meld_docs_owner::docs::correspondence::ProposedCorrespondence,
+                crate::error::ApiError,
+            > {
                 self.0.correspond(request).await
             }
             async fn assess(
@@ -9830,7 +9750,7 @@ mod tests {
         }
         fn graph(
             assembly: &ProductRuntimeAssembly,
-            binding: &crate::docs::runtime::DocsObservationBinding,
+            binding: &meld_docs_owner::docs::runtime::DocsObservationBinding,
         ) -> TraversalResult {
             let query =
                 meld_world_model::TraversalQuery::new(assembly.stores().traversal_store.as_ref());
@@ -9992,7 +9912,7 @@ mod tests {
 
     #[test]
     fn native_docs_claim_judgments_reach_graph_before_tasks_and_expire_on_source_change() {
-        use crate::docs::claim_observation::{
+        use meld_docs_owner::docs::claim_observation::{
             test_support::FixtureJudge, ObservedClaimDisposition,
         };
         let harness = StewardshipHarness::new();
@@ -10845,7 +10765,7 @@ mod tests {
         let harness = StewardshipHarness::new();
         let assembly = harness.assembly();
         let stores = assembly.stores();
-        let package_receipt = crate::docs::theory::install_package(
+        let package_receipt = meld_docs_owner::docs::theory::install_package(
             stores,
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/docs_freshness"),
             5,

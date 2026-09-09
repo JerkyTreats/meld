@@ -120,6 +120,7 @@ for line in sys.stdin:
  elif op=='open_revision_store':
   store=command['state_root']
   os.makedirs(store,exist_ok=True)
+ elif op=='close_revision_store': pass
  elif op=='validate_theory':
   assert json.loads(bytes(command['canonical_bytes']))['policy']=='external semantics'
  elif op=='install_theory':

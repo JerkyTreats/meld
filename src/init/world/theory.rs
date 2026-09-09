@@ -30,7 +30,6 @@ use meld_world_model::belief::{
 use meld_world_model::strategy::{validate_strategy_theory_package, StrategyTheoryPackage};
 
 use crate::config::xdg;
-use crate::docs::claim_validation::DocsClaimPolicy;
 use crate::error::ApiError;
 
 /// Root directory for theory configuration bodies.
@@ -75,14 +74,6 @@ pub fn authority_policy_config_path(policy_id: &str) -> Result<PathBuf, ApiError
     validate_theory_id("authority policy id", policy_id)?;
     Ok(theory_config_root()?
         .join("authority_policies")
-        .join(format!("{policy_id}.json")))
-}
-
-/// Path of the docs claim policy for one selected id.
-pub fn claim_policy_config_path(policy_id: &str) -> Result<PathBuf, ApiError> {
-    validate_theory_id("claim policy id", policy_id)?;
-    Ok(theory_config_root()?
-        .join("claim_policies")
         .join(format!("{policy_id}.json")))
 }
 
@@ -195,22 +186,6 @@ pub fn load_authority_policy(policy_id: &str) -> Result<AuthorityPolicy, ApiErro
     if policy.policy_id != policy_id {
         return Err(ApiError::ConfigError(format!(
             "authority policy '{}' declares policy_id '{}' but was selected as '{}'",
-            path.display(),
-            policy.policy_id,
-            policy_id
-        )));
-    }
-    Ok(policy)
-}
-
-/// Load and owner-validate the selected docs claim policy.
-pub fn load_claim_policy(policy_id: &str) -> Result<DocsClaimPolicy, ApiError> {
-    let path = claim_policy_config_path(policy_id)?;
-    let policy: DocsClaimPolicy = load_json(&path, "docs claim policy")?;
-    policy.validate()?;
-    if policy.policy_id != policy_id {
-        return Err(ApiError::ConfigError(format!(
-            "docs claim policy '{}' declares policy_id '{}' but was selected as '{}'",
             path.display(),
             policy.policy_id,
             policy_id

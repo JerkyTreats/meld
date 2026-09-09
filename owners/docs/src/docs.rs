@@ -13,6 +13,7 @@ pub mod input_basis;
 pub mod judgment;
 pub mod observation;
 pub mod observation_store;
+pub mod owner;
 /// Regression fixture for the retired hand-composed docs image.
 #[cfg(test)]
 pub mod pds;

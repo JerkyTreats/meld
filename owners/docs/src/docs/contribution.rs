@@ -98,7 +98,7 @@ struct DocsInvokerFactory {
     capability_type_id: String,
 }
 
-fn selected_claim_policy(
+pub(crate) fn selected_claim_policy(
     bindings: &OwnerBindingView,
 ) -> Result<DocsClaimPolicy, CapabilityContributionDiagnostic> {
     let body = bindings.get(CLAIM_POLICY_BINDING).ok_or_else(|| {
@@ -122,42 +122,48 @@ fn selected_claim_policy(
     Ok(revision.policy)
 }
 
+pub(crate) fn configuration(
+    bindings: &OwnerBindingView,
+) -> Result<DocsCapabilityConfig, CapabilityContributionDiagnostic> {
+    let workspace = bindings.get(WORKSPACE_BINDING).ok_or_else(|| {
+        diagnostic(
+            "selected_binding_missing",
+            "docs implementation requires a workspace binding",
+        )
+    })?;
+    let provider_name = bindings
+        .get(PROVIDER_BINDING)
+        .unwrap_or("provider-not-selected");
+    let subject_id = bindings.get(SUBJECT_BINDING).ok_or_else(|| {
+        diagnostic(
+            "selected_binding_missing",
+            "docs implementation requires a subject binding",
+        )
+    })?;
+    let agent_id = bindings.get(AGENT_BINDING).ok_or_else(|| {
+        diagnostic(
+            "selected_binding_missing",
+            "docs implementation requires an agent binding",
+        )
+    })?;
+    let provider =
+        ProviderExecutionBinding::new(provider_name, ProviderRuntimeOverrides::default())
+            .map_err(|failure| diagnostic("selected_binding_missing", failure.to_string()))?;
+    Ok(DocsCapabilityConfig {
+        target_root: PathBuf::from(workspace),
+        subject_id: subject_id.to_string(),
+        agent_id: agent_id.to_string(),
+        provider,
+    })
+}
+
 impl CapabilityInvokerFactory for DocsInvokerFactory {
     fn prepare(
         &self,
         _request: &CapabilityFactoryRequest<'_>,
         bindings: &OwnerBindingView,
     ) -> Result<PreparedCapabilityInvoker, CapabilityContributionDiagnostic> {
-        let workspace = bindings.get(WORKSPACE_BINDING).ok_or_else(|| {
-            diagnostic(
-                "selected_binding_missing",
-                "docs implementation requires a workspace binding",
-            )
-        })?;
-        let provider_name = bindings
-            .get(PROVIDER_BINDING)
-            .unwrap_or("provider-not-selected");
-        let subject_id = bindings.get(SUBJECT_BINDING).ok_or_else(|| {
-            diagnostic(
-                "selected_binding_missing",
-                "docs implementation requires a subject binding",
-            )
-        })?;
-        let agent_id = bindings.get(AGENT_BINDING).ok_or_else(|| {
-            diagnostic(
-                "selected_binding_missing",
-                "docs implementation requires an agent binding",
-            )
-        })?;
-        let provider =
-            ProviderExecutionBinding::new(provider_name, ProviderRuntimeOverrides::default())
-                .map_err(|failure| diagnostic("selected_binding_missing", failure.to_string()))?;
-        let config = DocsCapabilityConfig {
-            target_root: PathBuf::from(workspace),
-            subject_id: subject_id.to_string(),
-            agent_id: agent_id.to_string(),
-            provider,
-        };
+        let config = configuration(bindings)?;
         let invoker: Arc<
             dyn CapabilityInvoker<Error = ApiError, ExecutionApi = dyn ExecutionRuntimeContext>,
         > = match self.capability_type_id.as_str() {
@@ -321,7 +327,7 @@ mod tests {
         let db = sled::Config::new().temporary(true).open().unwrap();
         let store = crate::docs::claim_validation::DocsClaimPolicyRegistryStore::new(db).unwrap();
         let policy: DocsClaimPolicy = serde_json::from_str(include_str!(
-            "../../theory/docs_freshness/claim_policy.docs-claims-strict-v1.json"
+            "../../../../theory/docs_freshness/claim_policy.docs-claims-strict-v1.json"
         ))
         .unwrap();
         let (_, first) = store.install(policy.clone(), 1).unwrap();
@@ -401,8 +407,12 @@ mod tests {
             "theory/docs_freshness/authority_policy.docs_workspace_local.json",
             "theory/docs_freshness/claim_policy.docs-claims-strict-v1.json",
         ] {
-            let bytes =
-                std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path)).unwrap();
+            let bytes = std::fs::read(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../..")
+                    .join(path),
+            )
+            .unwrap();
             println!("{}  {path}", blake3::hash(&bytes).to_hex());
         }
     }

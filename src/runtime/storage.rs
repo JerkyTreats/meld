@@ -19,7 +19,6 @@ use meld_world_model::CurationStore;
 use thiserror::Error;
 
 use crate::context::frame::FrameStorage;
-use crate::docs::claim_validation::DocsClaimPolicyRegistryStore;
 use crate::prompt_context::PromptContextArtifactStorage;
 use crate::runtime::theory::TheoryInstallationReceiptStore;
 use crate::store::SledNodeRecordStore;
@@ -121,6 +120,7 @@ impl StoreScope {
 /// so an out-of-scope store is an explicit `None`, never a panic. A
 /// `Deref` on a closed store is a composition contract violation and
 /// panics with the owning field's diagnostic label.
+#[derive(Clone)]
 pub struct ScopedResource<T> {
     label: &'static str,
     inner: Option<T>,
@@ -167,7 +167,10 @@ impl<T> std::ops::Deref for ScopedResource<T> {
 /// Fields are scoped: a composition built from an explicit registration
 /// set opens only the store groups that set requires, and out-of-scope
 /// fields stay closed. The default product composition opens everything.
+#[derive(Clone)]
 pub struct OpenProductStores {
+    /// Executable owners selected by the physical runtime binding.
+    pub owners: crate::runtime::owners::catalog::OwnerCatalog,
     /// Workspace node record store.
     pub node_store: ScopedResource<Arc<SledNodeRecordStore>>,
     /// World model graph reducer state and traversal indexes.
@@ -200,11 +203,6 @@ pub struct OpenProductStores {
     pub capability_contract_registry: ScopedResource<Arc<CapabilityContractRegistryStore>>,
     /// Execution-owned exact effective-authority policy registry.
     pub authority_policy_registry: ScopedResource<Arc<AuthorityPolicyRegistryStore>>,
-    /// Docs-owned exact claim-policy registry.
-    pub claim_policy_registry: ScopedResource<Arc<DocsClaimPolicyRegistryStore>>,
-    /// Docs-owned observation history and pending native publications.
-    pub docs_observations:
-        ScopedResource<Arc<crate::docs::observation_store::DocsObservationStore>>,
     /// Read-only historical root installation receipts resolved by exact id.
     pub theory_receipts: ScopedResource<Arc<TheoryInstallationReceiptStore>>,
     /// Generic append-only PDS package receipts and selection heads.
@@ -411,8 +409,6 @@ impl OpenProductStores {
         let (
             capability_contract_registry,
             authority_policy_registry,
-            claim_policy_registry,
-            docs_observations,
             theory_receipts,
             pds_packages,
             pds_products,
@@ -432,21 +428,6 @@ impl OpenProductStores {
                     Arc::new(
                         AuthorityPolicyRegistryStore::new(theory_db.clone())
                             .map_err(to_execution)?,
-                    ),
-                ),
-                ScopedResource::open(
-                    "claim_policy_registry",
-                    Arc::new(
-                        DocsClaimPolicyRegistryStore::new(theory_db.clone()).map_err(to_context)?,
-                    ),
-                ),
-                ScopedResource::open(
-                    "docs_observations",
-                    Arc::new(
-                        crate::docs::observation_store::DocsObservationStore::new(
-                            theory_db.clone(),
-                        )
-                        .map_err(ProductStorageError::Io)?,
                     ),
                 ),
                 ScopedResource::open(
@@ -470,8 +451,6 @@ impl OpenProductStores {
             (
                 ScopedResource::closed("capability_contract_registry"),
                 ScopedResource::closed("authority_policy_registry"),
-                ScopedResource::closed("claim_policy_registry"),
-                ScopedResource::closed("docs_observations"),
                 ScopedResource::closed("theory_receipts"),
                 ScopedResource::closed("pds_packages"),
                 ScopedResource::closed("pds_products"),
@@ -522,6 +501,7 @@ impl OpenProductStores {
         };
 
         Ok(Self {
+            owners: Default::default(),
             node_store,
             traversal_store: traversal,
             curation_store: curation,
@@ -537,8 +517,6 @@ impl OpenProductStores {
             execution_db,
             capability_contract_registry,
             authority_policy_registry,
-            claim_policy_registry,
-            docs_observations,
             theory_receipts,
             pds_packages,
             pds_products,

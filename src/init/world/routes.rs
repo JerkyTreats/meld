@@ -25,14 +25,11 @@ use meld_world_model::strategy::{
     validate_strategy_theory_package, StrategyTheoryPackage, StrategyTheoryRegistryStore,
 };
 
-use crate::docs::claim_validation::{
-    DocsClaimPolicy, DocsClaimPolicyRegistryStore, DocsClaimPolicyRevisionRef,
-};
 use crate::runtime::storage::OpenProductStores;
 use crate::theory::{
-    no_semantic_links, InstalledPackageLinkView, InstalledTheoryComponentRef, OwnerRouteDiagnostic,
-    PortBackedTheoryRouteHandler, RouteCardinality, TheoryRevisionRef, TheoryRouteCatalog,
-    TheoryRouteContract, TheoryRouteHandler, TheoryRouteId, VersionRange,
+    no_semantic_links, OwnerRouteDiagnostic, PortBackedTheoryRouteHandler, RouteCardinality,
+    TheoryRevisionRef, TheoryRouteCatalog, TheoryRouteContract, TheoryRouteHandler, TheoryRouteId,
+    VersionRange,
 };
 
 const ROUTE_VERSION: u32 = 1;
@@ -46,7 +43,7 @@ pub fn current_product_route_catalog(
             crate::theory::TheoryRouterDiagnostic::new("route_unavailable", failure.to_string())
         })?,
     ));
-    let handlers: Vec<Arc<dyn TheoryRouteHandler>> = vec![
+    let mut handlers: Vec<Arc<dyn TheoryRouteHandler>> = vec![
         belief_family_handler(family_store),
         outcome_mapping_handler(opened(&stores.outcome_mapping_registry)),
         curation_rule_handler(opened(&stores.curation_rule_registry)),
@@ -56,20 +53,8 @@ pub fn current_product_route_catalog(
         strategy_handler(opened(&stores.strategy_theory_registry)),
         capability_contract_handler(opened(&stores.capability_contract_registry)),
         authority_policy_handler(opened(&stores.authority_policy_registry)),
-        claim_policy_handler(opened(&stores.claim_policy_registry)),
-        dependency_security_policy_handler(
-            crate::dependency_security::theory::DependencySecurityPolicyRegistry::new(
-                stores
-                    .theory_db
-                    .opened()
-                    .expect("theory route catalog requires the theory database")
-                    .clone(),
-            )
-            .map_err(|failure| {
-                crate::theory::TheoryRouterDiagnostic::new("route_unavailable", failure)
-            })?,
-        ),
     ];
+    handlers.extend(stores.owners.route_handlers());
     TheoryRouteCatalog::build(handlers)
 }
 
@@ -108,33 +93,6 @@ fn graph_owner_event_handler(
             "graph-owner-event-route",
             RouteCardinality::Many,
         ),
-        validate,
-        install,
-        verify,
-        no_semantic_links(),
-    ))
-}
-
-fn dependency_security_policy_handler(
-    store: crate::dependency_security::theory::DependencySecurityPolicyRegistry,
-) -> Arc<dyn TheoryRouteHandler> {
-    let validate = Arc::new(|owner_id: &str, bytes: &[u8]| {
-        let body: crate::dependency_security::policy::DependencySecurityPolicyV1 = decode(bytes)?;
-        body.validate().map_err(owner_failure)?;
-        require_id(owner_id, &body.policy_id)
-    });
-    let install_store = store.clone();
-    let install = Arc::new(move |owner_id: &str, bytes: &[u8], seq| {
-        let body: crate::dependency_security::policy::DependencySecurityPolicyV1 = decode(bytes)?;
-        require_id(owner_id, &body.policy_id)?;
-        install_store.install(body, seq).map_err(owner_failure)
-    });
-    let verify = Arc::new(move |reference: &TheoryRevisionRef| {
-        require_registry(reference, "dependency_security_policy")?;
-        require_found(store.resolve(reference).map_err(owner_failure)?.is_some())
-    });
-    Arc::new(PortBackedTheoryRouteHandler::new(
-        contract("dependency-security", "policy", RouteCardinality::Many),
         validate,
         install,
         verify,
@@ -448,58 +406,6 @@ fn authority_policy_handler(
         install,
         verify,
         no_semantic_links(),
-    ))
-}
-
-fn claim_policy_handler(store: Arc<DocsClaimPolicyRegistryStore>) -> Arc<dyn TheoryRouteHandler> {
-    let validate = Arc::new(|owner_id: &str, bytes: &[u8]| {
-        let body: DocsClaimPolicy = decode(bytes)?;
-        body.validate().map_err(owner_failure)?;
-        require_id(owner_id, &body.policy_id)
-    });
-    let install_store = store.clone();
-    let install = Arc::new(move |owner_id: &str, bytes: &[u8], seq| {
-        let body: DocsClaimPolicy = decode(bytes)?;
-        require_id(owner_id, &body.policy_id)?;
-        let (_, revision) = install_store.install(body, seq).map_err(owner_failure)?;
-        let reference = revision.revision_ref();
-        Ok(TheoryRevisionRef {
-            registry: "docs_claim_policy".to_string(),
-            id: reference.policy_id,
-            content_hash: reference.content_identity,
-        })
-    });
-    let verify = Arc::new(move |reference: &TheoryRevisionRef| {
-        require_registry(reference, "docs_claim_policy")?;
-        require_found(
-            store
-                .resolve(&DocsClaimPolicyRevisionRef {
-                    policy_id: reference.id.clone(),
-                    content_identity: reference.content_hash.clone(),
-                })
-                .map_err(owner_failure)?
-                .is_some(),
-        )
-    });
-    let links = Arc::new(
-        |reference: &InstalledTheoryComponentRef,
-         _package: &InstalledPackageLinkView|
-         -> Result<(), OwnerRouteDiagnostic> {
-            if reference.owner_revision.id != reference.owner_revision.id.trim() {
-                return Err(owner(
-                    "policy_id_mismatch",
-                    "claim policy id is not normalized",
-                ));
-            }
-            Ok(())
-        },
-    );
-    Arc::new(PortBackedTheoryRouteHandler::new(
-        contract("docs", "claim-policy", RouteCardinality::AtMostOne),
-        validate,
-        install,
-        verify,
-        links,
     ))
 }
 

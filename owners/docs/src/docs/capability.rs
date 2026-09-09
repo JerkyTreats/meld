@@ -157,18 +157,8 @@ impl CapabilityInvoker for InspectScopeCapability {
         payload: &CapabilityInvocationPayload,
         _event_context: Option<&ExecutionEventContext>,
     ) -> Result<CapabilityInvocationResult, ApiError> {
-        payload.validate_against(runtime_init)?;
-        let bundle = super::observation::inspect_scope_selected(
-            &self.config.target_root,
-            self.policy.semantics()?.scope()?,
-        )
-        .map_err(terminalize_docs_error)?;
-        Ok(single_artifact(
-            payload,
-            runtime_init,
-            EVIDENCE_BUNDLE,
-            to_value(bundle)?,
-        ))
+        self.invoke_owned(_api, runtime_init, payload, _event_context)
+            .await
     }
 }
 
@@ -193,17 +183,8 @@ impl CapabilityInvoker for DraftPatchSetCapability {
         payload: &CapabilityInvocationPayload,
         event_context: Option<&ExecutionEventContext>,
     ) -> Result<CapabilityInvocationResult, ApiError> {
-        payload.validate_against(runtime_init)?;
-        let bundle: DocsEvidenceBundle = decode_input(payload, EVIDENCE_BUNDLE)?;
-        let patches = draft_patch_set(api, &self.config, &self.policy, &bundle, event_context)
+        self.invoke_owned(api, runtime_init, payload, event_context)
             .await
-            .map_err(terminalize_docs_error)?;
-        Ok(single_artifact(
-            payload,
-            runtime_init,
-            PATCH_SET,
-            to_value(patches)?,
-        ))
     }
 }
 
@@ -228,25 +209,8 @@ impl CapabilityInvoker for ValidatePatchSetCapability {
         payload: &CapabilityInvocationPayload,
         event_context: Option<&ExecutionEventContext>,
     ) -> Result<CapabilityInvocationResult, ApiError> {
-        payload.validate_against(runtime_init)?;
-        let bundle: DocsEvidenceBundle = decode_input(payload, EVIDENCE_BUNDLE)?;
-        let patches: DocsPatchSet = decode_input(payload, PATCH_SET)?;
-        let validated = validate_patch_set(
-            api,
-            &self.config,
-            &self.policy,
-            &bundle,
-            &patches,
-            event_context,
-        )
-        .await
-        .map_err(terminalize_docs_error)?;
-        Ok(single_artifact(
-            payload,
-            runtime_init,
-            VALIDATED_PATCH_SET,
-            to_value(validated)?,
-        ))
+        self.invoke_owned(api, runtime_init, payload, event_context)
+            .await
     }
 }
 
@@ -303,31 +267,8 @@ impl CapabilityInvoker for PublishPatchSetCapability {
         payload: &CapabilityInvocationPayload,
         event_context: Option<&ExecutionEventContext>,
     ) -> Result<CapabilityInvocationResult, ApiError> {
-        payload.validate_against(runtime_init)?;
-        let patches: ValidatedDocsPatchSet = decode_input(payload, VALIDATED_PATCH_SET)?;
-        let invocation = super::publication_return::PublicationInvocation::new(
-            &self.config,
-            &self.policy,
-            &patches,
-            runtime_init,
-            payload,
-            event_context,
-        )
-        .map_err(terminalize_docs_error)?;
-        let events = api.durable_event_append().ok_or_else(|| {
-            terminalize_docs_error(ApiError::ConfigError(
-                "Docs publication has no durable Event authority".into(),
-            ))
-        })?;
-        let receipt = invocation
-            .publish(&events)
-            .map_err(terminalize_docs_error)?;
-        Ok(single_artifact(
-            payload,
-            runtime_init,
-            PUBLICATION_RECEIPT,
-            to_value(receipt)?,
-        ))
+        self.invoke_owned(api, runtime_init, payload, event_context)
+            .await
     }
 }
 
@@ -547,6 +488,125 @@ fn single_artifact(
                 output_slot_id: Some(artifact_type.to_string()),
             },
         }],
+    }
+}
+
+impl InspectScopeCapability {
+    pub(crate) async fn invoke_owned<
+        P: crate::runtime::owners::execution::OwnerExecutionPorts + ?Sized,
+    >(
+        &self,
+        _api: &P,
+        runtime_init: &CapabilityRuntimeInit,
+        payload: &CapabilityInvocationPayload,
+        _event_context: Option<&ExecutionEventContext>,
+    ) -> Result<CapabilityInvocationResult, ApiError> {
+        payload.validate_against(runtime_init)?;
+        let bundle = super::observation::inspect_scope_selected(
+            &self.config.target_root,
+            self.policy.semantics()?.scope()?,
+        )
+        .map_err(terminalize_docs_error)?;
+        Ok(single_artifact(
+            payload,
+            runtime_init,
+            EVIDENCE_BUNDLE,
+            to_value(bundle)?,
+        ))
+    }
+}
+
+impl DraftPatchSetCapability {
+    pub(crate) async fn invoke_owned<
+        P: crate::runtime::owners::execution::OwnerExecutionPorts + ?Sized,
+    >(
+        &self,
+        api: &P,
+        runtime_init: &CapabilityRuntimeInit,
+        payload: &CapabilityInvocationPayload,
+        event_context: Option<&ExecutionEventContext>,
+    ) -> Result<CapabilityInvocationResult, ApiError> {
+        payload.validate_against(runtime_init)?;
+        let bundle: DocsEvidenceBundle = decode_input(payload, EVIDENCE_BUNDLE)?;
+        let patches = draft_patch_set(api, &self.config, &self.policy, &bundle, event_context)
+            .await
+            .map_err(terminalize_docs_error)?;
+        Ok(single_artifact(
+            payload,
+            runtime_init,
+            PATCH_SET,
+            to_value(patches)?,
+        ))
+    }
+}
+
+impl ValidatePatchSetCapability {
+    pub(crate) async fn invoke_owned<
+        P: crate::runtime::owners::execution::OwnerExecutionPorts + ?Sized,
+    >(
+        &self,
+        api: &P,
+        runtime_init: &CapabilityRuntimeInit,
+        payload: &CapabilityInvocationPayload,
+        event_context: Option<&ExecutionEventContext>,
+    ) -> Result<CapabilityInvocationResult, ApiError> {
+        payload.validate_against(runtime_init)?;
+        let bundle: DocsEvidenceBundle = decode_input(payload, EVIDENCE_BUNDLE)?;
+        let patches: DocsPatchSet = decode_input(payload, PATCH_SET)?;
+        let validated = validate_patch_set(
+            api,
+            &self.config,
+            &self.policy,
+            &bundle,
+            &patches,
+            event_context,
+        )
+        .await
+        .map_err(terminalize_docs_error)?;
+        Ok(single_artifact(
+            payload,
+            runtime_init,
+            VALIDATED_PATCH_SET,
+            to_value(validated)?,
+        ))
+    }
+}
+
+impl PublishPatchSetCapability {
+    pub(crate) async fn invoke_owned<
+        P: crate::runtime::owners::execution::OwnerExecutionPorts + ?Sized,
+    >(
+        &self,
+        api: &P,
+        runtime_init: &CapabilityRuntimeInit,
+        payload: &CapabilityInvocationPayload,
+        event_context: Option<&ExecutionEventContext>,
+    ) -> Result<CapabilityInvocationResult, ApiError> {
+        payload.validate_against(runtime_init)?;
+        let patches: ValidatedDocsPatchSet = decode_input(payload, VALIDATED_PATCH_SET)?;
+        let invocation = super::publication_return::PublicationInvocation::new(
+            &self.config,
+            &self.policy,
+            &patches,
+            runtime_init,
+            payload,
+            event_context,
+        )
+        .map_err(terminalize_docs_error)?;
+        let events = api.owner_events().ok_or_else(|| {
+            terminalize_docs_error(ApiError::ConfigError(
+                "Docs publication has no durable Event authority".into(),
+            ))
+        })?;
+        let receipt = invocation
+            .publish(&events)
+            .map_err(terminalize_docs_error)?;
+        Ok(single_artifact(
+            payload,
+            runtime_init,
+            PUBLICATION_RECEIPT,
+            to_value(receipt)?,
+        ))
     }
 }
 

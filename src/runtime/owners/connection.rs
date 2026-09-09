@@ -80,6 +80,10 @@ impl OwnerConnection {
         let child = Command::new(&retained)
             .process_group(0)
             .env_clear()
+            .env(
+                "MELD_OWNER_MAX_MESSAGE_BYTES",
+                limits.max_message_bytes.to_string(),
+            )
             .current_dir(implementation_root)
             .stdin(input)
             .stdout(output)
@@ -104,7 +108,7 @@ impl OwnerConnection {
     pub fn call<T: DeserializeOwned>(
         &mut self,
         command: OwnerCommandV1,
-        callbacks: &mut dyn OwnerCallbackPort,
+        callbacks: &dyn OwnerCallbackPort,
     ) -> Result<T, OwnerDiagnosticV1> {
         if self.failed {
             return Err(OwnerDiagnosticV1::new(
@@ -130,7 +134,7 @@ impl OwnerConnection {
     fn exchange(
         &mut self,
         command: OwnerCommandV1,
-        callbacks: &mut dyn OwnerCallbackPort,
+        callbacks: &dyn OwnerCallbackPort,
     ) -> Result<OwnerResult, OwnerDiagnosticV1> {
         let request_id = self.next_request_id;
         self.next_request_id = request_id.checked_add(1).ok_or_else(|| {
@@ -203,6 +207,11 @@ impl OwnerConnection {
                 }
             }
         }
+    }
+
+    pub(crate) fn invalidate(&mut self) {
+        self.failed = true;
+        self.terminate_owned_processes();
     }
 
     fn terminate_owned_processes(&mut self) {

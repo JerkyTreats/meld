@@ -24,6 +24,12 @@ impl OwnerBindingView {
         Self { values }
     }
 
+    /// Exact owner preparation values. Callers select the granted keys before
+    /// crossing an external process boundary.
+    pub fn values(&self) -> &BTreeMap<String, String> {
+        &self.values
+    }
+
     pub fn get(&self, binding_id: &str) -> Option<&str> {
         self.values.get(binding_id).map(String::as_str)
     }

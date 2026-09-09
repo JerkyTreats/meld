@@ -23,11 +23,11 @@ pub struct DocsPdsRuntime {
 #[cfg(test)]
 pub fn compose(config: DocsCapabilityConfig) -> Result<DocsPdsRuntime, ApiError> {
     let package = serde_json::from_str(include_str!(
-        "../../theory/docs_freshness/strategy_theory.docs_freshness.json"
+        "../../../../theory/docs_freshness/strategy_theory.docs_freshness.json"
     ))
     .map_err(|error| ApiError::ConfigError(error.to_string()))?;
     let claim_policy = serde_json::from_str(include_str!(
-        "../../theory/docs_freshness/claim_policy.docs-claims-strict-v1.json"
+        "../../../../theory/docs_freshness/claim_policy.docs-claims-strict-v1.json"
     ))
     .map_err(|error| ApiError::ConfigError(error.to_string()))?;
     compose_with_theory(

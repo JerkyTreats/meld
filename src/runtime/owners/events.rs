@@ -116,8 +116,7 @@ pub struct OwnerEventCallbacks {
 
 struct PublicationGrant {
     owner: String,
-    session: String,
-    routes: BTreeSet<(String, String)>,
+    routes: BTreeSet<(String, String, String)>,
 }
 
 impl OwnerEventCallbacks {
@@ -141,11 +140,28 @@ impl OwnerEventCallbacks {
         session: &str,
         routes: BTreeSet<(String, String)>,
     ) -> Result<Self, EventAuthorityError> {
+        Self::publishing_routes(
+            ledger_id,
+            authority,
+            owner,
+            routes
+                .into_iter()
+                .map(|(kind, stream)| (session.to_string(), kind, stream))
+                .collect(),
+        )
+    }
+
+    /// Exact session, event-type and stream grants for retained publications.
+    pub fn publishing_routes(
+        ledger_id: LedgerIdentity,
+        authority: Arc<dyn EventAuthorityContract>,
+        owner: &str,
+        routes: BTreeSet<(String, String, String)>,
+    ) -> Result<Self, EventAuthorityError> {
         if owner.trim().is_empty()
-            || session.trim().is_empty()
             || routes.is_empty()
-            || routes.iter().any(|(event_type, stream)| {
-                event_type.trim().is_empty() || stream.trim().is_empty()
+            || routes.iter().any(|(session, kind, stream)| {
+                session.trim().is_empty() || kind.trim().is_empty() || stream.trim().is_empty()
             })
         {
             return Err(ungranted());
@@ -155,7 +171,6 @@ impl OwnerEventCallbacks {
             authority,
             publication: Some(PublicationGrant {
                 owner: owner.into(),
-                session: session.into(),
                 routes,
             }),
         })
@@ -180,10 +195,11 @@ impl OwnerEventCallbacks {
         match &self.publication {
             Some(grant)
                 if envelope.domain_id == grant.owner
-                    && envelope.session == grant.session
-                    && grant
-                        .routes
-                        .contains(&(envelope.event_type.clone(), envelope.stream_id.clone())) =>
+                    && grant.routes.contains(&(
+                        envelope.session.clone(),
+                        envelope.event_type.clone(),
+                        envelope.stream_id.clone(),
+                    )) =>
             {
                 Ok(())
             }

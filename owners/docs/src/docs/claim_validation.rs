@@ -1777,6 +1777,7 @@ mod tests {
         let installed: DocsClaimPolicy = serde_json::from_str(
             &std::fs::read_to_string(
                 std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../..")
                     .join("theory/docs_freshness/claim_policy.docs-claims-strict-v1.json"),
             )
             .unwrap(),

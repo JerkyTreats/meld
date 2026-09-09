@@ -15,7 +15,7 @@ use meld_execution::capability::CapabilityContractRevisionRef;
 use meld_world_model::belief::{BeliefFamilyRegistryStore, BranchScope};
 use meld_world_model::PerspectiveKey;
 
-use crate::capability::{OwnerBindingView, ProductCapabilityInventory};
+use crate::capability::ProductCapabilityInventory;
 use crate::config::{
     AdapterPlacement, AssignedAgentPositionV1, MerkleConfig, OperationalLimits, PhysicalBinding,
     RuntimeIsolationRequirements, StewardshipActivationV1, StewardshipAssignmentV1,
@@ -269,6 +269,7 @@ pub(crate) fn compile_product_initialization<'a>(
         ),
         &binding.package.authority_policy_id,
         &source_owners,
+        &stores.owners,
     )
     .map_err(|error| world_init_error(error.to_string()))?;
     let compilation = ProductCompilationReceiptV1::compile(
@@ -299,7 +300,7 @@ pub(crate) fn compile_product_initialization<'a>(
         declaration.principal_grant_ref.clone(),
     )?;
     let capability_inventory: ProductCapabilityInventory =
-        crate::capability::product_capability_inventory()
+        crate::capability::product_capability_inventory_with_owners(&stores.owners)
             .map_err(|error| world_init_error(error.to_string()))?;
     let selected_contracts = executable_contract_refs(&complete_contracts_for_product(
         &capability_inventory,
@@ -314,62 +315,26 @@ pub(crate) fn compile_product_initialization<'a>(
         })
         .collect::<Result<BTreeMap<_, _>, _>>()
         .map_err(|error| world_init_error(error.to_string()))?;
-    let mut capability_bindings = OwnerBindingView::new(binding.owner_binding_values());
-    let policies = compilation
-        .installed_owner_revisions
-        .iter()
-        .filter(|component| {
-            component.route.owner_domain == "docs"
-                && component.route.component_kind == "claim-policy"
-        })
-        .collect::<Vec<_>>();
-    if policies.len() > 1 {
-        return Err(world_init_error(
-            "product requires an unambiguous Docs claim policy",
-        ));
-    }
-    if let Some(component) = policies.first() {
-        let reference = &component.owner_revision;
-        if reference.registry != "docs_claim_policy" {
-            return Err(world_init_error("Docs claim policy has a foreign registry"));
-        }
-        let policy = stores
-            .claim_policy_registry
-            .resolve(&crate::docs::claim_validation::DocsClaimPolicyRevisionRef {
-                policy_id: reference.id.clone(),
-                content_identity: reference.content_hash.clone(),
-            })?
-            .ok_or_else(|| world_init_error("installed Docs claim policy is absent"))?;
-        capability_bindings =
-            crate::docs::contribution::bind_claim_policy(capability_bindings, &policy)?;
-    }
-    capability_bindings = crate::dependency_security::contribution::bind_selected_policy(
-        capability_bindings,
-        &crate::dependency_security::theory::DependencySecurityPolicyRegistry::new(
-            stores
-                .theory_db
-                .opened()
-                .ok_or_else(|| world_init_error("theory database is not open"))?
-                .clone(),
-        )
-        .map_err(world_init_error)?,
-        &compilation
-            .installed_owner_revisions
-            .iter()
-            .map(|component| component.owner_revision.clone())
-            .collect::<Vec<_>>(),
-        &binding.subject,
+    let capability_bindings = crate::runtime::owners::preparation::prepare_owner_bindings(
+        stores,
+        binding,
+        &compilation.installed_owner_revisions,
     )
-    .map_err(world_init_error)?;
+    .map_err(|error| world_init_error(error.to_string()))?;
     let activation = StewardshipActivationV1::new(
         assignment.assignment_id.clone(),
         binding.activation_bindings(),
         selected_implementations,
-        AdapterPlacement::InProcess,
+        if stores.owners.is_empty() {
+            AdapterPlacement::InProcess
+        } else {
+            AdapterPlacement::SerializedLocal
+        },
         RuntimeIsolationRequirements::default(),
         OperationalLimits::default(),
     )?;
     Ok(CompleteProductInitialization {
+        owners: &stores.owners,
         product_store: stores.pds_products.as_ref(),
         maintained_conditions: stores.maintained_condition_registry.as_ref(),
         curation_store: stores.curation_store.as_ref(),
@@ -512,10 +477,10 @@ mod tests {
             .unwrap();
         assert_eq!(
             routed.receipt.package_id,
-            crate::dependency_security::theory::PACKAGE_ID
+            meld_dependency_security_owner::dependency_security::theory::PACKAGE_ID
         );
         assert!(routed.changed);
-        crate::docs::theory::install_package(
+        meld_docs_owner::docs::theory::install_package(
             &stores,
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/docs_freshness"),
             2,

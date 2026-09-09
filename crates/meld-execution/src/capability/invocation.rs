@@ -11,7 +11,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// Successful capability invocation output for one task-owned attempt.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CapabilityInvocationResult {
     /// Artifacts emitted by this invocation attempt.
     pub emitted_artifacts: Vec<ArtifactRecord>,

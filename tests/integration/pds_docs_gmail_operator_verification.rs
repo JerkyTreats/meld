@@ -4,9 +4,9 @@ use std::process::Command;
 
 use meld::cli::{Commands, RunContext, RuntimeCommands, WorldCommands};
 use meld::config::{ConfigLoader, PhysicalBinding};
-use meld::docs::theory::DOCS_PACKAGE_ID;
 use meld::runtime::storage::ProductStorageLayout;
 use meld::runtime::theory::ResolvedStewardshipTheory;
+use meld_docs_owner::docs::theory::DOCS_PACKAGE_ID;
 use meld_events::DomainObjectRef;
 use meld_execution::task_network::store::TaskNetworkStoreFactory;
 use serde::Serialize;

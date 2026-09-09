@@ -24,12 +24,10 @@ use meld_world_model::belief::{BeliefConfigLoader, ConfiguredOutcomeMappingSet};
 use meld_world_model::strategy::{validate_strategy_theory_package, StrategyTheoryPackage};
 
 use crate::config::SelectedStewardshipPackage;
-use crate::docs::claim_validation::DocsClaimPolicy;
 use crate::error::ApiError;
 use crate::init::world::theory::{
-    authority_policy_config_path, belief_family_config_path, claim_policy_config_path,
-    curation_rule_config_path, maintained_condition_config_path, outcome_mapping_config_path,
-    strategy_theory_config_path,
+    authority_policy_config_path, belief_family_config_path, curation_rule_config_path,
+    maintained_condition_config_path, outcome_mapping_config_path, strategy_theory_config_path,
 };
 
 /// Disposition of one provisioned theory body.
@@ -157,24 +155,6 @@ pub fn provision_theory_source(
         "authority_policy",
         authority_policy_config_path(&package.authority_policy_id)?,
         authority_raw,
-    ));
-
-    let claim_raw = read_single(source_dir, "claim_policy")?;
-    let claim: DocsClaimPolicy = serde_json::from_str(&claim_raw)
-        .map_err(|error| source_error(source_dir, "claim_policy", error))?;
-    claim
-        .validate()
-        .map_err(|error| source_error(source_dir, "claim_policy", error))?;
-    if claim.policy_id != package.claim_policy_id {
-        return Err(ApiError::ConfigError(format!(
-            "theory source claim policy declares policy_id '{}' but the selection names '{}'",
-            claim.policy_id, package.claim_policy_id
-        )));
-    }
-    prepared.push((
-        "claim_policy",
-        claim_policy_config_path(&package.claim_policy_id)?,
-        claim_raw,
     ));
 
     let bodies = prepared

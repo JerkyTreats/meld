@@ -5,7 +5,6 @@ use sled::{Db, Tree};
 use thiserror::Error;
 
 use crate::config::SelectedStewardshipPackage;
-use crate::docs::claim_validation::DocsClaimPolicyRevisionRef;
 use meld_events::DomainObjectRef;
 use meld_execution::authority::{AuthorityPolicyRevision, AuthorityPolicyRevisionRef};
 use meld_execution::capability::CapabilityContractRevisionRef;
@@ -16,7 +15,6 @@ use meld_world_model::belief::{
 };
 use meld_world_model::strategy::StrategyTheoryRevision;
 
-use crate::docs::claim_validation::DocsClaimPolicyRevision;
 use crate::runtime::storage::OpenProductStores;
 use crate::theory::{
     InstalledTheoryComponentRef, PreparedActivationClosureV1, ProductCompilationReceiptV1,
@@ -45,9 +43,9 @@ pub struct TheoryInstallationReceipt {
     pub executable_contracts: Vec<CapabilityContractRevisionRef>,
     /// Exact effective-authority policy revision.
     pub authority_policy: AuthorityPolicyRevisionRef,
-    /// Exact Docs policy when the product selects that owner component.
+    /// Opaque historical owner reference retained only for receipt identity.
     #[serde(default)]
-    pub claim_policy: Option<DocsClaimPolicyRevisionRef>,
+    pub claim_policy: Option<serde_json::Value>,
     /// Sequence observed when the receipt was first installed.
     pub installed_at_seq: u64,
 }
@@ -62,7 +60,7 @@ struct ReceiptIdentity<'a> {
     strategy_theory: &'a TheoryRevisionRef,
     executable_contracts: &'a [CapabilityContractRevisionRef],
     authority_policy: &'a AuthorityPolicyRevisionRef,
-    claim_policy: &'a Option<DocsClaimPolicyRevisionRef>,
+    claim_policy: &'a Option<serde_json::Value>,
 }
 
 impl TheoryInstallationReceipt {
@@ -77,7 +75,7 @@ impl TheoryInstallationReceipt {
         strategy_theory: TheoryRevisionRef,
         mut executable_contracts: Vec<CapabilityContractRevisionRef>,
         authority_policy: AuthorityPolicyRevisionRef,
-        claim_policy: impl Into<Option<DocsClaimPolicyRevisionRef>>,
+        claim_policy: impl Into<Option<serde_json::Value>>,
         installed_at_seq: u64,
     ) -> Result<Self, TheoryReceiptError> {
         let claim_policy = claim_policy.into();
@@ -118,13 +116,6 @@ impl TheoryInstallationReceipt {
         {
             return Err(TheoryReceiptError::Invalid(
                 "receipt authority policy reference is incomplete".to_string(),
-            ));
-        }
-        if claim_policy.as_ref().is_some_and(|policy| {
-            policy.policy_id.trim().is_empty() || policy.content_identity.trim().is_empty()
-        }) {
-            return Err(TheoryReceiptError::Invalid(
-                "receipt claim policy reference is incomplete".to_string(),
             ));
         }
         let identity = ReceiptIdentity {
@@ -221,8 +212,6 @@ pub struct ResolvedStewardshipTheory {
     pub executable_contracts: Vec<CapabilityContractRevision>,
     /// Exact effective-authority policy revision.
     pub authority_policy: AuthorityPolicyRevision,
-    /// Exact Docs policy when the product selects that owner component.
-    pub claim_policy: Option<DocsClaimPolicyRevision>,
 }
 
 #[derive(Clone)]
@@ -473,17 +462,9 @@ impl ResolvedStewardshipTheory {
             )
             .map_err(owner_error)?
             .ok_or_else(|| missing("authority policy"))?;
-        let claim_policy = receipt
-            .claim_policy
-            .as_ref()
-            .map(|reference| {
-                stores
-                    .claim_policy_registry
-                    .resolve(reference)
-                    .map_err(owner_error)?
-                    .ok_or_else(|| missing("docs claim policy"))
-            })
-            .transpose()?;
+        if receipt.claim_policy.is_some() {
+            return Err(TheoryResolutionError::Inconsistent("historical compiled owner policy requires explicit external package reinstallation and preparation".into()));
+        }
         let mut families = std::collections::BTreeMap::from([(
             belief_family.family_id.clone(),
             belief_family.clone(),
@@ -529,7 +510,6 @@ impl ResolvedStewardshipTheory {
             strategy_theory,
             executable_contracts,
             authority_policy,
-            claim_policy,
         };
         resolved.validate(selection, expected_subject)?;
         Ok(resolved)
@@ -639,7 +619,7 @@ impl ResolvedStewardshipTheory {
             .resolve_template(&template_ref)
             .map_err(owner_error)?
             .ok_or_else(|| missing("installed Curation template"))?;
-        let rule = match assigned_curation_source(&template.template, &binding)
+        let rule = match assigned_curation_source(&stores.owners, &template.template, &binding)
             .map_err(TheoryResolutionError::Inconsistent)?
         {
             Some(source) => stores.curation_store.resolve_source_bound_rule(
@@ -684,11 +664,6 @@ impl ResolvedStewardshipTheory {
             || self.outcome_mapping.revision_ref() != self.receipt.outcome_mapping
             || self.strategy_theory.revision_ref() != self.receipt.strategy_theory
             || self.authority_policy.revision_ref() != self.receipt.authority_policy
-            || self
-                .claim_policy
-                .as_ref()
-                .map(|policy| policy.revision_ref())
-                != self.receipt.claim_policy
         {
             return Err(TheoryResolutionError::Inconsistent(
                 "resolved owner revision does not match its receipt reference".to_string(),
@@ -700,12 +675,6 @@ impl ResolvedStewardshipTheory {
             || self.receipt.outcome_mapping.id != selection.evidence_mapping_id
             || self.receipt.strategy_theory.id != selection.strategy_theory_id
             || self.receipt.authority_policy.policy_id != selection.authority_policy_id
-            || self
-                .receipt
-                .claim_policy
-                .as_ref()
-                .map_or("", |policy| policy.policy_id.as_str())
-                != selection.claim_policy_id
         {
             return Err(TheoryResolutionError::Inconsistent(
                 "prepared owner revisions differ from the physical stewardship selection"
@@ -809,11 +778,6 @@ fn receipt_from_components(
     let outcome_mapping = world_ref(one(route("world-model", "outcome-mapping"))?);
     let strategy_theory = world_ref(one(route("world-model", "strategy-theory"))?);
     let authority = one(route("execution", "authority-policy"))?;
-    let claim = if selection.claim_policy_id.is_empty() {
-        None
-    } else {
-        Some(one(route("docs", "claim-policy"))?)
-    };
     let mut executable_contracts = Vec::new();
     for component in components
         .iter()
@@ -851,10 +815,7 @@ fn receipt_from_components(
             policy_id: authority.id,
             content_hash: authority.content_hash,
         },
-        claim.map(|claim| DocsClaimPolicyRevisionRef {
-            policy_id: claim.id,
-            content_identity: claim.content_hash,
-        }),
+        None,
         installed_at_seq,
     )
     .map_err(|failure| TheoryResolutionError::Inconsistent(failure.to_string()))
@@ -954,29 +915,30 @@ fn owner_error(error: impl ToString) -> TheoryResolutionError {
 
 /// Composition selects an owner adapter; the owner constructs its semantic source address.
 pub(crate) fn assigned_curation_source(
+    owners: &crate::runtime::owners::catalog::OwnerCatalog,
     template: &meld_world_model::curation::CurationRuleTemplate,
     binding: &meld_world_model::curation::CurationRuleBinding,
 ) -> Result<Option<meld_world_model::curation::CurationSourceBinding>, String> {
     if template.source_owner_id == binding.subject.domain_id {
         return Ok(None);
     }
-    match template.source_owner_id.as_str() {
-        crate::docs::publication::OWNER_ID => {
-            crate::docs::publication::curation_source(binding).map(Some)
-        }
-        crate::dependency_security::publication::OWNER => {
-            crate::dependency_security::condition::curation_source(template, binding).map(Some)
-        }
-        owner => Err(format!("no assigned Curation source adapter for '{owner}'")),
-    }
+    owners
+        .curation_source(template, binding)?
+        .map(Some)
+        .ok_or_else(|| {
+            format!(
+                "no assigned Curation source adapter for '{}'",
+                template.source_owner_id
+            )
+        })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::docs::capability::published_contracts;
-    use crate::docs::claim_validation::DocsClaimPolicy;
     use crate::runtime::storage::ProductStorageLayout;
+    use meld_docs_owner::docs::capability::published_contracts;
+    use meld_docs_owner::docs::claim_validation::DocsClaimPolicy;
     use meld_lang::AuthorityPolicy;
     use meld_world_model::agent::{AgentCurationRuleConfig, AgentMaintainedCondition};
     use meld_world_model::belief::{
@@ -1170,7 +1132,7 @@ mod tests {
                 policy_id: "docs_workspace_local".to_string(),
                 content_hash: "missing-authority-policy".to_string(),
             },
-            DocsClaimPolicyRevisionRef {
+            serde_json::Value {
                 policy_id: "docs-claims-strict-v1".to_string(),
                 content_identity: "missing-policy".to_string(),
             },
@@ -1196,7 +1158,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let stores =
             OpenProductStores::open(&ProductStorageLayout::from_root(temp.path())).unwrap();
-        let package = crate::dependency_security::theory::install_package(
+        let package = meld_dependency_security_owner::dependency_security::theory::install_package(
             &stores,
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/dependency_security"),
             1,

@@ -48,6 +48,31 @@ impl PortBackedTheoryRouteHandler {
     }
 }
 
+impl PortBackedTheoryRouteHandler {
+    /// Invoke the same owner validation port used by the package router. Local
+    /// serialized owners receive body bytes before a parent-issued routing token.
+    pub fn validate_body(&self, owner_id: &str, bytes: &[u8]) -> Result<(), OwnerRouteDiagnostic> {
+        (self.validate_port)(owner_id, bytes)
+    }
+
+    /// The semantic store remains the authority for immutable revision identity.
+    pub fn install_body(
+        &self,
+        owner_id: &str,
+        bytes: &[u8],
+        seq: u64,
+    ) -> Result<TheoryRevisionRef, OwnerRouteDiagnostic> {
+        (self.install_port)(owner_id, bytes, seq)
+    }
+
+    pub fn verify_revision(
+        &self,
+        reference: &TheoryRevisionRef,
+    ) -> Result<(), OwnerRouteDiagnostic> {
+        (self.verify_port)(reference)
+    }
+}
+
 impl TheoryRouteHandler for PortBackedTheoryRouteHandler {
     fn contract(&self) -> TheoryRouteContract {
         self.contract.clone()
@@ -58,7 +83,7 @@ impl TheoryRouteHandler for PortBackedTheoryRouteHandler {
         source: &RoutedComponentSource,
         package: &PackageLinkView,
     ) -> Result<OwnerValidationToken, OwnerRouteDiagnostic> {
-        (self.validate_port)(&source.owner_component_id, &source.canonical_bytes)?;
+        self.validate_body(&source.owner_component_id, &source.canonical_bytes)?;
         Ok(OwnerValidationToken::new(
             &self.contract,
             package,
@@ -73,7 +98,7 @@ impl TheoryRouteHandler for PortBackedTheoryRouteHandler {
         validation: OwnerValidationToken,
         installed_at_seq: u64,
     ) -> Result<InstalledTheoryComponentRef, OwnerRouteDiagnostic> {
-        let owner_revision = (self.install_port)(
+        let owner_revision = self.install_body(
             &source.owner_component_id,
             validation.opaque(),
             installed_at_seq,
@@ -88,7 +113,7 @@ impl TheoryRouteHandler for PortBackedTheoryRouteHandler {
     }
 
     fn verify(&self, reference: &InstalledTheoryComponentRef) -> Result<(), OwnerRouteDiagnostic> {
-        (self.verify_port)(&reference.owner_revision)
+        self.verify_revision(&reference.owner_revision)
     }
 
     fn validate_links(

@@ -1,5 +1,8 @@
 //! Docs-owned package selection over the shared product installer.
 
+mod route;
+pub use route::{route_contract, route_handler};
+
 use crate::runtime::storage::OpenProductStores;
 use crate::theory::{PdsPackageInstallationReceiptV1, TheoryRouterError};
 use std::path::Path;
@@ -33,7 +36,9 @@ mod tests {
     use std::path::PathBuf;
 
     fn package_root() -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/docs_freshness")
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("theory/docs_freshness")
     }
 
     #[test]
@@ -44,7 +49,7 @@ mod tests {
         };
         let mapping = ConfiguredOutcomeMappingSet::new(
             serde_json::from_str(include_str!(
-                "../../theory/docs_freshness/outcome_interpretation.docs_freshness.json"
+                "../../../../theory/docs_freshness/outcome_interpretation.docs_freshness.json"
             ))
             .unwrap(),
         )

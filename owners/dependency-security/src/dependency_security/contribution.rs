@@ -62,6 +62,18 @@ pub struct DependencySecurityCapabilityContributor {
 }
 
 impl DependencySecurityCapabilityContributor {
+    pub(crate) fn capability(
+        &self,
+        id: &str,
+        bindings: &OwnerBindingView,
+    ) -> Result<SecurityCapability, CapabilityContributionDiagnostic> {
+        Factory {
+            id: id.into(),
+            publication_gate: self.publication_gate.clone(),
+        }
+        .prepare_value(bindings)
+    }
+
     pub(crate) fn observation_sources(
         &self,
         bindings: &OwnerBindingView,
@@ -384,7 +396,7 @@ mod tests {
         )
         .unwrap();
         let policy = serde_json::from_str(include_str!(
-            "../../theory/dependency_security/policy.cargo_fixture.json"
+            "../../../../theory/dependency_security/policy.cargo_fixture.json"
         ))
         .unwrap();
         let reference = registry.install(policy, 1).unwrap();

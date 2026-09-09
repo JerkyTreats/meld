@@ -282,15 +282,7 @@ fn publish_product(
         _ => None,
     }
     .ok_or_else(|| invalid("Security product identity is absent"))?;
-    let scope = OwnerPublicationScope {
-        scope_id: format!(
-            "security-scope::{}",
-            content_hash(&(&subject.subject, kind)).map_err(invalid)?
-        ),
-        branch_id: None,
-        perspective_id: None,
-        valid_at: None,
-    };
+    let scope = product_scope(&subject.subject, kind).map_err(invalid)?;
     let hydration = HydrationReference {
         owner_id: OWNER.into(),
         product_kind: kind.into(),
@@ -459,7 +451,7 @@ mod tests {
             id: ACQUIRE_ADVISORIES.into(),
             subject: subject.clone(),
             policy: serde_json::from_str(include_str!(
-                "../../theory/dependency_security/policy.cargo_fixture.json"
+                "../../../../theory/dependency_security/policy.cargo_fixture.json"
             ))
             .unwrap(),
             workspace: None,
@@ -622,4 +614,16 @@ mod tests {
             .unwrap();
         assert!(publication.recover(&foreign.replay_capability()).is_err());
     }
+}
+
+pub(crate) fn product_scope(
+    subject: &meld_events::DomainObjectRef,
+    kind: &str,
+) -> Result<OwnerPublicationScope, String> {
+    Ok(OwnerPublicationScope {
+        scope_id: format!("security-scope::{}", content_hash(&(subject, kind))?),
+        branch_id: None,
+        perspective_id: None,
+        valid_at: None,
+    })
 }

@@ -1,0 +1,29 @@
+[package]
+name = "meld-dependency-security-owner"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+meld = { path = "../.." }
+meld-events = { path = "../../crates/meld-events" }
+meld-execution = { path = "../../crates/meld-execution" }
+meld-world-model = { path = "../../crates/meld-world-model" }
+meld-lang = { path = "../../crates/meld-lang" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+blake3 = "1.5"
+sled = "0.34"
+tempfile = "3.8"
+tokio = { version = "1.0", features = ["rt", "time", "net", "macros"] }
+parking_lot = "0.12"
+async-trait = "0.1"
+walkdir = "2.4"
+chrono = "0.4"
+semver = "1.0"
+toml = "0.8"
+ureq = { version = "2.10", features = ["json"] }
+thiserror = "1.0"
+bincode = "1.3"
+hex = "0.4"

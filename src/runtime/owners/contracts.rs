@@ -42,6 +42,15 @@ pub struct OwnerImplementationOfferV1 {
     pub required_binding_ids: BTreeSet<String>,
 }
 
+/// Exact implementation selected by native capability preparation, retained on
+/// invocation and recovery alongside the complete Task payload.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerInvocationSelectionV1 {
+    pub contract_ref: CapabilityContractRevisionRef,
+    pub implementation_ref: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OwnerDescriptionV1 {
@@ -51,6 +60,43 @@ pub struct OwnerDescriptionV1 {
     pub capabilities: Vec<CapabilityContractRevision>,
     pub implementations: Vec<OwnerImplementationOfferV1>,
     pub observation_participant: Option<crate::theory::ActivationParticipantSpec>,
+}
+
+/// Package-authored callback requirements for one exact capability realization.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerCapabilityGrantV1 {
+    pub selection: OwnerInvocationSelectionV1,
+    pub publications: BTreeSet<(String, String)>,
+    pub provider_frame_types: BTreeSet<String>,
+    /// Exact retained-publication routes needed to finish prior owner work.
+    #[serde(default)]
+    pub continuation_publications: BTreeSet<(String, String, String)>,
+}
+
+/// Exact owner resources issued from installed revisions and granted physical
+/// bindings. Core fingerprints the values without interpreting policy bodies.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerPreparedBindingsV1 {
+    pub bindings: BTreeMap<String, String>,
+    pub observation_publications: BTreeSet<(String, String)>,
+    pub observation_provider_frame_types: BTreeSet<String>,
+    #[serde(default)]
+    pub retained_observation_publications: BTreeSet<(String, String, String)>,
+    pub capability_grants: Vec<OwnerCapabilityGrantV1>,
+}
+
+/// Existing native products supplied to an observation owner at preparation.
+/// Their meaning remains owned by Assignment, Curation, Authority and Graph.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerObservationPreparationV1 {
+    pub subject: meld_events::DomainObjectRef,
+    pub scope: meld_world_model::world_state::graph::contracts::OwnerPublicationScope,
+    pub session_id: String,
+    pub authority: meld_lang::AuthorityPolicyBinding,
+    pub event_routes: Vec<meld_world_model::world_state::graph::admission::GraphOwnerEventRoute>,
 }
 
 /// Only selected owner bindings cross this boundary. Core store paths and provider
@@ -65,12 +111,15 @@ pub struct OwnerRuntimePreparationV1 {
     pub bindings: BTreeMap<String, String>,
     pub installed_revisions: Vec<InstalledTheoryComponentRef>,
     pub ledger_id: meld_events::LedgerIdentity,
+    #[serde(default)]
+    pub observation: Option<OwnerObservationPreparationV1>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum OwnerCommandV1 {
     Describe,
+    CloseRevisionStore,
     OpenRevisionStore {
         state_root: PathBuf,
     },
@@ -93,6 +142,11 @@ pub enum OwnerCommandV1 {
         component: InstalledTheoryComponentRef,
         package: InstalledPackageLinkView,
     },
+    PrepareBindings {
+        subject: meld_events::DomainObjectRef,
+        bindings: BTreeMap<String, String>,
+        installed_revisions: Vec<InstalledTheoryComponentRef>,
+    },
     PrepareRuntime {
         preparation: OwnerRuntimePreparationV1,
     },
@@ -101,11 +155,13 @@ pub enum OwnerCommandV1 {
         binding: CurationRuleBinding,
     },
     RecoverInvocation {
+        selection: OwnerInvocationSelectionV1,
         runtime_init: CapabilityRuntimeInit,
         payload: CapabilityInvocationPayload,
         event_context: Option<ExecutionEventContext>,
     },
     Invoke {
+        selection: OwnerInvocationSelectionV1,
         runtime_init: CapabilityRuntimeInit,
         payload: CapabilityInvocationPayload,
         event_context: Option<ExecutionEventContext>,
@@ -130,6 +186,7 @@ pub enum OwnerCommandV1 {
     Release {
         context: ParticipantLifecycleContextV1,
     },
+    Snapshot,
     ResolvesWake {
         wake_ref: StructuralWakeRef,
     },
@@ -235,4 +292,21 @@ impl OwnerCallbackPort for NoOwnerCallbacks {
 pub fn encode_owner_result<T: Serialize>(value: T) -> OwnerResult {
     serde_json::to_value(value)
         .map_err(|error| OwnerDiagnosticV1::new("owner_product_encoding", error))
+}
+
+/// Retain the owner's terminal-versus-retryable disposition across transport.
+pub fn encode_capability_result<T: Serialize>(
+    value: Result<T, crate::error::ApiError>,
+) -> OwnerResult {
+    match value {
+        Ok(value) => encode_owner_result(value),
+        Err(error) => {
+            let code = if matches!(error, crate::error::ApiError::TerminalCapabilityFailure(_)) {
+                "terminal_capability_failure"
+            } else {
+                "owner_capability_failed"
+            };
+            Err(OwnerDiagnosticV1::new(code, error))
+        }
+    }
 }

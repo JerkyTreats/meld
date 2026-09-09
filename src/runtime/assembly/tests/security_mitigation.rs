@@ -256,9 +256,9 @@ fn materialize(
     let inventory_source = observer
         .sources
         .iter()
-        .find(|source| source.id == crate::dependency_security::capability::OBSERVE_INVENTORY)
+        .find(|source| source.id == meld_dependency_security_owner::dependency_security::capability::OBSERVE_INVENTORY)
         .unwrap();
-    let pending = crate::dependency_security::returns::pending(
+    let pending = meld_dependency_security_owner::dependency_security::returns::pending(
         inventory_source,
         &harness.authority.replay_capability(),
     )
@@ -272,7 +272,7 @@ fn materialize(
     let other_workspace = tempfile::tempdir().unwrap();
     foreign.workspace = Some(other_workspace.path().into());
     assert!(
-        crate::dependency_security::returns::pending(
+        meld_dependency_security_owner::dependency_security::returns::pending(
             &foreign,
             &harness.authority.replay_capability()
         )
@@ -345,10 +345,10 @@ pub(super) fn exercise(
             harness.binding.subject.clone(),
             vec![meld_events::DomainObjectRef::new(
                 "dependency-security",
-                crate::dependency_security::capability::ASSESSMENT,
+                meld_dependency_security_owner::dependency_security::capability::ASSESSMENT,
                 latest_security_product(
                     &records(harness),
-                    crate::dependency_security::capability::ASSESSMENT,
+                    meld_dependency_security_owner::dependency_security::capability::ASSESSMENT,
                 )
                 .1["assessment_id"]
                     .as_str()
@@ -470,7 +470,9 @@ fn latest_security_product<'a>(
 }
 
 pub(super) fn verify_trace(harness: &StewardshipHarness) {
-    use crate::dependency_security::capability::{ASSESSMENT, INVENTORY, VERIFICATION};
+    use meld_dependency_security_owner::dependency_security::capability::{
+        ASSESSMENT, INVENTORY, VERIFICATION,
+    };
     let events = records(harness);
     for kind in [
         acquisition::EVENT,
@@ -509,8 +511,9 @@ pub(super) fn verify_trace(harness: &StewardshipHarness) {
         .collect();
     assert_eq!(acknowledgments.len(), 2);
     for acknowledgment in &acknowledgments {
-        let causes: Vec<crate::dependency_security::returns::ExecutionObservationCause> =
-            serde_json::from_value(acknowledgment.data["execution_causes"].clone()).unwrap();
+        let causes: Vec<
+            meld_dependency_security_owner::dependency_security::returns::ExecutionObservationCause,
+        > = serde_json::from_value(acknowledgment.data["execution_causes"].clone()).unwrap();
         assert_eq!(causes.len(), 1);
         let cause = &causes[0];
         assert!(
@@ -558,9 +561,12 @@ pub(super) fn verify_trace(harness: &StewardshipHarness) {
     let condition_event = events
         .iter()
         .rev()
-        .find(|event| event.event_type == crate::dependency_security::condition::EVENT)
+        .find(|event| {
+            event.event_type
+                == meld_dependency_security_owner::dependency_security::condition::EVENT
+        })
         .unwrap();
-    let condition: crate::dependency_security::condition::CurrentSecurityCondition =
+    let condition: meld_dependency_security_owner::dependency_security::condition::CurrentSecurityCondition =
         serde_json::from_str(
             condition_event.data["batch"]["objects"][0]["qualifications"]["condition"]
                 .as_str()

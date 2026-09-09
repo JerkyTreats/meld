@@ -4,7 +4,8 @@ use super::*;
 use crate::runtime::contracts::WorkerTickReport;
 use crate::runtime::error::RuntimeAssemblyError;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct NativeOwnerLifecycleSnapshot {
     checkpoint_ref: String,
     installed_revision_refs: Vec<String>,
