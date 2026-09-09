@@ -1361,54 +1361,6 @@ impl EvidenceEventReplaySource for ProductEventReplayPort {
     }
 }
 
-pub(crate) struct ProductionDocsClaimJudge {
-    pub api: Arc<crate::api::ContextApi>,
-    pub config: crate::docs::capability::DocsCapabilityConfig,
-}
-
-#[async_trait]
-impl crate::docs::claim_validation::DocsClaimJudge for ProductionDocsClaimJudge {
-    async fn correspond(
-        &self,
-        request: &crate::docs::correspondence::DocsCorrespondenceRequest<'_>,
-    ) -> Result<crate::docs::correspondence::ProposedCorrespondence, crate::error::ApiError> {
-        crate::docs::claim_validation::ProviderDocsClaimJudge {
-            api: self.api.as_ref(),
-            config: &self.config,
-            event_context: None,
-        }
-        .correspond(request)
-        .await
-    }
-
-    async fn extract_source(
-        &self,
-        request: &crate::docs::source_claims::DocsSourceClaimRequest<'_>,
-    ) -> Result<crate::docs::source_claims::ProposedSourceClaims, crate::error::ApiError> {
-        crate::docs::claim_validation::ProviderDocsClaimJudge {
-            api: self.api.as_ref(),
-            config: &self.config,
-            event_context: None,
-        }
-        .extract_source(request)
-        .await
-    }
-
-    async fn assess(
-        &self,
-        request: &crate::docs::claim_validation::DocsClaimJudgmentRequest<'_>,
-    ) -> Result<Vec<crate::docs::claim_validation::ProviderClaimAssessment>, crate::error::ApiError>
-    {
-        crate::docs::claim_validation::ProviderDocsClaimJudge {
-            api: self.api.as_ref(),
-            config: &self.config,
-            event_context: None,
-        }
-        .assess(request)
-        .await
-    }
-}
-
 /// Shared composition core for production Task Network claim dispatch.
 ///
 /// Owner: root runtime composition. The port executes admitted compiled Tasks

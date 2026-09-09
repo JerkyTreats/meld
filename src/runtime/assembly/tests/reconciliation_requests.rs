@@ -24,7 +24,7 @@ fn named_requests_incept_separate_goals_and_share_native_work() {
         .write()
         .load_from_config(&config)
         .unwrap();
-    assert!(assembly.bind_production_docs_claim_judge(api));
+    assert!(assembly.bind_observation_provider(api));
     let store = &assembly.stores().agent_store;
     let command = crate::cli::RuntimeCommands::Request {
         agent_id: STEWARD_AGENT_ID.into(),
@@ -218,7 +218,7 @@ fn named_requests_incept_separate_goals_and_share_native_work() {
         .write()
         .load_from_config(&config)
         .unwrap();
-    assert!(reopened.bind_production_docs_claim_judge(api));
+    assert!(reopened.bind_observation_provider(api));
     let mut command = SupervisorStartCommand::new("docs-request-recovery", 1_000_000);
     command.registration_set = reopened.registration_set().cloned();
     let mut supervisor =

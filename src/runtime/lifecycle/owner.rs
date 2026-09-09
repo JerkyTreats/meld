@@ -88,6 +88,26 @@ pub fn verified_native_transition<T: NativeTransitionProof>(
     Ok(transition.proof_ref().to_string())
 }
 
+/// An observation participant supplies bounded work and its own lifecycle evidence.
+/// The supervisor does not inspect the owner's concrete actor or semantic state.
+pub trait NativeObservationOwner: NativeOwnerLifecycle {
+    fn tick(&mut self, budget: crate::runtime::contracts::WorkBudget) -> WorkerTickReport;
+}
+
+/// Owner-authored construction over already prepared bindings. Building remains
+/// inert; native readiness starts observation under the supervisor's lease.
+pub trait NativeObservationOwnerFactory: Send + Sync {
+    fn build(&self) -> Box<dyn NativeObservationOwner>;
+
+    /// Bind the existing provider execution port when this owner uses inference.
+    fn bind_provider(
+        &self,
+        _provider: std::sync::Arc<dyn crate::provider::ProviderCompletionPort>,
+    ) -> bool {
+        false
+    }
+}
+
 pub trait NativeOwnerLifecycle {
     fn native_snapshot(&self) -> Result<NativeOwnerLifecycleSnapshot, RuntimeAssemblyError>;
     fn native_readiness(

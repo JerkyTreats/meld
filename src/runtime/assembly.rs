@@ -70,8 +70,8 @@ use crate::runtime::contracts::{
 use crate::runtime::error::{RuntimeAssemblyError, RuntimeRegistryError};
 use crate::runtime::lifecycle::{
     owner_readiness_receipt, owner_release_receipt, owner_safe_point_receipt, owner_stop_receipt,
-    owner_wait_receipt, verified_native_transition, NativeOwnerLifecycle,
-    NativeOwnerLifecycleSnapshot,
+    owner_wait_receipt, verified_native_transition, NativeObservationOwner,
+    NativeObservationOwnerFactory, NativeOwnerLifecycle, NativeOwnerLifecycleSnapshot,
 };
 use crate::runtime::lifecycle::{
     ActivationLifecycleStore, OwnerReadinessReceiptV1, OwnerReleaseReceiptV1,
@@ -947,8 +947,7 @@ enum RuntimeSemanticHandleFactory {
 }
 
 enum RuntimeSemanticHandle {
-    DocsObservation(Box<crate::docs::runtime::DocsObservationActor>),
-    SecurityObservation(Box<crate::dependency_security::runtime::SecurityObservationActor>),
+    OwnerObservation(Box<dyn NativeObservationOwner>),
     None,
     GraphReplay(GraphReplayRuntimeHandle),
     EventAppend(EventAppendRuntimeHandle),
@@ -1620,7 +1619,8 @@ impl ProductRuntimeAssembly {
         self.capability_runtime.as_ref()
     }
 
-    pub fn bind_docs_claim_judge(
+    #[cfg(test)]
+    fn bind_docs_claim_judge(
         &self,
         judge: Arc<dyn crate::docs::claim_validation::DocsClaimJudge>,
     ) -> bool {
@@ -1636,21 +1636,21 @@ impl ProductRuntimeAssembly {
         }
     }
 
-    pub fn bind_production_docs_claim_judge(&self, api: Arc<crate::api::ContextApi>) -> bool {
-        let Some(RuntimeSemanticHandleFactory::DocsObservation(binding)) = self
-            .handle_factories
-            .get("docs.observation")
-            .map(|factory| &factory.semantic)
-        else {
-            return false;
-        };
-        let Some(config) = binding.claim_config.clone() else {
-            return false;
-        };
-        self.bind_docs_claim_judge(Arc::new(crate::runtime::ports::ProductionDocsClaimJudge {
-            api,
-            config,
-        }))
+    /// Supply the selected operational provider without choosing owner semantics.
+    pub fn bind_observation_provider(
+        &self,
+        provider: Arc<dyn crate::provider::ProviderCompletionPort>,
+    ) -> bool {
+        let mut bound = false;
+        for factory in self.handle_factories.factories.values() {
+            let owner: &dyn NativeObservationOwnerFactory = match &factory.semantic {
+                RuntimeSemanticHandleFactory::DocsObservation(binding) => binding.as_ref(),
+                RuntimeSemanticHandleFactory::SecurityObservation(binding) => binding.as_ref(),
+                _ => continue,
+            };
+            bound |= owner.bind_provider(provider.clone());
+        }
+        bound
     }
 
     /// Return whether execution routes are bound for the dispatch actor.
@@ -3162,15 +3162,11 @@ impl RuntimeSemanticHandleFactory {
     fn build_handle(&self) -> RuntimeSemanticHandle {
         match self {
             Self::SecurityObservation(binding) => {
-                RuntimeSemanticHandle::SecurityObservation(Box::new(
-                    crate::dependency_security::runtime::SecurityObservationActor::new(
-                        binding.as_ref().clone(),
-                    ),
-                ))
+                RuntimeSemanticHandle::OwnerObservation(binding.build())
             }
-            Self::DocsObservation(binding) => RuntimeSemanticHandle::DocsObservation(Box::new(
-                crate::docs::runtime::DocsObservationActor::new(binding.as_ref().clone()),
-            )),
+            Self::DocsObservation(binding) => {
+                RuntimeSemanticHandle::OwnerObservation(binding.build())
+            }
             Self::None => RuntimeSemanticHandle::None,
             Self::GraphReplay { graph_runtime } => {
                 RuntimeSemanticHandle::GraphReplay(GraphReplayRuntimeHandle {
@@ -3375,8 +3371,7 @@ impl RuntimeSemanticHandle {
     ) -> Result<OwnerReadinessReceiptV1, RuntimeAssemblyError> {
         match self {
             Self::None | Self::EventAppend(_) => Err(missing_native_lifecycle_owner()),
-            Self::DocsObservation(handle) => handle.native_readiness(context),
-            Self::SecurityObservation(handle) => handle.native_readiness(context),
+            Self::OwnerObservation(handle) => handle.native_readiness(context),
             Self::GraphReplay(handle) => handle.native_readiness(context),
             Self::BeliefAssessment(handle) => handle.native_readiness(context),
             Self::EvidenceIngestion(handle) => handle.native_readiness(context),
@@ -3391,8 +3386,7 @@ impl RuntimeSemanticHandle {
     fn tick(&mut self, budget: WorkBudget) -> Option<WorkerTickReport> {
         match self {
             Self::None => None,
-            Self::DocsObservation(handle) => Some(handle.tick(budget)),
-            Self::SecurityObservation(handle) => Some(handle.tick(budget)),
+            Self::OwnerObservation(handle) => Some(handle.tick(budget)),
             Self::GraphReplay(handle) => Some(handle.tick(budget)),
             Self::EventAppend(handle) => Some(handle.tick()),
             Self::BeliefAssessment(handle) => Some(handle.tick(budget)),
@@ -3411,8 +3405,7 @@ impl RuntimeSemanticHandle {
     ) -> Result<OwnerStopReceiptV1, RuntimeAssemblyError> {
         match self {
             Self::None | Self::EventAppend(_) => Err(missing_native_lifecycle_owner()),
-            Self::DocsObservation(handle) => handle.native_stop(context),
-            Self::SecurityObservation(handle) => handle.native_stop(context),
+            Self::OwnerObservation(handle) => handle.native_stop(context),
             Self::GraphReplay(handle) => handle.native_stop(context),
             Self::BeliefAssessment(handle) => handle.native_stop(context),
             Self::EvidenceIngestion(handle) => handle.native_stop(context),
@@ -3430,8 +3423,7 @@ impl RuntimeSemanticHandle {
     ) -> Result<OwnerSafePointReceiptV1, RuntimeAssemblyError> {
         match self {
             Self::None | Self::EventAppend(_) => Err(missing_native_lifecycle_owner()),
-            Self::DocsObservation(handle) => handle.native_safe_point(context),
-            Self::SecurityObservation(handle) => handle.native_safe_point(context),
+            Self::OwnerObservation(handle) => handle.native_safe_point(context),
             Self::GraphReplay(handle) => handle.native_safe_point(context),
             Self::BeliefAssessment(handle) => handle.native_safe_point(context),
             Self::EvidenceIngestion(handle) => handle.native_safe_point(context),
@@ -3449,8 +3441,7 @@ impl RuntimeSemanticHandle {
     ) -> Result<OwnerReleaseReceiptV1, RuntimeAssemblyError> {
         match self {
             Self::None | Self::EventAppend(_) => Err(missing_native_lifecycle_owner()),
-            Self::DocsObservation(handle) => handle.native_release(context),
-            Self::SecurityObservation(handle) => handle.native_release(context),
+            Self::OwnerObservation(handle) => handle.native_release(context),
             Self::GraphReplay(handle) => handle.native_release(context),
             Self::BeliefAssessment(handle) => handle.native_release(context),
             Self::EvidenceIngestion(handle) => handle.native_release(context),
@@ -3469,8 +3460,7 @@ impl RuntimeSemanticHandle {
     ) -> Result<OwnerWaitReceiptV1, RuntimeAssemblyError> {
         match self {
             Self::None | Self::EventAppend(_) => Err(missing_native_lifecycle_owner()),
-            Self::DocsObservation(handle) => handle.native_wait(context, report),
-            Self::SecurityObservation(handle) => handle.native_wait(context, report),
+            Self::OwnerObservation(handle) => handle.native_wait(context, report),
             Self::GraphReplay(handle) => handle.native_wait(context, report),
             Self::BeliefAssessment(handle) => handle.native_wait(context, report),
             Self::EvidenceIngestion(handle) => handle.native_wait(context, report),
@@ -3485,8 +3475,7 @@ impl RuntimeSemanticHandle {
     fn resolves_wake(&self, wake_ref: &StructuralWakeRef) -> Result<bool, RuntimeAssemblyError> {
         match self {
             Self::None | Self::EventAppend(_) => Ok(false),
-            Self::DocsObservation(handle) => handle.native_resolves_wake(wake_ref),
-            Self::SecurityObservation(handle) => handle.native_resolves_wake(wake_ref),
+            Self::OwnerObservation(handle) => handle.native_resolves_wake(wake_ref),
             Self::GraphReplay(handle) => handle.native_resolves_wake(wake_ref),
             Self::BeliefAssessment(handle) => handle.native_resolves_wake(wake_ref),
             Self::EvidenceIngestion(handle) => handle.native_resolves_wake(wake_ref),
@@ -7402,7 +7391,6 @@ mod tests {
 
     #[test]
     fn installed_docs_publishes_current_observations_before_task_admission() {
-        use crate::docs::runtime::DocsObservationActor;
         use meld_world_model::world_state::graph::contracts::{
             TraversalCutRequest, TraversalCutStatus, TraversalOwnerRequirement,
         };
@@ -7438,7 +7426,7 @@ mod tests {
         else {
             panic!("native Docs factory absent")
         };
-        let owner = DocsObservationActor::new(binding.as_ref().clone());
+        let owner = binding.as_ref().clone();
         assert!(owner.current_revision().unwrap().is_none());
         let mut supervisor = harness.start_supervisor(&assembly);
         for pass in 0..4 {
@@ -7540,7 +7528,7 @@ mod tests {
         else {
             panic!("reopened Docs factory absent")
         };
-        let owner = DocsObservationActor::new(binding.as_ref().clone());
+        let owner = binding.as_ref().clone();
         assert_eq!(owner.current_revision().unwrap(), Some(unavailable.clone()));
         harness.bind_production_routes(&reopened);
         let mut command = SupervisorStartCommand::new("docs-reopened", 2_000);
@@ -8323,7 +8311,7 @@ mod tests {
             .write()
             .load_from_config(&config)
             .unwrap();
-        assert!(assembly.bind_production_docs_claim_judge(api));
+        assert!(assembly.bind_observation_provider(api));
         let mut supervisor = harness.start_supervisor(&assembly);
         assert!(assembly
             .capability_runtime()
@@ -8681,7 +8669,7 @@ mod tests {
             .write()
             .load_from_config(&config)
             .unwrap();
-        assert!(assembly.bind_production_docs_claim_judge(api));
+        assert!(assembly.bind_observation_provider(api));
         let mut supervisor = harness.start_supervisor(&assembly);
         let RuntimeSemanticHandleFactory::AgentActor(agent) = &assembly
             .handle_factories()
@@ -9235,7 +9223,7 @@ mod tests {
             .write()
             .load_from_config(&config)
             .unwrap();
-        assert!(assembly.bind_production_docs_claim_judge(api));
+        assert!(assembly.bind_observation_provider(api));
         let mut supervisor = harness.start_supervisor(&assembly);
         for pass in 0..60 {
             supervisor.tick(1_000 + pass * 10).unwrap();
@@ -9561,11 +9549,12 @@ mod tests {
             else {
                 unreachable!()
             };
-            let revision =
-                crate::docs::runtime::DocsObservationActor::new(binding.as_ref().clone())
-                    .current_revision()
-                    .unwrap()
-                    .unwrap();
+            let revision = binding
+                .as_ref()
+                .clone()
+                .current_revision()
+                .unwrap()
+                .unwrap();
             assert!(revision.correspondence.as_ref().unwrap().complete);
             let outcome = agent.planner.assemble();
             assert!(
@@ -10006,7 +9995,6 @@ mod tests {
         use crate::docs::claim_observation::{
             test_support::FixtureJudge, ObservedClaimDisposition,
         };
-        use crate::docs::runtime::DocsObservationActor;
         let harness = StewardshipHarness::new();
         std::fs::write(
             harness._workspace.path().join("lib.rs"),
@@ -10034,7 +10022,7 @@ mod tests {
         else {
             panic!("Docs factory missing")
         };
-        let owner = DocsObservationActor::new(binding.as_ref().clone());
+        let owner = binding.as_ref().clone();
         let mut supervisor = harness.start_supervisor(&assembly);
         for pass in 0..5 {
             supervisor.tick(1_000 + pass * 10).unwrap();
@@ -10203,7 +10191,7 @@ mod tests {
         else {
             panic!("Docs factory missing")
         };
-        let owner = DocsObservationActor::new(binding.as_ref().clone());
+        let owner = binding.as_ref().clone();
         assert_eq!(owner.current_revision().unwrap(), Some(successor));
         assert_eq!(
             binding.store.revision(&assessed.revision_id).unwrap(),

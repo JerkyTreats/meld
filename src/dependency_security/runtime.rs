@@ -22,7 +22,13 @@ pub(crate) struct SecurityObservationBinding {
     pub route: meld_world_model::world_state::graph::admission::GraphOwnerEventRoute,
 }
 
-pub(crate) struct SecurityObservationActor {
+impl NativeObservationOwnerFactory for SecurityObservationBinding {
+    fn build(&self) -> Box<dyn NativeObservationOwner> {
+        Box::new(SecurityObservationActor::new(self.clone()))
+    }
+}
+
+struct SecurityObservationActor {
     binding: SecurityObservationBinding,
     binding_id: String,
     lifecycle: NativeLifecycle,
@@ -32,8 +38,14 @@ pub(crate) struct SecurityObservationActor {
     executor: Option<tokio::runtime::Runtime>,
 }
 
+impl NativeObservationOwner for SecurityObservationActor {
+    fn tick(&mut self, budget: WorkBudget) -> WorkerTickReport {
+        self.observe(budget)
+    }
+}
+
 impl SecurityObservationActor {
-    pub(crate) fn new(binding: SecurityObservationBinding) -> Self {
+    fn new(binding: SecurityObservationBinding) -> Self {
         let source_refs: Vec<_> = binding
             .sources
             .iter()
@@ -95,7 +107,7 @@ impl SecurityObservationActor {
         StructuralWakeRef::PassiveSubscription(format!("security-source-poll::{}", self.binding_id))
     }
 
-    pub(crate) fn tick(&mut self, budget: WorkBudget) -> WorkerTickReport {
+    fn observe(&mut self, budget: WorkBudget) -> WorkerTickReport {
         let input = self.checkpoint().unwrap_or(0);
         let mut report = WorkerTickReport {
             actor_id: RUNTIME_ID.into(),

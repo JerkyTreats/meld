@@ -32,26 +32,114 @@ pub(crate) struct DocsObservationBinding {
     pub route: meld_world_model::world_state::graph::admission::GraphOwnerEventRoute,
 }
 
-pub(crate) struct DocsObservationActor {
+impl DocsObservationBinding {
+    fn identity(&self) -> String {
+        identity(
+            "docs-binding",
+            &(
+                &self.root,
+                &self.subject,
+                &self.scope,
+                &self.route,
+                self.events.ledger_identity(),
+            ),
+        )
+        .expect("serializable Docs binding")
+    }
+
+    /// Read the current owner revision without constructing an observation actor.
+    pub(crate) fn current_revision(
+        &self,
+    ) -> Result<Option<super::publication::DocsObservationRevision>, String> {
+        self.store
+            .head(&self.identity())?
+            .map(|head| {
+                self.store.revision(&head.revision_id).and_then(|revision| {
+                    revision.ok_or_else(|| "Docs head revision is absent".into())
+                })
+            })
+            .transpose()
+    }
+}
+
+impl NativeObservationOwnerFactory for DocsObservationBinding {
+    fn build(&self) -> Box<dyn NativeObservationOwner> {
+        Box::new(DocsObservationActor::new(self.clone()))
+    }
+
+    fn bind_provider(&self, provider: Arc<dyn crate::provider::ProviderCompletionPort>) -> bool {
+        let Some(config) = self.claim_config.clone() else {
+            return false;
+        };
+        self.claim_judge
+            .bind(Arc::new(ObservationClaimJudge { provider, config }))
+    }
+}
+
+struct ObservationClaimJudge {
+    provider: Arc<dyn crate::provider::ProviderCompletionPort>,
+    config: crate::docs::capability::DocsCapabilityConfig,
+}
+
+#[async_trait::async_trait]
+impl crate::docs::claim_validation::DocsClaimJudge for ObservationClaimJudge {
+    async fn correspond(
+        &self,
+        request: &crate::docs::correspondence::DocsCorrespondenceRequest<'_>,
+    ) -> Result<crate::docs::correspondence::ProposedCorrespondence, crate::error::ApiError> {
+        crate::docs::claim_validation::ProviderDocsClaimJudge {
+            api: self.provider.as_ref(),
+            config: &self.config,
+            event_context: None,
+        }
+        .correspond(request)
+        .await
+    }
+
+    async fn extract_source(
+        &self,
+        request: &crate::docs::source_claims::DocsSourceClaimRequest<'_>,
+    ) -> Result<crate::docs::source_claims::ProposedSourceClaims, crate::error::ApiError> {
+        crate::docs::claim_validation::ProviderDocsClaimJudge {
+            api: self.provider.as_ref(),
+            config: &self.config,
+            event_context: None,
+        }
+        .extract_source(request)
+        .await
+    }
+
+    async fn assess(
+        &self,
+        request: &crate::docs::claim_validation::DocsClaimJudgmentRequest<'_>,
+    ) -> Result<Vec<crate::docs::claim_validation::ProviderClaimAssessment>, crate::error::ApiError>
+    {
+        crate::docs::claim_validation::ProviderDocsClaimJudge {
+            api: self.provider.as_ref(),
+            config: &self.config,
+            event_context: None,
+        }
+        .assess(request)
+        .await
+    }
+}
+
+struct DocsObservationActor {
     binding: DocsObservationBinding,
     binding_id: String,
     lifecycle: NativeLifecycle,
     running: bool,
 }
 
+impl NativeObservationOwner for DocsObservationActor {
+    fn tick(&mut self, budget: WorkBudget) -> WorkerTickReport {
+        self.observe(budget)
+    }
+}
+
 impl DocsObservationActor {
-    pub(crate) fn new(binding: DocsObservationBinding) -> Self {
-        let binding_id = identity(
-            "docs-binding",
-            &(
-                &binding.root,
-                &binding.subject,
-                &binding.scope,
-                &binding.route,
-                binding.events.ledger_identity(),
-            ),
-        )
-        .expect("serializable Docs binding");
+    fn new(binding: DocsObservationBinding) -> Self {
+        let binding_id = binding.identity();
         Self {
             binding,
             binding_id,
@@ -60,7 +148,7 @@ impl DocsObservationActor {
         }
     }
 
-    pub(crate) fn tick(&mut self, budget: WorkBudget) -> WorkerTickReport {
+    fn observe(&mut self, budget: WorkBudget) -> WorkerTickReport {
         let input = self.checkpoint().unwrap_or(0);
         let mut report = WorkerTickReport {
             actor_id: RUNTIME_ID.into(),
@@ -468,21 +556,10 @@ impl DocsObservationActor {
         Ok((true, source_error))
     }
 
-    pub(crate) fn current_revision(
+    fn current_revision(
         &self,
     ) -> Result<Option<super::publication::DocsObservationRevision>, String> {
-        self.binding
-            .store
-            .head(&self.binding_id)?
-            .map(|head| {
-                self.binding
-                    .store
-                    .revision(&head.revision_id)
-                    .and_then(|revision| {
-                        revision.ok_or_else(|| "Docs head revision is absent".into())
-                    })
-            })
-            .transpose()
+        self.binding.current_revision()
     }
 
     fn checkpoint(&self) -> Result<u64, String> {
