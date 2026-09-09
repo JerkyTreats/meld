@@ -638,6 +638,16 @@ External Docs and Security hosting tests pass. The Docs fixture changes the auth
 
 If applied, this commit makes installed package topology drive ordinary product preparation and removes root-authored product role selection. Newly prepared products must supply a topology component. Assignment scoping, retained-state closure and final integrated proof remain required before the user-directed R4 gate.
 
+### R4 Assignment Scope Checkpoint
+
+Prepared heads now select an explicit stable assignment scope derived from product, principal, subject and assigned Agents. Head validation resolves the retained exact compilation rather than requiring the latest product head. Owner state, observation scope, native Task sessions and networks use the same stable scope. Independent native supervisor stores qualify the participant role namespace by assignment. `load_assignment` shares the host's core stores, Event authority and Graph instance. CLI `--assignment` permits explicit selection among declarations addressing the same workspace.
+
+The external Docs proof installs a changed claim-policy revision for a second Agent addressing the same subject and workspace. Both exact preparations reopen together, start native supervisors and publish distinct observation streams through one Event authority. Their native shutdowns pass. A nonempty legacy owner tree produces `owner_history_incompatible`, preserves its opaque bytes and prevents replacement activation. Legacy unscoped prepared heads also refuse silent state reset. Whole-runtime isolation, unsupported concurrency and per-activation budget overrides fail preparation explicitly; the existing native supervisor budget and serialized owner connection remain the supported execution contract.
+
+Three external-host tests and three ordinary startup integration cases pass on this checkpoint. Full root and owner unit-test migration remains open and the all-target build is not yet clear. Exact retained executable replacement, final unchanged-core executable and Qwen evidence still require completion. No whole-R4 acceptance or push is claimed.
+
+If applied, this commit scopes prepared products and external owner state independently of workspace ownership and removes latest-compilation substitution from prepared-head resolution. The owner wire preparation now requires assignment scope. Existing unscoped history needs explicit migration; it is not automatically reset.
+
 ## Evidence Baseline And Current Validation Status
 
 The prior audit's tracked source inventory contained 618 Rust files and 213,645 lines including tests. No tracked `mod.rs` files were found. The worktree was clean at the baseline. The implementation contains real native owner participation, durable Agent progression, complete-Task admission, shared operational work, and exact package receipts. Those are retained foundations, not candidates for wholesale replacement.

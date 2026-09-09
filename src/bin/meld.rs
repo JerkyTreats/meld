@@ -74,10 +74,11 @@ fn main() {
     }
 
     // Create CLI context
-    let context = match RunContext::with_runtime_enablement(
+    let context = match RunContext::with_assignment(
         cli.workspace.clone(),
         cli.config.clone(),
         &cli.enable_runtime,
+        cli.assignment.as_deref(),
     ) {
         Ok(ctx) => {
             info!("CLI context initialized");

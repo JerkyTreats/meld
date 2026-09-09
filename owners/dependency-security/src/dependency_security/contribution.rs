@@ -18,6 +18,7 @@ pub const LIMITS: &str = "dependency-security.limits";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct PolicyBinding {
+    assignment_scope_id: String,
     revision: DependencySecurityPolicyRevision,
     subject: DomainObjectRef,
 }
@@ -28,6 +29,7 @@ pub fn bind_selected_policy(
     registry: &DependencySecurityPolicyRegistry,
     references: &[crate::theory::TheoryRevisionRef],
     subject: &DomainObjectRef,
+    assignment_scope_id: &str,
 ) -> Result<OwnerBindingView, String> {
     if bindings.contains(POLICY) {
         return Err("Security policy must be issued from the selected owner revision, not supplied as a physical binding".into());
@@ -49,6 +51,7 @@ pub fn bind_selected_policy(
     }
     subject.validate().map_err(|error| error.to_string())?;
     let body = serde_json::to_string(&PolicyBinding {
+        assignment_scope_id: assignment_scope_id.into(),
         revision,
         subject: subject.clone(),
     })
@@ -198,8 +201,10 @@ impl Factory {
             None
         };
         // These identify Security-owned captures, not fabricated workspace objects.
-        let subject_id = content_hash(&policy.subject).map_err(diagnostic)?;
+        let subject_id =
+            content_hash(&(&policy.subject, &policy.assignment_scope_id)).map_err(diagnostic)?;
         let subject = DependencySecuritySubjectV1 {
+            assignment_scope_id: policy.assignment_scope_id.clone(),
             subject: policy.subject.clone(),
             ecosystem: PackageEcosystem::Cargo,
             inventory_scope: InventoryScopeV1 {
@@ -434,6 +439,7 @@ mod tests {
             &registry,
             std::slice::from_ref(&reference),
             &DomainObjectRef::new("workspace_fs", "node", "repo").unwrap(),
+            "fixture-assignment",
         )
         .is_err());
         let bindings = bind_selected_policy(
@@ -441,6 +447,7 @@ mod tests {
             &registry,
             &[reference],
             &DomainObjectRef::new("workspace_fs", "node", "repo").unwrap(),
+            "fixture-assignment",
         )
         .unwrap();
         let closure = inventory.prepare(request, &bindings).unwrap();

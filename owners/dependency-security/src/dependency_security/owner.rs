@@ -30,6 +30,7 @@ impl SecurityPackageOwner {
     pub fn description() -> OwnerDescriptionV1 {
         let contributor = DependencySecurityCapabilityContributor::default();
         OwnerDescriptionV1 {
+            incompatible_legacy_trees: ["dependency_security_policy_revisions_v1".into()].into(),
             protocol_version: OWNER_PROTOCOL_VERSION,
             owner_id: super::publication::OWNER.into(),
             routes: vec![super::theory::route_contract()],
@@ -60,6 +61,7 @@ impl SecurityPackageOwner {
     }
     fn prepare_bindings(
         &self,
+        assignment_scope_id: String,
         subject: meld_events::DomainObjectRef,
         bindings: std::collections::BTreeMap<String, String>,
         revisions: Vec<crate::theory::InstalledTheoryComponentRef>,
@@ -74,6 +76,7 @@ impl SecurityPackageOwner {
                 .map(|c| c.owner_revision.clone())
                 .collect::<Vec<_>>(),
             &subject,
+            &assignment_scope_id,
         )
         .map_err(failure)?;
         let capability = self
@@ -82,6 +85,7 @@ impl SecurityPackageOwner {
             .map_err(failure)?;
         let condition_scope = super::condition::scope(
             &subject,
+            &assignment_scope_id,
             &capability
                 .policy
                 .revision_ref()
@@ -115,7 +119,7 @@ impl SecurityPackageOwner {
             retained.insert((
                 "dependency-security-observation".into(),
                 super::publication::EVENT.into(),
-                super::publication::product_scope(&subject, kind)
+                super::publication::product_scope(&capability.subject, kind)
                     .map_err(failure)?
                     .scope_id,
             ));
@@ -143,7 +147,7 @@ impl SecurityPackageOwner {
                         ),
                         (
                             super::publication::EVENT.into(),
-                            super::publication::product_scope(&subject, kind)
+                            super::publication::product_scope(&capability.subject, kind)
                                 .map_err(failure)?
                                 .scope_id,
                         ),
@@ -297,10 +301,11 @@ impl PackageOwner for SecurityPackageOwner {
                 command,
             ),
             PrepareBindings {
+                assignment_scope_id,
                 subject,
                 bindings,
                 installed_revisions,
-            } => self.prepare_bindings(subject, bindings, installed_revisions),
+            } => self.prepare_bindings(assignment_scope_id, subject, bindings, installed_revisions),
             PrepareRuntime { preparation } => self.prepare_runtime(preparation, callbacks),
             ResolveCurationSource { template, binding } => encode_owner_result(
                 super::condition::curation_source(&template, &binding).map_err(failure)?,

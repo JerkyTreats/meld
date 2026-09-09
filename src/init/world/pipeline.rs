@@ -442,7 +442,7 @@ impl<'a> WorldInitPipeline<'a> {
                     agent_id: assigned.agent_id.clone(),
                     subject: product.assignment.subject.clone(),
                     scope: meld_world_model::world_state::graph::contracts::OwnerPublicationScope {
-                        scope_id: product.assignment.subject.object_id.clone(),
+                        scope_id: product.assignment.scope_id(&product.declaration.product_id),
                         branch_id: Some(branch_scope.branch_id.clone()),
                         perspective_id: Some(perspective.perspective_id.clone()),
                         valid_at: None,
@@ -616,7 +616,10 @@ impl<'a> WorldInitPipeline<'a> {
             .collect();
         let prior = product
             .product_store
-            .prepared_head(&product.declaration.product_id)
+            .prepared_head(
+                &product.declaration.product_id,
+                &product.assignment.scope_id(&product.declaration.product_id),
+            )
             .map_err(|error| WorldInitError::Activation(error.to_string()))?;
         let effective_authority_inputs = EffectiveAuthorityInputRefs {
             requested_authority_ref: product.assignment.requested_authority_ref.clone(),

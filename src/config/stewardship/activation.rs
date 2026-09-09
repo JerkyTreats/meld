@@ -139,6 +139,19 @@ impl StewardshipActivationV1 {
         })
     }
 
+    /// Reject whole-runtime guarantees that this local host cannot provide.
+    pub fn validate_host_requirements(&self) -> Result<(), ApiError> {
+        if self.isolation_requirements.network_denied
+            || self.isolation_requirements.separate_process
+        {
+            return Err(ApiError::ConfigError("this host provides separate executable owners, not whole-runtime process or network isolation".into()));
+        }
+        if self.operational_limits.max_in_flight > 1 || self.operational_limits.step_budget != 0 {
+            return Err(ApiError::ConfigError("this host serializes each owner and uses the native supervisor work budget; declared concurrency or per-activation budget overrides are unsupported".into()));
+        }
+        Ok(())
+    }
+
     pub fn verify_identity(&self) -> Result<(), ApiError> {
         let selected = self
             .selected_implementations

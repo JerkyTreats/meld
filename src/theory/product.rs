@@ -781,7 +781,8 @@ impl PdsProductStore {
         )?;
         put_immutable(&self.prepared_closures, &closure.prepared_id, closure)?;
         let product_id = declaration.product_id;
-        let current = self.prepared_head(&product_id)?;
+        let scope_id = assignment.scope_id(&product_id);
+        let current = self.prepared_head(&product_id, &scope_id)?;
         if current.as_ref().map(|head| head.prepared_id.as_str())
             == Some(closure.prepared_id.as_str())
         {
@@ -807,7 +808,7 @@ impl PdsProductStore {
             .map_err(|failure| error("product_storage", failure.to_string()))?;
         self.prepared_heads
             .compare_and_swap(
-                product_id.as_bytes(),
+                scope_id.as_bytes(),
                 current_bytes.as_deref(),
                 Some(next_bytes.as_slice()),
             )
@@ -827,8 +828,18 @@ impl PdsProductStore {
     pub fn prepared_head(
         &self,
         product_id: &str,
+        scope_id: &str,
     ) -> Result<Option<PreparedProductHeadV1>, TheoryRouterError> {
-        let head: Option<PreparedProductHeadV1> = get_immutable(&self.prepared_heads, product_id)?;
+        let head: Option<PreparedProductHeadV1> = get_immutable(&self.prepared_heads, scope_id)?;
+        if head.is_none()
+            && self
+                .prepared_heads
+                .contains_key(product_id)
+                .map_err(|failure| error("product_storage", failure.to_string()))?
+        {
+            return Err(error("legacy_assignment_history_incompatible", "unscoped prepared history requires an explicit owner migration; refusing to reset assignment state"));
+        }
+
         if let Some(head) = &head {
             if head.product_id != product_id
                 || head.assignment_id.trim().is_empty()
@@ -841,6 +852,15 @@ impl PdsProductStore {
                 ));
             }
             self.validate_stored_prepared_head(head)?;
+            let assignment = self
+                .assignment(&head.assignment_id)?
+                .ok_or_else(|| error("product_storage_corrupt", "prepared assignment absent"))?;
+            if assignment.scope_id(product_id) != scope_id {
+                return Err(error(
+                    "product_storage_corrupt",
+                    "prepared head belongs to another assignment scope",
+                ));
+            }
         }
         Ok(head)
     }
@@ -883,19 +903,10 @@ impl PdsProductStore {
                     "prepared assignment cites a missing product compilation",
                 )
             })?;
-        let compilation_head = self.head(&head.product_id)?.ok_or_else(|| {
-            error(
-                "product_storage_corrupt",
-                "prepared product has no current compilation head",
-            )
-        })?;
-        if declaration.product_id != head.product_id
-            || compilation_head.product_revision_id != declaration.product_revision_id
-            || compilation_head.compilation_receipt_id != compilation.compilation_receipt_id
-        {
+        if declaration.product_id != head.product_id {
             return Err(error(
                 "product_storage_corrupt",
-                "prepared head does not belong to the current product compilation",
+                "prepared declaration belongs to another product",
             ));
         }
         let topology: ProductAgentTopologyReceiptV1 =

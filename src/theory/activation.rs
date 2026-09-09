@@ -198,6 +198,9 @@ impl PreparedActivationClosureV1 {
         activation
             .verify_identity()
             .map_err(|failure| error("activation_invalid", failure.to_string()))?;
+        activation
+            .validate_host_requirements()
+            .map_err(|failure| error("activation_requirements_unsupported", failure.to_string()))?;
         participant_plan.verify_identity()?;
         if activation.assignment_id != assignment.assignment_id {
             return Err(error(

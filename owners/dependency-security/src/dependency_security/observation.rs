@@ -527,6 +527,7 @@ pub(super) mod tests {
         AdvisoryKnowledgeSnapshotV1,
     ) {
         let subject = DependencySecuritySubjectV1 {
+            assignment_scope_id: "fixture-assignment".into(),
             subject: DomainObjectRef::new("workspace_fs", "node", "repo").unwrap(),
             ecosystem: PackageEcosystem::Cargo,
             inventory_scope: InventoryScopeV1 {

@@ -21,6 +21,10 @@ pub struct Cli {
     #[arg(long)]
     pub config: Option<PathBuf>,
 
+    /// Named stewardship assignment to run when declarations share a target.
+    #[arg(long)]
+    pub assignment: Option<String>,
+
     /// Enable a runtime that is disabled by default, such as
     /// execution.task_dispatch. Repeatable.
     #[arg(long = "enable-runtime", value_name = "RUNTIME_ID")]

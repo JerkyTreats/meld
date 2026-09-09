@@ -121,6 +121,7 @@ mod tests {
     use meld_events::DomainObjectRef;
     fn subject() -> DependencySecuritySubjectV1 {
         DependencySecuritySubjectV1 {
+            assignment_scope_id: "fixture-assignment".into(),
             subject: DomainObjectRef::new("workspace_fs", "node", "repo").unwrap(),
             ecosystem: PackageEcosystem::Cargo,
             inventory_scope: InventoryScopeV1 {

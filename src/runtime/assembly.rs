@@ -380,8 +380,8 @@ impl StewardshipActorBindings {
             perspective: PerspectiveKey::new("default", "default")
                 .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?,
             branch_scope: BranchScope::main(),
-            network_id: format!("stewardship.{expression}"),
-            session_id: format!("stewardship::{expression}"),
+            network_id: format!("stewardship.{}", binding.assignment_scope_id()),
+            session_id: format!("stewardship::{}", binding.assignment_scope_id()),
             expression,
         })
     }
@@ -519,9 +519,12 @@ fn hydrate_prepared_stewardship_theory(
             &subject,
             closure,
         ),
-        None => {
-            ResolvedStewardshipTheory::resolve_prepared_product(stores, &binding.package, &subject)
-        }
+        None => ResolvedStewardshipTheory::resolve_prepared_product(
+            stores,
+            &binding.package,
+            &subject,
+            &binding.assignment_scope_id(),
+        ),
     };
     let resolved = match resolution {
         Ok(resolved) => Arc::new(resolved),
@@ -1288,6 +1291,34 @@ impl ProductRuntimeAssembly {
         event_authority: Arc<EventAuthority>,
         stewardship: Option<StewardshipComposition>,
     ) -> Result<Self, RuntimeAssemblyError> {
+        Self::load_composed_shared(config, event_authority, stewardship, None)
+    }
+
+    /// Compose another assignment over the same stores, Graph and Event authority.
+    pub fn load_assignment(
+        &self,
+        config: ProductRuntimeConfig,
+        binding: PhysicalBinding,
+    ) -> Result<Self, RuntimeAssemblyError> {
+        if config.product_root != self.layout.root || binding.storage_root != self.layout.root {
+            return Err(RuntimeAssemblyError::Config(
+                "assignment must use this host's product storage".into(),
+            ));
+        }
+        Self::load_composed_shared(
+            config,
+            self.event_authority.clone(),
+            Some(StewardshipComposition { binding }),
+            Some(self),
+        )
+    }
+
+    fn load_composed_shared(
+        config: ProductRuntimeConfig,
+        event_authority: Arc<EventAuthority>,
+        stewardship: Option<StewardshipComposition>,
+        shared: Option<&Self>,
+    ) -> Result<Self, RuntimeAssemblyError> {
         if config.product_root.as_os_str().is_empty() {
             return Err(RuntimeAssemblyError::Config(
                 "product root must not be empty".to_string(),
@@ -1342,12 +1373,26 @@ impl ProductRuntimeAssembly {
             scope.theory = true;
         }
 
-        let mut stores = OpenProductStores::open_scoped(&layout, &scope)?;
+        let mut stores = match shared {
+            Some(host) => host.stores.as_ref().clone(),
+            None => OpenProductStores::open_scoped(&layout, &scope)?,
+        };
+        owners
+            .check_legacy_state(&stores)
+            .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?;
         stores.owners = owners;
         let stores = Arc::new(stores);
-        let supervisor_store_path = config
-            .supervisor_store_path
-            .unwrap_or_else(|| layout.root.join("supervisor.sled"));
+        let supervisor_store_path =
+            config
+                .supervisor_store_path
+                .unwrap_or_else(|| match &physical_binding {
+                    Some(binding) => layout
+                        .root
+                        .join("supervisors")
+                        .join(binding.assignment_scope_id())
+                        .join("supervisor.sled"),
+                    None => layout.root.join("supervisor.sled"),
+                });
         let fallback_desired_runtime_state = desired_runtime_state(
             &registry,
             config.enabled_runtime_ids.clone(),
@@ -1361,18 +1406,21 @@ impl ProductRuntimeAssembly {
             event_authority.as_ref(),
             provider,
         )?;
-        let graph_runtime = match stores.traversal_store.opened() {
-            Some(traversal_store) => Some(Arc::new(
-                GraphRuntime::from_ports(
-                    Arc::new(ports.event_replay().clone()),
-                    Arc::new(ports.graph_cursor().clone()),
-                    Arc::clone(traversal_store),
-                )
-                .map_err(|error| {
-                    RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
-                })?,
-            )),
-            None => None,
+        let graph_runtime = match shared {
+            Some(host) => host.graph_runtime.clone(),
+            None => match stores.traversal_store.opened() {
+                Some(traversal_store) => Some(Arc::new(
+                    GraphRuntime::from_ports(
+                        Arc::new(ports.event_replay().clone()),
+                        Arc::new(ports.graph_cursor().clone()),
+                        Arc::clone(traversal_store),
+                    )
+                    .map_err(|error| {
+                        RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
+                    })?,
+                )),
+                None => None,
+            },
         };
 
         let mut diagnostics = Vec::new();

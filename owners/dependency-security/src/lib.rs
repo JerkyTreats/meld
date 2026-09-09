@@ -5,3 +5,6 @@ pub use meld::{
     theory,
 };
 pub mod dependency_security;
+
+#[cfg(test)]
+pub use meld::{agent, api, concurrency, heads, prompt_context, store};

@@ -53,12 +53,12 @@ pub fn prepare_owner_bindings(
         &OwnerObservationPreparationV1 {
             subject: binding.subject.clone(),
             scope: meld_world_model::world_state::graph::contracts::OwnerPublicationScope {
-                scope_id: binding.subject.object_id.clone(),
+                scope_id: binding.assignment_scope_id(),
                 branch_id: Some("main".into()),
                 perspective_id: Some("default".into()),
                 valid_at: None,
             },
-            session_id: format!("stewardship::{}", binding.package.expression),
+            session_id: format!("stewardship::{}", binding.assignment_scope_id()),
             authority,
             event_routes,
         },

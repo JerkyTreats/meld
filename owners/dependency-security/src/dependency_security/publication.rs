@@ -282,7 +282,7 @@ fn publish_product(
         _ => None,
     }
     .ok_or_else(|| invalid("Security product identity is absent"))?;
-    let scope = product_scope(&subject.subject, kind).map_err(invalid)?;
+    let scope = product_scope(subject, kind).map_err(invalid)?;
     let hydration = HydrationReference {
         owner_id: OWNER.into(),
         product_kind: kind.into(),
@@ -435,6 +435,7 @@ mod tests {
     fn interrupted_publication_reopens_exact_receipt_without_source_reacquisition() {
         let root = tempfile::tempdir().unwrap();
         let subject = DependencySecuritySubjectV1 {
+            assignment_scope_id: "fixture-assignment".into(),
             subject: DomainObjectRef::new("workspace_fs", "node", "repo").unwrap(),
             ecosystem: PackageEcosystem::Cargo,
             inventory_scope: InventoryScopeV1 {
@@ -617,7 +618,7 @@ mod tests {
 }
 
 pub(crate) fn product_scope(
-    subject: &meld_events::DomainObjectRef,
+    subject: &DependencySecuritySubjectV1,
     kind: &str,
 ) -> Result<OwnerPublicationScope, String> {
     Ok(OwnerPublicationScope {

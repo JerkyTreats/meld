@@ -18,6 +18,7 @@ pub struct InventoryScopeV1 {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DependencySecuritySubjectV1 {
+    pub assignment_scope_id: String,
     pub subject: DomainObjectRef,
     pub ecosystem: PackageEcosystem,
     pub inventory_scope: InventoryScopeV1,

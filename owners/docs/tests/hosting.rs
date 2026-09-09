@@ -87,6 +87,7 @@ fn docs_package_installs_observes_invokes_and_reopens_through_native_ports() {
     let subject = meld_events::DomainObjectRef::new("workspace_fs", "node", "docs").unwrap();
     let resources = owner
         .prepare_bindings(
+            "docs".into(),
             subject.clone(),
             BTreeMap::from([
                 ("workspace".into(), workspace.path().display().to_string()),
@@ -336,7 +337,12 @@ fn ordinary_initialization_prepares_external_docs() {
     );
     let open = || {
         ProductRuntimeAssembly::load_composed(
-            ProductRuntimeConfig::for_product_root(binding.storage_root.clone()),
+            {
+                let mut config =
+                    ProductRuntimeConfig::for_product_root(binding.storage_root.clone());
+                config.provider.provider_available = true;
+                config
+            },
             authority.clone(),
             Some(StewardshipComposition {
                 binding: binding.clone(),
@@ -393,7 +399,7 @@ fn ordinary_initialization_prepares_external_docs() {
     let head = assembly
         .stores()
         .pds_products
-        .prepared_head(&binding.package.expression)
+        .prepared_head(&binding.package.expression, &binding.assignment_scope_id())
         .unwrap()
         .unwrap();
     let prepared = assembly
@@ -417,6 +423,76 @@ fn ordinary_initialization_prepares_external_docs() {
         "Keep the authored documentation contract current."
     );
 
+    let policy_path = package.join("claim_policy.docs-claims-strict-v1.json");
+    let mut policy: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&policy_path).unwrap()).unwrap();
+    policy["minimum_claim_confidence"] = serde_json::json!(0.81);
+    let policy_bytes = serde_json::to_vec(&policy).unwrap();
+    std::fs::write(&policy_path, &policy_bytes).unwrap();
+    let mut manifest: PdsPackageManifestV1 =
+        serde_json::from_slice(&std::fs::read(package.join("pds-package.json")).unwrap()).unwrap();
+    manifest.package_version = "1.0.1".into();
+    let component = manifest
+        .components
+        .iter_mut()
+        .find(|component| component.route.owner_domain == "docs")
+        .unwrap();
+    if let ComponentContentRef::RelativeFile { content_hash, .. } = &mut component.content {
+        *content_hash = blake3::hash(&policy_bytes).to_hex().to_string();
+    }
+    std::fs::write(
+        package.join("pds-package.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    let mut second_config = config.clone();
+    second_config
+        .stewardship
+        .declarations
+        .get_mut("docs")
+        .unwrap()
+        .agent_id = "second-docs-agent".into();
+    let second_binding = PhysicalBinding::resolve(&second_config).unwrap();
+    let second = assembly
+        .load_assignment(
+            {
+                let mut config =
+                    ProductRuntimeConfig::for_product_root(binding.storage_root.clone());
+                config.provider.provider_available = true;
+                config
+            },
+            second_binding.clone(),
+        )
+        .unwrap();
+    meld::init::world::tooling::run_world_init(
+        &second,
+        &second_config,
+        workspace.path(),
+        &[],
+        Some(&package),
+        "second-init",
+    )
+    .unwrap();
+    let second_head = second
+        .stores()
+        .pds_products
+        .prepared_head(
+            &binding.package.expression,
+            &second_binding.assignment_scope_id(),
+        )
+        .unwrap()
+        .unwrap();
+    assert_ne!(head.assignment_id, second_head.assignment_id);
+    assert_eq!(
+        assembly
+            .stores()
+            .pds_products
+            .prepared_head(&binding.package.expression, &binding.assignment_scope_id())
+            .unwrap()
+            .unwrap(),
+        head
+    );
+    drop(second);
     drop(assembly);
     let reopened = open();
     assert!(
@@ -428,4 +504,105 @@ fn ordinary_initialization_prepares_external_docs() {
         .handle_factories()
         .get("docs.observation")
         .is_some());
+    let second = reopened
+        .load_assignment(
+            {
+                let mut config =
+                    ProductRuntimeConfig::for_product_root(binding.storage_root.clone());
+                config.provider.provider_available = true;
+                config
+            },
+            second_binding,
+        )
+        .unwrap();
+    assert!(Arc::ptr_eq(
+        &reopened.graph_runtime(),
+        &second.graph_runtime()
+    ));
+    assert_ne!(
+        reopened.supervisor_store().path(),
+        second.supervisor_store().path()
+    );
+    use meld::runtime::assembly::DispatchRouteBindings;
+    use meld::runtime::ports::ProductionDispatchRouteContext;
+    let provider = Arc::new(api(state.path()));
+    provider
+        .bind_event_append(authority.append_capability())
+        .unwrap();
+    for assembly in [&reopened, &second] {
+        let seed = assembly.dispatch_route_seed().unwrap();
+        let capabilities = assembly.capability_runtime().unwrap().clone();
+        assembly.bind_dispatch_routes(DispatchRouteBindings::production(
+            ProductionDispatchRouteContext {
+                api: provider.clone(),
+                session_id: Some(seed.session_id.clone()),
+                catalog: capabilities.catalog,
+                registry: capabilities.registry,
+            },
+        ));
+        assembly.bind_owner_provider(provider.clone());
+    }
+    use meld::runtime::supervisor::{RuntimeSupervisor, SupervisorStartCommand};
+    let mut first_supervisor = RuntimeSupervisor::start(
+        reopened.supervisor_startup_package(),
+        SupervisorStartCommand::new("first-assignment", 100),
+    )
+    .unwrap();
+    let mut second_supervisor = RuntimeSupervisor::start(
+        second.supervisor_startup_package(),
+        SupervisorStartCommand::new("second-assignment", 100),
+    )
+    .unwrap();
+    first_supervisor.tick(101).unwrap();
+    second_supervisor.tick(102).unwrap();
+    let observed = authority
+        .replay_capability()
+        .replay(meld_events::ReplayRequest {
+            cursor: meld_events::LedgerCursor {
+                ledger_id: authority.ledger_identity(),
+                after_seq: 0,
+            },
+            limit: 1024,
+        })
+        .unwrap();
+    let publications: Vec<_> = observed
+        .records
+        .iter()
+        .filter(|event| event.event_type == meld_docs_owner::docs::publication::OBSERVATION_EVENT)
+        .collect();
+    assert_eq!(publications.len(), 2, "{publications:?}");
+    assert_ne!(publications[0].stream_id, publications[1].stream_id);
+    first_supervisor.request_shutdown(103).unwrap();
+    second_supervisor.request_shutdown(104).unwrap();
+    drop(first_supervisor);
+    drop(second_supervisor);
+    let legacy = reopened
+        .stores()
+        .traversal_store
+        .db()
+        .open_tree("docs_observations_v1")
+        .unwrap();
+    legacy
+        .insert(b"retained-observation", b"opaque-owner-history")
+        .unwrap();
+    let result = reopened.load_assignment(
+        ProductRuntimeConfig::for_product_root(binding.storage_root.clone()),
+        binding.clone(),
+    );
+    let error = match result {
+        Ok(_) => panic!("legacy history was silently reset"),
+        Err(error) => error,
+    };
+    assert!(
+        error.to_string().contains("owner_history_incompatible"),
+        "{error}"
+    );
+    assert_eq!(
+        legacy
+            .get(b"retained-observation")
+            .unwrap()
+            .unwrap()
+            .as_ref(),
+        b"opaque-owner-history"
+    );
 }

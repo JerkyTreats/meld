@@ -52,11 +52,13 @@ impl RegisteredOwner {
 
     pub fn prepare_bindings(
         &self,
+        assignment_scope_id: String,
         subject: meld_events::DomainObjectRef,
         bindings: std::collections::BTreeMap<String, String>,
         installed_revisions: Vec<crate::theory::InstalledTheoryComponentRef>,
     ) -> Result<super::OwnerPreparedBindingsV1, OwnerDiagnosticV1> {
         self.connection.call(OwnerCommandV1::PrepareBindings {
+            assignment_scope_id,
             subject,
             bindings,
             installed_revisions,

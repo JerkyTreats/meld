@@ -110,6 +110,18 @@ impl StewardshipAssignmentV1 {
         })
     }
 
+    /// Stable operational scope, independent of policy and executable revisions.
+    pub fn scope_id(&self, product_id: &str) -> String {
+        assignment_scope_id(
+            product_id,
+            &self.principal_id,
+            &self.subject,
+            self.agent_positions
+                .iter()
+                .map(|position| position.agent_id.as_str()),
+        )
+    }
+
     pub fn verify_identity(&self) -> Result<(), ApiError> {
         let rebuilt = Self::new(
             self.product_compilation_receipt_id.clone(),
@@ -130,6 +142,19 @@ impl StewardshipAssignmentV1 {
         }
         Ok(())
     }
+}
+
+pub(super) fn assignment_scope_id<'a>(
+    product_id: &str,
+    principal_id: &str,
+    subject: &DomainObjectRef,
+    agents: impl IntoIterator<Item = &'a str>,
+) -> String {
+    let mut agents: Vec<_> = agents.into_iter().collect();
+    agents.sort();
+    let bytes = serde_json::to_vec(&(product_id, principal_id, subject, agents))
+        .expect("assignment scope contains only strings");
+    blake3::hash(&bytes).to_hex().to_string()
 }
 
 fn identity_hash(value: &impl Serialize) -> Result<String, ApiError> {

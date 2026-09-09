@@ -38,6 +38,7 @@ pub struct ProductPosition {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CurrentSecurityCondition {
+    pub assignment_scope_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub work_input_basis_id: Option<String>,
     pub subject: DomainObjectRef,
@@ -59,7 +60,7 @@ pub fn curation_source(
         .and_then(|rule| rule.required_qualifications.get("policy_revision"))
         .filter(|hash| !hash.is_empty())
         .ok_or("Security Curation requires an exact policy revision qualification")?;
-    let scope = scope(&binding.subject, policy)?;
+    let scope = scope(&binding.subject, &binding.scope.scope_id, policy)?;
     Ok(meld_world_model::curation::CurationSourceBinding {
         event_source: Some(graph_route().source_ref().map_err(|e| e.to_string())?),
         roots: vec![
@@ -72,12 +73,13 @@ pub fn curation_source(
 
 pub(crate) fn scope(
     subject: &DomainObjectRef,
+    assignment_scope_id: &str,
     policy_hash: &str,
 ) -> Result<OwnerPublicationScope, String> {
     Ok(OwnerPublicationScope {
         scope_id: format!(
             "security-condition::{}",
-            content_hash(&(subject, policy_hash))?
+            content_hash(&(subject, assignment_scope_id, policy_hash))?
         ),
         branch_id: None,
         perspective_id: None,
@@ -312,6 +314,7 @@ pub(crate) fn current_state(
     };
     Ok((
         Some(CurrentSecurityCondition {
+            assignment_scope_id: capability.subject.assignment_scope_id.clone(),
             work_input_basis_id: work_input_basis(
                 &capability.subject,
                 &capability.policy,
@@ -372,7 +375,12 @@ impl CurrentSecurityCondition {
         session: &str,
         ledger: meld_events::LedgerIdentity,
     ) -> Result<meld_events::EventEnvelope, ApiError> {
-        let scope = scope(&self.subject, &self.policy_revision.content_hash).map_err(invalid)?;
+        let scope = scope(
+            &self.subject,
+            &self.assignment_scope_id,
+            &self.policy_revision.content_hash,
+        )
+        .map_err(invalid)?;
         let revision = format!(
             "security-condition-revision::{}",
             content_hash(self).map_err(invalid)?
@@ -494,6 +502,7 @@ mod input_basis_tests {
         )
         .unwrap();
         let subject = DependencySecuritySubjectV1 {
+            assignment_scope_id: "fixture-assignment".into(),
             subject: DomainObjectRef::new("workspace_fs", "node", "repo").unwrap(),
             ecosystem: PackageEcosystem::Cargo,
             inventory_scope: InventoryScopeV1 {

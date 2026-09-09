@@ -201,10 +201,7 @@ mod tests {
             DOCS_PRODUCT_ID,
             "workspace-owner",
             &resolved_package,
-            "docs-belief-family",
-            "steward documentation freshness",
-            "docs_workspace_local",
-            &std::collections::BTreeSet::from(["workspace_fs".into(), "docs".into()]),
+            &stores.pds_products,
         )
         .unwrap();
         assert!(ProductCompilationReceiptV1::compile(

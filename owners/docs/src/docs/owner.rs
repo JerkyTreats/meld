@@ -46,6 +46,11 @@ impl DocsPackageOwner {
     pub fn description() -> OwnerDescriptionV1 {
         let contributor = DocsCapabilityContributor;
         OwnerDescriptionV1 {
+            incompatible_legacy_trees: [
+                "docs_claim_policy_registry_revisions".into(),
+                "docs_observations_v1".into(),
+            ]
+            .into(),
             protocol_version: OWNER_PROTOCOL_VERSION,
             owner_id: "docs".into(),
             routes: vec![super::theory::route_contract()],
@@ -77,6 +82,7 @@ impl DocsPackageOwner {
 
     fn prepare_bindings(
         &self,
+        assignment_scope_id: String,
         subject: meld_events::DomainObjectRef,
         bindings: std::collections::BTreeMap<String, String>,
         revisions: Vec<crate::theory::InstalledTheoryComponentRef>,
@@ -142,7 +148,7 @@ impl DocsPackageOwner {
             bindings: bindings.values().clone(),
             observation_publications: BTreeSet::from([(
                 super::publication::OBSERVATION_EVENT.into(),
-                subject.object_id,
+                assignment_scope_id,
             )]),
             observation_provider_frame_types: provider_observation,
             retained_observation_publications: Default::default(),
@@ -341,10 +347,11 @@ impl PackageOwner for DocsPackageOwner {
                 )
             }
             PrepareBindings {
+                assignment_scope_id,
                 subject,
                 bindings,
                 installed_revisions,
-            } => self.prepare_bindings(subject, bindings, installed_revisions),
+            } => self.prepare_bindings(assignment_scope_id, subject, bindings, installed_revisions),
             PrepareRuntime { preparation } => self.prepare_runtime(preparation),
             ResolveCurationSource {
                 template: _,

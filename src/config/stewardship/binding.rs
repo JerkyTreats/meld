@@ -137,7 +137,7 @@ impl PhysicalBinding {
             0 => Ok(None),
             1 => Ok(matches.pop()),
             count => Err(ApiError::ConfigError(format!(
-                "{count} stewardship declarations target '{}'",
+                "{count} stewardship declarations target '{}'; select one with --assignment",
                 target.display()
             ))),
         }
@@ -200,6 +200,16 @@ impl PhysicalBinding {
             },
             storage_root,
         })
+    }
+
+    /// Independent assignment address for heads, sessions and mutable owner state.
+    pub fn assignment_scope_id(&self) -> String {
+        super::assignment::assignment_scope_id(
+            &self.package.expression,
+            &self.package.principal_id,
+            &self.subject,
+            [self.agent_id.as_str()],
+        )
     }
 
     /// Exact structural bindings supplied to selected owner implementations.

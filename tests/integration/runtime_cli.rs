@@ -482,7 +482,12 @@ fn prepared_product_activates_routes_and_ignores_loose_owner_heads() {
         let prepared_head = product
             .stores()
             .pds_products
-            .prepared_head(&selection.expression)
+            .prepared_head(
+                &selection.expression,
+                &PhysicalBinding::resolve(&ConfigLoader::load_global().unwrap())
+                    .unwrap()
+                    .assignment_scope_id(),
+            )
             .unwrap()
             .unwrap();
         let prepared = product
@@ -513,6 +518,9 @@ fn prepared_product_activates_routes_and_ignores_loose_owner_heads() {
             product.stores(),
             &selection,
             &DomainObjectRef::new("workspace_fs", "node", "docs").unwrap(),
+            &PhysicalBinding::resolve(&ConfigLoader::load_global().unwrap())
+                .unwrap()
+                .assignment_scope_id(),
         )
         .unwrap();
         let compilation = product
@@ -662,6 +670,9 @@ fn prepared_product_activates_routes_and_ignores_loose_owner_heads() {
             product_b.stores(),
             &selection,
             &agent.subject,
+            &PhysicalBinding::resolve(&ConfigLoader::load_global().unwrap())
+                .unwrap()
+                .assignment_scope_id(),
         )
         .unwrap();
         assert_eq!(
@@ -817,7 +828,12 @@ authority_policy_id = "startup_nonce_local"
             .product_runtime()
             .stores()
             .pds_products
-            .prepared_head("startup")
+            .prepared_head(
+                "startup",
+                &PhysicalBinding::resolve(&config)
+                    .unwrap()
+                    .assignment_scope_id(),
+            )
             .unwrap()
             .unwrap();
         let prepared = run
@@ -883,6 +899,7 @@ authority_policy_id = "startup_nonce_local"
             run.product_runtime().stores(),
             &binding.package,
             &binding.subject,
+            &binding.assignment_scope_id(),
         )
         .unwrap();
         assert_eq!(

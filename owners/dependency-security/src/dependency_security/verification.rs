@@ -72,6 +72,7 @@ mod tests {
     #[test]
     fn verification_recomputes_exact_inputs() {
         let subject = DependencySecuritySubjectV1 {
+            assignment_scope_id: "fixture-assignment".into(),
             subject: DomainObjectRef::new("workspace_fs", "node", "repo").unwrap(),
             ecosystem: PackageEcosystem::Cargo,
             inventory_scope: InventoryScopeV1 {

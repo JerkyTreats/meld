@@ -118,9 +118,15 @@ fn routed_docs_pds_generates_gmail_operator_and_reopens_without_work() {
             .unwrap()
             .expect("routed docs package head");
         let subject = DomainObjectRef::new("workspace_fs", "node", SUBJECT_PATH).unwrap();
-        let resolved =
-            ResolvedStewardshipTheory::resolve_prepared_product(stores, &selection, &subject)
-                .unwrap();
+        let resolved = ResolvedStewardshipTheory::resolve_prepared_product(
+            stores,
+            &selection,
+            &subject,
+            &PhysicalBinding::resolve(&ConfigLoader::load_global().unwrap())
+                .unwrap()
+                .assignment_scope_id(),
+        )
+        .unwrap();
         assert_eq!(resolved.package_receipt_ids, vec![package_head.receipt_id]);
         assert_eq!(resolved.executable_contracts.len(), 5);
         let package_receipt_id = resolved.package_receipt_ids[0].clone();
@@ -158,6 +164,9 @@ fn routed_docs_pds_generates_gmail_operator_and_reopens_without_work() {
             reopened.product_runtime().stores(),
             &selection,
             &subject,
+            &PhysicalBinding::resolve(&ConfigLoader::load_global().unwrap())
+                .unwrap()
+                .assignment_scope_id(),
         )
         .unwrap();
         assert_eq!(
@@ -309,9 +318,15 @@ fn routed_docs_pds_generates_gmail_operator_with_live_provider() {
             .unwrap()
             .expect("routed docs package head");
         let subject = DomainObjectRef::new("workspace_fs", "node", SUBJECT_PATH).unwrap();
-        let resolved =
-            ResolvedStewardshipTheory::resolve_prepared_product(stores, &selection, &subject)
-                .unwrap();
+        let resolved = ResolvedStewardshipTheory::resolve_prepared_product(
+            stores,
+            &selection,
+            &subject,
+            &PhysicalBinding::resolve(&ConfigLoader::load_global().unwrap())
+                .unwrap()
+                .assignment_scope_id(),
+        )
+        .unwrap();
         assert_eq!(resolved.package_receipt_ids, vec![package_head.receipt_id]);
         assert_eq!(resolved.executable_contracts.len(), 5);
         let package_receipt_id = resolved.package_receipt_ids[0].clone();

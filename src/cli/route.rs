@@ -120,11 +120,37 @@ impl RunContext {
         config_path: Option<PathBuf>,
         enable_runtime_ids: &[String],
     ) -> Result<Self, ApiError> {
-        let config = if let Some(ref cfg_path) = config_path {
+        Self::with_assignment(workspace_root, config_path, enable_runtime_ids, None)
+    }
+
+    /// Select a named assignment without claiming exclusive ownership of its target.
+    pub fn with_assignment(
+        workspace_root: PathBuf,
+        config_path: Option<PathBuf>,
+        enable_runtime_ids: &[String],
+        assignment: Option<&str>,
+    ) -> Result<Self, ApiError> {
+        let mut config = if let Some(ref cfg_path) = config_path {
             ConfigLoader::load_from_file(cfg_path)?
         } else {
             ConfigLoader::load(&workspace_root)?
         };
+        if let Some(id) = assignment {
+            let selected = config
+                .stewardship
+                .lowered_declarations()
+                .map_err(|errors| ApiError::ConfigError(format!("{errors:?}")))?
+                .into_iter()
+                .find(|declaration| declaration.declaration_id == id)
+                .ok_or_else(|| {
+                    ApiError::ConfigError(format!(
+                        "stewardship assignment '{id}' is not configured"
+                    ))
+                })?;
+            config.stewardship.declarations =
+                std::collections::BTreeMap::from([(id.into(), selected.declaration)]);
+            config.stewardship.docs_freshness = None;
+        }
         // Resolve physical scope before any branch or storage metadata writes.
         let selected = PhysicalBinding::resolve_for_target(&config, &workspace_root)?;
         let runtime_workspace = selected.as_ref().map_or_else(

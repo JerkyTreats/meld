@@ -235,10 +235,11 @@ impl ResolvedStewardshipTheory {
         stores: &OpenProductStores,
         selection: &SelectedStewardshipPackage,
         subject: &DomainObjectRef,
+        scope_id: &str,
     ) -> Result<Self, TheoryResolutionError> {
         let head = stores
             .pds_products
-            .prepared_head(&selection.expression)
+            .prepared_head(&selection.expression, scope_id)
             .map_err(|failure| TheoryResolutionError::Inconsistent(failure.to_string()))?
             .ok_or(TheoryResolutionError::NotPrepared)?;
         let closure = stores
@@ -608,7 +609,9 @@ impl ResolvedStewardshipTheory {
             agent_id: agent.agent_id.clone(),
             subject: agent.subject.clone(),
             scope: meld_world_model::world_state::graph::contracts::OwnerPublicationScope {
-                scope_id: agent.subject.object_id.clone(),
+                scope_id: closure
+                    .assignment
+                    .scope_id(&self.receipt.selection.expression),
                 branch_id: Some(agent.branch_scope.branch_id.clone()),
                 perspective_id: Some(agent.perspective_key.perspective_id.clone()),
                 valid_at: None,

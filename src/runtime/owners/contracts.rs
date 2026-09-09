@@ -60,6 +60,9 @@ pub struct OwnerDescriptionV1 {
     pub capabilities: Vec<CapabilityContractRevision>,
     pub implementations: Vec<OwnerImplementationOfferV1>,
     pub observation_participant: Option<crate::theory::ActivationParticipantSpec>,
+    /// Retired in-core stores whose nonempty history this package cannot import.
+    #[serde(default)]
+    pub incompatible_legacy_trees: BTreeSet<String>,
 }
 
 /// Package-authored callback requirements for one exact capability realization.
@@ -143,6 +146,7 @@ pub enum OwnerCommandV1 {
         package: InstalledPackageLinkView,
     },
     PrepareBindings {
+        assignment_scope_id: String,
         subject: meld_events::DomainObjectRef,
         bindings: BTreeMap<String, String>,
         installed_revisions: Vec<InstalledTheoryComponentRef>,

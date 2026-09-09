@@ -99,6 +99,36 @@ impl OwnerCatalog {
         Ok(Self { owners })
     }
 
+    /// Refuse incompatible retained state before creating a replacement owner instance.
+    pub fn check_legacy_state(
+        &self,
+        stores: &crate::runtime::storage::OpenProductStores,
+    ) -> Result<(), OwnerDiagnosticV1> {
+        let mut databases = Vec::new();
+        if let Some(db) = stores.theory_db.opened() {
+            databases.push(db);
+        }
+        if let Some(traversal) = stores.traversal_store.opened() {
+            databases.push(traversal.db());
+        }
+        for description in self.descriptions() {
+            for db in &databases {
+                for name in db.tree_names() {
+                    if description
+                        .incompatible_legacy_trees
+                        .iter()
+                        .any(|legacy| legacy.as_bytes() == name.as_ref())
+                        && !db.open_tree(&name).map_err(failure)?.is_empty()
+                    {
+                        return Err(OwnerDiagnosticV1::new("owner_history_incompatible", format!(
+                            "owner '{}' cannot import retained legacy tree '{}'; preserve that history and use an explicit owner migration before activation", description.owner_id, String::from_utf8_lossy(&name))));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn is_empty(&self) -> bool {
         self.owners.is_empty()
     }
@@ -167,6 +197,7 @@ impl OwnerCatalog {
                 })
                 .collect::<Result<BTreeMap<_, _>, _>>()?;
             let resources = owner.registration.prepare_bindings(
+                binding.assignment_scope_id(),
                 binding.subject.clone(),
                 scoped,
                 revisions.to_vec(),
@@ -299,7 +330,7 @@ impl SelectedOwner {
                 state_root: self
                     .root
                     .join("assignments")
-                    .join(blake3::hash(assignment_id.as_bytes()).to_hex().as_str()),
+                    .join(seed.observation.scope.scope_id.as_str()),
                 bindings: seed.resources.bindings.clone(),
                 installed_revisions: seed.installed_revisions,
                 ledger_id: self.ledger_id,

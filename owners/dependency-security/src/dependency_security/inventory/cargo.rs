@@ -379,6 +379,7 @@ mod tests {
 
     fn subject() -> DependencySecuritySubjectV1 {
         DependencySecuritySubjectV1 {
+            assignment_scope_id: "fixture-assignment".into(),
             subject: DomainObjectRef::new(
                 "dependency-security",
                 "cargo_dependency_graph",
