@@ -582,11 +582,35 @@ mod tests {
         let package = package(&handlers);
         let (router, store) = setup(&handlers);
         let receipt = router.install(&package, 1, true, None).unwrap();
+        let importing = PdsPackageInstallationReceiptV1::new(
+            "importing".into(),
+            "1".into(),
+            "importing-hash".into(),
+            1,
+            vec![InstalledExactPackageImport {
+                package_id: receipt.package_id.clone(),
+                receipt_id: receipt.receipt_id.clone(),
+            }],
+            Vec::new(),
+            1,
+        )
+        .unwrap();
+        store.install_receipt(&importing).unwrap();
         let resolver = PdsPackageResolver::new(router.catalog().clone(), store);
         let resolved = resolver.resolve(&receipt.receipt_id).unwrap();
         assert_eq!(resolved.receipt, receipt);
+        let imported = resolver.resolve(&importing.receipt_id).unwrap();
+        assert_eq!(imported.receipt_closure.len(), 2);
+        assert_eq!(imported.components_by_route, resolved.components_by_route);
 
         handlers[0].remove("component-0");
+        assert_eq!(
+            resolver
+                .resolve(&importing.receipt_id)
+                .unwrap_err()
+                .diagnostic_code,
+            "owner_revision_missing"
+        );
         assert_eq!(
             resolver
                 .resolve(&receipt.receipt_id)

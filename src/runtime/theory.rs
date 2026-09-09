@@ -320,7 +320,17 @@ impl ResolvedStewardshipTheory {
             .collect::<Result<Vec<_>, _>>()?;
         let rebuilt = ProductCompilationReceiptV1::compile(
             &declaration,
-            package_receipts,
+            package_receipts
+                .into_iter()
+                .filter(|receipt| {
+                    declaration.selected_packages.iter().any(|selection| {
+                        selection.package_id == receipt.package_id
+                            && selection.package_version == receipt.package_version
+                            && selection.package_content_hash == receipt.package_content_hash
+                    })
+                })
+                .collect(),
+            &stores.pds_packages,
             compilation.compiled_at_seq,
         )
         .map_err(|failure| TheoryResolutionError::Inconsistent(failure.to_string()))?;
@@ -371,15 +381,26 @@ impl ResolvedStewardshipTheory {
             .resolve_receipt(package_receipt_id)
             .map_err(|failure| TheoryResolutionError::Inconsistent(failure.to_string()))?
             .ok_or_else(|| missing("PDS package receipt"))?;
+        let closure = stores
+            .pds_packages
+            .resolve_closure(&[package_receipt_id.to_string()])
+            .map_err(owner_error)?;
+        let components = closure
+            .iter()
+            .flat_map(|package| package.components.clone())
+            .collect::<Vec<_>>();
         let compatibility_receipt =
-            receipt_from_components(selection, &package.components, package.installed_at_seq)?;
+            receipt_from_components(selection, &components, package.installed_at_seq)?;
         Self::resolve_exact_with_lineage(
             stores,
             selection,
             Some(subject),
             compatibility_receipt,
             None,
-            vec![package_receipt_id.to_string()],
+            closure
+                .into_iter()
+                .map(|package| package.receipt_id)
+                .collect(),
             None,
         )
     }

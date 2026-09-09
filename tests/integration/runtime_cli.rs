@@ -677,6 +677,15 @@ fn prepared_product_activates_routes_and_ignores_loose_owner_heads() {
 
 #[test]
 fn startup_cli_reaches_goal_without_workspace_branch_or_provider() {
+    assert_startup_cli_reaches_goal(false);
+}
+
+#[test]
+fn startup_cli_uses_exact_transitive_imports_through_goal_and_reopen() {
+    assert_startup_cli_reaches_goal(true);
+}
+
+fn assert_startup_cli_reaches_goal(imported: bool) {
     let temp_dir = TempDir::new().unwrap();
     with_xdg_env(&temp_dir, || {
         let absent_workspace = temp_dir.path().join("no-workspace");
@@ -753,11 +762,53 @@ authority_policy_id = "startup_nonce_local"
             .unwrap_err();
         assert!(retired.to_string().contains("retired"));
 
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/startup");
+        let theory_source = if imported {
+            let base = meld::init::world::product::install_package(
+                run.product_runtime().stores(),
+                &source,
+                None,
+                0,
+            )
+            .unwrap();
+            let mut previous = base.clone();
+            for name in ["startup-import-middle", "startup-import-root"] {
+                let directory = temp_dir.path().join(name);
+                std::fs::create_dir_all(&directory).unwrap();
+                let mut imports = vec![
+                    serde_json::json!({"package_id": previous.package_id, "receipt_id": previous.receipt_id}),
+                ];
+                if name.ends_with("root") {
+                    imports.push(serde_json::json!({"package_id": base.package_id, "receipt_id": base.receipt_id}));
+                }
+                std::fs::write(
+                    directory.join("pds-package.json"),
+                    serde_json::to_vec(&serde_json::json!({
+                        "schema_version": 1, "package_id": name, "package_version": "1.0.0",
+                        "imports": imports, "components": []
+                    }))
+                    .unwrap(),
+                )
+                .unwrap();
+                if name.ends_with("middle") {
+                    previous = meld::init::world::product::install_package(
+                        run.product_runtime().stores(),
+                        &directory,
+                        None,
+                        0,
+                    )
+                    .unwrap();
+                }
+            }
+            temp_dir.path().join("startup-import-root")
+        } else {
+            source
+        };
         run.execute(&Commands::World {
             command: WorldCommands::Init {
                 path: absent_workspace.clone(),
                 stages: Vec::new(),
-                theory_source: Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/startup")),
+                theory_source: Some(theory_source),
                 format: "json".to_string(),
             },
         })
@@ -780,6 +831,35 @@ authority_policy_id = "startup_nonce_local"
             prepared.assignment.subject,
             DomainObjectRef::new("runtime", "instance", "meld").unwrap()
         );
+        let compilation = run
+            .product_runtime()
+            .stores()
+            .pds_products
+            .compilation(&prepared.assignment.product_compilation_receipt_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            compilation.package_receipt_ids.len(),
+            if imported { 3 } else { 1 }
+        );
+        assert_eq!(compilation.installed_owner_revisions.len(), 9);
+        if imported {
+            let replacement_root = temp_dir.path().join("replacement-base");
+            std::fs::create_dir_all(&replacement_root).unwrap();
+            std::fs::write(replacement_root.join("pds-package.json"), serde_json::to_vec(&serde_json::json!({
+                "schema_version": 1, "package_id": "meld.startup", "package_version": "2.0.0", "components": []
+            })).unwrap()).unwrap();
+            let replacement = meld::init::world::product::install_package(
+                run.product_runtime().stores(),
+                &replacement_root,
+                None,
+                100,
+            )
+            .unwrap();
+            assert!(!compilation
+                .package_receipt_ids
+                .contains(&replacement.receipt_id));
+        }
         assert_eq!(prepared.participant_plan.participants.len(), 8);
         assert!(!prepared.activation.bindings.contains_key("workspace"));
         assert!(!prepared.activation.bindings.contains_key("provider"));
@@ -798,6 +878,18 @@ authority_policy_id = "startup_nonce_local"
                 .ledger_id,
             ledger_id
         );
+        let binding = PhysicalBinding::resolve(&config).unwrap();
+        let resolved = ResolvedStewardshipTheory::resolve_prepared_product(
+            run.product_runtime().stores(),
+            &binding.package,
+            &binding.subject,
+        )
+        .unwrap();
+        assert_eq!(
+            resolved.package_receipt_ids,
+            compilation.package_receipt_ids
+        );
+        assert_eq!(resolved.executable_contracts.len(), 1);
         run.execute(&runtime_run_json(
             Some("startup-without-workspace"),
             1,

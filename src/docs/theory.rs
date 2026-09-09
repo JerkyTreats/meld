@@ -186,19 +186,36 @@ mod tests {
         let layout = ProductStorageLayout::from_root(root.path());
         let stores = OpenProductStores::open(&layout).unwrap();
         let receipt = install_package(&stores, &package_root(), 1).unwrap();
+        let resolved_package = PdsPackageResolver::new(
+            current_product_route_catalog(&stores).unwrap(),
+            stores.pds_packages.as_ref().clone(),
+        )
+        .resolve(&receipt.receipt_id)
+        .unwrap();
         let declaration = crate::init::world::product::product_declaration(
             DOCS_PRODUCT_ID,
             "workspace-owner",
-            &receipt,
+            &resolved_package,
             "docs-belief-family",
             "steward documentation freshness",
             "docs_workspace_local",
             &std::collections::BTreeSet::from(["workspace_fs".into(), "docs".into()]),
         )
         .unwrap();
-        assert!(ProductCompilationReceiptV1::compile(&declaration, Vec::new(), 1).is_err());
-        let compilation =
-            ProductCompilationReceiptV1::compile(&declaration, vec![receipt], 1).unwrap();
+        assert!(ProductCompilationReceiptV1::compile(
+            &declaration,
+            Vec::new(),
+            &stores.pds_packages,
+            1
+        )
+        .is_err());
+        let compilation = ProductCompilationReceiptV1::compile(
+            &declaration,
+            vec![receipt],
+            &stores.pds_packages,
+            1,
+        )
+        .unwrap();
         let head = stores
             .pds_products
             .install(&declaration, &compilation, None)

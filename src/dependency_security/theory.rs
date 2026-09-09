@@ -199,8 +199,13 @@ mod tests {
             "pds-product-compilation.v1".to_string(),
         )
         .unwrap();
-        let compilation =
-            ProductCompilationReceiptV1::compile(&declaration, vec![receipt], 2).unwrap();
+        let compilation = ProductCompilationReceiptV1::compile(
+            &declaration,
+            vec![receipt],
+            &stores.pds_packages,
+            2,
+        )
+        .unwrap();
         assert_eq!(
             compilation.product_revision_id,
             declaration.product_revision_id

@@ -164,11 +164,19 @@ fn routed_install(
             .resolve_receipt(&head.receipt_id)
             .map_err(|error| world_init_error(error.to_string()))?
             .ok_or_else(|| world_init_error("package head cites a missing receipt"))?;
-        if receipt.components.iter().any(|component| {
-            component.route.owner_domain == "world-model"
-                && component.route.component_kind == "strategy-theory"
-                && component.owner_revision.id == selection.strategy_theory_id
-        }) {
+        let closure = stores
+            .pds_packages
+            .resolve_closure(std::slice::from_ref(&receipt.receipt_id))
+            .map_err(|error| world_init_error(error.to_string()))?;
+        if closure
+            .iter()
+            .flat_map(|package| &package.components)
+            .any(|component| {
+                component.route.owner_domain == "world-model"
+                    && component.route.component_kind == "strategy-theory"
+                    && component.owner_revision.id == selection.strategy_theory_id
+            })
+        {
             matches.push(receipt);
         }
     }
@@ -187,8 +195,19 @@ pub(crate) fn compile_product_initialization<'a>(
     package_receipt: &crate::theory::PdsPackageInstallationReceiptV1,
     observed_seq: u64,
 ) -> Result<CompleteProductInitialization<'a>, ApiError> {
-    let observation_components: Vec<_> = package_receipt
-        .components
+    let resolved_package = crate::theory::PdsPackageResolver::new(
+        super::routes::current_product_route_catalog(stores)
+            .map_err(|error| world_init_error(error.to_string()))?,
+        stores.pds_packages.as_ref().clone(),
+    )
+    .resolve(&package_receipt.receipt_id)
+    .map_err(|error| world_init_error(error.to_string()))?;
+    let components = resolved_package
+        .components_by_route
+        .values()
+        .flatten()
+        .collect::<Vec<_>>();
+    let observation_components: Vec<_> = components
         .iter()
         .filter(|component| {
             component.route.owner_domain == "world-model"
@@ -202,7 +221,7 @@ pub(crate) fn compile_product_initialization<'a>(
         ));
     }
     let mut source_owners = std::collections::BTreeSet::from([binding.subject.domain_id.clone()]);
-    for component in &package_receipt.components {
+    for component in &components {
         if component.owner_revision.registry
             == meld_world_model::curation::CURATION_TEMPLATE_REGISTRY_ID
         {
@@ -218,7 +237,7 @@ pub(crate) fn compile_product_initialization<'a>(
             source_owners.insert(template.template.source_owner_id);
         }
     }
-    for component in &package_receipt.components {
+    for component in &components {
         if component.owner_revision.registry
             == meld_world_model::world_state::graph::admission::OWNER_EVENT_ROUTE_REGISTRY
         {
@@ -241,7 +260,7 @@ pub(crate) fn compile_product_initialization<'a>(
     let declaration = super::product::product_declaration(
         &binding.package.expression,
         &binding.package.principal_id,
-        package_receipt,
+        &resolved_package,
         &observation_components[0].component_id,
         &format!(
             "steward '{}' for subject '{}'",
@@ -255,6 +274,7 @@ pub(crate) fn compile_product_initialization<'a>(
     let compilation = ProductCompilationReceiptV1::compile(
         &declaration,
         vec![package_receipt.clone()],
+        &stores.pds_packages,
         observed_seq,
     )
     .map_err(|error| world_init_error(error.to_string()))?;
@@ -295,8 +315,8 @@ pub(crate) fn compile_product_initialization<'a>(
         .collect::<Result<BTreeMap<_, _>, _>>()
         .map_err(|error| world_init_error(error.to_string()))?;
     let mut capability_bindings = OwnerBindingView::new(binding.owner_binding_values());
-    let policies = package_receipt
-        .components
+    let policies = compilation
+        .installed_owner_revisions
         .iter()
         .filter(|component| {
             component.route.owner_domain == "docs"

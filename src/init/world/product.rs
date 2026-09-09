@@ -47,12 +47,13 @@ fn source_error(message: impl Into<String>) -> TheoryRouterError {
 pub fn product_declaration(
     product_id: &str,
     principal_id: &str,
-    receipt: &PdsPackageInstallationReceiptV1,
+    package: &crate::theory::ResolvedPdsPackage,
     observation_scope_component_id: &str,
     directive: &str,
     requested_authority_ref: &str,
     source_owners: &BTreeSet<String>,
 ) -> Result<ProductDeclarationV1, TheoryRouterError> {
+    let receipt = &package.receipt;
     let participants = [
         (
             "dependency_security.observation",
@@ -139,9 +140,10 @@ pub fn product_declaration(
         vec![ProductAgentPositionV1 {
             position_id: "steward".to_string(),
             directive: directive.to_string(),
-            required_owner_routes: receipt
-                .components
-                .iter()
+            required_owner_routes: package
+                .components_by_route
+                .values()
+                .flatten()
                 .map(|component| component.route.clone())
                 .collect(),
             observation_scope_component_id: observation_scope_component_id.to_string(),

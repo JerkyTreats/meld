@@ -17,6 +17,7 @@ use meld_world_model::agent::{AgentGenesisReceiptV1, AgentStore};
 use super::contracts::{InstalledTheoryComponentRef, TheoryRouteId};
 use super::error::{error, TheoryRouterError};
 use super::receipt::PdsPackageInstallationReceiptV1;
+use super::registry::PdsPackageStore;
 
 const TREE_DECLARATIONS: &str = "pds_product_declarations_v1";
 const TREE_COMPILATIONS: &str = "pds_product_compilations_v1";
@@ -226,6 +227,7 @@ impl ProductCompilationReceiptV1 {
     pub fn compile(
         declaration: &ProductDeclarationV1,
         mut receipts: Vec<PdsPackageInstallationReceiptV1>,
+        package_store: &PdsPackageStore,
         compiled_at_seq: u64,
     ) -> Result<Self, TheoryRouterError> {
         declaration.verify_identity()?;
@@ -250,6 +252,12 @@ impl ProductCompilationReceiptV1 {
                 ));
             }
         }
+        let receipts = package_store.resolve_closure(
+            &receipts
+                .iter()
+                .map(|receipt| receipt.receipt_id.clone())
+                .collect::<Vec<_>>(),
+        )?;
         let available_routes = receipts
             .iter()
             .flat_map(|receipt| receipt.components.iter().map(|component| &component.route))
@@ -1194,9 +1202,93 @@ mod tests {
             "compilation-policy.v1".to_string(),
         )
         .unwrap();
+        let package_store =
+            PdsPackageStore::new(sled::Config::new().temporary(true).open().unwrap()).unwrap();
+        package_store.install_receipt(&package).unwrap();
         let compilation =
-            ProductCompilationReceiptV1::compile(&declaration, vec![package], 1).unwrap();
+            ProductCompilationReceiptV1::compile(&declaration, vec![package], &package_store, 1)
+                .unwrap();
         (declaration, compilation)
+    }
+
+    #[test]
+    fn compilation_includes_shared_imported_components_once() {
+        let (declaration, baseline) = product_records(
+            "imports",
+            AgentTheoryRef {
+                registry: "belief_family".into(),
+                id: "family".into(),
+                content_hash: "revision".into(),
+            },
+        );
+        let store =
+            PdsPackageStore::new(sled::Config::new().temporary(true).open().unwrap()).unwrap();
+        let selected = &declaration.selected_packages[0];
+        let leaf = PdsPackageInstallationReceiptV1::new(
+            selected.package_id.clone(),
+            selected.package_version.clone(),
+            selected.package_content_hash.clone(),
+            1,
+            Vec::new(),
+            baseline.installed_owner_revisions.clone(),
+            1,
+        )
+        .unwrap();
+        store.install_receipt(&leaf).unwrap();
+        let import = |package: &PdsPackageInstallationReceiptV1| {
+            crate::theory::InstalledExactPackageImport {
+                package_id: package.package_id.clone(),
+                receipt_id: package.receipt_id.clone(),
+            }
+        };
+        let middle = PdsPackageInstallationReceiptV1::new(
+            "middle".into(),
+            "1".into(),
+            "middle-hash".into(),
+            1,
+            vec![import(&leaf)],
+            Vec::new(),
+            1,
+        )
+        .unwrap();
+        store.install_receipt(&middle).unwrap();
+        let root = PdsPackageInstallationReceiptV1::new(
+            "root".into(),
+            "1".into(),
+            "root-hash".into(),
+            1,
+            vec![import(&leaf), import(&middle)],
+            Vec::new(),
+            1,
+        )
+        .unwrap();
+        store.install_receipt(&root).unwrap();
+        let imported = ProductDeclarationV1::new(
+            declaration.product_id,
+            declaration.principal_id,
+            vec![ProductPackageSelectionV1 {
+                package_id: root.package_id.clone(),
+                package_version: root.package_version.clone(),
+                package_content_hash: root.package_content_hash.clone(),
+            }],
+            declaration.agent_topology,
+            declaration.participant_plan,
+            declaration.requested_authority_ref,
+            declaration.principal_grant_ref,
+            declaration.compilation_policy_revision,
+        )
+        .unwrap();
+        let compiled =
+            ProductCompilationReceiptV1::compile(&imported, vec![root], &store, 1).unwrap();
+        assert_eq!(compiled.package_receipt_ids.len(), 3);
+        assert_eq!(
+            compiled.installed_owner_revisions,
+            baseline.installed_owner_revisions
+        );
+        assert_ne!(
+            compiled.compilation_receipt_id,
+            baseline.compilation_receipt_id
+        );
     }
 
     fn agent_receipt(
