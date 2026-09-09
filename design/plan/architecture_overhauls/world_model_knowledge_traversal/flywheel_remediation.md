@@ -658,6 +658,14 @@ Startup now acquires native leases, fences and drains the exact predecessor, rel
 
 One earlier broad run used a temporary filesystem that hit its per-user quota. Subsequent tests use an external disk-backed temporary root. That infrastructure failure is retained as evidence and is not classified as product behavior. This checkpoint is an implementation commit, not R4 gate acceptance. The user directs the final gate after all requirements are ready.
 
+### R4 Signal Handling And Unused Adapter Retirement
+
+Real Qwen completed repair, native Goal satisfaction and idle stability, then exposed a shutdown defect: interrupted reads discarded the outstanding owner frame. The transport now retains partial bytes on `Interrupted` and finishes that same reply before native drain. A partial-frame regression and a subsequent real Qwen shutdown and reopen both pass. Unsupported host declarations are also exercised through preparation rather than inferred from configuration fields alone.
+
+The final V14 source review found six standalone capability adapters reachable only from manually assembled tests: Workspace resolve and scan, Merkle traversal, Provider chat, and Context prepare and finalize. Their implementations, module exports and exclusive invocation fixtures are now removed. Required native Nonce and Code Change capabilities remain in the canonical inventory. Workspace scan, Merkle traversal, Provider completion and retained Context artifact contracts remain in their owning domains. The Workspace scan assertions were migrated to that existing domain port, including source identity, incremental scan, publication ownership and deterministic products. No replacement adapter registry was introduced.
+
+This is a breaking library-surface removal. Callers of those six adapter types must use supported native domain ports or an installed package capability. Example product guides now require explicit external executable selection and document named assignments, native activation, supported placement and incompatible-history refusal. The final unchanged-core proof is repeated against the binary with these adapters removed before the user-directed gate readiness handoff.
+
 ## Evidence Baseline And Current Validation Status
 
 The prior audit's tracked source inventory contained 618 Rust files and 213,645 lines including tests. No tracked `mod.rs` files were found. The worktree was clean at the baseline. The implementation contains real native owner participation, durable Agent progression, complete-Task admission, shared operational work, and exact package receipts. Those are retained foundations, not candidates for wholesale replacement.

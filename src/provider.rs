@@ -15,7 +15,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-pub mod capability;
 pub mod clients;
 pub mod commands;
 pub mod completion;

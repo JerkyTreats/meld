@@ -12,8 +12,8 @@ use std::collections::BTreeMap;
 /// Artifact type id for the seeded belief context bundle.
 pub const BELIEF_CONTEXT_BUNDLE_ARTIFACT_TYPE_ID: &str = "belief_context_bundle";
 
-/// Hydrated belief view for one subject, seeded into the task package at
-/// trigger time and consumed by `context_generate_prepare`.
+/// Retained belief context captured for a generated Context artifact.
+/// Historical prompt artifacts keep their original subject and currency.
 ///
 /// Each seeded assertion carries its own per-subject currency in its
 /// `as_of_seq`; the bundle-level `as_of_seq` is the high-water sequence

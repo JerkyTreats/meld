@@ -35,7 +35,7 @@ impl RegisteredOwner {
         }
         let mut connection = OwnerConnection::start(executable, implementation_root, limits)?;
         let description: OwnerDescriptionV1 =
-            connection.call(OwnerCommandV1::Describe, &mut NoOwnerCallbacks)?;
+            connection.call(OwnerCommandV1::Describe, &NoOwnerCallbacks)?;
         validate_description(expected_owner, &description)?;
         Ok(Self {
             description,

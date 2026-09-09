@@ -2,7 +2,6 @@
 //! Owns context behavior; CLI, agent adapter, and workspace watch consume via explicit contracts.
 
 pub mod belief_context;
-pub mod capability;
 pub mod events;
 pub mod facade;
 pub mod frame;

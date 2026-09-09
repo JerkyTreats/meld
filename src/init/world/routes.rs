@@ -495,6 +495,31 @@ fn owner_failure(failure: impl ToString) -> OwnerRouteDiagnostic {
     owner("owner_contract_invalid", failure.to_string())
 }
 
+fn product_topology_handler(
+    store: Arc<crate::theory::PdsProductStore>,
+) -> Arc<dyn TheoryRouteHandler> {
+    use crate::theory::ProductTopologyV1;
+    let install = store.clone();
+    Arc::new(PortBackedTheoryRouteHandler::new(
+        contract("runtime", "product-topology", RouteCardinality::Many),
+        Arc::new(|id, bytes| {
+            let topology: ProductTopologyV1 = decode(bytes)?;
+            require_id(id, &topology.topology_id)?;
+            topology.validate().map_err(owner_failure)
+        }),
+        Arc::new(move |id, bytes, _| {
+            let topology: ProductTopologyV1 = decode(bytes)?;
+            require_id(id, &topology.topology_id)?;
+            install.install_topology(&topology).map_err(owner_failure)
+        }),
+        Arc::new(move |reference| {
+            require_registry(reference, crate::theory::PRODUCT_TOPOLOGY_REGISTRY)?;
+            require_found(store.topology(reference).map_err(owner_failure)?.is_some())
+        }),
+        no_semantic_links(),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -524,29 +549,4 @@ mod tests {
             ]
         );
     }
-}
-
-fn product_topology_handler(
-    store: Arc<crate::theory::PdsProductStore>,
-) -> Arc<dyn TheoryRouteHandler> {
-    use crate::theory::ProductTopologyV1;
-    let install = store.clone();
-    Arc::new(PortBackedTheoryRouteHandler::new(
-        contract("runtime", "product-topology", RouteCardinality::Many),
-        Arc::new(|id, bytes| {
-            let topology: ProductTopologyV1 = decode(bytes)?;
-            require_id(id, &topology.topology_id)?;
-            topology.validate().map_err(owner_failure)
-        }),
-        Arc::new(move |id, bytes, _| {
-            let topology: ProductTopologyV1 = decode(bytes)?;
-            require_id(id, &topology.topology_id)?;
-            install.install_topology(&topology).map_err(owner_failure)
-        }),
-        Arc::new(move |reference| {
-            require_registry(reference, crate::theory::PRODUCT_TOPOLOGY_REGISTRY)?;
-            require_found(store.topology(reference).map_err(owner_failure)?.is_some())
-        }),
-        no_semantic_links(),
-    ))
 }

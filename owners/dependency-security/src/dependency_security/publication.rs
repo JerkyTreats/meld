@@ -426,6 +426,18 @@ fn storage(error: impl ToString) -> ApiError {
     ))
 }
 
+pub(crate) fn product_scope(
+    subject: &DependencySecuritySubjectV1,
+    kind: &str,
+) -> Result<OwnerPublicationScope, String> {
+    Ok(OwnerPublicationScope {
+        scope_id: format!("security-scope::{}", content_hash(&(subject, kind))?),
+        branch_id: None,
+        perspective_id: None,
+        valid_at: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -615,16 +627,4 @@ mod tests {
             .unwrap();
         assert!(publication.recover(&foreign.replay_capability()).is_err());
     }
-}
-
-pub(crate) fn product_scope(
-    subject: &DependencySecuritySubjectV1,
-    kind: &str,
-) -> Result<OwnerPublicationScope, String> {
-    Ok(OwnerPublicationScope {
-        scope_id: format!("security-scope::{}", content_hash(&(subject, kind))?),
-        branch_id: None,
-        perspective_id: None,
-        valid_at: None,
-    })
 }

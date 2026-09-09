@@ -298,6 +298,9 @@ impl ConfigManager {
 }
 
 #[cfg(test)]
+pub(crate) use stewardship::assignment::assignment_scope_id;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
@@ -855,6 +858,3 @@ claim_policy_id = "docs-claims-strict-v1"
         );
     }
 }
-
-#[cfg(test)]
-pub(crate) use stewardship::assignment::assignment_scope_id;

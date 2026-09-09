@@ -2,6 +2,8 @@
 
 Meld reconciles installed intentions against owner-observed knowledge. Agent judges what remains to be done, Strategy constructs the work, and Execution and Curation return separate operational and semantic evidence.
 
+Docs and Security require separately selected [external owner packages](owners/README.md).
+
 The native runtime supports [Startup](theory/startup/README.md), [README maintenance](theory/docs_freshness/README.md), [declared Security mitigation](theory/dependency_security_mitigation/README.md) and [declared code changes](theory/code_change/README.md). Each guide explains configuration, inert preparation and activation through `meld runtime run`. The Startup guide provides a small end-to-end example with no workspace or model provider.
 
 Legacy Workflow execution is retired. Existing Workflow profiles remain inspectable; use the native product guides for executable reconciliation. The context commands below remain available for Merkle-tree and stored-frame tooling.

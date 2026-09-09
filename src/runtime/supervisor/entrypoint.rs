@@ -1503,7 +1503,7 @@ impl<'a> RuntimeSupervisor<'a> {
                 &generation_id,
                 &participant.participant_id,
                 source.readiness(&context)?,
-                &prepared,
+                prepared,
             )?;
             store.record_wait(
                 &assignment_id,
@@ -2475,7 +2475,7 @@ mod tests {
         assert_eq!(status.instance_id, "instance-a");
         assert_eq!(status.product_root, temp.path());
         assert_eq!(status.instance_status, RuntimeInstanceStatus::Running);
-        assert_eq!(status.runtimes.len(), 14);
+        assert_eq!(status.runtimes.len(), 12);
         // Only the two roles with concrete semantic
         // bodies start; the remaining enabled roles stay unresolved instead
         // of leasing as healthy no-op placeholders.
@@ -2528,7 +2528,7 @@ mod tests {
             .iter()
             .filter(|runtime| runtime.desired_enabled && !runtime.handle_started)
             .collect::<Vec<_>>();
-        assert_eq!(body_less.len(), 11);
+        assert_eq!(body_less.len(), 9);
         for runtime in body_less {
             assert_ne!(
                 runtime.health_status,

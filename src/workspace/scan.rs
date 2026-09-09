@@ -1,9 +1,8 @@
 //! Workspace scan contract and scan execution core.
 //!
 //! Owns the typed request, outcome, and publication-candidate shapes for one
-//! workspace scan. Both the CLI scan command and the `workspace_scan`
-//! capability run scans through this module so workspace tree updates happen
-//! in one place. The core never appends canonical events: it reports
+//! workspace scan. CLI commands and the native workspace port share this
+//! implementation, so workspace tree updates happen in one place. The core never appends canonical events: it reports
 //! publication candidates for the owning publication runtime to append.
 
 use crate::api::ContextApi;

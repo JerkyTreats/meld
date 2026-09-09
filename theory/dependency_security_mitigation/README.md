@@ -8,6 +8,8 @@ Missing or incomplete coverage cannot authorize the mutation. The package retain
 
 The proposal is a canonical serialized `CodeChangeSet` with exact prior content hashes, replacement text and declared reason references. It is read during execution from `code-change.proposal`. The native file materializer currently requires Unix. This policy grants six exact actions to `workspace-owner` for `workspace_fs/node/dependency-graph`; another principal or logical subject requires its corresponding policy.
 
+Build and select `meld-dependency-security-owner` using the [external owner setup](../../owners/README.md). Grant its Cargo and advisory bindings explicitly, then add this declaration to the same configuration.
+
 ```toml
 [system.storage]
 product_root = "/absolute/path/to/security-product"
@@ -33,7 +35,12 @@ strategy_theory_id = "dependency_security_mitigation"
 authority_policy_id = "dependency_security_declared_mitigation"
 ```
 
-From the repository root, `cargo run --bin meld -- world init --theory-source theory/dependency_security_mitigation --format json` installs and prepares the selected product. `runtime run` activates it. Preparation does not execute the intervention.
+From the repository root, install and prepare the selected product, then activate it. Preparation does not execute the intervention.
+
+```sh
+target/debug/meld --workspace /absolute/path/to/workspace --assignment security world init /absolute/path/to/workspace --theory-source theory/dependency_security_mitigation --format json
+target/debug/meld --workspace /absolute/path/to/workspace --assignment security --enable-runtime execution.task_dispatch runtime run
+```
 
 Native owners retain the proposal, mutation intent, materialization and independent Security products. A completed mutation remains causal history when Strategy constructs successor verification. If the generation closes after materialization and before verification, the replacement generation can finish the same Goal using the retained mutation and fresh Security evidence. The original mutation authorization and acceptance keep their original generation; successor verification and Goal judgment use current authority. Recovery does not require the proposal file to remain available and does not repeat the completed write.
 

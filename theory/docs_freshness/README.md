@@ -2,7 +2,7 @@
 
 This package maintains README existence and configured claims supported by workspace evidence through native owner observations, Agent judgment, Strategy planning, Execution, and confirmation after publication. A current README can satisfy the maintained condition without a Task. A completed write alone does not establish correctness or Goal satisfaction.
 
-Add a declaration to your Meld configuration. Bind `docs-provider` to a configured provider that supports JSON Schema response formats and keep the product storage outside the target workspace. An explicit `--config` selects the same configuration for initialization and runtime execution.
+Build and select `meld-docs-owner` using the [external owner setup](../../owners/README.md), then add the declaration below to the same Meld configuration. Bind `docs-provider` to a configured provider that supports JSON Schema response formats and keep the product storage outside the target workspace. An explicit `--config` selects the same configuration for initialization and runtime execution.
 
 ```toml
 [system.storage]
@@ -29,8 +29,8 @@ claim_policy_id = "docs-claims-strict-v1"
 From the repository root, install and prepare the product, then activate it:
 
 ```sh
-cargo run --bin meld -- world init /absolute/path/to/workspace --theory-source theory/docs_freshness --format json
-cargo run --bin meld -- runtime run
+target/debug/meld --workspace /absolute/path/to/workspace --assignment docs world init /absolute/path/to/workspace --theory-source theory/docs_freshness --format json
+target/debug/meld --workspace /absolute/path/to/workspace --assignment docs --enable-runtime execution.task_dispatch runtime run
 ```
 
 Preparation remains inert. Activation opens the native owner lifecycle and admission path. The installed claim policy supplies the questions, acceptance rules and drafting instructions. The runtime observes current workspace evidence before deciding on work and returns published results through Docs observations, Curation, Belief and Agent judgment.
@@ -59,4 +59,4 @@ The command reaches the live owner when the foreground runtime is running, or du
 
 The installed Strategy settlement rule selects `repeat_on_changed_owners: ["docs"]`. Changed Docs evidence permits a new repair even while an earlier repair awaits confirmation. Other products do not inherit that repetition policy. Runtime checks the selected owner basis and preserves completed history; it does not choose which domain changes warrant repeated work.
 
-Current Docs preparation uses package `1.15.0`, including explicit scope and repeated-work selection. Previously prepared revisions remain historical evidence. The CLI does not migrate an existing Agent into a different genesis lineage when installing a revised package. Use a new product root and preparation for changed theory; do not delete prior records to imitate migration. Ordinary runtime reopen of the same prepared theory remains supported.
+Current Docs preparation uses package `1.15.0`, including explicit scope and repeated-work selection. Previously prepared revisions remain historical evidence. The CLI does not migrate an existing Agent into a different genesis lineage when installing a revised package. Use a separately assigned Agent and preparation for changed theory; assignments can share the same product root. Do not delete prior records to imitate migration. Ordinary runtime reopen of the same prepared theory remains supported.

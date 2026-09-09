@@ -60,7 +60,7 @@ impl PreparedOwnerRuntime {
     ) -> Result<Arc<Self>, OwnerDiagnosticV1> {
         super::registration::validate_description(&description.owner_id, &description)?;
         let actual: OwnerDescriptionV1 =
-            connection.call(OwnerCommandV1::Describe, &mut NoOwnerCallbacks)?;
+            connection.call(OwnerCommandV1::Describe, &NoOwnerCallbacks)?;
         if serde_json::to_value(&actual).map_err(|error| unavailable(&error.to_string()))?
             != serde_json::to_value(&description)
                 .map_err(|error| unavailable(&error.to_string()))?
@@ -84,7 +84,7 @@ impl PreparedOwnerRuntime {
             OwnerCommandV1::PrepareRuntime {
                 preparation: preparation.clone(),
             },
-            &mut NoOwnerCallbacks,
+            &NoOwnerCallbacks,
         )?;
         Ok(Arc::new(Self {
             description,

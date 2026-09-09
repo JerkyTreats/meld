@@ -381,6 +381,71 @@ mod tests {
     }
 
     #[test]
+    fn preparation_refuses_unsupported_host_requirements() {
+        for (isolation, limits) in [
+            (
+                RuntimeIsolationRequirements {
+                    network_denied: true,
+                    separate_process: false,
+                },
+                OperationalLimits::default(),
+            ),
+            (
+                RuntimeIsolationRequirements {
+                    network_denied: false,
+                    separate_process: true,
+                },
+                OperationalLimits::default(),
+            ),
+            (
+                RuntimeIsolationRequirements::default(),
+                OperationalLimits {
+                    max_in_flight: 2,
+                    step_budget: 0,
+                },
+            ),
+            (
+                RuntimeIsolationRequirements::default(),
+                OperationalLimits {
+                    max_in_flight: 1,
+                    step_budget: 8,
+                },
+            ),
+        ] {
+            let assignment = assignment();
+            let activation = StewardshipActivationV1::new(
+                assignment.assignment_id.clone(),
+                BTreeMap::new(),
+                BTreeMap::new(),
+                AdapterPlacement::SerializedLocal,
+                isolation,
+                limits,
+            )
+            .unwrap();
+            let error = PreparedActivationClosureV1::new(
+                assignment,
+                activation,
+                "content".into(),
+                vec![PreparedDomainActivationRef {
+                    owner_domain: "docs".into(),
+                    receipt_ref: "owner".into(),
+                }],
+                "capability".into(),
+                plan(),
+                vec![],
+                EffectiveAuthorityInputRefs {
+                    requested_authority_ref: "authority".into(),
+                    principal_grant_ref: "grant".into(),
+                    current_judgment_ref: "judgment".into(),
+                },
+                None,
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("host"), "{error}");
+        }
+    }
+
+    #[test]
     fn missing_owner_receipt_prevents_closure() {
         let assignment = assignment();
         let activation = StewardshipActivationV1::new(

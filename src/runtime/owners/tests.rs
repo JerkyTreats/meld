@@ -37,7 +37,7 @@ fn external_revision_changes_without_changing_the_host_and_old_bytes_remain_avai
     let mut old = connect(root.path(), &first);
     let read = |connection: &mut OwnerConnection| {
         connection
-            .call::<String>(OwnerCommandV1::Describe, &mut NoOwnerCallbacks)
+            .call::<String>(OwnerCommandV1::Describe, &NoOwnerCallbacks)
             .unwrap()
     };
     assert_eq!(read(&mut old), "owner-revision-one");
@@ -71,8 +71,7 @@ returned=json.loads(sys.stdin.readline())
 print(json.dumps({'message':'return','request_id':request['request_id'],'result':returned['result']}),flush=True)"#,
     );
     let mut connection = connect(root.path(), &selected);
-    let result =
-        connection.call::<serde_json::Value>(OwnerCommandV1::Describe, &mut NoOwnerCallbacks);
+    let result = connection.call::<serde_json::Value>(OwnerCommandV1::Describe, &NoOwnerCallbacks);
     assert_eq!(result.unwrap_err().code, "owner_callback_not_granted");
 }
 
@@ -87,14 +86,14 @@ print(json.dumps({'message':'return','request_id':request['request_id']+1,'resul
     let mut connection = connect(root.path(), &selected);
     assert_eq!(
         connection
-            .call::<String>(OwnerCommandV1::Flush, &mut NoOwnerCallbacks)
+            .call::<String>(OwnerCommandV1::Flush, &NoOwnerCallbacks)
             .unwrap_err()
             .code,
         "owner_protocol_mismatch"
     );
     assert_eq!(
         connection
-            .call::<String>(OwnerCommandV1::Flush, &mut NoOwnerCallbacks)
+            .call::<String>(OwnerCommandV1::Flush, &NoOwnerCallbacks)
             .unwrap_err()
             .code,
         "owner_connection_unavailable"
@@ -184,5 +183,35 @@ for line in sys.stdin:
     assert_eq!(
         resolver.resolve(&receipt.receipt_id).unwrap().receipt,
         receipt
+    );
+}
+
+#[test]
+fn interrupted_reads_retain_the_partial_owner_product() {
+    struct InterruptedFrame {
+        step: usize,
+    }
+    impl std::io::Read for InterruptedFrame {
+        fn read(&mut self, target: &mut [u8]) -> std::io::Result<usize> {
+            self.step += 1;
+            let part: &[u8] = match self.step {
+                1 => b"{\"value\":",
+                2 => return Err(std::io::ErrorKind::Interrupted.into()),
+                3 => b"42}\n",
+                _ => return Ok(0),
+            };
+            target[..part.len()].copy_from_slice(part);
+            Ok(part.len())
+        }
+    }
+    let mut reader = std::io::BufReader::new(InterruptedFrame { step: 0 });
+    let value: serde_json::Value = super::server::read_message(&mut reader, 64)
+        .unwrap()
+        .unwrap();
+    assert_eq!(value, serde_json::json!({"value":42}));
+    assert!(
+        super::server::read_message::<serde_json::Value>(&mut reader, 64)
+            .unwrap()
+            .is_none()
     );
 }

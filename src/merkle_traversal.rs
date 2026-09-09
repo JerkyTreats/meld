@@ -1,5 +1,3 @@
-pub mod capability;
-
 use crate::error::ApiError;
 use crate::execution::ContextReadPort;
 use crate::store::NodeType;

@@ -185,9 +185,13 @@ pub(crate) fn read_message<T: DeserializeOwned>(
 ) -> Result<Option<T>, OwnerDiagnosticV1> {
     let mut bytes = Vec::new();
     loop {
-        let buffer = reader
-            .fill_buf()
-            .map_err(|error| OwnerDiagnosticV1::new("owner_transport_unavailable", error))?;
+        let buffer = match reader.fill_buf() {
+            Ok(buffer) => buffer,
+            // A native stop signal does not cancel the outstanding owner product.
+            // Keep its partial frame and let the supervisor drain after it returns.
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(OwnerDiagnosticV1::new("owner_transport_unavailable", error)),
+        };
         if buffer.is_empty() {
             if bytes.is_empty() {
                 return Ok(None);
