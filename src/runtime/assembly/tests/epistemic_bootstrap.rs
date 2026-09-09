@@ -191,3 +191,152 @@ fn native_unassessed_question_authorizes_observation_before_first_belief() {
         .is_some());
     supervisor.request_shutdown(6_000).unwrap();
 }
+
+#[test]
+fn planned_nonce_observation_progresses_from_acquisition_through_confirmation() {
+    let harness = startup_harness();
+    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/startup");
+    let package = tempfile::tempdir().unwrap();
+    for entry in std::fs::read_dir(&source).unwrap() {
+        let entry = entry.unwrap();
+        if entry.file_type().unwrap().is_file() {
+            std::fs::copy(entry.path(), package.path().join(entry.file_name())).unwrap();
+        }
+    }
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(source.join("pds-package.json")).unwrap()).unwrap();
+    for name in [
+        "belief_family.startup_realization.json",
+        "epistemic_rule.startup.json",
+        "strategy_theory.startup.json",
+    ] {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(source.join(name)).unwrap()).unwrap();
+        match name {
+            "belief_family.startup_realization.json" => {
+                value["anchor_requirement"] = "Required".into()
+            }
+            "epistemic_rule.startup.json" => value["selection_posture"] = "planned_only".into(),
+            _ => {
+                let mut acquisition = value["snapshot"]["settlement_rules"][0].clone();
+                acquisition["construction"] = "observe_unknown".into();
+                acquisition["product_ordering"] = serde_json::json!([]);
+                value["snapshot"]["settlement_rules"]
+                    .as_array_mut()
+                    .unwrap()
+                    .insert(0, acquisition);
+            }
+        }
+        let bytes = serde_json::to_vec(&value).unwrap();
+        std::fs::write(package.path().join(name), &bytes).unwrap();
+        let component = manifest["components"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|component| component["content"]["path"] == name)
+            .unwrap();
+        component["content"]["content_hash"] = blake3::hash(&bytes).to_hex().to_string().into();
+    }
+    std::fs::write(
+        package.path().join("pds-package.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    {
+        let assembly = harness.assembly();
+        harness.run_world_genesis_from(&assembly, package.path());
+    }
+    let assembly = harness.assembly();
+    harness.bind_production_routes(&assembly);
+    let mut supervisor = harness.start_supervisor(&assembly);
+    let mut reports = Vec::new();
+    let store = &assembly.stores().agent_store;
+    let mut satisfied = false;
+    for pass in 0..48 {
+        reports.push(supervisor.tick(1_100 + pass * 100).unwrap());
+        if store
+            .reconciliation_goals_for_agent("startup-agent")
+            .unwrap()
+            .iter()
+            .any(|goal| {
+                store
+                    .current_reconciliation_plan(&goal.goal.goal_id)
+                    .unwrap()
+                    .is_some_and(|plan| {
+                        store
+                            .goal_disposition_for_plan(&plan.plan_revision_id)
+                            .unwrap()
+                            .is_some_and(|d| {
+                                matches!(d.lifecycle, meld_lang::GoalLifecycle::Satisfied { .. })
+                            })
+                    })
+            })
+        {
+            satisfied = true;
+            break;
+        }
+    }
+    assert!(satisfied, "planned nonce did not settle: {reports:#?}");
+    let goals = store
+        .reconciliation_goals_for_agent("startup-agent")
+        .unwrap();
+    assert_eq!(goals.len(), 1);
+    let authorizations = store
+        .product_authorizations_for_goal(&goals[0].goal.goal_id)
+        .unwrap();
+    assert_eq!(authorizations.len(), 3, "{authorizations:#?}");
+    let mut acquisition = 0;
+    let mut confirmation = 0;
+    let mut tasks = 0;
+    for authorization in &authorizations {
+        let plan = store
+            .reconciliation_plan(&authorization.plan_revision_id)
+            .unwrap()
+            .unwrap();
+        let cut = store
+            .reconciliation_cut(&plan.planner_cut_id)
+            .unwrap()
+            .unwrap();
+        match &authorization.product {
+            meld_world_model::AgentAuthorizedProduct::Epistemic(_) => {
+                if cut.world_model_view.unassessed_belief.is_some() {
+                    acquisition += 1;
+                    assert!(cut.world_model_view.hydration_refs.revision_ids.is_empty());
+                } else {
+                    confirmation += 1;
+                    assert!(cut.world_model_view.pending_derived_evidence.is_some());
+                    assert!(!cut.world_model_view.hydration_refs.revision_ids.is_empty());
+                    assert!(plan.tasks.is_empty());
+                }
+            }
+            meld_world_model::AgentAuthorizedProduct::Task(_) => {
+                tasks += 1;
+                assert!(cut.world_model_view.pending_derived_evidence.is_none());
+                assert!(cut.world_model_view.unassessed_belief.is_none());
+            }
+        }
+    }
+    assert_eq!((acquisition, tasks, confirmation), (1, 1, 1));
+    let events = assembly
+        .ports()
+        .event_replay()
+        .read_after_limit(0, 128)
+        .unwrap();
+    let nonce = events
+        .iter()
+        .find(|event| event.envelope.event_type == crate::nonce::EVENT_TYPE)
+        .unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.envelope.event_type == crate::nonce::EVENT_TYPE)
+            .count(),
+        1
+    );
+    let observations: Vec<_> = events
+        .iter()
+        .filter(|event| event.envelope.event_type == meld_world_model::CURATION_RESULT_EVENT_TYPE)
+        .collect();
+    assert_eq!(observations.len(), 2);
+    assert!(observations[0].seq < nonce.seq && nonce.seq < observations[1].seq);
+}

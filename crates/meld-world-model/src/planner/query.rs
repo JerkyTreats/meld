@@ -134,6 +134,7 @@ impl<'a> PlannerQuery<'a> {
         {
             return refuse("primary Belief question has no committed revision".into());
         }
+        let mut pending_derived_evidence = None;
         if let Some(required) = &request.required_derived_evidence {
             let Some(curation) = &self.curation_query else {
                 return refuse("derived evidence requires its native Curation source".into());
@@ -142,6 +143,18 @@ impl<'a> PlannerQuery<'a> {
                 match curation.current_evidence_basis(&required.curation_rule, &cut) {
                     Ok(Some(basis)) => Some(basis),
                     Ok(None) if unassessed_belief.is_some() => None,
+                    Ok(None)
+                        if request
+                            .policy
+                            .acquisition_question
+                            .as_ref()
+                            .is_some_and(|question| question.family == required.belief_family) =>
+                    {
+                        // A required observation is a prerequisite for settled
+                        // knowledge, not for selecting the observation itself.
+                        pending_derived_evidence = Some(required.clone());
+                        None
+                    }
                     Ok(None) => return refuse(
                         "Curation evidence does not match the selected source revision and rule"
                             .into(),
@@ -227,6 +240,7 @@ impl<'a> PlannerQuery<'a> {
             source_positions,
             view_input: PlannerProjectionInput {
                 unassessed_belief,
+                pending_derived_evidence,
                 additional_beliefs,
                 context: PlannerProjectionContext {
                     subject: observation_subject.clone(),

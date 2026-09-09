@@ -6042,6 +6042,7 @@ mod tests {
             source_positions: Vec::new(),
             world_model_view: WorldModelView {
                 unassessed_belief: None,
+                pending_derived_evidence: None,
                 world_state: WorldState::new(Vec::new()).unwrap(),
                 projection_version: PLANNER_PROJECTION_VERSION.to_string(),
                 source_refs: vec![PlannerSourceRef::ProjectionRule {

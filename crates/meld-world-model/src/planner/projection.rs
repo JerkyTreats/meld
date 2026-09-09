@@ -155,6 +155,25 @@ fn validate_assembly_request(request: &PlannerAssemblyRequest) -> Vec<PlannerRef
                 .into(),
         });
     }
+    if let Some(required) = &request.view_input.pending_derived_evidence {
+        if !request
+            .policy
+            .acquisition_question
+            .as_ref()
+            .is_some_and(|question| {
+                question.family == required.belief_family
+                    && request.view_input.belief_view.as_ref().is_some_and(|view| {
+                        view.key == question.key
+                            && view.theory_revision.as_ref() == Some(&question.family)
+                    })
+            })
+        {
+            grounds.push(PlannerRefusalGround::InvalidInput {
+                detail: "pending derived evidence differs from the installed acquisition question"
+                    .into(),
+            });
+        }
+    }
     if &request.view_input.context.subject != request.context.observation_subject() {
         grounds.push(PlannerRefusalGround::InvalidInput {
             detail: "projected evidence belongs to another observation subject".into(),
@@ -338,6 +357,7 @@ pub fn project_world_state(
             &input.context.subject,
             view,
             &input.field_config,
+            input.pending_derived_evidence.is_none(),
             &mut propositions,
             &mut source_refs,
             &mut hydration_refs,
@@ -392,6 +412,7 @@ pub fn project_world_state(
                     &input.context.subject,
                     view,
                     &input.field_config,
+                    true,
                     &mut propositions,
                     &mut source_refs,
                     &mut hydration_refs,
@@ -434,6 +455,7 @@ pub fn project_world_state(
 
     Ok(WorldModelView {
         unassessed_belief: input.unassessed_belief,
+        pending_derived_evidence: input.pending_derived_evidence,
         world_state: WorldState::new(propositions)?,
         projection_version: input.context.projection_version,
         source_refs,
@@ -472,6 +494,7 @@ fn project_belief_view(
     subject: &crate::events::DomainObjectRef,
     view: &crate::belief::BeliefView,
     field_config: &crate::planner::contracts::PlannerFieldProjectionConfig,
+    derived_evidence_current: bool,
     propositions: &mut Vec<Proposition>,
     source_refs: &mut Vec<PlannerSourceRef>,
     hydration_refs: &mut PlannerHydrationRefs,
@@ -489,10 +512,11 @@ fn project_belief_view(
     let stale_dimension = field_config.stale_dimension(&view.key.dimension_id)?;
     let observation_dimension =
         field_config.observation_needed_dimension(&view.key.dimension_id)?;
-    let observation_open = view
-        .observation
-        .as_ref()
-        .is_some_and(|observation| observation.open);
+    let observation_open = !derived_evidence_current
+        || view
+            .observation
+            .as_ref()
+            .is_some_and(|observation| observation.open);
 
     // A prior remains inspectable in Belief, but a missing observation or
     // unsettled assessment cannot establish a settled proposition.
@@ -864,6 +888,7 @@ mod cut_tests {
                 .collect(),
             view_input: PlannerProjectionInput {
                 unassessed_belief: None,
+                pending_derived_evidence: None,
                 additional_beliefs: Vec::new(),
                 context: PlannerProjectionContext {
                     subject,

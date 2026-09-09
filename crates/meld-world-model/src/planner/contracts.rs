@@ -49,7 +49,8 @@ pub struct PlannerSourcePosition {
 /// Deliberately limited installed policy for one Planner decision context.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlannerAssemblyPolicy {
-    /// Installed observation-only construction may acquire this exact unanswered question.
+    /// Installed observation-only construction may acquire this exact question
+    /// before its first Belief or when current source lacks its derived judgment.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub acquisition_question: Option<PlannerBeliefSelection>,
     pub policy_revision_id: String,
@@ -279,6 +280,10 @@ impl Default for PlannerFieldProjectionConfig {
 pub struct PlannerProjectionInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unassessed_belief: Option<crate::belief::UnassessedBeliefQuestion>,
+    /// Current source lacks the required derived judgment. Prior Belief remains
+    /// inspectable, but cannot establish a settled proposition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_derived_evidence: Option<PlannerDerivedEvidenceRequirement>,
     pub context: PlannerProjectionContext,
     pub belief_view: Option<BeliefView>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -298,6 +303,10 @@ pub struct PlannerGraphScope {
 pub struct WorldModelView {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unassessed_belief: Option<crate::belief::UnassessedBeliefQuestion>,
+    /// Current source lacks the required derived judgment. Prior Belief remains
+    /// inspectable, but cannot establish a settled proposition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_derived_evidence: Option<PlannerDerivedEvidenceRequirement>,
     pub world_state: WorldState,
     pub projection_version: String,
     pub source_refs: Vec<PlannerSourceRef>,

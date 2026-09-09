@@ -98,6 +98,7 @@ fn test_view(dimension_id: &str, confidence: f64, stale: bool, observation: bool
 fn projection_input(view: Option<BeliefView>) -> PlannerProjectionInput {
     PlannerProjectionInput {
         unassessed_belief: None,
+        pending_derived_evidence: None,
         additional_beliefs: Vec::new(),
         context: PlannerProjectionContext::first_slice(subject()),
         belief_view: view,
@@ -301,6 +302,7 @@ fn planner_indeterminate_projection() {
 fn planner_graph_projection() {
     let output = project_world_state(PlannerProjectionInput {
         unassessed_belief: None,
+        pending_derived_evidence: None,
         additional_beliefs: Vec::new(),
         context: PlannerProjectionContext::first_slice(subject()),
         belief_view: None,

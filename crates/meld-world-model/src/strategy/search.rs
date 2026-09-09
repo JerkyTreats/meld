@@ -84,12 +84,8 @@ fn search_with_completed(
     }
     let mut candidates = Vec::new();
     for (rule, bindings) in rules {
-        if request
-            .problem
-            .planner_cut
-            .world_model_view
-            .unassessed_belief
-            .is_some()
+        let view = &request.problem.planner_cut.world_model_view;
+        if (view.unassessed_belief.is_some() || view.pending_derived_evidence.is_some())
             && rule.construction != StrategyConstruction::ObserveUnknown
         {
             state.reject(StrategyRejectionGround::InvalidComposition);

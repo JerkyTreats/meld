@@ -57,6 +57,8 @@ The request declares completeness before source selection. A caller may request 
 
 The Curation operation catalog and Strategy construction policy are frozen beside the `PlannerCut` in the Strategy construction request. They define available means rather than observed world state.
 
+When installed acquisition policy admits an exact question and the current source lacks its required derived judgment, Planner retains that pending requirement in the cut. A prior Belief revision remains available for inspection, with its lineage intact, but does not project settled confidence for that question. This cut can support authorized epistemic acquisition or confirmation. It cannot justify executable work or Goal satisfaction. Missing interpretation, mismatched scope, and unavailable required source owners remain refusals; a future observation result is not a prerequisite for selecting that observation.
+
 ## PlannerCut
 
 A `PlannerCut` binds:

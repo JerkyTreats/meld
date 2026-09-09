@@ -80,6 +80,15 @@ fn verify_with_history(
     {
         grounds.push(StrategyRejectionGround::InvalidComposition);
     }
+    if problem
+        .planner_cut
+        .world_model_view
+        .pending_derived_evidence
+        .is_some()
+        && !candidate.tasks.is_empty()
+    {
+        grounds.push(StrategyRejectionGround::InvalidComposition);
+    }
     if super::search::ground_proposition(&rule.settlement_obligation, &bindings).as_ref()
         != Ok(&candidate.settlement_obligation)
         || candidate.evidence_route.as_ref() != Some(&rule.evidence_route)

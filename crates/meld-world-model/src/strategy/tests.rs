@@ -213,6 +213,7 @@ fn planner_cut_at(revision: &str) -> PlannerCut {
             .collect(),
         view_input: PlannerProjectionInput {
             unassessed_belief: None,
+            pending_derived_evidence: None,
             additional_beliefs: Vec::new(),
             context: PlannerProjectionContext {
                 subject: subject_ref(),
@@ -2123,4 +2124,48 @@ fn current_negative_confirmation_does_not_repeat_its_own_effect_publication() {
         }
     );
     assert!(search_successor(&request).recommendation.is_none());
+}
+
+#[test]
+fn missing_current_derived_evidence_allows_observation_but_not_executable_work() {
+    let mut request = StrategySearchRequest {
+        problem: problem(),
+        bounds: StrategySearchBounds {
+            max_expansions: 64,
+            max_depth: 8,
+        },
+    };
+    let executable = search(&request).recommendation.unwrap();
+    assert!(!executable.tasks.is_empty());
+    request
+        .problem
+        .planner_cut
+        .world_model_view
+        .pending_derived_evidence = Some(crate::planner::PlannerDerivedEvidenceRequirement {
+        curation_rule: request.problem.curation_operations[0].rule_revision.clone(),
+        belief_family: crate::belief::TheoryRevisionRef {
+            registry: "belief_family".into(),
+            id: "docs".into(),
+            content_hash: "family".into(),
+        },
+        outcome_mappings: vec![],
+    });
+    request.problem.planner_cut.world_model_view.world_state = meld_lang::WorldState::empty();
+    assert!(search(&request).recommendation.is_none());
+    assert!(matches!(
+        verify_plan(&request.problem, &executable),
+        PlanVerification::Invalid { .. }
+    ));
+    let mut acquisition = request.problem.theory.settlement_rules[0].clone();
+    acquisition.construction = StrategyConstruction::ObserveUnknown;
+    acquisition.product_ordering.clear();
+    acquisition.epistemic_selections[0].evidence_return = true;
+    request.problem.theory.settlement_rules.push(acquisition);
+    let observation = search(&request).recommendation.unwrap();
+    assert!(observation.tasks.is_empty());
+    assert!(!observation.epistemic_operations.is_empty());
+    assert!(matches!(
+        verify_plan(&request.problem, &observation),
+        PlanVerification::Valid { .. }
+    ));
 }
