@@ -116,11 +116,12 @@ mod tests {
     #[test]
     fn routed_docs_package_round_trips_all_exact_owner_revisions() {
         let root = tempfile::tempdir().unwrap();
-        let stores =
+        let mut stores =
             OpenProductStores::open(&ProductStorageLayout::from_root(root.path())).unwrap();
+        crate::test_support::configure(&mut stores, root.path(), &[("docs", "meld-docs-owner")]);
         let receipt = install_package(&stores, &package_root(), 1).unwrap();
         assert_eq!(receipt.package_id, DOCS_PACKAGE_ID);
-        assert_eq!(receipt.components.len(), 13);
+        assert_eq!(receipt.components.len(), 14);
 
         let catalog = current_product_route_catalog(&stores).unwrap();
         let package_store =
@@ -129,7 +130,7 @@ mod tests {
             .resolve(&receipt.receipt_id)
             .unwrap();
         assert_eq!(resolved.receipt, receipt);
-        assert_eq!(resolved.components_by_route.len(), 10);
+        assert_eq!(resolved.components_by_route.len(), 11);
         assert_eq!(
             resolved
                 .components_by_route
@@ -143,8 +144,9 @@ mod tests {
     #[test]
     fn exact_reinstall_is_idempotent_and_does_not_advance_the_head() {
         let root = tempfile::tempdir().unwrap();
-        let stores =
+        let mut stores =
             OpenProductStores::open(&ProductStorageLayout::from_root(root.path())).unwrap();
+        crate::test_support::configure(&mut stores, root.path(), &[("docs", "meld-docs-owner")]);
         let first = install_package(&stores, &package_root(), 1).unwrap();
         let second = install_package(&stores, &package_root(), 99).unwrap();
         assert_eq!(first.receipt_id, second.receipt_id);
@@ -157,8 +159,9 @@ mod tests {
     #[test]
     fn routed_receipt_resolves_by_explicit_identity_for_historical_reading() {
         let root = tempfile::tempdir().unwrap();
-        let stores =
+        let mut stores =
             OpenProductStores::open(&ProductStorageLayout::from_root(root.path())).unwrap();
+        crate::test_support::configure(&mut stores, root.path(), &[("docs", "meld-docs-owner")]);
         let receipt = install_package(&stores, &package_root(), 1).unwrap();
         let selection = SelectedStewardshipPackage {
             expression: "docs_freshness".to_string(),
@@ -189,7 +192,8 @@ mod tests {
     fn product_compilation_requires_the_complete_package_set_and_reopens_exactly() {
         let root = tempfile::tempdir().unwrap();
         let layout = ProductStorageLayout::from_root(root.path());
-        let stores = OpenProductStores::open(&layout).unwrap();
+        let mut stores = OpenProductStores::open(&layout).unwrap();
+        crate::test_support::configure(&mut stores, root.path(), &[("docs", "meld-docs-owner")]);
         let receipt = install_package(&stores, &package_root(), 1).unwrap();
         let resolved_package = PdsPackageResolver::new(
             current_product_route_catalog(&stores).unwrap(),

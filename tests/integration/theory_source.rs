@@ -63,7 +63,7 @@ fn shipped_theory_provisions_and_loads_through_every_selection_identity() {
         assert!(kinds.contains(&"maintained_condition"));
         assert!(kinds.contains(&"strategy_theory"));
         assert!(kinds.contains(&"authority_policy"));
-        assert_eq!(kinds.len(), 7);
+        assert_eq!(kinds.len(), 6);
         assert!(report.bodies.iter().all(|body| body.changed));
 
         let family = load_belief_family_config("docs_freshness").unwrap();
@@ -172,7 +172,7 @@ provider_type = "local"
 model = "test-model"
 endpoint = "http://127.0.0.1:9"
 
-[stewardship.docs_freshness]
+[stewardship.declarations.docs]
 expression = "docs_freshness"
 target_root = "{target_root}"
 subject = "docs"
@@ -180,7 +180,7 @@ agent_id = "docs-writer"
 principal_id = "workspace-owner"
 provider_id = "steward-provider"
 
-[stewardship.docs_freshness.theory]
+[stewardship.declarations.docs.theory]
 belief_family_id = "docs_freshness"
 evidence_mapping_id = "docs_freshness_outcome_interpretation_v1"
 curation_rule_id = "docs_freshness"
@@ -191,6 +191,7 @@ claim_policy_id = "docs-claims-strict-v1"
 "#,
         target_root = target_root.display()
     );
+    let config = super::external_owners::docs_config(&config);
     let config_path = config_dir.join("config.toml");
     std::fs::write(&config_path, config).unwrap();
     config_path

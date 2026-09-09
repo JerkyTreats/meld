@@ -85,6 +85,35 @@ struct ProductDeclarationIdentity<'a> {
     compilation_policy_revision: &'a str,
 }
 
+pub(super) fn valid_agent_topology(
+    positions: &[ProductAgentPositionV1],
+    plan: &ActivationParticipantPlanV1,
+) -> bool {
+    !positions.is_empty()
+        && positions
+            .iter()
+            .map(|position| &position.position_id)
+            .collect::<BTreeSet<_>>()
+            .len()
+            == positions.len()
+        && positions.iter().all(|position| {
+            !position.position_id.trim().is_empty()
+                && !position.directive.trim().is_empty()
+                && !position.required_owner_routes.is_empty()
+                && !position.observation_scope_component_id.trim().is_empty()
+                && !position.required_subscriptions.is_empty()
+                && position.required_subscriptions.iter().all(|subscription| {
+                    !subscription.source_owner.trim().is_empty()
+                        && !subscription.source_contract_component_id.trim().is_empty()
+                        && !subscription.initial_cursor_policy.trim().is_empty()
+                })
+                && plan
+                    .participants
+                    .iter()
+                    .any(|participant| participant.participant_id == position.participant_ref)
+        })
+}
+
 impl ProductDeclarationV1 {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -124,28 +153,7 @@ impl ProductDeclarationV1 {
             || !selected_packages
                 .windows(2)
                 .all(|pair| pair[0].package_id != pair[1].package_id)
-            || agent_topology.iter().any(|position| {
-                position.position_id.trim().is_empty()
-                    || position.directive.trim().is_empty()
-                    || position.required_owner_routes.is_empty()
-                    || position.observation_scope_component_id.trim().is_empty()
-                    || position.required_subscriptions.is_empty()
-                    || position.required_subscriptions.iter().any(|subscription| {
-                        subscription.source_owner.trim().is_empty()
-                            || subscription.source_contract_component_id.trim().is_empty()
-                            || subscription.initial_cursor_policy.trim().is_empty()
-                    })
-                    || position.participant_ref.trim().is_empty()
-            })
-            || !agent_topology
-                .windows(2)
-                .all(|pair| pair[0].position_id != pair[1].position_id)
-            || agent_topology.iter().any(|position| {
-                !participant_plan
-                    .participants
-                    .iter()
-                    .any(|participant| participant.participant_id == position.participant_ref)
-            })
+            || !valid_agent_topology(&agent_topology, &participant_plan)
         {
             return Err(error(
                 "product_declaration_invalid",
@@ -1567,8 +1575,16 @@ mod tests {
                 Some(&head_b),
             )
             .is_err());
-        assert!(store.prepared_head("product-a").unwrap().is_none());
-        assert_eq!(store.prepared_head("product-b").unwrap(), Some(head_b));
+        assert!(store
+            .prepared_head("product-a", &product_a.assignment.scope_id("product-a"))
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            store
+                .prepared_head("product-b", &product_b.assignment.scope_id("product-b"))
+                .unwrap(),
+            Some(head_b)
+        );
     }
 
     #[test]

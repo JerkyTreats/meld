@@ -1003,6 +1003,7 @@ claim_policy_id = "docs-claims-strict-v1"
 "#,
         target_root = target_root.display()
     );
+    let config = super::external_owners::docs_config(&config);
     std::fs::write(config_dir.join("config.toml"), &config).unwrap();
     let global_config_dir = Path::new(&std::env::var("XDG_CONFIG_HOME").unwrap()).join("meld");
     std::fs::create_dir_all(&global_config_dir).unwrap();

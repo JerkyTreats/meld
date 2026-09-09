@@ -122,3 +122,256 @@ fn response(input: &serde_json::Value) -> (&'static str, String) {
         ("draft", README.into())
     }
 }
+
+/// Read published owner evidence without opening the child's mutable store.
+#[derive(Clone)]
+pub(super) struct ObservationReader {
+    pub scope: meld_world_model::world_state::graph::contracts::OwnerPublicationScope,
+    events: meld_events::EventReplayCapability,
+}
+impl ObservationReader {
+    pub fn for_assembly(assembly: &super::ProductRuntimeAssembly) -> Arc<Self> {
+        Arc::new(Self {
+            scope: meld_world_model::world_state::graph::contracts::OwnerPublicationScope {
+                scope_id: assembly
+                    .physical_binding
+                    .as_ref()
+                    .unwrap()
+                    .assignment_scope_id(),
+                branch_id: Some("main".into()),
+                perspective_id: Some("default".into()),
+                valid_at: None,
+            },
+            events: assembly.event_authority().replay_capability(),
+        })
+    }
+    pub fn revision(
+        &self,
+        id: &str,
+    ) -> Result<Option<meld_docs_owner::docs::publication::DocsObservationRevision>, String> {
+        Ok(self
+            .revisions()?
+            .into_iter()
+            .find(|revision| revision.revision_id == id))
+    }
+    pub fn current_revision(
+        &self,
+    ) -> Result<Option<meld_docs_owner::docs::publication::DocsObservationRevision>, String> {
+        Ok(self.revisions()?.pop())
+    }
+    pub fn descends_from(&self, revision: &str, ancestor: &str) -> Result<bool, String> {
+        let revisions = self.revisions()?;
+        let mut cursor = revision;
+        loop {
+            if cursor == ancestor {
+                return Ok(true);
+            }
+            let Some(prior) = revisions
+                .iter()
+                .find(|item| item.revision_id == cursor)
+                .and_then(|item| item.predecessor.as_deref())
+            else {
+                return Ok(false);
+            };
+            cursor = prior;
+        }
+    }
+    fn revisions(
+        &self,
+    ) -> Result<Vec<meld_docs_owner::docs::publication::DocsObservationRevision>, String> {
+        let mut cursor = meld_events::LedgerCursor {
+            ledger_id: self.events.ledger_identity(),
+            after_seq: 0,
+        };
+        let mut revisions = Vec::new();
+        loop {
+            let page = self
+                .events
+                .replay(meld_events::ReplayRequest {
+                    cursor,
+                    limit: 1024,
+                })
+                .map_err(|e| e.to_string())?;
+            for record in &page.records {
+                if record.event_type != "docs.observation"
+                    || record.stream_id != self.scope.scope_id
+                {
+                    continue;
+                }
+                let operation: meld_world_model::world_state::graph::contracts::OwnerPublicationOperation = serde_json::from_value(record.data.clone()).map_err(|e| e.to_string())?;
+                for object in operation.batch.objects {
+                    if object.object_ref.object_kind == "scope_observation" {
+                        revisions.push(
+                            serde_json::from_str(
+                                object
+                                    .qualifications
+                                    .get("observation")
+                                    .ok_or("observation absent")?,
+                            )
+                            .map_err(|e| e.to_string())?,
+                        );
+                    }
+                }
+            }
+            if page.records.is_empty() || page.next_cursor.after_seq >= page.coverage.tip_seq {
+                break;
+            }
+            cursor = page.next_cursor;
+        }
+        Ok(revisions)
+    }
+}
+
+/// Scripted inference crosses the same provider callback as production owners.
+pub(super) struct JudgeProvider(
+    pub Arc<dyn meld_docs_owner::docs::claim_validation::DocsClaimJudge>,
+);
+#[async_trait::async_trait]
+impl crate::provider::ProviderCompletionPort for JudgeProvider {
+    async fn complete_provider_request(
+        &self,
+        _request: &crate::context::generation::contracts::GenerationOrchestrationRequest,
+        messages: Vec<crate::provider::ChatMessage>,
+        _context: Option<&crate::execution::ExecutionEventContext>,
+    ) -> Result<crate::provider::ProviderCompletion, crate::error::ApiError> {
+        use meld_docs_owner::docs::{
+            capability::*, claim_validation::*, correspondence::*, source_claims::*,
+        };
+        let input: serde_json::Value = serde_json::from_str(&messages[1].content).unwrap();
+        let policy = meld_docs_owner::docs::claim_observation::test_support::policy();
+        let failure = |e: meld_docs_owner::error::ApiError| {
+            crate::error::ApiError::ProviderError(e.to_string())
+        };
+        let content = if input.get("source").is_some() {
+            let source = serde_json::from_value(input["source"].clone()).unwrap();
+            let proposed = self
+                .0
+                .extract_source(&DocsSourceClaimRequest {
+                    source: &source,
+                    policy: &policy,
+                })
+                .await
+                .map_err(failure)?;
+            serde_json::json!({"complete": proposed.complete, "no_claims_reason": proposed.no_claims_reason,
+                "claims": proposed.claims.iter().map(|claim| serde_json::json!({"statement":claim.statement,"confidence":claim.confidence,"quotes":claim.quotes})).collect::<Vec<_>>()})
+        } else if input.get("sources").is_some() {
+            let owned: Vec<(String, ObservedSourceClaim)> = input["sources"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|value| {
+                    (
+                        value["path"].as_str().unwrap().into(),
+                        serde_json::from_value(value["claim"].clone()).unwrap(),
+                    )
+                })
+                .collect();
+            let sources: Vec<_> = owned
+                .iter()
+                .map(|(path, claim)| CorrespondenceSource { path, claim })
+                .collect();
+            let claims: Vec<ReadmeClaim> =
+                serde_json::from_value(input["readme_claims"].clone()).unwrap();
+            serde_json::to_value(
+                self.0
+                    .correspond(&DocsCorrespondenceRequest {
+                        readme_path: input["readme_path"].as_str().unwrap(),
+                        sources: &sources,
+                        readme_claims: &claims,
+                        policy: &policy,
+                    })
+                    .await
+                    .map_err(failure)?,
+            )
+            .unwrap()
+        } else {
+            let directory = DirectoryEvidence {
+                path: input["directory"].as_str().unwrap().into(),
+                direct_files: vec![],
+                child_directories: vec![],
+                evidence: String::new(),
+            };
+            let patch = ReadmePatch {
+                path: input["readme_path"].as_str().unwrap().into(),
+                content: input["readme_context"].as_str().unwrap().into(),
+                content_hash: input["readme_content_hash"].as_str().unwrap().into(),
+            };
+            let evidence = EvidencePartitions {
+                inventory: input["inventory"].as_str().unwrap().into(),
+                direct: input["direct_evidence"].as_str().unwrap().into(),
+                descendant: input["descendant_evidence"].as_str().unwrap().into(),
+            };
+            let claims: Vec<ReadmeClaim> = serde_json::from_value(input["claims"].clone()).unwrap();
+            let assessments = self
+                .0
+                .assess(&DocsClaimJudgmentRequest {
+                    policy: &policy,
+                    directory: &directory,
+                    patch: &patch,
+                    evidence: &evidence,
+                    claims: &claims,
+                    revision_attempt: 0,
+                    batch_index: 0,
+                })
+                .await
+                .map_err(failure)?;
+            serde_json::json!({"assessments":assessments.iter().map(|a| serde_json::json!({"claim_id":a.claim_id,"verdict":a.verdict,"confidence":a.confidence,"citations":a.citations,"rationale":a.rationale})).collect::<Vec<_>>()})
+        };
+        Ok(crate::provider::ProviderCompletion {
+            preparation: crate::provider::ProviderExecutionDescription {
+                provider_type: "fixture".into(),
+                requested_model: "fixture".into(),
+                configuration_identity: "fixture-judge".into(),
+            },
+            response: crate::provider::CompletionResponse {
+                content: content.to_string(),
+                model: "fixture".into(),
+                usage: crate::provider::TokenUsage {
+                    prompt_tokens: 1,
+                    completion_tokens: 1,
+                    total_tokens: 2,
+                },
+                finish_reason: Some("stop".into()),
+            },
+        })
+    }
+}
+
+#[path = "../../../owners/test_support.rs"]
+mod owner_fixture;
+
+pub(crate) fn select_owners(
+    bindings: &mut std::collections::BTreeMap<String, crate::config::PhysicalBindingRef>,
+) {
+    bindings.extend([
+        owner_fixture::selection(
+            "docs",
+            "meld-docs-owner",
+            &["workspace", "provider", "agent", "subject"],
+        ),
+        owner_fixture::selection(
+            "dependency-security",
+            "meld-dependency-security-owner",
+            &[
+                "workspace",
+                "agent",
+                "subject",
+                "dependency-security.cargo",
+                "dependency-security.advisories",
+            ],
+        ),
+    ]);
+}
+pub(crate) fn configure_stores(
+    stores: &mut crate::runtime::storage::OpenProductStores,
+    root: &std::path::Path,
+) {
+    owner_fixture::configure(
+        stores,
+        root,
+        &[
+            ("docs", "meld-docs-owner"),
+            ("dependency-security", "meld-dependency-security-owner"),
+        ],
+    );
+}

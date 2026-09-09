@@ -337,9 +337,18 @@ impl<'a> RuntimeSupervisor<'a> {
             supervisor.recover_expired_leases(command.started_at_ms)?;
             supervisor.check_startup_ownership()?;
             let activation_mode = supervisor.prepare_activation()?;
-            supervisor.start_enabled_runtimes(command.started_at_ms)?;
-            supervisor.publish_activation(activation_mode)?;
+            supervisor.acquire_enabled_runtimes(command.started_at_ms)?;
             supervisor.retire_predecessors()?;
+            supervisor.ready_passive_sources()?;
+            for runtime_id in supervisor.handles.keys().cloned().collect::<Vec<_>>() {
+                supervisor.ready_runtime(
+                    &runtime_id,
+                    command.started_at_ms,
+                    NO_RESTART_ATTEMPTS,
+                    None,
+                )?;
+            }
+            supervisor.publish_activation(activation_mode)?;
             supervisor.mark_instance(
                 RuntimeInstanceStatus::Running,
                 None,
@@ -1197,6 +1206,7 @@ impl<'a> RuntimeSupervisor<'a> {
             return Ok(());
         };
         let assignment_id = &current.assignment.assignment_id;
+        store.fence_replacement_predecessor(assignment_id, current_id)?;
         let history = store.assignment(assignment_id)?.ok_or_else(|| {
             SupervisorRuntimeError::InvalidCommand("assignment history is absent".into())
         })?;
@@ -1444,6 +1454,18 @@ impl<'a> RuntimeSupervisor<'a> {
         )?;
         self.generation_id = Some(generation_id.clone());
 
+        Ok(mode)
+    }
+
+    fn ready_passive_sources(&mut self) -> Result<(), SupervisorRuntimeError> {
+        let (Some(store), Some(prepared), Some(generation_id)) = (
+            self.lifecycle_store,
+            self.prepared_activation,
+            self.generation_id.clone(),
+        ) else {
+            return Ok(());
+        };
+        let assignment_id = prepared.assignment.assignment_id.clone();
         for participant in prepared
             .participant_plan
             .participants
@@ -1494,7 +1516,7 @@ impl<'a> RuntimeSupervisor<'a> {
             self.passive_sources
                 .insert(participant.participant_id.clone(), source);
         }
-        Ok(mode)
+        Ok(())
     }
 
     fn publish_activation(
@@ -1702,7 +1724,7 @@ impl<'a> RuntimeSupervisor<'a> {
         Ok(())
     }
 
-    fn start_enabled_runtimes(&mut self, now_ms: u64) -> Result<(), SupervisorRuntimeError> {
+    fn acquire_enabled_runtimes(&mut self, now_ms: u64) -> Result<(), SupervisorRuntimeError> {
         let runtime_ids = self.desired.keys().cloned().collect::<Vec<_>>();
         for runtime_id in runtime_ids {
             let Some(desired) = self.desired.get(&runtime_id) else {
@@ -1724,12 +1746,12 @@ impl<'a> RuntimeSupervisor<'a> {
                 )?;
                 continue;
             }
-            self.start_runtime(&runtime_id, now_ms, NO_RESTART_ATTEMPTS, None)?;
+            self.acquire_runtime(&runtime_id, now_ms, NO_RESTART_ATTEMPTS, None)?;
         }
         Ok(())
     }
 
-    fn start_runtime(
+    fn acquire_runtime(
         &mut self,
         runtime_id: &str,
         now_ms: u64,
@@ -1827,26 +1849,57 @@ impl<'a> RuntimeSupervisor<'a> {
             Some("lease acquired".to_string()),
         )?;
 
-        let mut handle = factory.build_handle();
         let owner = lease.owner();
+        self.handles.insert(
+            runtime_id.to_string(),
+            SupervisedRuntimeHandle {
+                actor: BoundedActorHandle::new(factory.build_handle()),
+                owner: owner.clone(),
+            },
+        );
+        Ok(Some(owner))
+    }
+
+    fn start_runtime(
+        &mut self,
+        runtime_id: &str,
+        now_ms: u64,
+        restart_count: u64,
+        last_restart_cause: Option<RestartCause>,
+    ) -> Result<Option<RuntimeLeaseOwner>, SupervisorRuntimeError> {
+        let owner = self.acquire_runtime(
+            runtime_id,
+            now_ms,
+            restart_count,
+            last_restart_cause.clone(),
+        )?;
+        if owner.is_some() {
+            self.ready_runtime(runtime_id, now_ms, restart_count, last_restart_cause)?;
+        }
+        Ok(owner)
+    }
+
+    fn ready_runtime(
+        &mut self,
+        runtime_id: &str,
+        now_ms: u64,
+        restart_count: u64,
+        last_restart_cause: Option<RestartCause>,
+    ) -> Result<(), SupervisorRuntimeError> {
+        let owner = self.handles[runtime_id].owner.clone();
+        let runtime = owner.runtime_id.clone();
         let lifecycle_context =
             self.create_runtime_lifecycle_context(runtime_id, &owner.lease_id)?;
         let lease_context = RuntimeLeaseContext {
             runtime_id: runtime_id.to_string(),
-            lease_id: lease.lease_id.clone(),
+            lease_id: owner.lease_id.clone(),
         };
-        let start_report = match lifecycle_context.as_ref() {
-            Some(context) => handle.start_after_lifecycle_lease(lease_context, context),
-            None => handle.start_after_lease(lease_context),
-        };
-        self.handles.insert(
-            runtime_id.to_string(),
-            SupervisedRuntimeHandle {
-                actor: BoundedActorHandle::new(handle),
-                owner: owner.clone(),
-            },
-        );
-        let start_report = start_report?;
+        let start_report = self
+            .handles
+            .get_mut(runtime_id)
+            .unwrap()
+            .actor
+            .start(lease_context, lifecycle_context.as_ref())?;
         self.record_runtime_readiness(runtime_id, start_report.owner_readiness)?;
         // A started actor has not proven health yet: only a real bounded
         // tick report may promote it past starting.
@@ -1866,7 +1919,7 @@ impl<'a> RuntimeSupervisor<'a> {
             restart_count,
             last_restart_cause,
         )?;
-        Ok(Some(owner))
+        Ok(())
     }
 
     fn restart_runtime(

@@ -270,8 +270,8 @@ impl DocsClaimJudgeSlot {
     }
 }
 
-#[cfg(test)]
-pub(crate) mod test_support {
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support {
     use super::*;
     use crate::docs::claim_validation::{
         CitationScope, ClaimCitation, ClaimVerdict, DocsClaimJudgmentRequest,

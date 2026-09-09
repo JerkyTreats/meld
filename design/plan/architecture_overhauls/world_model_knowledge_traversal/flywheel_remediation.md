@@ -648,6 +648,16 @@ Three external-host tests and three ordinary startup integration cases pass on t
 
 If applied, this commit scopes prepared products and external owner state independently of workspace ownership and removes latest-compilation substitution from prepared-head resolution. The owner wire preparation now requires assignment scope. Existing unscoped history needs explicit migration; it is not automatically reset.
 
+### R4 Native Handover And Regression Checkpoint
+
+The external-owner regression migration now uses executable selections, native provider callbacks and published Event evidence. No root Docs or Security actor was restored for tests. All workspace targets compile. The moved owner libraries pass 103 unit tests, the three external-host proofs pass, and all 14 runtime CLI cases pass. The native observation ancestry proof and real-clock Security expiry proof also pass. A broad root run remains in progress; its three obsolete fixture expectations have separate passing corrections. Final integrated evidence and the unchanged-core Qwen proof remain open.
+
+The regression work exposed actual ownership defects. Provider callbacks now retain the selected provider, model and host overrides while allowing package-owned semantic request fields. Observation inference receives the native assignment session for provider Event attribution without Task effect authority. Security topology selects its authored posture Belief for the maintained condition rather than the auxiliary coverage Belief.
+
+Startup now acquires native leases, fences and drains the exact predecessor, releases its mutable state, readies the successor, then publishes admission. The retained compare-and-swap head keeps a failed replacement recoverable. A lost observation handle terminates its owned process without fabricating a release receipt. Native readiness after lease acquisition can reconnect the retained executable and reopen its exact preparation; ordinary invocations cannot perform that recovery. The replacement regression overwrites the operator executable path and proves that predecessor retirement still reconstructs from retained bytes.
+
+One earlier broad run used a temporary filesystem that hit its per-user quota. Subsequent tests use an external disk-backed temporary root. That infrastructure failure is retained as evidence and is not classified as product behavior. This checkpoint is an implementation commit, not R4 gate acceptance. The user directs the final gate after all requirements are ready.
+
 ## Evidence Baseline And Current Validation Status
 
 The prior audit's tracked source inventory contained 618 Rust files and 213,645 lines including tests. No tracked `mod.rs` files were found. The worktree was clean at the baseline. The implementation contains real native owner participation, durable Agent progression, complete-Task admission, shared operational work, and exact package receipts. Those are retained foundations, not candidates for wholesale replacement.

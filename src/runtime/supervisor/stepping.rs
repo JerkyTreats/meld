@@ -9,7 +9,7 @@
 
 use crate::runtime::assembly::{
     InertRuntimeHandle, RuntimeHandleFlushReport, RuntimeHandleSafePointReport,
-    RuntimeHandleStopReport,
+    RuntimeHandleStartReport, RuntimeHandleStopReport, RuntimeLeaseContext,
 };
 use crate::runtime::contracts::{
     ActorBoundedStep, ActorBoundedStepError, WorkBudget, WorkerTickReport,
@@ -22,7 +22,7 @@ use crate::runtime::lifecycle::{OwnerWaitReceiptV1, StructuralWakeRef};
 ///
 /// Owns the started runtime handle and forwards the lifecycle hooks the
 /// supervisor needs around stepping. Construction does not start the handle;
-/// the supervisor starts it after lease acquisition, before wrapping.
+/// the supervisor starts it after lease acquisition and predecessor release.
 pub struct BoundedActorHandle {
     runtime_id: String,
     handle: InertRuntimeHandle,
@@ -34,6 +34,17 @@ impl BoundedActorHandle {
         Self {
             runtime_id: handle.runtime_id().to_string(),
             handle,
+        }
+    }
+
+    pub(super) fn start(
+        &mut self,
+        lease: RuntimeLeaseContext,
+        lifecycle: Option<&ParticipantLifecycleContextV1>,
+    ) -> Result<RuntimeHandleStartReport, RuntimeAssemblyError> {
+        match lifecycle {
+            Some(context) => self.handle.start_after_lifecycle_lease(lease, context),
+            None => self.handle.start_after_lease(lease),
         }
     }
 

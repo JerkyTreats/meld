@@ -785,10 +785,18 @@ claim_policy_id = "docs-claims-strict-v1"
             "error should name the invalid field, got: {message}"
         );
         let canonical_source = config_file.canonicalize().unwrap();
-        assert!(
-            message.contains(canonical_source.to_str().unwrap()),
-            "error should name the config source {}, got: {message}",
-            canonical_source.display()
+        let reported_source = message
+            .split("(from ")
+            .nth(1)
+            .unwrap()
+            .split("):")
+            .next()
+            .unwrap();
+        assert_eq!(
+            std::path::Path::new(reported_source)
+                .canonicalize()
+                .unwrap(),
+            canonical_source
         );
     }
 
@@ -847,3 +855,6 @@ claim_policy_id = "docs-claims-strict-v1"
         );
     }
 }
+
+#[cfg(test)]
+pub(crate) use stewardship::assignment::assignment_scope_id;

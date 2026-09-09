@@ -507,14 +507,13 @@ mod tests {
             OpenProductStores::open(&ProductStorageLayout::from_root(root.path())).unwrap();
         let catalog = current_product_route_catalog(&stores).unwrap();
         let routes: Vec<String> = catalog.routes().map(TheoryRouteId::key).collect();
-        assert_eq!(routes.len(), 11);
+        assert_eq!(routes.len(), 10);
         assert_eq!(
             routes,
             vec![
-                "dependency-security.policy.v1",
-                "docs.claim-policy.v1",
                 "execution.authority-policy.v1",
                 "execution.capability-contract.v1",
+                "runtime.product-topology.v1",
                 "world-model.agent-curation-rule.v1",
                 "world-model.agent-maintained-condition.v1",
                 "world-model.belief-family.v1",

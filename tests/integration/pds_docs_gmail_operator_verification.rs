@@ -443,6 +443,7 @@ claim_policy_id = "docs-claims-strict-v1"
 "#,
         target_root = workspace_root.canonicalize().unwrap().display(),
     );
+    let config = super::external_owners::docs_config(&config);
     let config_root = Path::new(&std::env::var("XDG_CONFIG_HOME").unwrap()).join("meld");
     std::fs::create_dir_all(&config_root).unwrap();
     std::fs::write(config_root.join("config.toml"), config).unwrap();

@@ -245,37 +245,32 @@ fn materialize(
         published.fatal_errors.is_empty() && published.retryable_errors.is_empty(),
         "{published:?}"
     );
-    let RuntimeSemanticHandleFactory::SecurityObservation(observer) = &assembly
-        .handle_factories()
-        .get("dependency_security.observation")
+    let prepared = assembly.prepared_activation().unwrap();
+    let compilation = assembly
+        .stores()
+        .pds_products
+        .compilation(&prepared.assignment.product_compilation_receipt_id)
         .unwrap()
-        .semantic
-    else {
-        unreachable!()
-    };
-    let inventory_source = observer
-        .sources
-        .iter()
-        .find(|source| source.id == meld_dependency_security_owner::dependency_security::capability::OBSERVE_INVENTORY)
         .unwrap();
-    let pending = meld_dependency_security_owner::dependency_security::returns::pending(
-        inventory_source,
-        &harness.authority.replay_capability(),
+    let bindings = crate::runtime::owners::preparation::prepare_owner_bindings(
+        assembly.stores(),
+        &harness.binding,
+        &compilation.installed_owner_revisions,
     )
     .unwrap();
+    let seed: serde_json::Value =
+        serde_json::from_str(bindings.get("owner-runtime::dependency-security").unwrap()).unwrap();
+    let resources: BTreeMap<String, String> =
+        serde_json::from_value(seed["resources"]["bindings"].clone()).unwrap();
+    let pending = meld_dependency_security_owner::dependency_security::test_support::pending_inventory_returns(resources.clone(), &harness.authority.replay_capability(), None).unwrap();
     assert_eq!(
         pending.len(),
         1,
         "late Execution publication still needs an explicit source acknowledgment"
     );
-    let mut foreign = inventory_source.clone();
     let other_workspace = tempfile::tempdir().unwrap();
-    foreign.workspace = Some(other_workspace.path().into());
     assert!(
-        meld_dependency_security_owner::dependency_security::returns::pending(
-            &foreign,
-            &harness.authority.replay_capability()
-        )
+        meld_dependency_security_owner::dependency_security::test_support::pending_inventory_returns(resources, &harness.authority.replay_capability(), Some(other_workspace.path().into()))
         .unwrap()
         .is_empty(),
         "a recognized subject on another physical workspace cannot receive this outcome"

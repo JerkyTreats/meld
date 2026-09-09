@@ -137,7 +137,11 @@ impl PreparedOwnerRuntime {
             .clone();
         let context = match scope {
             OperationScope::Invocation(context, _) => Some(context.clone()),
-            _ => None,
+            OperationScope::Observation => Some(ExecutionEventContext {
+                session_id: self.grants.observation_session.clone(),
+                effect_authority: None,
+            }),
+            OperationScope::ReadOnly => None,
         };
         let frames = match scope {
             OperationScope::Observation => self.grants.observation_provider_frame_types.clone(),
@@ -165,6 +169,25 @@ impl PreparedOwnerRuntime {
             .lock()
             .map_err(|_| unavailable("runtime connection lock poisoned"))?
             .call(command, callbacks.as_ref())
+    }
+
+    fn recover_connection_after_lease(&self) -> Result<(), OwnerDiagnosticV1> {
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| unavailable("runtime connection lock poisoned"))?;
+        if connection.unavailable() {
+            // Native readiness is the sole retry boundary. Invocations never
+            // replace a failed process or acquire mutable observation tenure.
+            connection.reconnect()?;
+            connection.call::<()>(
+                OwnerCommandV1::PrepareRuntime {
+                    preparation: self.preparation.clone(),
+                },
+                &NoOwnerCallbacks,
+            )?;
+        }
+        Ok(())
     }
 
     fn event_grant(
@@ -242,6 +265,7 @@ impl NativeObservationOwnerFactory for Arc<PreparedOwnerRuntime> {
         Box::new(OwnerObservation {
             runtime: self.clone(),
             context: None,
+            owns_session: false,
         })
     }
 
@@ -325,6 +349,20 @@ impl CapabilityInvoker for OwnerInvoker {
 struct OwnerObservation {
     runtime: Arc<PreparedOwnerRuntime>,
     context: Option<ParticipantLifecycleContextV1>,
+    owns_session: bool,
+}
+
+impl Drop for OwnerObservation {
+    fn drop(&mut self) {
+        // Losing the native lifecycle handle ends this process's mutable tenure.
+        // Retained invokers cannot keep it alive, and termination supplies no
+        // semantic release receipt. Recovery must still drain the predecessor.
+        if self.owns_session {
+            if let Ok(mut connection) = self.runtime.connection.lock() {
+                connection.invalidate();
+            }
+        }
+    }
 }
 
 impl NativeObservationOwner for OwnerObservation {
@@ -363,6 +401,10 @@ impl NativeOwnerLifecycle for OwnerObservation {
         &mut self,
         context: &ParticipantLifecycleContextV1,
     ) -> Result<OwnerReadinessReceiptV1, RuntimeAssemblyError> {
+        self.owns_session = true;
+        self.runtime
+            .recover_connection_after_lease()
+            .map_err(runtime_error)?;
         let receipt = self
             .runtime
             .call(
@@ -435,6 +477,7 @@ impl NativeOwnerLifecycle for OwnerObservation {
             )
             .map_err(runtime_error)?;
         self.context = None;
+        self.owns_session = false;
         Ok(receipt)
     }
     fn native_resolves_wake(

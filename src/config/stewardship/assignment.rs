@@ -144,7 +144,7 @@ impl StewardshipAssignmentV1 {
     }
 }
 
-pub(super) fn assignment_scope_id<'a>(
+pub(crate) fn assignment_scope_id<'a>(
     product_id: &str,
     principal_id: &str,
     subject: &DomainObjectRef,

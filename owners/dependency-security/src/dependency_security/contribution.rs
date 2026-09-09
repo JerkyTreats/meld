@@ -260,6 +260,7 @@ fn diagnostic(message: impl Into<String>) -> CapabilityContributionDiagnostic {
 mod tests {
     use super::*;
     use crate::task::ArtifactRecord;
+    use meld_execution::EventPublicationPort;
     use std::collections::BTreeMap;
 
     fn api(root: &std::path::Path) -> crate::api::ContextApi {

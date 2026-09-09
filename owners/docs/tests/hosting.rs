@@ -234,6 +234,21 @@ fn docs_package_installs_observes_invokes_and_reopens_through_native_ports() {
         result.emitted_artifacts[0].artifact_type_id,
         "docs_evidence_bundle"
     );
+    // Losing the native handle must close its process even while invokers and
+    // factories remain reachable. The next native lease reopens exact state.
+    drop(observer);
+    let mut observer = runtime.build();
+    let context = ParticipantLifecycleContextV1 {
+        incarnation_id: "incarnation-recovered".into(),
+        ..context
+    };
+    observer.native_readiness(&context).unwrap();
+    let recovered_report = observer.tick(meld::runtime::contracts::WorkBudget { max_items: 1 });
+    assert!(
+        recovered_report.fatal_errors.is_empty(),
+        "{recovered_report:?}"
+    );
+    assert_eq!(recovered_report.items_committed, 0);
     // A successor can prepare while its predecessor still owns mutable state.
     let reopened = open();
     observer.native_safe_point(&context).unwrap();

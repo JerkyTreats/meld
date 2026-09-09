@@ -109,8 +109,8 @@ directories = "5.0"
 rustix = { version = "1.1.4", features = ["fs", "process"] }
 
 [dev-dependencies]
-meld-docs-owner = { path = "owners/docs" }
-meld-dependency-security-owner = { path = "owners/dependency-security" }
+meld-docs-owner = { path = "owners/docs", features = ["test-support"] }
+meld-dependency-security-owner = { path = "owners/dependency-security", features = ["test-support"] }
 # Testing
 meld-events = { path = "crates/meld-events", version = "2.7.0", features = ["test-support"] }
 proptest = "1.4"

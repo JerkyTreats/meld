@@ -6,6 +6,21 @@ use crate::runtime::lifecycle::ActivationGenerationStatus;
 #[test]
 fn prepared_binding_replacement_preserves_assignment_and_drains_predecessor() {
     let mut harness = StewardshipHarness::new();
+    let crate::config::PhysicalBindingRef::ConfigRef(selected) =
+        &harness.binding.bindings["owner::docs"]
+    else {
+        unreachable!()
+    };
+    let mut selected: crate::runtime::owners::catalog::OwnerSelectionV1 =
+        serde_json::from_str(selected).unwrap();
+    let executable_path = harness._external.path().join("selected-docs-owner");
+    std::fs::copy(&selected.executable.path, &executable_path).unwrap();
+    selected.executable.path = executable_path.clone();
+    let predecessor_digest = selected.executable.content_hash.clone();
+    harness.binding.bindings.insert(
+        "owner::docs".into(),
+        crate::config::PhysicalBindingRef::ConfigRef(serde_json::to_string(&selected).unwrap()),
+    );
     {
         let assembly = harness.assembly();
         harness.run_world_genesis(&assembly);
@@ -25,11 +40,25 @@ fn prepared_binding_replacement_preserves_assignment_and_drains_predecessor() {
             .unwrap();
         assert!(predecessor.admission_open());
         harness.binding.provider_id = Some("replacement-provider".into());
+        // Replace the operator path after the old executable was retained. An ELF
+        // trailer changes its identity while preserving this fixture's semantics.
+        let mut successor_bytes = std::fs::read(&executable_path).unwrap();
+        successor_bytes.extend_from_slice(b"\nreplacement-fixture\n");
+        std::fs::write(&executable_path, &successor_bytes).unwrap();
+        selected.executable.content_hash = blake3::hash(&successor_bytes).to_hex().to_string();
+        assert_ne!(selected.executable.content_hash, predecessor_digest);
+        harness.binding.bindings.insert(
+            "owner::docs".into(),
+            crate::config::PhysicalBindingRef::ConfigRef(serde_json::to_string(&selected).unwrap()),
+        );
         harness.run_world_genesis(&assembly);
         let head = assembly
             .stores()
             .pds_products
-            .prepared_head(&harness.binding.package.expression)
+            .prepared_head(
+                &harness.binding.package.expression,
+                &harness.binding.assignment_scope_id(),
+            )
             .unwrap()
             .unwrap();
         let successor = assembly

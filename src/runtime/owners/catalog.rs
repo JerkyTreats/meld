@@ -129,6 +129,26 @@ impl OwnerCatalog {
         Ok(())
     }
 
+    pub fn placement_for(
+        &self,
+        selections: &BTreeMap<meld_execution::capability::CapabilityContractRevisionRef, String>,
+        participants: &crate::theory::ActivationParticipantPlanV1,
+    ) -> crate::config::AdapterPlacement {
+        if self.descriptions().any(|owner| {
+            owner
+                .observation_participant
+                .as_ref()
+                .is_some_and(|spec| participants.participants.contains(spec))
+                || owner.implementations.iter().any(|offer| {
+                    selections.get(&offer.contract_ref) == Some(&offer.implementation_ref)
+                })
+        }) {
+            crate::config::AdapterPlacement::SerializedLocal
+        } else {
+            crate::config::AdapterPlacement::InProcess
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         self.owners.is_empty()
     }

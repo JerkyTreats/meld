@@ -3,7 +3,7 @@ use std::os::fd::OwnedFd;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -22,6 +22,7 @@ pub struct OwnerConnection {
     next_request_id: u64,
     failed: bool,
     executable_hash: String,
+    retained_path: PathBuf,
 }
 
 impl OwnerConnection {
@@ -98,6 +99,7 @@ impl OwnerConnection {
             next_request_id: 1,
             failed: false,
             executable_hash: digest,
+            retained_path: retained,
         })
     }
 
@@ -207,6 +209,23 @@ impl OwnerConnection {
                 }
             }
         }
+    }
+
+    pub(crate) fn unavailable(&self) -> bool {
+        self.failed
+    }
+
+    pub(crate) fn reconnect(&mut self) -> Result<(), OwnerDiagnosticV1> {
+        let selected = OwnerExecutableV1 {
+            path: self.retained_path.clone(),
+            content_hash: self.executable_hash.clone(),
+        };
+        *self = Self::start(
+            &selected,
+            self.retained_path.parent().unwrap(),
+            self.limits.clone(),
+        )?;
+        Ok(())
     }
 
     pub(crate) fn invalidate(&mut self) {

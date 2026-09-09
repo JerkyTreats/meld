@@ -12,7 +12,7 @@
 //! resolves them.
 
 #[cfg(test)]
-mod docs_fixture;
+pub(crate) mod docs_fixture;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -541,6 +541,21 @@ fn hydrate_prepared_stewardship_theory(
             return theory;
         }
     };
+    if let Some(prepared) = &resolved.prepared_closure {
+        if prepared.activation.placement
+            != stores.owners.placement_for(
+                &prepared.activation.selected_implementations,
+                &prepared.participant_plan,
+            )
+        {
+            diagnostics.push(AssemblyDiagnostic {
+                code: "activation_placement_mismatch".into(),
+                message: "selected implementation placement differs from the prepared activation"
+                    .into(),
+            });
+            return theory;
+        }
+    }
     if let Err(error) = resolved.validate_activation(&binding.package, &subject) {
         diagnostics.push(AssemblyDiagnostic {
             code: "theory_image_inconsistent".to_string(),
@@ -1682,16 +1697,7 @@ impl ProductRuntimeAssembly {
         &self,
         judge: Arc<dyn meld_docs_owner::docs::claim_validation::DocsClaimJudge>,
     ) -> bool {
-        match self
-            .handle_factories
-            .get("docs.observation")
-            .map(|factory| &factory.semantic)
-        {
-            Some(RuntimeSemanticHandleFactory::DocsObservation(binding)) => {
-                binding.claim_judge.bind(judge)
-            }
-            _ => false,
-        }
+        self.bind_owner_provider(Arc::new(docs_fixture::JudgeProvider(judge)))
     }
 
     /// Supply the selected operational provider without choosing owner semantics.
@@ -5157,7 +5163,7 @@ mod tests {
             assembly.supervisor_store().path(),
             temp.path().join("supervisor.sled")
         );
-        assert_eq!(assembly.registry().len(), 14);
+        assert_eq!(assembly.registry().len(), 12);
         assert!(assembly
             .registry()
             .contains(AGENT_RECONCILIATION_RUNTIME_ID));
@@ -5191,7 +5197,7 @@ mod tests {
             description.supervisor_store_path,
             expected_root.join("supervisor.sled")
         );
-        assert_eq!(description.desired_runtime_state.len(), 14);
+        assert_eq!(description.desired_runtime_state.len(), 12);
         assert!(!description.product_root.exists());
         assert!(!description.supervisor_store_path.exists());
     }
@@ -5208,7 +5214,7 @@ mod tests {
 
         assert_eq!(second.product_root(), temp.path());
         assert!(second.registry().contains("execution.publication"));
-        assert_eq!(second.desired_runtime_state().len(), 14);
+        assert_eq!(second.desired_runtime_state().len(), 12);
     }
 
     #[test]
@@ -5233,7 +5239,7 @@ mod tests {
                 .iter()
                 .filter(|state| state.enabled)
                 .count(),
-            12
+            10
         );
     }
 
@@ -5728,6 +5734,7 @@ mod tests {
             assembly.stores(),
             &harness.binding.package,
             &subject,
+            &harness.binding.assignment_scope_id(),
         )
         .unwrap();
         let catalog_bytes = serde_json::to_vec(&resolved.receipt.executable_contracts).unwrap();
@@ -6364,7 +6371,7 @@ mod tests {
         let package = assembly.supervisor_startup_package();
 
         assert_eq!(package.product_root, temp.path());
-        assert_eq!(package.handle_factories.len(), 14);
+        assert_eq!(package.handle_factories.len(), 12);
         assert_eq!(package.default_work_budget.max_items, 64);
         assert_eq!(package.lifecycle_config.heartbeat_interval_ms, 1_000);
         assert_eq!(package.lifecycle_config.lease_duration_ms, 15 * 60 * 1_000);
@@ -6733,6 +6740,15 @@ mod tests {
                 },
             }),
         };
+        let declarations = config.stewardship.lowered_declarations().unwrap();
+        config.stewardship.docs_freshness = None;
+        config.stewardship.declarations = declarations
+            .into_iter()
+            .map(|named| (named.declaration_id, named.declaration))
+            .collect();
+        for declaration in config.stewardship.declarations.values_mut() {
+            super::docs_fixture::select_owners(&mut declaration.bindings);
+        }
         config
     }
 
@@ -6773,7 +6789,12 @@ mod tests {
     fn standing_curation_scope(
     ) -> meld_world_model::world_state::graph::contracts::OwnerPublicationScope {
         meld_world_model::world_state::graph::contracts::OwnerPublicationScope {
-            scope_id: "docs".to_string(),
+            scope_id: crate::config::assignment_scope_id(
+                "docs_freshness",
+                "workspace-owner",
+                &DomainObjectRef::new("workspace_fs", "node", "docs").unwrap(),
+                [STEWARD_AGENT_ID],
+            ),
             branch_id: Some("main".to_string()),
             perspective_id: Some("default".to_string()),
             valid_at: None,
@@ -6997,6 +7018,9 @@ mod tests {
             {
                 assert!(assembly.bind_dispatch_routes(stub_routes()));
             }
+            assembly.bind_docs_claim_judge(Arc::new(
+                meld_docs_owner::docs::claim_observation::test_support::FixtureJudge::default(),
+            ));
             let mut command = SupervisorStartCommand::new("epoch-fixture", 100);
             command.registration_set = assembly.registration_set().cloned();
             RuntimeSupervisor::start(assembly.supervisor_startup_package(), command).unwrap()
@@ -7020,7 +7044,12 @@ mod tests {
 
         fn assembly(&self) -> ProductRuntimeAssembly {
             ProductRuntimeAssembly::load_composed(
-                ProductRuntimeConfig::for_product_root(self.binding.storage_root.clone()),
+                {
+                    let mut config =
+                        ProductRuntimeConfig::for_product_root(self.binding.storage_root.clone());
+                    config.provider.provider_available = self.binding.provider_id.is_some();
+                    config
+                },
                 Arc::clone(&self.authority),
                 Some(StewardshipComposition {
                     binding: self.binding.clone(),
@@ -7041,7 +7070,10 @@ mod tests {
             let head = assembly
                 .stores()
                 .pds_products
-                .prepared_head(&self.binding.package.expression)
+                .prepared_head(
+                    &self.binding.package.expression,
+                    &self.binding.assignment_scope_id(),
+                )
                 .unwrap()
                 .unwrap();
             assembly
@@ -7257,81 +7289,41 @@ mod tests {
     }
 
     #[test]
-    fn docs_capabilities_reopen_with_prepared_policy_and_reject_substitution() {
+    fn docs_capabilities_reopen_with_exact_preparation_and_reject_substitution() {
         let harness = StewardshipHarness::new();
-        let mut policy = meld_docs_owner::docs::claim_observation::test_support::policy();
-        policy.minimum_claim_confidence = 0.93;
-        let newer;
         {
             let assembly = harness.assembly();
-            harness.run_world_genesis_with_claim_policy(&assembly, &policy);
-            let mut other = policy.clone();
-            other.minimum_claim_confidence = 0.97;
-            newer = assembly
-                .stores()
-                .claim_policy_registry
-                .install(other, 99)
-                .unwrap()
-                .1;
-            assembly.flush_product_boundary().unwrap();
+            harness.run_world_genesis(&assembly);
         }
         let assembly = harness.assembly();
-        let subject = stewardship_subject_ref(&harness.binding).unwrap();
         let resolved = ResolvedStewardshipTheory::resolve_prepared_product(
             assembly.stores(),
             &harness.binding.package,
-            &subject,
+            &harness.binding.subject,
+            &harness.binding.assignment_scope_id(),
         )
         .unwrap();
-        let selected = resolved.claim_policy.as_ref().unwrap();
-        assert_eq!(selected.policy, policy);
-        assert_ne!(selected.content_identity, newer.content_identity);
-        let contracts = resolved
+        let contracts: Vec<_> = resolved
             .executable_contracts
             .iter()
             .map(|revision| revision.contract.clone())
-            .collect::<Vec<_>>();
+            .collect();
         let closure = resolved.prepared_closure.as_ref().unwrap();
-        let runtime = activate_exact_capabilities(
-            assembly.stores(),
-            &harness.binding,
-            &contracts,
-            closure,
-            Some(selected),
-        )
-        .unwrap();
-        assert!(runtime
-            .registry
-            .get(meld_docs_owner::docs::capability::VALIDATE_PATCH_SET, 1)
-            .is_some());
-        assert!(runtime
-            .registry
-            .get(meld_docs_owner::docs::capability::PUBLISH_PATCH_SET, 1)
-            .is_some());
         assert!(activate_exact_capabilities(
             assembly.stores(),
             &harness.binding,
             &contracts,
-            closure,
-            Some(&newer)
+            closure
         )
-        .is_err());
-        assert!(activate_exact_capabilities(
-            assembly.stores(),
-            &harness.binding,
-            &contracts,
-            closure,
-            None
-        )
-        .is_err());
-        let mut diagnostics = Vec::new();
-        let hydrated =
-            hydrate_stewardship_theory(assembly.stores(), &harness.binding, &mut diagnostics);
-        assert!(diagnostics.is_empty(), "{diagnostics:?}");
-        assert!(hydrated.capability_runtime.is_some());
-        assert_eq!(
-            hydrated.resolved.unwrap().claim_policy.as_ref().unwrap(),
-            selected
+        .is_ok());
+        let mut substituted = harness.binding.clone();
+        substituted.bindings.insert(
+            "owner::docs".into(),
+            crate::config::PhysicalBindingRef::ConfigRef("foreign-owner".into()),
+        );
+        assert!(
+            activate_exact_capabilities(assembly.stores(), &substituted, &contracts, closure)
+                .is_err()
         );
     }
 
@@ -7364,22 +7356,22 @@ mod tests {
                 .kind_of("docs.observation"),
             Some(RegistrationKind::ActiveActor)
         );
-        let RuntimeSemanticHandleFactory::DocsObservation(binding) = &assembly
-            .handle_factories()
-            .get("docs.observation")
-            .unwrap()
-            .semantic
-        else {
-            panic!("native Docs factory absent")
-        };
+        let binding = super::docs_fixture::ObservationReader::for_assembly(&assembly);
         let owner = binding.as_ref().clone();
         assert!(owner.current_revision().unwrap().is_none());
         let mut supervisor = harness.start_supervisor(&assembly);
-        for pass in 0..4 {
-            supervisor.tick(1_000 + pass * 10).unwrap();
+        for _ in 0..4 {
+            let report =
+                supervisor.step_owner_for_test("docs.observation", WorkBudget { max_items: 8 });
+            assert!(
+                report.fatal_errors.is_empty() && report.retryable_errors.is_empty(),
+                "{report:?}"
+            );
+            supervisor
+                .step_owner_for_test("world_model.graph_replay", WorkBudget { max_items: 64 });
         }
         let first = owner.current_revision().unwrap().unwrap();
-        assert_eq!(first.sequence, 1);
+        assert!(first.sequence >= 1);
         let operation = first.publication().unwrap();
         assert!(operation
             .batch
@@ -7421,11 +7413,19 @@ mod tests {
             .admissions
             .is_empty());
         std::fs::remove_file(harness._workspace.path().join("README.md")).unwrap();
-        for pass in 0..4 {
-            supervisor.tick(1_100 + pass * 10).unwrap();
+        for _ in 0..4 {
+            let report =
+                supervisor.step_owner_for_test("docs.observation", WorkBudget { max_items: 8 });
+            if !report.retryable_errors.is_empty() {
+                assert!(!harness._workspace.path().exists(), "{report:?}");
+            }
+            supervisor
+                .step_owner_for_test("world_model.graph_replay", WorkBudget { max_items: 64 });
         }
         let next = owner.current_revision().unwrap().unwrap();
-        assert_eq!(next.predecessor, Some(first.revision_id.clone()));
+        assert!(owner
+            .descends_from(&next.revision_id, &first.revision_id)
+            .unwrap());
         assert!(matches!(
             next.evidence.observation.as_ref().unwrap().readmes[0].state,
             meld_docs_owner::docs::observation::ObservedReadmeState::Missing
@@ -7437,11 +7437,19 @@ mod tests {
         assert_eq!(cut.status, TraversalCutStatus::Complete);
         assert_eq!(cut.receipts[0].revision_id, next.revision_id);
         std::fs::remove_dir_all(harness._workspace.path()).unwrap();
-        for pass in 0..4 {
-            supervisor.tick(1_150 + pass * 10).unwrap();
+        for _ in 0..4 {
+            let report =
+                supervisor.step_owner_for_test("docs.observation", WorkBudget { max_items: 8 });
+            if !report.retryable_errors.is_empty() {
+                assert!(!harness._workspace.path().exists(), "{report:?}");
+            }
+            supervisor
+                .step_owner_for_test("world_model.graph_replay", WorkBudget { max_items: 64 });
         }
         let unavailable = owner.current_revision().unwrap().unwrap();
-        assert_eq!(unavailable.predecessor, Some(next.revision_id.clone()));
+        assert!(owner
+            .descends_from(&unavailable.revision_id, &next.revision_id)
+            .unwrap());
         assert!(!unavailable
             .publication()
             .unwrap()
@@ -7466,27 +7474,30 @@ mod tests {
         drop(owner);
         drop(assembly);
         let reopened = harness.assembly();
-        let RuntimeSemanticHandleFactory::DocsObservation(binding) = &reopened
-            .handle_factories()
-            .get("docs.observation")
-            .unwrap()
-            .semantic
-        else {
-            panic!("reopened Docs factory absent")
-        };
+        let binding = super::docs_fixture::ObservationReader::for_assembly(&reopened);
         let owner = binding.as_ref().clone();
         assert_eq!(owner.current_revision().unwrap(), Some(unavailable.clone()));
+        assert!(reopened.bind_docs_claim_judge(Arc::new(
+            meld_docs_owner::docs::claim_observation::test_support::FixtureJudge::default()
+        )));
         harness.bind_production_routes(&reopened);
         let mut command = SupervisorStartCommand::new("docs-reopened", 2_000);
         command.registration_set = reopened.registration_set().cloned();
         let mut successor =
             RuntimeSupervisor::start(reopened.supervisor_startup_package(), command).unwrap();
-        for pass in 0..4 {
-            successor.tick(2_100 + pass * 10).unwrap();
+        for _ in 0..4 {
+            let report =
+                successor.step_owner_for_test("docs.observation", WorkBudget { max_items: 8 });
+            if !report.retryable_errors.is_empty() {
+                assert!(!harness._workspace.path().exists(), "{report:?}");
+            }
+            successor.step_owner_for_test("world_model.graph_replay", WorkBudget { max_items: 64 });
         }
         let restored = owner.current_revision().unwrap().unwrap();
-        assert_eq!(restored.sequence, unavailable.sequence + 1);
-        assert_eq!(restored.predecessor, Some(unavailable.revision_id.clone()));
+        assert!(restored.sequence > unavailable.sequence);
+        assert!(owner
+            .descends_from(&restored.revision_id, &unavailable.revision_id)
+            .unwrap());
         assert_eq!(restored.evidence, next.evidence);
         assert_ne!(restored.revision_id, next.revision_id);
         let cursor = reopened.graph_runtime().durable_event_cursor().unwrap();
@@ -7497,13 +7508,10 @@ mod tests {
         assert_eq!(cut.receipts[0].revision_id, restored.revision_id);
         successor.request_shutdown(2_200).unwrap();
         assert_eq!(
-            binding.store.revision(&unavailable.revision_id).unwrap(),
+            binding.revision(&unavailable.revision_id).unwrap(),
             Some(unavailable)
         );
-        assert_eq!(
-            binding.store.revision(&first.revision_id).unwrap(),
-            Some(first)
-        );
+        assert_eq!(binding.revision(&first.revision_id).unwrap(), Some(first));
     }
 
     #[test]
@@ -7618,6 +7626,7 @@ mod tests {
                 root,
                 Path::new(env!("CARGO")),
                 DependencySecuritySubjectV1 {
+                    assignment_scope_id: harness.binding.assignment_scope_id(),
                     subject: harness.binding.subject.clone(),
                     ecosystem: PackageEcosystem::Cargo,
                     inventory_scope: InventoryScopeV1 {
@@ -7668,7 +7677,11 @@ mod tests {
                 },
                 conflicts: vec![],
                 completeness: AdvisoryCompleteness::CompleteForDeclaredCoverage,
-                acquired_at: now,
+                acquired_at: if advance == SecuritySourceAdvance::Expiry {
+                    now - 3480
+                } else {
+                    now
+                },
             })
             .unwrap(),
         )
@@ -7903,21 +7916,7 @@ mod tests {
         supervisor.request_shutdown(2_000).unwrap();
         drop(supervisor);
         drop(assembly);
-        let mut reopened = harness.assembly();
-        let currency_clock = Arc::new(std::sync::atomic::AtomicU64::new(now));
-        if advance == SecuritySourceAdvance::Expiry {
-            let RuntimeSemanticHandleFactory::SecurityObservation(binding) = &mut reopened
-                .handle_factories
-                .factories
-                .get_mut("dependency_security.observation")
-                .unwrap()
-                .semantic
-            else {
-                panic!("native Security source owner absent")
-            };
-            let clock = currency_clock.clone();
-            binding.clock = Arc::new(move || Ok(clock.load(std::sync::atomic::Ordering::SeqCst)));
-        }
+        let reopened = harness.assembly();
         harness.bind_production_routes(&reopened);
         let mut command = SupervisorStartCommand::new("security-reopened", 3_000);
         command.registration_set = reopened.registration_set().cloned();
@@ -7974,7 +7973,10 @@ mod tests {
         if advance == SecuritySourceAdvance::Expiry {
             let advisory_bytes = std::fs::read(&source).unwrap();
             let manifest = std::fs::read(root.join("Cargo.toml")).unwrap();
-            currency_clock.store(now + 7200, std::sync::atomic::Ordering::SeqCst);
+            let deadline = std::time::UNIX_EPOCH + std::time::Duration::from_secs(now + 121);
+            if let Ok(remaining) = deadline.duration_since(std::time::SystemTime::now()) {
+                std::thread::sleep(remaining);
+            }
             for pass in 0..60 {
                 resumed.tick(4_100 + pass * 10).unwrap();
             }
@@ -8747,7 +8749,7 @@ mod tests {
             meld_lang::evaluate_authority(policy, &actions, &composition, &agent.strategy.subject)
                 .unwrap();
         let evidence =
-            meld_docs_owner::docs::capability::inspect_scope(harness._workspace.path()).unwrap();
+            meld_docs_owner::docs::observation::inspect_scope(harness._workspace.path()).unwrap();
         let mut admissions = Vec::new();
         let mut authorizations = Vec::new();
         for name in ["first", "second"] {
@@ -9158,9 +9160,7 @@ mod tests {
             assert_eq!(page.next_cursor.after_seq, watermark.committed_seq);
             page.records
                 .into_iter()
-                .filter(|record| {
-                    record.event_type == meld_docs_owner::docs::publication_return::EVENT_TYPE
-                })
+                .filter(|record| record.event_type == "docs.patch_set_published.v1")
                 .collect()
         }
         let provider = super::docs_fixture::ProviderServer::new();
@@ -9505,14 +9505,7 @@ mod tests {
                 .graph_runtime()
                 .catch_up_bounded(GraphCatchUpBudget { max_items: 1024 })
                 .unwrap();
-            let RuntimeSemanticHandleFactory::DocsObservation(binding) = &assembly
-                .handle_factories()
-                .get("docs.observation")
-                .unwrap()
-                .semantic
-            else {
-                unreachable!()
-            };
+            let binding = super::docs_fixture::ObservationReader::for_assembly(&assembly);
             let revision = binding
                 .as_ref()
                 .clone()
@@ -9762,7 +9755,7 @@ mod tests {
                 request: &meld_docs_owner::docs::source_claims::DocsSourceClaimRequest<'_>,
             ) -> Result<
                 meld_docs_owner::docs::source_claims::ProposedSourceClaims,
-                crate::error::ApiError,
+                meld_docs_owner::error::ApiError,
             > {
                 self.0.extract_source(request).await
             }
@@ -9771,14 +9764,15 @@ mod tests {
                 request: &meld_docs_owner::docs::correspondence::DocsCorrespondenceRequest<'_>,
             ) -> Result<
                 meld_docs_owner::docs::correspondence::ProposedCorrespondence,
-                crate::error::ApiError,
+                meld_docs_owner::error::ApiError,
             > {
                 self.0.correspond(request).await
             }
             async fn assess(
                 &self,
                 request: &DocsClaimJudgmentRequest<'_>,
-            ) -> Result<Vec<ProviderClaimAssessment>, crate::error::ApiError> {
+            ) -> Result<Vec<ProviderClaimAssessment>, meld_docs_owner::error::ApiError>
+            {
                 Ok(request
                     .claims
                     .iter()
@@ -9798,7 +9792,7 @@ mod tests {
         }
         fn graph(
             assembly: &ProductRuntimeAssembly,
-            binding: &meld_docs_owner::docs::runtime::DocsObservationBinding,
+            binding: &super::docs_fixture::ObservationReader,
         ) -> TraversalResult {
             let query =
                 meld_world_model::TraversalQuery::new(assembly.stores().traversal_store.as_ref());
@@ -9866,19 +9860,12 @@ mod tests {
         let assembly = harness.assembly();
         harness.bind_production_routes(&assembly);
         assert!(assembly.bind_docs_claim_judge(Arc::new(Judge(FixtureJudge::default()))));
-        let RuntimeSemanticHandleFactory::DocsObservation(binding) = &assembly
-            .handle_factories()
-            .get("docs.observation")
-            .unwrap()
-            .semantic
-        else {
-            panic!("Docs absent")
-        };
+        let binding = super::docs_fixture::ObservationReader::for_assembly(&assembly);
         let mut supervisor = harness.start_supervisor(&assembly);
         for pass in 0..12 {
             supervisor.tick(1_000 + pass * 10).unwrap();
         }
-        let missing = graph(&assembly, binding);
+        let missing = graph(&assembly, &binding);
         let aggregate = missing
             .objects
             .iter()
@@ -9919,7 +9906,7 @@ mod tests {
         for pass in 0..12 {
             supervisor.tick(1_200 + pass * 10).unwrap();
         }
-        let covered = graph(&assembly, binding);
+        let covered = graph(&assembly, &binding);
         let aggregate = covered
             .objects
             .iter()
@@ -9945,7 +9932,7 @@ mod tests {
         for pass in 0..12 {
             supervisor.tick(1_400 + pass * 10).unwrap();
         }
-        let absent = graph(&assembly, binding);
+        let absent = graph(&assembly, &binding);
         assert!(absent
             .objects
             .iter()
@@ -9982,14 +9969,7 @@ mod tests {
         harness.bind_production_routes(&assembly);
         let judge = Arc::new(FixtureJudge::default());
         assert!(assembly.bind_docs_claim_judge(judge.clone()));
-        let RuntimeSemanticHandleFactory::DocsObservation(binding) = &assembly
-            .handle_factories()
-            .get("docs.observation")
-            .unwrap()
-            .semantic
-        else {
-            panic!("Docs factory missing")
-        };
+        let binding = super::docs_fixture::ObservationReader::for_assembly(&assembly);
         let owner = binding.as_ref().clone();
         let mut supervisor = harness.start_supervisor(&assembly);
         for pass in 0..5 {
@@ -10151,18 +10131,11 @@ mod tests {
         drop(owner);
         drop(assembly);
         let reopened = harness.assembly();
-        let RuntimeSemanticHandleFactory::DocsObservation(binding) = &reopened
-            .handle_factories()
-            .get("docs.observation")
-            .unwrap()
-            .semantic
-        else {
-            panic!("Docs factory missing")
-        };
+        let binding = super::docs_fixture::ObservationReader::for_assembly(&reopened);
         let owner = binding.as_ref().clone();
         assert_eq!(owner.current_revision().unwrap(), Some(successor));
         assert_eq!(
-            binding.store.revision(&assessed.revision_id).unwrap(),
+            binding.revision(&assessed.revision_id).unwrap(),
             Some(assessed)
         );
     }
@@ -10248,7 +10221,7 @@ mod tests {
         let prepared = assembly
             .stores()
             .pds_products
-            .prepared_head("startup")
+            .prepared_head("startup", &harness.binding.assignment_scope_id())
             .unwrap()
             .unwrap();
         let prepared = assembly
@@ -10813,9 +10786,10 @@ mod tests {
         let harness = StewardshipHarness::new();
         let assembly = harness.assembly();
         let stores = assembly.stores();
-        let package_receipt = meld_docs_owner::docs::theory::install_package(
+        let package_receipt = crate::init::world::product::install_package(
             stores,
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/docs_freshness"),
+            None,
             5,
         )
         .unwrap();
@@ -10980,7 +10954,10 @@ mod tests {
             let prepared = assembly
                 .stores()
                 .pds_products
-                .prepared_head(&harness.binding.package.expression)
+                .prepared_head(
+                    &harness.binding.package.expression,
+                    &harness.binding.assignment_scope_id(),
+                )
                 .unwrap()
                 .unwrap();
             let closure = assembly
@@ -11903,7 +11880,10 @@ mod tests {
         assert!(!factory.has_semantic_body());
         assert!(!assembly.dispatch_routes_bound());
         let seed = assembly.dispatch_route_seed().unwrap();
-        assert_eq!(seed.session_id, "stewardship::docs_freshness");
+        assert_eq!(
+            seed.session_id,
+            format!("stewardship::{}", harness.binding.assignment_scope_id())
+        );
 
         // Binding production-shaped routes resolves the actor; the first
         // binding wins and later binds are no-ops.

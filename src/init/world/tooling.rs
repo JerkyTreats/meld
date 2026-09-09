@@ -17,7 +17,7 @@ use meld_world_model::PerspectiveKey;
 
 use crate::capability::ProductCapabilityInventory;
 use crate::config::{
-    AdapterPlacement, AssignedAgentPositionV1, MerkleConfig, OperationalLimits, PhysicalBinding,
+    AssignedAgentPositionV1, MerkleConfig, OperationalLimits, PhysicalBinding,
     RuntimeIsolationRequirements, StewardshipActivationV1, StewardshipAssignmentV1,
 };
 use crate::error::ApiError;
@@ -262,15 +262,14 @@ pub(crate) fn compile_product_initialization<'a>(
         &compilation.installed_owner_revisions,
     )
     .map_err(|error| world_init_error(error.to_string()))?;
+    let placement = stores
+        .owners
+        .placement_for(&selected_implementations, &declaration.participant_plan);
     let activation = StewardshipActivationV1::new(
         assignment.assignment_id.clone(),
         binding.activation_bindings(),
         selected_implementations,
-        if stores.owners.is_empty() {
-            AdapterPlacement::InProcess
-        } else {
-            AdapterPlacement::SerializedLocal
-        },
+        placement,
         RuntimeIsolationRequirements::default(),
         OperationalLimits::default(),
     )?;
@@ -394,10 +393,11 @@ mod tests {
     fn shared_initializer_selects_security_components_and_authority_from_the_package() {
         let root = tempfile::tempdir().unwrap();
         let workspace = tempfile::tempdir().unwrap();
-        let stores = crate::runtime::storage::OpenProductStores::open(
+        let mut stores = crate::runtime::storage::OpenProductStores::open(
             &crate::runtime::storage::ProductStorageLayout::from_root(root.path()),
         )
         .unwrap();
+        crate::runtime::assembly::docs_fixture::configure_stores(&mut stores, root.path());
         let selected = crate::config::SelectedStewardshipPackage {
             expression: "dependency_security_fixture".into(),
             principal_id: "workspace-owner".into(),
@@ -421,9 +421,10 @@ mod tests {
             meld_dependency_security_owner::dependency_security::theory::PACKAGE_ID
         );
         assert!(routed.changed);
-        meld_docs_owner::docs::theory::install_package(
+        crate::init::world::product::install_package(
             &stores,
             &Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/docs_freshness"),
+            None,
             2,
         )
         .unwrap();

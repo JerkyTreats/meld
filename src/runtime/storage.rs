@@ -688,7 +688,7 @@ mod tests {
         let stores = OpenProductStores::open_scoped(&layout, &scope).unwrap();
 
         assert!(stores.capability_contract_registry.is_open());
-        assert!(stores.claim_policy_registry.is_open());
+        assert!(stores.owners.is_empty());
         assert!(stores.theory_receipts.is_open());
         assert!(stores.theory_db.is_open());
         assert!(!stores.belief_family_registry.is_open());

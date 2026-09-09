@@ -261,7 +261,7 @@
       "content": {
         "kind": "relative_file",
         "path": "product_topology.json",
-        "content_hash": "3459d8dc862d3116030b73e3bfec20f93d126088eb6e0911d59b1eed7f8ea40b"
+        "content_hash": "cd9a7f50e643c15828f03a1fb4f09c0b7b7c215900210711aeb9bcc7401e42af"
       },
       "requires": []
     }

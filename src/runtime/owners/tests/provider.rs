@@ -51,9 +51,17 @@ impl ProviderCompletionPort for RecordingCompletion {
 #[test]
 fn provider_callbacks_keep_the_native_selection_context_and_provenance() {
     let native = Arc::new(RecordingCompletion::default());
-    let binding =
-        ProviderExecutionBinding::new("selected-provider", ProviderRuntimeOverrides::default())
-            .unwrap();
+    let binding = ProviderExecutionBinding::new(
+        "selected-provider",
+        ProviderRuntimeOverrides {
+            extra_body_fields: std::collections::BTreeMap::from([(
+                "top_k".into(),
+                serde_json::json!(0),
+            )]),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let context = ExecutionEventContext {
         session_id: "native-session".into(),
         effect_authority: None,
@@ -81,6 +89,10 @@ fn provider_callbacks_keep_the_native_selection_context_and_provenance() {
         .enable_all()
         .build()
         .unwrap();
+    request.provider.runtime_overrides.extra_body_fields.insert(
+        "response_format".into(),
+        serde_json::json!({"type":"json_schema","json_schema":{"name":"owner_result"}}),
+    );
     let completed = runtime
         .block_on(client.complete_provider_request(&request, vec![], None))
         .unwrap();
@@ -98,6 +110,21 @@ fn provider_callbacks_keep_the_native_selection_context_and_provenance() {
     assert!(runtime
         .block_on(client.complete_provider_request(&request, vec![], Some(&forged)))
         .is_err());
+    let allowed = request.provider.clone();
+    request.provider.runtime_overrides.model_override = Some("other-model".into());
+    assert!(runtime
+        .block_on(client.complete_provider_request(&request, vec![], None))
+        .is_err());
+    request.provider = allowed.clone();
+    request
+        .provider
+        .runtime_overrides
+        .extra_body_fields
+        .insert("top_k".into(), serde_json::json!(1));
+    assert!(runtime
+        .block_on(client.complete_provider_request(&request, vec![], None))
+        .is_err());
+    request.provider = allowed;
     request.provider.provider_name = "another-provider".into();
     assert!(runtime
         .block_on(client.complete_provider_request(&request, vec![], None))

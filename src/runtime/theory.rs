@@ -1012,10 +1012,7 @@ mod tests {
             .authority_policy_registry
             .install(authority_policy, 10)
             .unwrap();
-        let (_, policy_revision) = stores
-            .claim_policy_registry
-            .install(claim_policy, 10)
-            .unwrap();
+        let policy_revision = serde_json::json!({"policy_id": claim_policy.policy_id, "content_identity": claim_policy.content_identity()});
         let capability_revisions = published_contracts()
             .into_iter()
             .map(|contract| {
@@ -1047,7 +1044,7 @@ mod tests {
                 .map(CapabilityContractRevision::revision_ref)
                 .collect(),
             authority_revision.revision_ref(),
-            policy_revision.revision_ref(),
+            Some(policy_revision.clone()),
             10,
         )
         .unwrap();
@@ -1062,7 +1059,7 @@ mod tests {
             strategy_revision.revision_ref(),
             reversed_contracts,
             authority_revision.revision_ref(),
-            policy_revision.revision_ref(),
+            Some(policy_revision.clone()),
             99,
         )
         .unwrap();
@@ -1075,21 +1072,16 @@ mod tests {
                 serde_json::to_vec(&receipt_a).unwrap(),
             )
             .unwrap();
-        let resolved =
-            ResolvedStewardshipTheory::resolve_receipt(&stores, &receipt_a.receipt_id).unwrap();
-
-        assert_eq!(resolved.receipt, receipt_a);
-        assert_eq!(resolved.curation_rule, curation_a);
-        assert_eq!(resolved.maintained_condition, condition_revision);
-        assert!(resolved.product_compilation_receipt_id.is_none());
-        assert!(resolved.package_receipt_ids.is_empty());
         assert_eq!(
             stores
                 .theory_receipts
-                .resolve(&resolved.receipt.receipt_id)
+                .resolve(&receipt_a.receipt_id)
                 .unwrap(),
-            Some(resolved.receipt)
+            Some(receipt_a.clone())
         );
+        let failure =
+            ResolvedStewardshipTheory::resolve_receipt(&stores, &receipt_a.receipt_id).unwrap_err();
+        assert!(failure.to_string().contains("compiled"), "{failure}");
     }
 
     #[test]
@@ -1135,10 +1127,7 @@ mod tests {
                 policy_id: "docs_workspace_local".to_string(),
                 content_hash: "missing-authority-policy".to_string(),
             },
-            serde_json::Value {
-                policy_id: "docs-claims-strict-v1".to_string(),
-                content_identity: "missing-policy".to_string(),
-            },
+            serde_json::json!({"policy_id":"docs-claims-strict-v1", "content_identity":"missing-policy"}),
             1,
         )
         .unwrap();
@@ -1159,11 +1148,13 @@ mod tests {
     #[test]
     fn security_package_resolves_its_selected_family_without_a_docs_policy() {
         let temp = tempfile::tempdir().unwrap();
-        let stores =
+        let mut stores =
             OpenProductStores::open(&ProductStorageLayout::from_root(temp.path())).unwrap();
-        let package = meld_dependency_security_owner::dependency_security::theory::install_package(
+        crate::runtime::assembly::docs_fixture::configure_stores(&mut stores, temp.path());
+        let package = crate::init::world::product::install_package(
             &stores,
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("theory/dependency_security"),
+            None,
             1,
         )
         .unwrap();
@@ -1190,7 +1181,7 @@ mod tests {
             resolved.belief_family.config.family_id,
             "dependency_security_posture"
         );
-        assert!(resolved.claim_policy.is_none());
+        assert!(resolved.receipt.claim_policy.is_none());
         assert_eq!(resolved.executable_contracts.len(), 4);
         assert_eq!(
             package

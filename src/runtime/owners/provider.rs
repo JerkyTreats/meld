@@ -107,7 +107,25 @@ impl OwnerCallbackPort for OwnerProviderCallbacks {
         else {
             return self.events.call(callback);
         };
-        if request.provider != self.binding
+        // Packages own semantic request fields. The host retains provider/model
+        // selection and any explicitly granted overrides; native Provider owns
+        // validation of reserved request fields.
+        if request.provider.provider_name != self.binding.provider_name
+            || request.provider.runtime_overrides.model_override
+                != self.binding.runtime_overrides.model_override
+            || self
+                .binding
+                .runtime_overrides
+                .extra_body_fields
+                .iter()
+                .any(|(key, value)| {
+                    request
+                        .provider
+                        .runtime_overrides
+                        .extra_body_fields
+                        .get(key)
+                        != Some(value)
+                })
             || request.agent_id != self.agent_id
             || !self.frame_types.contains(&request.frame_type)
             || event_context

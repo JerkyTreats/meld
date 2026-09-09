@@ -56,11 +56,11 @@
           "route_version": 1
         }
       ],
-      "observation_scope_component_id": "security-coverage-belief",
+      "observation_scope_component_id": "security-posture-belief",
       "required_subscriptions": [
         {
           "source_owner": "belief",
-          "source_contract_component_id": "security-coverage-belief",
+          "source_contract_component_id": "security-posture-belief",
           "initial_cursor_policy": "from_genesis"
         }
       ],

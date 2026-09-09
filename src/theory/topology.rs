@@ -33,9 +33,9 @@ impl ProductTopologyV1 {
         })
     }
     pub fn validate(&self) -> Result<(), TheoryRouterError> {
-        ActivationParticipantPlanV1::new(self.participants.clone())?;
+        let plan = ActivationParticipantPlanV1::new(self.participants.clone())?;
         if self.topology_id.trim().is_empty()
-            || self.agent_positions.is_empty()
+            || !super::product::valid_agent_topology(&self.agent_positions, &plan)
             || self.requested_authority_ref.trim().is_empty()
             || self.compilation_policy_revision.trim().is_empty()
         {

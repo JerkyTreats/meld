@@ -443,9 +443,11 @@ impl ActivationLifecycleStore {
             ));
         }
         if let Some(prior_id) = assignment.current_generation_id.clone() {
-            close_generation_admission(&mut assignment, &prior_id, "replaced")?;
-            required_generation_mut(&mut assignment, &prior_id)?.status =
-                ActivationGenerationStatus::Draining;
+            if assignment.generations[&prior_id].status != ActivationGenerationStatus::Retired {
+                close_generation_admission(&mut assignment, &prior_id, "replaced")?;
+                required_generation_mut(&mut assignment, &prior_id)?.status =
+                    ActivationGenerationStatus::Draining;
+            }
         }
         let generation = required_generation_mut(&mut assignment, generation_id)?;
         if generation.status != ActivationGenerationStatus::Ready {
@@ -688,18 +690,51 @@ impl ActivationLifecycleStore {
         Ok(epoch)
     }
 
-    /// Reconstruct a non-current drain without reopening admission or reusing old incarnation proofs.
+    /// Fence the exact predecessor while retaining the compare-and-swap head.
+    /// Its physical owners must release before successor readiness can open the
+    /// same assignment stores. A crash leaves a closed, recoverable predecessor.
+    pub fn fence_replacement_predecessor(
+        &self,
+        assignment_id: &str,
+        successor_id: &str,
+    ) -> Result<(), LifecycleError> {
+        let mut assignment = self.required_assignment(assignment_id)?;
+        let successor = assignment
+            .generations
+            .get(successor_id)
+            .ok_or_else(|| LifecycleError::Invalid("successor generation is absent".into()))?;
+        if assignment.current_generation_id.as_deref() == Some(successor_id) {
+            return Ok(());
+        }
+        if assignment.current_generation_id != successor.expected_prior_generation
+            || !matches!(
+                successor.status,
+                ActivationGenerationStatus::Preparing | ActivationGenerationStatus::Ready
+            )
+        {
+            return Err(LifecycleError::Conflict(
+                "successor does not own the expected replacement boundary".into(),
+            ));
+        }
+        let Some(prior_id) = assignment.current_generation_id.clone() else {
+            return Ok(());
+        };
+        if assignment.generations[&prior_id].status == ActivationGenerationStatus::Retired {
+            return Ok(());
+        }
+        close_generation_admission(&mut assignment, &prior_id, "replacement-drain")?;
+        required_generation_mut(&mut assignment, &prior_id)?.status =
+            ActivationGenerationStatus::Draining;
+        self.commit_assignment(&mut assignment)
+    }
+
+    /// Reconstruct a fenced drain without reopening admission or reusing old incarnation proofs.
     pub fn recover_drain(
         &self,
         assignment_id: &str,
         generation_id: &str,
     ) -> Result<(), LifecycleError> {
         let mut assignment = self.required_assignment(assignment_id)?;
-        if assignment.current_generation_id.as_deref() == Some(generation_id) {
-            return Err(LifecycleError::Conflict(
-                "current generation cannot recover predecessor retirement".into(),
-            ));
-        }
         let generation = required_generation_mut(&mut assignment, generation_id)?;
         if !matches!(
             generation.status,

@@ -133,14 +133,19 @@ mod tests {
     #[test]
     fn package_installs_across_security_world_and_execution_routes() {
         let root = tempfile::tempdir().unwrap();
-        let stores =
+        let mut stores =
             OpenProductStores::open(&ProductStorageLayout::from_root(root.path())).unwrap();
+        crate::test_support::configure(
+            &mut stores,
+            root.path(),
+            &[("dependency-security", "meld-dependency-security-owner")],
+        );
         let package_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .join("theory/dependency_security");
         let receipt = super::install_package(&stores, &package_root, 1).unwrap();
         assert_eq!(receipt.package_id, super::PACKAGE_ID);
-        assert_eq!(receipt.components.len(), 15);
+        assert_eq!(receipt.components.len(), 16);
         let owners: std::collections::BTreeSet<_> = receipt
             .components
             .iter()
@@ -148,7 +153,12 @@ mod tests {
             .collect();
         assert_eq!(
             owners,
-            std::collections::BTreeSet::from(["dependency-security", "execution", "world-model"])
+            std::collections::BTreeSet::from([
+                "dependency-security",
+                "execution",
+                "runtime",
+                "world-model"
+            ])
         );
         let repeated = super::install_package(&stores, &package_root, 99).unwrap();
         assert_eq!(receipt.receipt_id, repeated.receipt_id);
@@ -157,8 +167,13 @@ mod tests {
     #[test]
     fn security_product_compiles_with_its_own_topology_and_source_contract() {
         let root = tempfile::tempdir().unwrap();
-        let stores =
+        let mut stores =
             OpenProductStores::open(&ProductStorageLayout::from_root(root.path())).unwrap();
+        crate::test_support::configure(
+            &mut stores,
+            root.path(),
+            &[("dependency-security", "meld-dependency-security-owner")],
+        );
         let package_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .join("theory/dependency_security");

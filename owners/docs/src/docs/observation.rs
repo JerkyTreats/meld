@@ -75,7 +75,7 @@ pub fn inspect_scope_selected(
     inspect_scope_with_selected_read(root, scope, |path| std::fs::read(path).map_err(io_error))
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub fn inspect_scope(root: &Path) -> Result<DocsEvidenceBundle, ApiError> {
     inspect_scope_selected(
         root,

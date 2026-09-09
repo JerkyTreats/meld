@@ -17,6 +17,7 @@ mod docs_freshness_fixture_contract;
 pub(crate) mod docs_provider;
 mod event_ledger;
 mod execution_projection;
+mod external_owners;
 mod harness_run;
 mod harness_served_surface;
 mod harness_stall_specimen;
