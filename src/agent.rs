@@ -25,3 +25,6 @@ pub use profile::AgentConfig;
 pub use prompt::{resolve_prompt_path, PromptCache};
 pub use registry::AgentRegistry;
 pub use storage::{AgentStorage, StoredAgentConfig, XdgAgentStorage};
+
+/// Native Agent inspection and command delegation.
+pub mod native;

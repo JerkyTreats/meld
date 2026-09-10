@@ -6,6 +6,9 @@
 
 /// Flow subcommand rendering.
 mod flow;
+/// Live transport delegates to the same native event contracts.
+mod live;
+pub use live::try_live;
 /// Session subcommand rendering.
 mod session;
 /// Status subcommand rendering.

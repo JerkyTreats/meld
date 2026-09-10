@@ -21,7 +21,7 @@
 //! - Single writer: the owning supervisor instance is the only publisher,
 //!   matching the lease discipline of the lifecycle store.
 
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::runtime::contracts::{
     RuntimeActionRecord, RuntimeActionRecordCompatV1, RuntimeActionRecordCompatV2,
@@ -38,6 +38,23 @@ const LATEST_SNAPSHOT_KEY: &[u8] = b"latest";
 
 /// Default retention bound for durable per-tick action records.
 pub const DEFAULT_MAX_TICK_ACTION_RECORDS: usize = 4096;
+
+/// One bounded read of retained native action reports. Cursor positions are
+/// observational only and never drive actor checkpoints.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ActionPage {
+    pub actions: Vec<SequencedAction>,
+    pub next_after: Option<u64>,
+    pub oldest_available: Option<u64>,
+    pub history_gap: bool,
+    pub more: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SequencedAction {
+    pub sequence: u64,
+    pub action: RuntimeActionRecord,
+}
 
 /// Sled-backed publisher and reader for preserved per-tick reports.
 ///
@@ -116,6 +133,49 @@ impl SupervisorReportStore {
             .collect::<Result<Vec<RuntimeActionRecord>, _>>()?;
         records.reverse();
         Ok(records)
+    }
+
+    pub fn read_action_page(
+        &self,
+        floor: u64,
+        after: Option<u64>,
+        limit: usize,
+    ) -> Result<ActionPage, SupervisorStoreError> {
+        if limit == 0 || limit > 1000 {
+            return Err(SupervisorStoreError::InvalidRecord(
+                "limit must be between 1 and 1000".into(),
+            ));
+        }
+        let start = after.map_or(floor, |after| after.saturating_add(1).max(floor));
+        let oldest = self
+            .actions
+            .range(floor.to_be_bytes()..)
+            .next()
+            .transpose()
+            .map_err(to_sled)?
+            .map(|(key, _)| decode_sequence(&key))
+            .transpose()?;
+        let mut actions = self
+            .actions
+            .range(start.to_be_bytes()..)
+            .take(limit + 1)
+            .map(|entry| {
+                let (key, bytes) = entry.map_err(to_sled)?;
+                Ok(SequencedAction {
+                    sequence: decode_sequence(&key)?,
+                    action: decode_action(&bytes)?,
+                })
+            })
+            .collect::<Result<Vec<_>, SupervisorStoreError>>()?;
+        let more = actions.len() > limit;
+        actions.truncate(limit);
+        Ok(ActionPage {
+            next_after: actions.last().map(|row| row.sequence).or(after),
+            actions,
+            oldest_available: oldest,
+            history_gap: oldest.is_some_and(|oldest| start < oldest),
+            more,
+        })
     }
 
     /// Latest preserved action for one runtime at or after a floor.

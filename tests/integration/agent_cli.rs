@@ -1,7 +1,7 @@
 //! Integration tests for Agent CLI commands
 
 use meld::agent::{AgentRole, AgentStorage, XdgAgentStorage};
-use meld::cli::{AgentCommands, Commands, RunContext};
+use meld::cli::{Commands, ProfileCommands, RunContext};
 use meld::config::{xdg, AgentConfig};
 use meld::error::ApiError;
 use std::fs;
@@ -77,8 +77,8 @@ fn test_agent_list_empty() {
         let workspace = test_dir.path().to_path_buf();
         let cli = RunContext::new(workspace, None).unwrap();
 
-        let command = Commands::Agent {
-            command: AgentCommands::List {
+        let command = Commands::Profile {
+            command: ProfileCommands::List {
                 format: "text".to_string(),
                 role: None,
             },
@@ -110,8 +110,8 @@ fn test_agent_status_empty() {
         }
         let workspace = test_dir.path().to_path_buf();
         let cli = RunContext::new(workspace, None).unwrap();
-        let result = cli.execute(&Commands::Agent {
-            command: AgentCommands::Status {
+        let result = cli.execute(&Commands::Profile {
+            command: ProfileCommands::Status {
                 format: "text".to_string(),
             },
         });
@@ -134,8 +134,8 @@ fn test_agent_status_one_agent_text() {
         .unwrap();
         let workspace = test_dir.path().to_path_buf();
         let cli = RunContext::new(workspace, None).unwrap();
-        let result = cli.execute(&Commands::Agent {
-            command: AgentCommands::Status {
+        let result = cli.execute(&Commands::Profile {
+            command: ProfileCommands::Status {
                 format: "text".to_string(),
             },
         });
@@ -162,8 +162,8 @@ fn test_agent_status_one_agent_json() {
         .unwrap();
         let workspace = test_dir.path().to_path_buf();
         let cli = RunContext::new(workspace, None).unwrap();
-        let result = cli.execute(&Commands::Agent {
-            command: AgentCommands::Status {
+        let result = cli.execute(&Commands::Profile {
+            command: ProfileCommands::Status {
                 format: "json".to_string(),
             },
         });
@@ -194,8 +194,8 @@ fn test_agent_status_multiple_agents() {
         create_test_agent("reader-agent", AgentRole::Reader, None).unwrap();
         let workspace = test_dir.path().to_path_buf();
         let cli = RunContext::new(workspace, None).unwrap();
-        let result = cli.execute(&Commands::Agent {
-            command: AgentCommands::Status {
+        let result = cli.execute(&Commands::Profile {
+            command: ProfileCommands::Status {
                 format: "text".to_string(),
             },
         });
@@ -223,8 +223,8 @@ fn test_agent_list_text() {
         let workspace = test_dir.path().to_path_buf();
         let cli = RunContext::new(workspace, None).unwrap();
 
-        let command = Commands::Agent {
-            command: AgentCommands::List {
+        let command = Commands::Profile {
+            command: ProfileCommands::List {
                 format: "text".to_string(),
                 role: None,
             },
@@ -253,8 +253,8 @@ fn test_agent_list_json() {
         let workspace = test_dir.path().to_path_buf();
         let cli = RunContext::new(workspace, None).unwrap();
 
-        let command = Commands::Agent {
-            command: AgentCommands::List {
+        let command = Commands::Profile {
+            command: ProfileCommands::List {
                 format: "json".to_string(),
                 role: None,
             },
@@ -283,8 +283,8 @@ fn test_agent_list_filtered_by_role() {
         let workspace = test_dir.path().to_path_buf();
         let cli = RunContext::new(workspace, None).unwrap();
 
-        let command = Commands::Agent {
-            command: AgentCommands::List {
+        let command = Commands::Profile {
+            command: ProfileCommands::List {
                 format: "text".to_string(),
                 role: Some("Writer".to_string()),
             },
@@ -311,8 +311,8 @@ fn test_agent_show_text() {
         let workspace = test_dir.path().to_path_buf();
         let cli = RunContext::new(workspace, None).unwrap();
 
-        let command = Commands::Agent {
-            command: AgentCommands::Show {
+        let command = Commands::Profile {
+            command: ProfileCommands::Show {
                 agent_id: "test-agent".to_string(),
                 format: "text".to_string(),
                 include_prompt: false,
@@ -340,8 +340,8 @@ fn test_agent_show_with_prompt() {
         let workspace = test_dir.path().to_path_buf();
         let cli = RunContext::new(workspace, None).unwrap();
 
-        let command = Commands::Agent {
-            command: AgentCommands::Show {
+        let command = Commands::Profile {
+            command: ProfileCommands::Show {
                 agent_id: "test-agent".to_string(),
                 format: "text".to_string(),
                 include_prompt: true,
@@ -369,8 +369,8 @@ fn test_agent_show_json() {
         let workspace = test_dir.path().to_path_buf();
         let cli = RunContext::new(workspace, None).unwrap();
 
-        let command = Commands::Agent {
-            command: AgentCommands::Show {
+        let command = Commands::Profile {
+            command: ProfileCommands::Show {
                 agent_id: "test-agent".to_string(),
                 format: "json".to_string(),
                 include_prompt: false,
@@ -390,8 +390,8 @@ fn test_agent_show_not_found() {
         let workspace = test_dir.path().to_path_buf();
         let cli = RunContext::new(workspace, None).unwrap();
 
-        let command = Commands::Agent {
-            command: AgentCommands::Show {
+        let command = Commands::Profile {
+            command: ProfileCommands::Show {
                 agent_id: "nonexistent".to_string(),
                 format: "text".to_string(),
                 include_prompt: false,
@@ -418,8 +418,8 @@ fn test_agent_validate_valid() {
         let workspace = test_dir.path().to_path_buf();
         let cli = RunContext::new(workspace, None).unwrap();
 
-        let command = Commands::Agent {
-            command: AgentCommands::Validate {
+        let command = Commands::Profile {
+            command: ProfileCommands::Validate {
                 agent_id: Some("test-agent".to_string()),
                 all: false,
                 verbose: false,
@@ -448,8 +448,8 @@ fn test_agent_validate_missing_prompt() {
         let workspace = test_dir.path().to_path_buf();
         let cli = RunContext::new(workspace, None).unwrap();
 
-        let command = Commands::Agent {
-            command: AgentCommands::Validate {
+        let command = Commands::Profile {
+            command: ProfileCommands::Validate {
                 agent_id: Some("test-agent".to_string()),
                 all: false,
                 verbose: false,
@@ -486,8 +486,8 @@ fn test_agent_validate_all() {
         let workspace = test_dir.path().to_path_buf();
         let cli = RunContext::new(workspace, None).unwrap();
 
-        let command = Commands::Agent {
-            command: AgentCommands::Validate {
+        let command = Commands::Profile {
+            command: ProfileCommands::Validate {
                 agent_id: None,
                 all: true,
                 verbose: false,
@@ -518,8 +518,8 @@ fn test_agent_validate_all_verbose() {
         let workspace = test_dir.path().to_path_buf();
         let cli = RunContext::new(workspace, None).unwrap();
 
-        let command = Commands::Agent {
-            command: AgentCommands::Validate {
+        let command = Commands::Profile {
+            command: ProfileCommands::Validate {
                 agent_id: None,
                 all: true,
                 verbose: true,
@@ -552,8 +552,8 @@ fn test_agent_validate_all_empty() {
         let workspace = test_dir.path().to_path_buf();
         let cli = RunContext::new(workspace, None).unwrap();
 
-        let command = Commands::Agent {
-            command: AgentCommands::Validate {
+        let command = Commands::Profile {
+            command: ProfileCommands::Validate {
                 agent_id: None,
                 all: true,
                 verbose: false,
@@ -580,8 +580,8 @@ fn test_agent_create_non_interactive() {
         let workspace = test_dir.path().to_path_buf();
         let cli = RunContext::new(workspace, None).unwrap();
 
-        let command = Commands::Agent {
-            command: AgentCommands::Create {
+        let command = Commands::Profile {
+            command: ProfileCommands::Create {
                 agent_id: "new-agent".to_string(),
                 role: Some("Writer".to_string()),
                 prompt_path: Some(prompt_path.to_str().unwrap().to_string()),
@@ -607,8 +607,8 @@ fn test_agent_create_reader() {
         let workspace = test_dir.path().to_path_buf();
         let cli = RunContext::new(workspace, None).unwrap();
 
-        let command = Commands::Agent {
-            command: AgentCommands::Create {
+        let command = Commands::Profile {
+            command: ProfileCommands::Create {
                 agent_id: "reader-agent".to_string(),
                 role: Some("Reader".to_string()),
                 prompt_path: None,
@@ -643,8 +643,8 @@ fn test_agent_edit_prompt_path() {
         let workspace = test_dir.path().to_path_buf();
         let cli = RunContext::new(workspace, None).unwrap();
 
-        let command = Commands::Agent {
-            command: AgentCommands::Edit {
+        let command = Commands::Profile {
+            command: ProfileCommands::Edit {
                 agent_id: "test-agent".to_string(),
                 prompt_path: Some(new_prompt_path.to_str().unwrap().to_string()),
                 role: None,
@@ -682,8 +682,8 @@ fn test_agent_edit_role() {
         let workspace = test_dir.path().to_path_buf();
         let cli = RunContext::new(workspace, None).unwrap();
 
-        let command = Commands::Agent {
-            command: AgentCommands::Edit {
+        let command = Commands::Profile {
+            command: ProfileCommands::Edit {
                 agent_id: "test-agent".to_string(),
                 prompt_path: None,
                 role: Some("Reader".to_string()),
@@ -719,8 +719,8 @@ fn test_agent_remove() {
         let workspace = test_dir.path().to_path_buf();
         let cli = RunContext::new(workspace, None).unwrap();
 
-        let command = Commands::Agent {
-            command: AgentCommands::Remove {
+        let command = Commands::Profile {
+            command: ProfileCommands::Remove {
                 agent_id: "test-agent".to_string(),
                 force: true,
             },
@@ -742,8 +742,8 @@ fn test_agent_remove_not_found() {
         let workspace = test_dir.path().to_path_buf();
         let cli = RunContext::new(workspace, None).unwrap();
 
-        let command = Commands::Agent {
-            command: AgentCommands::Remove {
+        let command = Commands::Profile {
+            command: ProfileCommands::Remove {
                 agent_id: "nonexistent".to_string(),
                 force: true,
             },

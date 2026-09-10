@@ -2,7 +2,7 @@ use std::fs;
 
 use meld::agent::{AgentRole, AgentStorage, XdgAgentStorage};
 use meld::cli::{
-    AgentCommands, Commands, ContextCommands, ProviderCommands, RunContext, WorkflowCommands,
+    Commands, ContextCommands, ProfileCommands, ProviderCommands, RunContext, WorkflowCommands,
     WorkspaceCommands,
 };
 use meld::config::AgentConfig;
@@ -370,13 +370,13 @@ fn command_families_emit_typed_summaries_with_command_summary() {
             ),
             (Commands::Validate, "validate", "validate_summary"),
             (
-                Commands::Agent {
-                    command: AgentCommands::List {
+                Commands::Profile {
+                    command: ProfileCommands::List {
                         format: "text".to_string(),
                         role: None,
                     },
                 },
-                "agent.list",
+                "profile.list",
                 "config_mutation_summary",
             ),
             (

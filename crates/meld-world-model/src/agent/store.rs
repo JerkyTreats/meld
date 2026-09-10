@@ -183,6 +183,30 @@ impl AgentStore {
         get_immutable(&self.genesis_intents, id)
     }
 
+    /// Read native genesis identities in Agent-id order without consulting profiles.
+    pub fn list_genesis_intents(
+        &self,
+        after: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<AgentGenesisIntentV1>, StorageError> {
+        self.genesis_by_agent
+            .iter()
+            .filter_map(|entry| match entry {
+                Ok((key, _)) if after.is_some_and(|after| key.as_ref() <= after.as_bytes()) => None,
+                other => Some(other),
+            })
+            .take(limit.min(1001))
+            .map(|entry| {
+                let (key, _) = entry.map_err(to_storage_io)?;
+                let id = std::str::from_utf8(&key)
+                    .map_err(|error| StorageError::InvalidPath(error.to_string()))?;
+                self.genesis_intent_for_agent(id)?.ok_or_else(|| {
+                    StorageError::InvalidPath("native Agent genesis index is unresolved".into())
+                })
+            })
+            .collect()
+    }
+
     pub(crate) fn put_epoch_products(
         &self,
         products: &crate::agent::AgentEpochProducts,

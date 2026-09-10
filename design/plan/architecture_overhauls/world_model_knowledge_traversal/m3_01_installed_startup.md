@@ -1,7 +1,7 @@
 # M3-01: first Startup journey
 
 Date: 2026-09-10. Source reference: `f2af45c8` on `feat/meld-3-candidate`.
-Status: active delivery following design commit `06fe52fc`. Native first-use Startup verified through the external harness; managed control remains open. Local builds and checks are routine; publication and release actions require explicit authorization.
+Status: native command control delivery complete locally. Startup and deterministic Docs are verified through compiled artifacts and the external harness. Local builds and checks are routine; publication and release actions require explicit authorization.
 
 The [program](meld_3_candidate_program.md) owns the outcome, iteration method, authority and architectural circuit breaker. These notes describe the next useful experiment, not a complete implementation specification.
 
@@ -87,3 +87,26 @@ Control uses the existing unauthenticated public listener. Stop signals the exis
 The probe found that pure description used the pre-assignment supervisor path. Description and assembly now share the scoped path resolver, and live control verifies the selected assignment. Discovery publication is atomic. Listener failure triggers native drain rather than leaving an uncontrollable run.
 
 The configured Docs fixture still carried old declaration, subject and provider-response assumptions. Those are harness adaptation gaps, not evidence of a native architectural failure. Wider product qualification and command inspection ergonomics remain in progress.
+
+
+### Native command control closeout
+
+The exercised control plane now covers native initialization, managed or foreground launch, live and retained instance inspection, actor reports with cursors, wait explanations, causal traces, native Agent discovery and judgment reads, reconciliation request intake and lookup, Event observation, orderly stop and restart. Native Agent commands replace the old profile-facing `agent` family; those configuration commands remain under `profile`. No semantic writer, planner or scheduler was added.
+
+The Docs run exposed one bounded native defect: an empty captured file could not bind its quotation schema. The existing Docs owner now represents no valid quotation with a false item schema, allowing empty claims while still rejecting missing capture. Its focused regression passes, and the configured fixture progresses through the previously blocking `.gitkeep`.
+
+A 30-second Docs run showed transient Planner refusal and no final Goal disposition. Delivery paused for classification. Diagnostic receipt sequences and a longer run showed staged Docs judgments still advancing, followed by native satisfaction at sequence 161 and settled owner waits. The suspected self-feedback was not established. No Curation, Graph or Planner contract was changed; temporary diagnostics were removed. The circuit breaker did not trip. The harness now waits for native completion, uses a 90-second ceiling, and stops early after request completion rather than treating a fixed short window or idle counter as success.
+
+Final Meld executable SHA256: `5f786de83fbd716ec1ea86e1aa8d311703794dea5a8b1ee2a6a318975a167645`. Its standalone directory under `/home/jerkytreats/.local/state/meld-eval/m3/candidates/` also contains the selected Docs owner, package and source-state record. The owner SHA256 is `c607bad5a7b385e522f9baaa2011d17ba833dd280eced300d577526324bac33e`.
+
+Final artifact evidence:
+
+- First use: `/home/jerkytreats/.local/state/meld-eval/m3/first-use-ztmw9fl1/report.json`, 22 checks passed.
+- Managed control: `/home/jerkytreats/.local/state/meld-eval/m3/managed-qrryq46a/report.json`, 33 checks passed, including live Event reads/follow, native Agent judgments, action cursor continuation, stale-target refusal and shutdown lookup.
+- Configured Docs: `/home/jerkytreats/meld-eval/runs/20260910T204757Z-83e6415b/report.json`, 25 checks passed. Native Goal satisfaction, retained authorization, repeated request identity and completion lookup were observed through the public product. No paid model call was made.
+
+Local verification also passed: 17 CLI library tests, 23 profile integration tests, 15 progress tests, 14 runtime tests, one served-surface integration test, the focused empty-capture regression, four harness tests and strict library/binary Clippy. The final executable was built with `cargo build --locked --bin meld`. These results qualify the exercised command journeys, not real-model quality, Security, Code Change or the release candidate as a whole.
+
+Implementation commits occur at the natural checkpoints requested by the user. No push, release workflow dispatch, release tag, crates.io publication or replacement of the user's installed Meld occurred. Wider product and release work remains outside this completed command-control scope.
+
+Checkpoint provenance: design `06fe52fc`, native first use `3a19d5e3`, managed lifecycle `85d955fe`, empty Docs capture correction `628194ee`, and external harness core `f5ad3d4` in `/home/jerkytreats/meld-eval`. The final native inspection checkpoint contains this closeout record.

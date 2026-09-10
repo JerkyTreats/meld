@@ -12,7 +12,21 @@ use tracing::{error, info};
 
 fn main() {
     let mut arguments: Vec<_> = std::env::args_os().collect();
-    if arguments.len() == 1 {
+    if arguments.len() == 1
+        || (arguments.len() == 2
+            && [
+                "runtime",
+                "agent",
+                "profile",
+                "world",
+                "event",
+                "provider",
+                "workspace",
+                "branches",
+            ]
+            .iter()
+            .any(|family| arguments[1] == *family))
+    {
         arguments.push("-h".into());
     }
     let mut cli = Cli::parse_from(arguments);
@@ -181,6 +195,24 @@ fn try_execute_danger_command(cli: &Cli) -> Option<Result<String, meld::error::A
 }
 
 fn try_execute_live_runtime_command(cli: &Cli) -> Option<Result<String, meld::error::ApiError>> {
+    if let Commands::Event { command } = &cli.command {
+        let config = RunContext::selected_config(
+            &cli.workspace,
+            cli.config.as_deref(),
+            cli.assignment.as_deref(),
+        )
+        .ok()?;
+        return meld::events::tooling::try_live(&cli.workspace, &config, command);
+    }
+    if let Commands::Agent { command } = &cli.command {
+        let config = RunContext::selected_config(
+            &cli.workspace,
+            cli.config.as_deref(),
+            cli.assignment.as_deref(),
+        )
+        .ok()?;
+        return meld::agent::native::try_live(&cli.workspace, &config, command);
+    }
     let Commands::Runtime { command } = &cli.command else {
         return None;
     };
@@ -189,6 +221,9 @@ fn try_execute_live_runtime_command(cli: &Cli) -> Option<Result<String, meld::er
         meld::cli::RuntimeCommands::Status { .. }
             | meld::cli::RuntimeCommands::Request { .. }
             | meld::cli::RuntimeCommands::StartupAccount { .. }
+            | meld::cli::RuntimeCommands::Startup { .. }
+            | meld::cli::RuntimeCommands::Trace { .. }
+            | meld::cli::RuntimeCommands::Why { .. }
     ) {
         return None;
     }
@@ -200,6 +235,37 @@ fn try_execute_live_runtime_command(cli: &Cli) -> Option<Result<String, meld::er
     )
     .ok()?;
     match command {
+        meld::cli::RuntimeCommands::Trace { .. } | meld::cli::RuntimeCommands::Why { .. } => {
+            meld::runtime::tooling::try_live_inspection(&cli.workspace, &config, command)
+        }
+        meld::cli::RuntimeCommands::Startup {
+            agent,
+            generation,
+            epoch,
+            nonce,
+            json,
+        } => {
+            let id = match agent {
+                Some(id) => id.clone(),
+                None => {
+                    meld::config::PhysicalBinding::resolve_for_target(&config, &cli.workspace)
+                        .ok()??
+                        .agent_id
+                }
+            };
+            meld::runtime::tooling::try_live_startup_account(
+                &cli.workspace,
+                &config,
+                &meld::harness::startup::StartupAccountRequest {
+                    agent_id: id,
+                    generation_id: generation.clone(),
+                    admission_epoch: epoch.clone(),
+                    nonce_id: nonce.clone(),
+                    inspection_fence: None,
+                },
+                if *json { "json" } else { "text" },
+            )
+        }
         meld::cli::RuntimeCommands::StartupAccount {
             agent_id,
             generation_id,

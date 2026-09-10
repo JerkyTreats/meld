@@ -24,7 +24,7 @@ pub(super) fn run(
     render(format, &report, render_text)
 }
 
-fn render_text(report: &SessionTimelineReport) -> String {
+pub(super) fn render_text(report: &SessionTimelineReport) -> String {
     let mut lines = vec![
         format!("ledger_id: {}", report.ledger_id),
         format!(

@@ -3,27 +3,27 @@ use crate::api::ContextApi;
 use crate::cli::{
     format_agent_list_result_json, format_agent_list_result_text, format_agent_show_result_json,
     format_agent_show_result_text, format_validation_result, format_validation_results_all,
-    AgentCommands, AgentPromptCommands,
+    AgentPromptCommands, ProfileCommands,
 };
 use crate::error::ApiError;
 use crate::workspace::{format_agent_status_text, AgentStatusEntry, AgentStatusOutput};
 use std::path::{Path, PathBuf};
 
-pub fn handle_cli_command(api: &ContextApi, command: &AgentCommands) -> Result<String, ApiError> {
+pub fn handle_cli_command(api: &ContextApi, command: &ProfileCommands) -> Result<String, ApiError> {
     match command {
-        AgentCommands::Status { format } => handle_status(api, format),
-        AgentCommands::List { format, role } => handle_list(api, format, role.as_deref()),
-        AgentCommands::Show {
+        ProfileCommands::Status { format } => handle_status(api, format),
+        ProfileCommands::List { format, role } => handle_list(api, format, role.as_deref()),
+        ProfileCommands::Show {
             agent_id,
             format,
             include_prompt,
         } => handle_show(api, agent_id, format, *include_prompt),
-        AgentCommands::Validate {
+        ProfileCommands::Validate {
             agent_id,
             all,
             verbose,
         } => handle_validate(api, agent_id.as_deref(), *all, *verbose),
-        AgentCommands::Create {
+        ProfileCommands::Create {
             agent_id,
             role,
             prompt_path,
@@ -37,7 +37,7 @@ pub fn handle_cli_command(api: &ContextApi, command: &AgentCommands) -> Result<S
             *interactive,
             *non_interactive,
         ),
-        AgentCommands::Edit {
+        ProfileCommands::Edit {
             agent_id,
             prompt_path,
             role,
@@ -49,8 +49,8 @@ pub fn handle_cli_command(api: &ContextApi, command: &AgentCommands) -> Result<S
             role.as_deref(),
             editor.as_deref(),
         ),
-        AgentCommands::Prompt { command } => handle_prompt_command(api, command),
-        AgentCommands::Remove { agent_id, force } => handle_remove(api, agent_id, *force),
+        ProfileCommands::Prompt { command } => handle_prompt_command(api, command),
+        ProfileCommands::Remove { agent_id, force } => handle_remove(api, agent_id, *force),
     }
 }
 

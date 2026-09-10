@@ -14,44 +14,44 @@ pub struct Cli {
     pub command: Commands,
 
     /// Workspace root directory
-    #[arg(long, default_value = ".")]
+    #[arg(long, global = true, default_value = ".")]
     pub workspace: PathBuf,
 
     /// Configuration file path (overrides default config loading)
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub config: Option<PathBuf>,
 
     /// Named stewardship assignment to run when declarations share a target.
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub assignment: Option<String>,
 
     /// Enable a runtime that is disabled by default, such as
     /// execution.task_dispatch. Repeatable.
-    #[arg(long = "enable-runtime", value_name = "RUNTIME_ID")]
+    #[arg(long = "enable-runtime", global = true, value_name = "RUNTIME_ID")]
     pub enable_runtime: Vec<String>,
 
     /// Enable verbose logging and mirror logs to stderr unless output is explicitly set
-    #[arg(long, default_value = "false")]
+    #[arg(long, global = true, default_value = "false")]
     pub verbose: bool,
 
     /// Disable logging (overrides config and default)
-    #[arg(long, default_value = "false")]
+    #[arg(long, global = true, default_value = "false")]
     pub quiet: bool,
 
     /// Log level (trace, debug, info, warn, error, off)
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub log_level: Option<String>,
 
     /// Log format (json, text)
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub log_format: Option<String>,
 
     /// Log output (stdout, stderr, file, file+stderr, both)
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub log_output: Option<String>,
 
     /// Log file path (if output includes "file")
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub log_file: Option<PathBuf>,
 }
 
@@ -71,7 +71,7 @@ pub enum Commands {
     /// Show unified status (workspace, agents, providers)
     Status {
         /// Output format (text or json)
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
         /// Show only workspace section
         #[arg(long)]
@@ -103,10 +103,10 @@ pub enum Commands {
         #[arg(long)]
         foreground: bool,
     },
-    /// Manage agents
-    Agent {
+    /// Manage legacy Reader and Writer configuration profiles
+    Profile {
         #[command(subcommand)]
-        command: AgentCommands,
+        command: ProfileCommands,
     },
     /// Manage providers
     Provider {
@@ -126,6 +126,11 @@ pub enum Commands {
     Context {
         #[command(subcommand)]
         command: ContextCommands,
+    },
+    /// Inspect native Agents and request reconciliation of installed intentions
+    Agent {
+        #[command(subcommand)]
+        command: AgentCommands,
     },
     /// Inspect legacy Workflow profiles
     Workflow {
@@ -164,19 +169,19 @@ pub enum BranchesCommands {
     /// Show known branches and migration status
     Status {
         /// Output format
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
     },
     /// Discover dormant branches from the global data home
     Discover {
         /// Output format
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
     },
     /// Migrate all registered branches safely
     Migrate {
         /// Output format
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
     },
     /// Attach one explicit branch path
@@ -184,7 +189,7 @@ pub enum BranchesCommands {
         /// Workspace path to attach
         path: PathBuf,
         /// Output format
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
     },
     /// Show federated graph readiness for selected branches
@@ -196,7 +201,7 @@ pub enum BranchesCommands {
         #[arg(long = "branch-id")]
         branch_ids: Vec<String>,
         /// Output format
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
     },
     /// Query exact owner publications through an immutable bounded cut
@@ -241,7 +246,7 @@ pub enum BranchesCommands {
         #[arg(long, default_value_t = 2048)]
         max_paths: usize,
         /// Output format
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
     },
 }
@@ -273,13 +278,13 @@ pub enum EventCommands {
     /// Show ledger health: tip, watermark, retention, drops, consumer lag
     Status {
         /// Output format
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
     },
     /// Follow ledger records as they commit
     Tail {
         /// Output format
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
 
         /// Cursor to start after; defaults to the most recent records, or
@@ -291,15 +296,14 @@ pub enum EventCommands {
         #[arg(long, default_value_t = 64)]
         limit: usize,
 
-        /// Keep following until interrupted; holds the database, so other
-        /// meld commands cannot write while following
+        /// Follow the live owner when available; interruption ends observation
         #[arg(long)]
         follow: bool,
     },
     /// Trace the causal chain for an object, stream, or record
     Trace {
         /// Output format
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
 
         /// Object subject as domain::kind::id
@@ -317,7 +321,7 @@ pub enum EventCommands {
     /// Reconstruct one session's timeline
     Session {
         /// Output format
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
 
         /// Session identifier
@@ -326,7 +330,7 @@ pub enum EventCommands {
     /// Show event flow over a trailing window
     Flow {
         /// Output format
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
 
         /// Trailing window size in events
@@ -337,6 +341,47 @@ pub enum EventCommands {
 
 #[derive(Subcommand)]
 pub enum RuntimeCommands {
+    /// Walk native causal references such as event:42, goal:ID or task NETWORK TASK
+    Trace {
+        subject: String,
+        network: Option<String>,
+        task: Option<String>,
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Explain native waits for task-completion, task-admission, belief-revision or evidence
+    Why {
+        kind: String,
+        subject: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List retained instances of the selected configured assignment
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Read an existing native shutdown result without requesting a stop
+    Shutdown {
+        #[arg(long)]
+        instance: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect the native Startup path using the selected Agent by default
+    Startup {
+        agent: Option<String>,
+        #[arg(long)]
+        generation: Option<String>,
+        #[arg(long)]
+        epoch: Option<String>,
+        #[arg(long)]
+        nonce: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Start the native supervisor and wait for its public control surface
     Start {
         /// Keep the supervisor attached to this terminal
@@ -361,8 +406,19 @@ pub enum RuntimeCommands {
         #[arg(long)]
         json: bool,
     },
+    /// List retained native actor reports with resumable positions
+    Actions {
+        #[arg(long)]
+        after: Option<u64>,
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+        #[arg(long)]
+        json: bool,
+    },
     /// Observe native actor reports without owning the runtime lifetime
     Follow {
+        #[arg(long)]
+        after: Option<u64>,
         #[arg(long)]
         instance: Option<String>,
         #[arg(long)]
@@ -381,7 +437,7 @@ pub enum RuntimeCommands {
         /// Require exactly the owner positions returned by a previous inspection
         #[arg(long)]
         inspection_fence: Option<String>,
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
     },
     /// Request another native reconciliation of an installed Agent intent
@@ -391,13 +447,13 @@ pub enum RuntimeCommands {
         /// Stable caller key; repeating it resumes the same request
         #[arg(long)]
         request_key: String,
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
     },
     /// Show runtime supervisor status
     Status {
         /// Output format
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
 
         /// Runtime id filter
@@ -419,7 +475,7 @@ pub enum RuntimeCommands {
         duration_ms: Option<u64>,
 
         /// Output format
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
 
         /// Restart policy
@@ -455,7 +511,7 @@ pub enum WorldCommands {
         theory_source: Option<PathBuf>,
 
         /// Output format
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
     },
 }
@@ -465,7 +521,7 @@ pub enum WorkspaceCommands {
     /// Show workspace status (tree, context coverage, top paths)
     Status {
         /// Output format (text or json)
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
         /// Include top-level path breakdown
         #[arg(long)]
@@ -474,7 +530,7 @@ pub enum WorkspaceCommands {
     /// Validate workspace integrity
     Validate {
         /// Output format (text or json)
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
     },
     /// List or add paths to the workspace ignore list
@@ -485,7 +541,7 @@ pub enum WorkspaceCommands {
         #[arg(long)]
         dry_run: bool,
         /// Output format for list mode (text or json)
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
     },
     /// Tombstone a node and its descendants (logical delete; reversible with restore)
@@ -534,23 +590,57 @@ pub enum WorkspaceCommands {
         #[arg(long)]
         older_than: Option<u64>,
         /// Output format (text or json)
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
     },
 }
 
 #[derive(Subcommand)]
 pub enum AgentCommands {
+    /// List native Agent genesis identities
+    List {
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+        #[arg(long)]
+        after: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect the installed intention and retained native Goals
+    Show {
+        agent: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Request reconciliation where the installed intention permits it
+    Request {
+        agent: Option<String>,
+        #[arg(long)]
+        request_key: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Read a retained request without submitting it again
+    RequestStatus {
+        key: String,
+        agent: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ProfileCommands {
     /// Show agent status (validation and prompt path)
     Status {
         /// Output format (text or json)
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
     },
     /// List all agents
     List {
         /// Output format (text or json)
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
         /// Filter by role (Reader or Writer)
         #[arg(long)]
@@ -561,7 +651,7 @@ pub enum AgentCommands {
         /// Agent ID
         agent_id: String,
         /// Output format (text or json)
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
         /// Include prompt file content in output
         #[arg(long)]
@@ -647,7 +737,7 @@ pub enum ProviderCommands {
     /// Show provider status (optional connectivity)
     Status {
         /// Output format (text or json)
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
         /// Test connectivity per provider (may be slow)
         #[arg(long)]
@@ -656,7 +746,7 @@ pub enum ProviderCommands {
     /// List all providers
     List {
         /// Output format (text or json)
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
         /// Filter by provider type (openai, anthropic, ollama, local)
         #[arg(long)]
@@ -667,7 +757,7 @@ pub enum ProviderCommands {
         /// Provider name
         provider_name: String,
         /// Output format (text or json)
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
         /// Show API key status
         #[arg(long)]
@@ -872,7 +962,7 @@ pub enum ContextCommands {
         separator: String,
 
         /// Output format: text or json
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
 
         /// Include metadata fields in output
@@ -918,13 +1008,13 @@ pub enum WorkflowCommands {
     /// List resolved workflows with source metadata
     List {
         /// Output format: text or json
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
     },
     /// Validate workflow profile registry loading and schema
     Validate {
         /// Output format: text or json
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
     },
     /// Inspect one workflow profile
@@ -932,7 +1022,7 @@ pub enum WorkflowCommands {
         /// Workflow ID
         workflow_id: String,
         /// Output format: text or json
-        #[arg(long, default_value = "text")]
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
     },
     /// Retired command; use a native reconciliation product through runtime run or request

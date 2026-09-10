@@ -15,7 +15,7 @@ pub(super) fn run(
     render(format, &report, render_text)
 }
 
-fn render_text(report: &EventHealthReport) -> String {
+pub(super) fn render_text(report: &EventHealthReport) -> String {
     let mut out = String::new();
     out.push_str(&format!("ledger_id:           {}\n", report.ledger_id));
     scalar(&mut out, "tip_seq", report.tip_seq);

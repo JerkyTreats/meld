@@ -291,6 +291,13 @@ impl RunContext {
             command,
             Commands::Runtime {
                 command: crate::cli::RuntimeCommands::StartupAccount { .. }
+                    | crate::cli::RuntimeCommands::Startup { .. }
+                    | crate::cli::RuntimeCommands::Trace { .. }
+                    | crate::cli::RuntimeCommands::Why { .. }
+            } | Commands::Agent {
+                command: crate::cli::AgentCommands::List { .. }
+                    | crate::cli::AgentCommands::Show { .. }
+                    | crate::cli::AgentCommands::RequestStatus { .. }
             }
         ) {
             return self.execute_inner(command, "", None);
@@ -388,6 +395,9 @@ impl RunContext {
                 &self.frame_storage_path,
             ),
             Commands::Agent { command } => {
+                crate::agent::native::execute(self.assembly.product_runtime().as_ref(), command)
+            }
+            Commands::Profile { command } => {
                 crate::agent::tooling::handle_cli_command(self.assembly.api().as_ref(), command)
             }
             Commands::Provider { command } => crate::provider::tooling::handle_cli_command(

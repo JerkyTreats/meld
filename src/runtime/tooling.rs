@@ -224,10 +224,58 @@ pub fn handle_cli_command_with_account_writer(
     account_writer: &mut dyn Write,
 ) -> Result<String, ApiError> {
     match command {
-        RuntimeCommands::Start { .. }
+        RuntimeCommands::Trace { .. } | RuntimeCommands::Why { .. } => {
+            let (path, body) = inspection_request(command)?;
+            let sources = crate::serve::sources::ServeSources::from_assembly(assembly)
+                .map_err(|e| runtime_message(e.to_string()))?
+                .with_full_history();
+            let response = crate::serve::routes::dispatch(
+                &sources,
+                "POST",
+                path,
+                &serde_json::to_vec(&body).map_err(|e| runtime_message(e.to_string()))?,
+            );
+            if response.status != 200 {
+                return Err(runtime_message(String::from_utf8_lossy(&response.body)));
+            }
+            let value: serde_json::Value = serde_json::from_slice(&response.body)
+                .map_err(|e| runtime_message(e.to_string()))?;
+            format_inspection(&value, command)
+        }
+        RuntimeCommands::Startup {
+            agent,
+            generation,
+            epoch,
+            nonce,
+            json,
+        } => {
+            let store = assembly
+                .stores()
+                .agent_store
+                .opened()
+                .ok_or_else(|| runtime_message("native Agent store unavailable"))?;
+            let agent = crate::agent::native::resolve_agent(store, agent.as_deref())
+                .map_err(runtime_message)?;
+            handle_cli_command_with_account_writer(
+                assembly,
+                &RuntimeCommands::StartupAccount {
+                    agent_id: agent,
+                    generation_id: generation.clone(),
+                    admission_epoch: epoch.clone(),
+                    nonce_id: nonce.clone(),
+                    inspection_fence: None,
+                    format: if *json { "json" } else { "text" }.into(),
+                },
+                account_writer,
+            )
+        }
+        RuntimeCommands::List { .. }
+        | RuntimeCommands::Shutdown { .. }
+        | RuntimeCommands::Start { .. }
         | RuntimeCommands::Stop { .. }
         | RuntimeCommands::Restart { .. }
-        | RuntimeCommands::Follow { .. } => Err(runtime_message(
+        | RuntimeCommands::Follow { .. }
+        | RuntimeCommands::Actions { .. } => Err(runtime_message(
             "managed commands require the process command entrypoint",
         )),
         RuntimeCommands::StartupAccount {
@@ -488,90 +536,51 @@ pub fn try_live_runtime_status(
         config,
     )
     .ok()?;
-    let discovery = crate::serve::discovery::read(&description.product_root)?;
-    let response = ureq::get(&format!(
-        "http://{}/v1/reports/latest_snapshot",
-        discovery.addr
-    ))
-    .timeout(std::time::Duration::from_secs(2))
-    .call()
-    .ok()?;
-    let record: Option<RuntimeStatusCacheRecord> = response.into_json().ok()?;
-    let record = record?;
-    // A recycled port serving a different root must not answer for this
-    // workspace; the snapshot names the root its writer owns.
-    if record.product_root != description.product_root {
-        return None;
-    }
-    if !runtime_ids.is_empty() {
-        let known: std::collections::BTreeSet<&str> = description
-            .desired_runtime_state
-            .iter()
-            .map(|state| state.runtime_id.as_str())
-            .collect();
-        if let Some(unknown) = runtime_ids.iter().find(|id| !known.contains(id.as_str())) {
-            return Some(Err(runtime_message(format!(
-                "unknown runtime id '{unknown}'"
-            ))));
-        }
-    }
-    Some(render_live_status(&discovery, record, format, runtime_ids))
-}
-
-/// Render one live served snapshot in the status command's formats.
-fn render_live_status(
-    discovery: &crate::serve::discovery::ServeDiscovery,
-    mut record: RuntimeStatusCacheRecord,
-    format: &str,
-    runtime_ids: &[String],
-) -> Result<String, ApiError> {
-    validate_format(format)?;
-    if !runtime_ids.is_empty() {
-        record
-            .snapshot
-            .runtimes
-            .retain(|row| runtime_ids.iter().any(|id| id == &row.runtime_id));
-    }
-    if format == "json" {
-        return serde_json::to_string_pretty(&record)
-            .map_err(|error| runtime_message(format!("status encoding failed: {error}")));
-    }
-    let mut lines = vec![
-        format!(
-            "live surface at {} (pid {})",
-            discovery.addr, discovery.process_id
-        ),
-        format!("product root: {}", record.product_root.display()),
-    ];
-    if let Some(instance) = &record.snapshot.instance {
-        lines.push(format!(
-            "instance {} status {}",
-            instance.instance_id, instance.status
-        ));
-    }
-    for row in &record.snapshot.runtimes {
-        lines.push(format!(
-            "{}: {} (retryable {}, fatal {})",
-            row.runtime_id,
-            row.health.status,
-            row.health.retryable_error_count,
-            row.health.fatal_error_count
-        ));
-        if let Some(action) = &row.last_action {
-            for declaration in &action.waiting_on {
-                lines.push(format!(
-                    "  waiting on {}{}",
-                    declaration.condition,
-                    declaration
-                        .subject_key
-                        .as_deref()
-                        .map(|key| format!(" ({key})"))
-                        .unwrap_or_default()
-                ));
+    let (_, status) = match crate::runtime::managed::discover_live(&description) {
+        Ok(Some(live)) => live,
+        Ok(None) => return None,
+        Err(error) => return Some(Err(error)),
+    };
+    Some((|| {
+        validate_format(format)?;
+        for id in runtime_ids {
+            if !status
+                .participants
+                .iter()
+                .any(|row| row.desired.runtime_id.as_str() == id)
+            {
+                return Err(runtime_message(format!("unknown runtime id '{id}'")));
             }
         }
-    }
-    Ok(lines.join("\n"))
+        let mut status = status;
+        if !runtime_ids.is_empty() {
+            status.participants.retain(|row| {
+                runtime_ids
+                    .iter()
+                    .any(|id| row.desired.runtime_id.as_str() == id)
+            });
+        }
+        if format == "json" {
+            serde_json::to_string_pretty(&status).map_err(|e| runtime_message(e.to_string()))
+        } else {
+            let mut lines = vec![
+                format!(
+                    "{}: {:?}",
+                    status.instance.instance_id, status.instance.status
+                ),
+                format!("Product: {}", status.product_root.display()),
+            ];
+            for row in status.participants {
+                lines.push(format!(
+                    "{}: {}",
+                    row.desired.runtime_id.as_str(),
+                    serde_json::to_string(&row.health)
+                        .map_err(|e| runtime_message(e.to_string()))?
+                ));
+            }
+            Ok(lines.join("\n"))
+        }
+    })())
 }
 
 fn runtime_status(
@@ -1882,4 +1891,147 @@ mod tests {
         assert!(!empty_pass.active_idle);
         assert!(empty_pass.actors.is_empty());
     }
+}
+
+/// Format-only routing into existing public native inspection contracts.
+pub fn inspection_request(
+    command: &RuntimeCommands,
+) -> Result<(&'static str, serde_json::Value), ApiError> {
+    use crate::harness::eligibility::{AbsentRecordKind, EligibilityQuestion};
+    use crate::harness::walk::ThreadSubject;
+    match command {
+        RuntimeCommands::Trace {
+            subject,
+            network,
+            task,
+            limit,
+            ..
+        } => {
+            if *limit == 0 || *limit > 1000 {
+                return Err(runtime_message("limit must be between 1 and 1000"));
+            }
+            let subject = if subject == "task" {
+                ThreadSubject::Task {
+                    network_id: network
+                        .clone()
+                        .ok_or_else(|| runtime_message("task trace requires NETWORK TASK"))?,
+                    task_instance_id: task
+                        .clone()
+                        .ok_or_else(|| runtime_message("task trace requires NETWORK TASK"))?,
+                }
+            } else {
+                if network.is_some() || task.is_some() {
+                    return Err(runtime_message(
+                        "only task subjects accept NETWORK TASK arguments",
+                    ));
+                }
+                let (kind, id) = subject
+                    .split_once(':')
+                    .ok_or_else(|| runtime_message("trace expects KIND:ID or task NETWORK TASK"))?;
+                if id.is_empty() {
+                    return Err(runtime_message("trace identity must not be empty"));
+                }
+                match kind {
+                    "event" => ThreadSubject::Event { seq: id.parse().map_err(|_| runtime_message("event sequence must be an integer"))? },
+                    "publication" => ThreadSubject::OwnerPublication { source_seq: id.parse().map_err(|_| runtime_message("publication sequence must be an integer"))? },
+                    "evidence" => ThreadSubject::Evidence { evidence_id: id.into() },
+                    "belief" => ThreadSubject::BeliefRevision { revision_id: id.into() },
+                    "decision" => ThreadSubject::Decision { decision_id: id.into() },
+                    "goal" => ThreadSubject::Goal { goal_id: id.into() },
+                    _ => return Err(runtime_message("unknown trace kind; use event, publication, evidence, belief, decision, goal or task")),
+                }
+            };
+            Ok((
+                "/v1/walks/thread",
+                serde_json::json!({"subject":subject,"max_nodes":limit}),
+            ))
+        }
+        RuntimeCommands::Why { kind, subject, .. } => {
+            let kind = match kind.as_str() {
+                "task-completion" => AbsentRecordKind::TaskCompletion,
+                "task-admission" => AbsentRecordKind::TaskAdmission,
+                "belief-revision" => AbsentRecordKind::BeliefRevision,
+                "evidence" => AbsentRecordKind::Evidence,
+                _ => return Err(runtime_message("unknown absence kind; use task-completion, task-admission, belief-revision or evidence")),
+            };
+            Ok((
+                "/v1/walks/eligibility",
+                serde_json::to_value(EligibilityQuestion {
+                    kind,
+                    subject_key: subject.clone(),
+                })
+                .map_err(|e| runtime_message(e.to_string()))?,
+            ))
+        }
+        _ => Err(runtime_message("not a native inspection command")),
+    }
+}
+
+pub fn format_inspection(
+    value: &serde_json::Value,
+    command: &RuntimeCommands,
+) -> Result<String, ApiError> {
+    let json = match command {
+        RuntimeCommands::Trace { json, .. } | RuntimeCommands::Why { json, .. } => *json,
+        _ => true,
+    };
+    if json {
+        return serde_json::to_string_pretty(value).map_err(|e| runtime_message(e.to_string()));
+    }
+    let mut lines = Vec::new();
+    if let Some(nodes) = value["nodes"].as_array() {
+        for node in nodes {
+            lines.push(format!(
+                "{}: {}",
+                node["subject"],
+                node["summary"].as_str().unwrap_or("unresolved")
+            ));
+        }
+    }
+    if let Some(links) = value["links"].as_array() {
+        for link in links {
+            lines.push(format!(
+                "{}: {}",
+                link["runtime_id"].as_str().unwrap_or("?"),
+                link["declaration"]["condition"].as_str().unwrap_or("?")
+            ));
+        }
+    }
+    for field in ["divergences", "cuts"] {
+        if let Some(items) = value[field].as_array() {
+            for item in items {
+                lines.push(format!("Unresolved: {item}"));
+            }
+        }
+    }
+    if value["bounded"].as_bool() == Some(true) {
+        lines.push("Traversal reached its node bound.".into());
+    }
+    if lines.is_empty() {
+        lines.push("No retained explanation is available at this observation boundary.".into());
+    }
+    Ok(lines.join("\n"))
+}
+
+pub fn try_live_inspection(
+    workspace: &std::path::Path,
+    config: &crate::config::MerkleConfig,
+    command: &RuntimeCommands,
+) -> Option<Result<String, ApiError>> {
+    let target = ProductRuntimeAssembly::describe_for_workspace(workspace, config).ok()?;
+    let (url, _) = match crate::runtime::managed::discover_live(&target) {
+        Ok(Some(live)) => live,
+        Ok(None) => return None,
+        Err(error) => return Some(Err(error)),
+    };
+    Some((|| {
+        let (path, body) = inspection_request(command)?;
+        let value = ureq::post(&format!("{url}{path}"))
+            .timeout(Duration::from_secs(5))
+            .send_json(body)
+            .map_err(|e| runtime_message(e.to_string()))?
+            .into_json::<serde_json::Value>()
+            .map_err(|e| runtime_message(e.to_string()))?;
+        format_inspection(&value, command)
+    })())
 }

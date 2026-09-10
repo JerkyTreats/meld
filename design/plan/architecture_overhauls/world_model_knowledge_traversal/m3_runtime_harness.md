@@ -1,6 +1,6 @@
 # M3 external harness: fast product feedback
 
-Date: 2026-09-10. Status: first-use runner implemented in sibling `meld-eval`; journeys grow through feedback.
+Date: 2026-09-10. Status: first-use, managed control and deterministic Docs journeys implemented in sibling `meld-eval`; all passed against the final standalone artifact.
 
 The [program](meld_3_candidate_program.md) owns the outcome, authority and architectural circuit breaker. The harness exists to validate and improve ordinary commands against the compiled flywheel runtime. Its shape follows what exploration needs.
 
@@ -41,3 +41,6 @@ Commands are the first transport. The runtime shares its unauthenticated local c
 Follow the [program stop rule](meld_3_candidate_program.md#architectural-circuit-breaker) when a major native architecture gap appears. Preserve the command, artifact, last trustworthy observation and missing native transition. Stop product changes and dependent qualification, then report the finding for workstream reassessment. Do not grow a scheduler, semantic writer or repair framework inside the harness to make the scenario pass.
 
 The sibling `meld-eval first-use` runner now exercises entrypoint behavior, native preparation, live Startup observation, supported request rejection, Ctrl-C drain and a second epoch. It records public command transcripts and incremental runtime output. The [iteration record](m3_01_installed_startup.md#iteration-record) owns current evidence and remaining gaps. Local builds are routine; publication remains separately authorized.
+
+
+The runnable commands and dependency inputs are documented in `/home/jerkytreats/meld-eval/README.md`. First use and managed control take an explicit binary and output location. Configured Docs additionally takes an explicit package path, owner executable and its BLAKE3 digest; it does not require the Meld checkout. The [closeout](m3_01_installed_startup.md#native-command-control-closeout) records exact final artifact and report identities. Deterministic replay proves native routing and completion, while real-model quality and other product journeys remain separate qualification.

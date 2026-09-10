@@ -28,9 +28,12 @@ pub fn execute(cli: &Cli) -> Option<Result<String, ApiError>> {
         RuntimeCommands::Start {
             foreground: false,
             ..
-        } | RuntimeCommands::Stop { .. }
+        } | RuntimeCommands::List { .. }
+            | RuntimeCommands::Shutdown { .. }
+            | RuntimeCommands::Stop { .. }
             | RuntimeCommands::Restart { .. }
             | RuntimeCommands::Follow { .. }
+            | RuntimeCommands::Actions { .. }
     ) {
         return None;
     }
@@ -43,14 +46,105 @@ pub fn execute(cli: &Cli) -> Option<Result<String, ApiError>> {
         let target = ProductRuntimeAssembly::describe_for_workspace(&cli.workspace, &config)
             .map_err(error)?;
         match command {
+            RuntimeCommands::List { json } => {
+                let live = discover_live(&target)?;
+                let instances = if let Some((url, _)) = &live {
+                    ureq::get(&format!("{url}/v1/runtime/instances"))
+                        .timeout(Duration::from_secs(2))
+                        .call()
+                        .map_err(error)?
+                        .into_json::<Vec<super::supervisor::RuntimeInstance>>()
+                        .map_err(error)?
+                } else if target.supervisor_store_path.exists() {
+                    SupervisorStore::open(&target.supervisor_store_path)
+                        .map_err(error)?
+                        .list_runtime_instances()
+                        .map_err(error)?
+                } else {
+                    Vec::new()
+                };
+                let value = serde_json::json!({"scope": "selected assignment", "product_root": target.product_root,
+                    "live_verified": live.is_some(), "live_instance_id": live.as_ref().map(|(_, status)| status.instance.instance_id.clone()), "coverage": "retained instances in the selected assignment", "instances": instances});
+                render(&value, *json, || {
+                    if instances.is_empty() {
+                        return "Selected assignment has not started.".into();
+                    }
+                    instances
+                        .iter()
+                        .map(|instance| {
+                            format!(
+                                "{} {:?} {}",
+                                instance.instance_id,
+                                instance.status,
+                                if live
+                                    .as_ref()
+                                    .is_some_and(|(_, status)| status.instance.instance_id
+                                        == instance.instance_id)
+                                {
+                                    "live verified"
+                                } else {
+                                    "retained"
+                                }
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+            }
+            RuntimeCommands::Shutdown { instance, json } => {
+                let shutdown = if let Some((url, _)) = discover_live(&target)? {
+                    ureq::post(&format!("{url}/v1/runtime/shutdown"))
+                        .timeout(Duration::from_secs(2))
+                        .send_json(instance)
+                        .map_err(error)?
+                        .into_json::<Option<super::supervisor::RuntimeShutdownState>>()
+                        .map_err(error)?
+                } else if target.supervisor_store_path.exists() {
+                    let store =
+                        SupervisorStore::open(&target.supervisor_store_path).map_err(error)?;
+                    let record = match instance {
+                        Some(id) => store.get_runtime_instance(id),
+                        None => store.latest_runtime_instance(),
+                    }
+                    .map_err(error)?
+                    .ok_or_else(|| error("runtime instance not found"))?;
+                    store
+                        .get_shutdown_state(&shutdown_id(&record))
+                        .map_err(error)?
+                } else {
+                    None
+                };
+                render(&shutdown, *json, || match &shutdown {
+                    Some(record) => format!("{} {:?}", record.shutdown_id, record.status),
+                    None => "No native shutdown record; no stop was requested by this read.".into(),
+                })
+            }
             RuntimeCommands::Start { tick_ms, json, .. } => start(cli, &target, *tick_ms, *json),
             RuntimeCommands::Stop { instance, json } => stop(&target, instance.as_deref(), *json),
             RuntimeCommands::Restart { tick_ms, json } => {
                 stop(&target, None, true)?;
                 start(cli, &target, *tick_ms, *json)
             }
-            RuntimeCommands::Follow { instance, json } => {
-                follow(&target, instance.as_deref(), *json)
+            RuntimeCommands::Follow {
+                instance,
+                after,
+                json,
+            } => follow(&target, instance.as_deref(), *after, *json),
+            RuntimeCommands::Actions { after, limit, json } => {
+                let page = if let Some((url, _)) = discover_live(&target)? {
+                    action_page(&url, *after, *limit)?
+                } else {
+                    if !target.supervisor_store_path.exists() {
+                        return Err(error("no retained runtime reports"));
+                    }
+                    let store =
+                        SupervisorStore::open(&target.supervisor_store_path).map_err(error)?;
+                    super::supervisor::SupervisorReportStore::open(&store)
+                        .map_err(error)?
+                        .read_action_page(0, *after, *limit)
+                        .map_err(error)?
+                };
+                render(&page, *json, || format_actions(&page))
             }
             _ => unreachable!(),
         }
@@ -59,7 +153,9 @@ pub fn execute(cli: &Cli) -> Option<Result<String, ApiError>> {
 
 /// An advertisement is only a route hint. The live owner must confirm its root
 /// and process identity before callers issue an exact-instance operation.
-fn live(target: &ProductRuntimeDescription) -> Result<Option<(String, ControlStatus)>, ApiError> {
+pub fn discover_live(
+    target: &ProductRuntimeDescription,
+) -> Result<Option<(String, ControlStatus)>, ApiError> {
     let root = &target.product_root;
     let Some(discovery) = crate::serve::discovery::read(root) else {
         return Ok(None);
@@ -115,7 +211,7 @@ fn start(
     if tick_ms == 0 {
         return Err(error("tick-ms must be greater than 0"));
     }
-    if let Some((_, status)) = live(target)? {
+    if let Some((_, status)) = discover_live(target)? {
         if status.instance.status != RuntimeInstanceStatus::Running || status.stop_received {
             return Err(error(
                 "the current runtime is draining; wait for its shutdown before starting",
@@ -182,7 +278,7 @@ fn start(
                 stderr_path.display()
             )));
         }
-        if let Some((_, status)) = live(target)? {
+        if let Some((_, status)) = discover_live(target)? {
             if status.instance.instance_id == instance
                 && status.process_id == child.id()
                 && status.instance.status == RuntimeInstanceStatus::Running
@@ -206,7 +302,7 @@ fn stop(
     expected: Option<&str>,
     json: bool,
 ) -> Result<String, ApiError> {
-    let current = live(target)?;
+    let current = discover_live(target)?;
     let instance = if let Some((url, status)) = current {
         if expected.is_some_and(|id| id != status.instance.instance_id) {
             return Err(error(
@@ -277,43 +373,75 @@ fn stop(
     )))
 }
 
+fn action_page(
+    url: &str,
+    after: Option<u64>,
+    limit: usize,
+) -> Result<super::supervisor::reports::ActionPage, ApiError> {
+    ureq::post(&format!("{url}/v1/reports/actions"))
+        .timeout(Duration::from_secs(2))
+        .send_json(&crate::serve::routes::ActionPageRequest { after, limit })
+        .map_err(error)?
+        .into_json()
+        .map_err(error)
+}
+
+fn format_actions(page: &super::supervisor::reports::ActionPage) -> String {
+    let mut lines = Vec::new();
+    if page.history_gap {
+        lines.push("Earlier reports are no longer retained; observation has a history gap.".into());
+    }
+    for row in &page.actions {
+        let action = &row.action;
+        lines.push(format!(
+            "{} {} {:?}: {} committed",
+            row.sequence, action.runtime_id, action.outcome, action.metrics.committed
+        ));
+        for issue in &action.issues {
+            lines.push(format!("  {}: {}", issue.code, issue.message));
+        }
+        for wait in &action.waiting_on {
+            lines.push(format!("  waiting: {}", wait.condition));
+        }
+    }
+    if page.more {
+        lines.push(format!(
+            "More reports: --after {}",
+            page.next_after.unwrap_or_default()
+        ));
+    }
+    lines.join("\n")
+}
+
 fn follow(
     target: &ProductRuntimeDescription,
     expected: Option<&str>,
+    mut after: Option<u64>,
     json: bool,
 ) -> Result<String, ApiError> {
-    let (url, status) = live(target)?.ok_or_else(|| error("no live runtime to follow"))?;
+    let (url, status) = discover_live(target)?.ok_or_else(|| error("no live runtime to follow"))?;
     if expected.is_some_and(|id| id != status.instance.instance_id) {
         return Err(error("selected instance is not live"));
     }
-    let mut last = String::new();
     loop {
-        let Some((_, current)) = live(target)? else {
-            return Ok("Runtime observation ended".into());
+        let Some((_, current)) = discover_live(target)? else {
+            return Ok(String::new());
         };
         if current.instance.instance_id != status.instance.instance_id {
-            return Ok("Selected instance ended; successor was not followed".into());
+            return Ok(String::new());
         }
-        let reports: serde_json::Value = ureq::post(&format!("{url}/v1/reports/recent_actions"))
-            .timeout(Duration::from_secs(2))
-            .send_json(serde_json::json!({"limit": 64}))
-            .map_err(error)?
-            .into_json()
-            .map_err(error)?;
-        let encoded = serde_json::to_string(&reports).map_err(error)?;
-        if encoded != last {
+        let page = action_page(&url, after, 100)?;
+        if !page.actions.is_empty() || page.history_gap {
             if json {
-                println!("{encoded}");
+                println!("{}", serde_json::to_string(&page).map_err(error)?);
             } else {
-                println!(
-                    "{}\n{}",
-                    current.instance.instance_id,
-                    serde_json::to_string_pretty(&reports).map_err(error)?
-                );
+                println!("{}", format_actions(&page));
             }
             std::io::stdout().flush().map_err(error)?;
-            last = encoded;
+            after = page.next_after;
         }
-        std::thread::sleep(Duration::from_millis(250));
+        if !page.more {
+            std::thread::sleep(Duration::from_millis(250));
+        }
     }
 }

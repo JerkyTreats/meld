@@ -38,6 +38,12 @@ pub struct RecentActionsRequest {
     pub limit: usize,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct ActionPageRequest {
+    pub after: Option<u64>,
+    pub limit: usize,
+}
+
 /// Request shape for the per-runtime latest report read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LatestActionRequest {
@@ -81,6 +87,39 @@ pub struct StartupAccountReadRequest {
 /// Dispatch one request against the served sources.
 pub fn dispatch(sources: &ServeSources, method: &str, path: &str, body: &[u8]) -> RouteResponse {
     match (method, path) {
+        ("POST", "/v1/events/newest_page") => {
+            handle(body, |request: meld_events::remote::NewestPageRequest| {
+                sources.events.newest_page(request)
+            })
+        }
+        ("GET", "/v1/runtime/instances") => respond(
+            sources
+                .control
+                .as_ref()
+                .ok_or_else(|| "runtime control unavailable".to_string())
+                .and_then(|control| control.instances()),
+        ),
+        ("POST", "/v1/runtime/shutdown") => handle(body, |instance: Option<String>| {
+            sources
+                .control
+                .as_ref()
+                .ok_or("runtime control unavailable")?
+                .shutdown(instance.as_deref())
+        }),
+        ("POST", "/v1/reports/actions") => handle(body, |request: ActionPageRequest| {
+            sources
+                .reports
+                .read_action_page(sources.action_floor, request.after, request.limit)
+        }),
+        ("POST", "/v1/agents/query") => handle(body, |request: crate::agent::native::AgentRead| {
+            crate::agent::native::read(
+                sources
+                    .agent
+                    .as_deref()
+                    .ok_or("native Agent store unavailable")?,
+                request,
+            )
+        }),
         ("GET", "/v1/runtime/status") => respond(
             sources
                 .control

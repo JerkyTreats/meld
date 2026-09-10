@@ -1,6 +1,6 @@
 # Meld 3: prove the flywheel through excellent commands
 
-Date: 2026-09-10. Mode: active delivery following design commit `06fe52fc`. The native first-use journey is locally verified; the delivery loop remains active.
+Date: 2026-09-10. Mode: native command-control delivery complete locally. Startup, managed control and deterministic Docs have passed the external harness; broader product and release qualification remain separate.
 Source reference: `f2af45c8` on `feat/meld-3-candidate`, with working design changes.
 
 ## Outcome
@@ -89,4 +89,4 @@ The user clarified that local Cargo builds and checks are routine and freely aut
 
 For each runtime iteration, retain an identifiable artifact, the exercised command and enough output to explain the observed result. For the final candidate, preserve the requested matching CI checks, Cargo/package status, build command/toolchain, exact source and artifact identities, relevant regressions and installed-product evidence. Older binaries or unrelated green checks cannot qualify a changed candidate. Publication, push and deployment remain separately controlled.
 
-The user now supersedes the earlier design-first implementation gates, journaled-migration prerequisite, mandatory harness decomposition and requirement to finalize future contracts before starting. Design commit `06fe52fc` records that method and circuit breaker. The [iteration record](m3_01_installed_startup.md#iteration-record) retains help/version, native initialization and live Startup proof, plus the correction to misleading request-rejection diagnostics. Two native epochs have reached independent Goal satisfaction through public commands. Managed controls and wider product qualification remain open; no architectural breaker has tripped.
+The user now supersedes the earlier design-first implementation gates, journaled-migration prerequisite, mandatory harness decomposition and requirement to finalize future contracts before starting. Design commit `06fe52fc` records that method and circuit breaker. The [iteration record](m3_01_installed_startup.md#iteration-record) retains help/version, native initialization and live Startup proof, plus the correction to misleading request-rejection diagnostics. Two native epochs have reached independent Goal satisfaction through public commands. Native command control is now implemented and exercised through Startup and deterministic Docs. The final artifact passed 80 external harness checks. No architectural breaker tripped. Security, Code Change, real-model quality and release qualification remain open, without expanding this completed command-control scope.

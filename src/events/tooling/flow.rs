@@ -24,7 +24,7 @@ pub(super) fn run(
     render(format, &report, render_text)
 }
 
-fn render_text(report: &EventFlowReport) -> String {
+pub(super) fn render_text(report: &EventFlowReport) -> String {
     let span = report
         .span_seconds
         .map(|seconds| format!("{seconds}s"))

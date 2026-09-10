@@ -127,7 +127,7 @@ fn poll_page(
 
 /// Next cursor after a page: the page's cursor when it carried records, the
 /// current cursor unchanged when it was empty (a timeout, not a gap).
-fn advance_cursor(cursor: u64, page: &EventPage) -> u64 {
+pub(super) fn advance_cursor(cursor: u64, page: &EventPage) -> u64 {
     if page.records.is_empty() {
         cursor
     } else {
@@ -137,7 +137,7 @@ fn advance_cursor(cursor: u64, page: &EventPage) -> u64 {
 
 /// Renders one follow-mode page: text lines, or the whole page as a single
 /// JSON object line so `--format json --follow` streams one object per page.
-fn render_follow_page(format: &str, page: &EventPage) -> Result<String, ApiError> {
+pub(super) fn render_follow_page(format: &str, page: &EventPage) -> Result<String, ApiError> {
     match format {
         "json" => serde_json::to_string(page)
             .map_err(|err| ApiError::ConfigError(format!("failed to render event page: {err}"))),
@@ -145,7 +145,7 @@ fn render_follow_page(format: &str, page: &EventPage) -> Result<String, ApiError
     }
 }
 
-fn render_page_text(page: &EventPage) -> String {
+pub(super) fn render_page_text(page: &EventPage) -> String {
     let mut lines = vec![
         format!("ledger_id: {}", page.ledger_id),
         format!(

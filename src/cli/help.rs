@@ -1,8 +1,8 @@
 //! CLI help and command-name contract for telemetry and routing.
 
 use crate::cli::parse::{
-    AgentCommands, AgentPromptCommands, BranchesCommands, Commands, ContextCommands,
-    DangerCommands, EventCommands, ProviderCommands, RuntimeCommands, WorkflowCommands,
+    AgentPromptCommands, BranchesCommands, Commands, ContextCommands, DangerCommands,
+    EventCommands, ProfileCommands, ProviderCommands, RuntimeCommands, WorkflowCommands,
     WorkspaceCommands, WorldCommands,
 };
 use crate::telemetry::summary::TypedSummaryEvent;
@@ -15,7 +15,8 @@ pub fn command_name(command: &Commands) -> String {
         Commands::Status { .. } => "status".to_string(),
         Commands::Validate => "validate".to_string(),
         Commands::Watch { .. } => "watch".to_string(),
-        Commands::Agent { command } => format!("agent.{}", agent_command_name(command)),
+        Commands::Agent { .. } => "agent".into(),
+        Commands::Profile { command } => format!("profile.{}", agent_command_name(command)),
         Commands::Provider { command } => format!("provider.{}", provider_command_name(command)),
         Commands::Init { .. } => "init".to_string(),
         Commands::Context { command } => format!("context.{}", context_command_name(command)),
@@ -41,9 +42,15 @@ pub fn event_command_name(command: &EventCommands) -> &'static str {
 pub fn runtime_command_name(command: &RuntimeCommands) -> &'static str {
     match command {
         RuntimeCommands::Start { .. } => "start",
+        RuntimeCommands::Trace { .. } => "trace",
+        RuntimeCommands::Why { .. } => "why",
+        RuntimeCommands::List { .. } => "list",
+        RuntimeCommands::Shutdown { .. } => "shutdown",
+        RuntimeCommands::Startup { .. } => "startup",
         RuntimeCommands::Stop { .. } => "stop",
         RuntimeCommands::Restart { .. } => "restart",
         RuntimeCommands::Follow { .. } => "follow",
+        RuntimeCommands::Actions { .. } => "actions",
         RuntimeCommands::StartupAccount { .. } => "startup-account",
         RuntimeCommands::Request { .. } => "request",
         RuntimeCommands::Status { .. } => "status",
@@ -116,19 +123,19 @@ pub fn workflow_command_name(command: &WorkflowCommands) -> &'static str {
     }
 }
 
-pub fn agent_command_name(command: &AgentCommands) -> &'static str {
+pub fn agent_command_name(command: &ProfileCommands) -> &'static str {
     match command {
-        AgentCommands::Status { .. } => "status",
-        AgentCommands::List { .. } => "list",
-        AgentCommands::Show { .. } => "show",
-        AgentCommands::Create { .. } => "create",
-        AgentCommands::Edit { .. } => "edit",
-        AgentCommands::Prompt { command } => match command {
+        ProfileCommands::Status { .. } => "status",
+        ProfileCommands::List { .. } => "list",
+        ProfileCommands::Show { .. } => "show",
+        ProfileCommands::Create { .. } => "create",
+        ProfileCommands::Edit { .. } => "edit",
+        ProfileCommands::Prompt { command } => match command {
             AgentPromptCommands::Show { .. } => "prompt_show",
             AgentPromptCommands::Edit { .. } => "prompt_edit",
         },
-        AgentCommands::Remove { .. } => "remove",
-        AgentCommands::Validate { .. } => "validate",
+        ProfileCommands::Remove { .. } => "remove",
+        ProfileCommands::Validate { .. } => "validate",
     }
 }
 
@@ -229,16 +236,17 @@ pub fn typed_summary_event(
             duration_ms,
             error,
         )),
-        Commands::Agent { command } => Some(crate::agent::summary::command(
+        Commands::Agent { .. } => None,
+        Commands::Profile { command } => Some(crate::agent::summary::command(
             agent_command_name(command),
             matches!(
                 command,
-                AgentCommands::Create { .. }
-                    | AgentCommands::Edit { .. }
-                    | AgentCommands::Prompt {
+                ProfileCommands::Create { .. }
+                    | ProfileCommands::Edit { .. }
+                    | ProfileCommands::Prompt {
                         command: AgentPromptCommands::Edit { .. },
                     }
-                    | AgentCommands::Remove { .. }
+                    | ProfileCommands::Remove { .. }
             ),
             ok,
             duration_ms,

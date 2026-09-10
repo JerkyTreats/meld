@@ -4,7 +4,7 @@ Meld reconciles installed intentions against owner-observed knowledge. Agent jud
 
 Docs and Security require separately selected [external owner packages](owners/README.md).
 
-The native runtime supports [Startup](theory/startup/README.md), [README maintenance](theory/docs_freshness/README.md), [declared Security mitigation](theory/dependency_security_mitigation/README.md) and [declared code changes](theory/code_change/README.md). Each guide explains configuration, inert preparation and activation through `meld runtime run`. The Startup guide provides a small end-to-end example with no workspace or model provider.
+The native runtime supports [Startup](theory/startup/README.md), [README maintenance](theory/docs_freshness/README.md), [declared Security mitigation](theory/dependency_security_mitigation/README.md) and [declared code changes](theory/code_change/README.md). Each guide explains configuration, inert preparation and activation through `meld runtime start`. The Startup guide provides a small end-to-end example with no workspace or model provider.
 
 Legacy Workflow execution is retired. Existing Workflow profiles remain inspectable; use the native product guides for executable reconciliation. The context commands below remain available for Merkle-tree and stored-frame tooling.
 
@@ -12,7 +12,7 @@ Legacy Workflow execution is retired. Existing Workflow profiles remain inspecta
 
 AI agents need context about your code. Traditional approaches require expensive full-codebase scans or semantic search. Meld provides:
 
-- **Instant invalidation** — Hash comparison detects changes in O(1)
+- **Instant invalidation** — Hash comparison detects changes in `O(1)`
 - **Fast lookups** — Retrieve context for any file without scanning
 - **Immutable history** — Context frames are append-only and verifiable
 - **Multi-agent support** — Multiple agents can read/write context independently
@@ -29,13 +29,13 @@ cargo install --path .
 # Prepare bundled Startup without a workspace or provider
 meld init
 
-# Run the native flywheel; Ctrl-C requests drain
+# Start the native flywheel, then observe it
 meld runtime start
-meld runtime follow
-meld runtime stop
+meld runtime follow          # Ctrl-C ends observation
+meld runtime stop            # Request native drain
 
 # Inspect progress from another terminal, or retained evidence after stopping
-meld runtime startup-account --agent-id startup-agent
+meld runtime startup
 ```
 
 `meld init --json` reports native preparation receipts. Repeating it preserves
@@ -67,18 +67,25 @@ meld context regenerate            # Force regenerate (--force --no-recursive)
 
 ### Agents
 
-Agents are LLM-powered workers that generate context frames.
+Native Agents own installed intentions and independent Goal judgments.
 
 ```bash
-meld agent list              # List configured agents
-meld agent create            # Create a new agent interactively
-meld agent show <id>         # Show agent details
-meld agent validate <id>     # Validate agent configuration
+meld agent list              # Discover prepared native Agents
+meld agent show              # Inspect the sole Agent, or supply its ID
+meld agent request --request-key review-1
+meld agent request-status review-1
 ```
+
+Startup uses lifecycle observations and rejects explicit reconciliation requests.
+Configured products such as Docs support them. Legacy Reader/Writer configuration
+commands now live under `meld profile`, including list, show, create and validate.
+
+See the [command reference](design/plan/architecture_overhauls/world_model_knowledge_traversal/m3_command_reference.md)
+for runtime status, actions, traces, waits and live Event observation.
 
 ### Providers
 
-Providers are LLM backends (OpenAI, Anthropic, Ollama, etc.).
+Providers select model backends such as OpenAI, Anthropic and Ollama.
 
 ```bash
 meld provider list           # List configured providers
@@ -97,20 +104,19 @@ Meld uses XDG directories:
 | Providers | `~/.config/meld/providers/*.toml` |
 | Prompts | `~/.config/meld/prompts/*.md` |
 | Data | `~/.local/share/meld/workspaces/<hash>/` |
-| Logs | Platform state directory, e.g. `$XDG_STATE_HOME/meld/` on Linux |
+| Logs | Platform state directory, such as `$XDG_STATE_HOME/meld/` on Linux |
 
 ### Logging
 
-Logging is on by default and writes to a file under the platform state directory (e.g. `$XDG_STATE_HOME/meld/.../meld.log` on Linux). Use `--quiet` to disable logging, or `--log-file <path>` / `MERKLE_LOG_FILE` to set the log file path. Configure level, format, and output in `[logging]` in your config file.
+Logging is on by default and writes to a file under the platform state directory, such as `$XDG_STATE_HOME/meld/.../meld.log` on Linux. Use `--quiet` to disable logging, or `--log-file <path>` / `MERKLE_LOG_FILE` to set the log file path. Configure level, format, and output in `[logging]` in your config file.
 
 ### Workspace config
 
-Create `.meld/config.toml` in your project root:
+Use the configuration prepared by `meld init`, or select an explicit file with `--config`. Product storage must remain outside the target workspace:
 
 ```toml
-[storage]
-store_path = ".meld/store"
-frames_path = ".meld/frames"
+[system.storage]
+product_root = "/absolute/path/outside/workspace/product"
 
 [logging]
 enabled = true
@@ -131,16 +137,16 @@ Context frames are immutable blobs of AI-generated information attached to nodes
 
 - **FrameID** — Content-addressed hash
 - **Basis** — The NodeID it describes
-- **Content** — The actual context (summaries, analysis, etc.)
+- **Content** — The actual context, such as summaries and analysis
 
 Frames are append-only. New context creates new frames; history is preserved.
 
 ### Agents & Providers
 
-- **Agent** — Defines the prompt and role (Reader or Writer)
+- **Agent** — Native maintained intention and Goal judgment
 - **Provider** — The LLM backend that executes the prompt
 
-Writer agents generate context frames. Reader agents can query context but not write.
+Legacy Reader and Writer profiles remain configuration for stored-context tooling. They do not create native Agents.
 
 ## Architecture
 

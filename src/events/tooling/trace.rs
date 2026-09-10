@@ -26,14 +26,14 @@ pub(super) fn run(
 ///
 /// Flag conflicts are already rejected by the parser; this guards the "no
 /// subject at all" case and validates the selector formats.
-fn parse_subject(
+pub(super) fn parse_subject(
     object: Option<&str>,
     stream: Option<&str>,
     seq: Option<u64>,
 ) -> Result<TraceSubject, ApiError> {
     match (object, stream, seq) {
         (Some(object), None, None) => {
-            let parts: Vec<&str> = object.split("::").collect();
+            let parts: Vec<&str> = object.splitn(3, "::").collect();
             let [domain_id, object_kind, object_id] = parts.as_slice() else {
                 return Err(ApiError::ConfigError(format!(
                     "invalid trace object '{object}', expected domain::kind::id"
@@ -44,7 +44,7 @@ fn parse_subject(
             Ok(TraceSubject::Object(object_ref))
         }
         (None, Some(stream), None) => {
-            let parts: Vec<&str> = stream.split("::").collect();
+            let parts: Vec<&str> = stream.splitn(2, "::").collect();
             let [domain_id, stream_id] = parts.as_slice() else {
                 return Err(ApiError::ConfigError(format!(
                     "invalid trace stream '{stream}', expected domain::stream"
@@ -64,7 +64,7 @@ fn parse_subject(
     }
 }
 
-fn format_text(report: &EventTraceReport) -> String {
+pub(super) fn format_text(report: &EventTraceReport) -> String {
     let mut out = format!(
         "trace ledger={} {}\n",
         report.ledger_id,
