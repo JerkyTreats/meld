@@ -1,14 +1,16 @@
-# Canonical Flywheel Alignment And Runtime Soft Freeze
+# Canonical Flywheel Alignment And Remediation History
 
 Date: 2026-09-08
 
 Baseline: `e1666ffa4449cc68881a282c00e90a7e363dd63b` on `design/world-model-reconciliation`.
 
-State: R3/P0 and R4 are accepted. The user accepted the bounded R5 and Startup increment for commit after recorded neutral review and executable proof. The next workstream is Meld 3 candidate design; its records follow on a separate branch. No final candidate qualification is claimed.
+State: R3/P0 is accepted by fresh bounded neutral review at `b5daadcc`. The user accepted R4 at runtime source `375cc449` and authorized R5 implementation with Sol delegation. R5 correctness is ready for acceptance with passing bounded actual-Qwen evidence. The user has withdrawn soft freeze and requested the next lifecycle, ergonomics and official Meld 3.0 candidate workstream.
+
+Current direction: [Meld 3.0 candidate program](meld_3_candidate_program.md) owns the new workstream design. R6 soft freeze and the requirement to defer product/lifecycle design until freeze are superseded. Core changes needed for the new outcome are in scope for design. The user explicitly accepted R5 and Startup for commit; `f41c4fea` records that bounded increment. References below to pending acceptance or final freeze describe earlier checkpoints. Applicable integrated proof and canonical ownership obligations remain in the successor program.
 
 ## Authority And Supersession
 
-This document is the sole current reconciliation-branch issue register, severity order, remediation sequence, and soft-freeze acceptance definition. The user requested this consolidation after the current-snapshot architecture audit and explicitly prioritized one working architectural flywheel over product cleanup.
+This document remains the R1–R5 reconciliation issue and acceptance register. It formerly owned the full remediation sequence and soft-freeze acceptance definition; the explicit user-directed supersession above withdraws that future direction. The user originally requested consolidation after the current-snapshot architecture audit and prioritized one working architectural flywheel over product cleanup.
 
 It supersedes the delivery, prioritization, pickup, and branch-completion authority of every earlier assessment, plan, ledger, recovery amendment, review, and acceptance record in this reconciliation directory and its descendants. In particular, the former delivery ledgers, `reconciliation_outcome_audit.md`, and `reconciliation_acceptance.md` are supporting history, not competing directions. Old authorizations and next-task instructions embedded in those records are historical. Their valid observations and exact artifacts remain evidence; supersession does not rewrite them as failures.
 
@@ -20,9 +22,9 @@ The separate [PDS proposal corpus](../../../persistent_domain_stewardship/README
 
 Meld must have one canonical loop from owner observation through Events, knowledge admission, Belief, Agent judgment, Planner traversal, Strategy construction, authorized work, and returned owner evidence. That loop must make observable progress through ordinary runtime entrypoints without a product coordinator or test arranging its internal turns.
 
-The desired branch outcome is a soft-frozen cognitive runtime on which PDS design and recorded use cases can be developed without repeatedly repairing core ownership and connectivity. Soft freeze means the public domain contracts and canonical paths are established and exercised. It permits ordinary bug fixes and deliberate additive capabilities; it does not promise an immutable implementation or complete cognition.
+The former branch outcome was a soft-frozen cognitive runtime. That outcome and its sequencing constraint are withdrawn. The successor outcome is a usable and reproducible official Meld 3.0 candidate, including necessary core changes. Repeated use without further core repair may supply evidence of maturity; preserving unchanged core code is not a constraint on the new workstream.
 
-The user's scope constraints are preserved:
+The earlier scope constraints are preserved here as history. The final freeze-dependent sequencing bullet is superseded; this is not authorization for unrelated product expansion:
 
 - There is only one flywheel, and it must turn.
 - Architectural alignment takes precedence over product-policy cleanup.
@@ -243,8 +245,8 @@ Historical durable data may require a small owned decoder or migration reader. T
 | P1 and P2 | V18 | Product domains depend on assembly internals; API contains owned mutation logic | R4 removes product-to-root implementation coupling; R1 or R3 moves logic needed for their replacements; R5 closes remaining adapter/style defects |
 | P2 | V04 | Compiled README grammar defines assertion-bearing content, skips non-title headings, and reinterprets retained observations | R5 makes extraction a selected versioned product mechanism outside core; exact prior interpretation remains recoverable. Include the parent/child source-path evidence mismatch demonstrated by the matrix proof |
 | P2 | V05 | Security coverage flags are forced true and the verification-selection flag is inert | R5 makes policy claims truthful in the external owner; either honor supported choices or express a fixed contract without fictional options |
-| P2 | V12 | Nondefault compatibility paths can persist runtime state beneath the target workspace | R5 routes all runtime-state paths through external-root validation; this remains a mandatory invariant fix |
-| P2 | V13 | CLI binds a Belief API to a different database; no current production hydration caller was found | R5 retains only a demonstrated supported reader through canonical Belief; otherwise fully removes the disconnected API and its storage binding |
+| P2 | V12 | Original configured-storage bypass was corrected, but direct XDG callers and Context fallback still bypassed refusal | R5 routes configured storage and direct XDG state through shared external-root validation, removes Context temp fallback, and validates the branch catalog destination before writing |
+| P2 | V13 | Original disconnected Belief API was retired, but unused bundle selectors, classification and authorship remained | R5 removes the remaining live surface. Only opaque historical lineage references and verified artifact reading remain; canonical Planner and Belief own live knowledge |
 | P2 | V17 | Compiled capture limits make some selected Docs scopes unassessable; gaps are reported honestly | R5 makes scope limits explicit product capability constraints or adds a complete selected capture path. Universal repository coverage is deferred product work |
 
 ### Source Evidence For The Register
@@ -467,7 +469,9 @@ The passing run retained one malformed first validation: the provider labeled co
 
 The [R5 evidence index](evidence/r5_correctness_2026_09_09/README.md) contains the source and README before and after, exact proof identities, owner publication and independent observation, native Agent records, retired-symbol scans, validation logs index and failed-run index. Runtime source manifest SHA-256 is `08bcf83c8f1b5c71da78146479fffcb9ab1e86c5daf74ad5033749dedbf84372`; the selected Docs policy component BLAKE3 is `e718ae611e51dbbc4e90c3c03f7f005ad26ff1fb5090c959fefea72595351f40`. The durable evidence workspace `~/.local/state/meld-flywheel-remediation/r5-closeout-20260909` additionally retains the candidate patch and new source, compressed successful and failed logs, neutral review and ordinary CLI driver. Separate Qwen roots retain original binaries, owner selection, installation, source manifest, Events and snapshots. Credential configuration is excluded from the repository evidence.
 
-### R6 — Final Local-Model Proof And Soft Freeze
+### R6 — Former Final Local-Model Proof And Soft Freeze
+
+Superseded as a soft-freeze gate by the user's next-workstream instruction. The proof requirements below are retained as evidence input to the Meld 3.0 candidate program, not a prerequisite to analyzing or changing core lifecycle and ergonomics.
 
 Depends on R1 through R5. Outcome: one exact final source and core binary satisfy the canonical path, extension boundary, and evidence matrix.
 
@@ -923,4 +927,4 @@ This is the requested next-workstream assessment. It does not report that work a
 | Require both nonce and Qwen at P0 | Nonce is the durable runtime diagnostic; real local inference supplies complementary semantic execution evidence before P0 acceptance |
 | Preserve evidence, supersede conclusions | Old demonstrations remain valid within scope; old branch-completion and theory-separation conclusions do not override this issue register |
 
-Completion record: the combined implementation increment and its commit effect are accepted at the fresh neutral gate above. R3/P0 is now accepted at `b5daadcc` by the subsequent bounded matrix gate. R4 implementation is now complete and awaits the user-directed gate readiness check recorded above; R5 and R6 remain open. No full-program acceptance is claimed. Soft freeze requires closure of the issue register, successful final integrated proof, and one canonical implementation of each responsibility through the ordinary runtime.
+Completion record: the combined implementation increment and its commit effect are accepted at the fresh neutral gate above. R3/P0 is now accepted at `b5daadcc` by the subsequent bounded matrix gate. The user accepted R4 and authorized R5, whose current correction and verification record appears below. R6 remains open. No full-program acceptance is claimed. Soft freeze requires closure of the issue register, successful final integrated proof, and one canonical implementation of each responsibility through the ordinary runtime.
