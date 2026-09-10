@@ -28,6 +28,11 @@ on:
         required: false
         type: boolean
         default: false
+      publish_release:
+        description: Explicitly authorize release tags, artifacts and crates.io publication
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -110,7 +115,7 @@ jobs:
 
   release:
     name: Release and publish
-    if: ${{ (github.event_name != 'push' || !contains(github.event.head_commit.message, '[skip ci]')) && github.ref == 'refs/heads/master' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_release && github.ref == 'refs/heads/master' }}
     runs-on: ubuntu-24.04
     needs: verify
     concurrency:

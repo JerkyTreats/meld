@@ -2,6 +2,28 @@
 
 This package asks an Agent to realize one nonce for its current admission epoch and confirm it through native Curation and Belief before separately satisfying its Goal. It uses the runtime subject `runtime/instance/meld` and requires no workspace or model provider.
 
+For a fresh installation, the binary bundles this package and its bootstrap
+preset. No repository checkout or manual TOML is needed:
+
+```sh
+meld init
+meld runtime run
+```
+
+Inspect the live runtime from another terminal with
+`meld runtime startup-account --agent-id startup-agent`. Ctrl-C requests native
+drain; the same inspection command then reads retained evidence. Repeating
+`meld init` preserves preparation identities. `meld init --json` exposes the
+native receipts. An existing explicitly configured product can supply package
+bytes with `meld --config /absolute/config.toml init --package /absolute/package`.
+
+Startup is triggered by the admission epoch. Explicit `runtime request` is
+rejected by the native Agent contract; start another epoch to exercise another
+nonce. The command reports this reason rather than recommending a futile retry.
+
+The remaining examples show explicit configuration and lower-level package
+preparation for developers.
+
 Use a single Startup declaration in the global Meld configuration at `$XDG_CONFIG_HOME/meld/config.toml`. Replace the storage path with an absolute product directory. Existing workspace declarations remain supported; selecting multiple declarations for the same invocation is rejected as ambiguous.
 
 ```toml

@@ -1,0 +1,16 @@
+[system.storage]
+product_root = ""
+
+[stewardship.declarations.startup]
+expression = "startup"
+subject = { domain_id = "runtime", object_kind = "instance", object_id = "meld" }
+agent_id = "startup-agent"
+principal_id = "runtime-owner"
+
+[stewardship.declarations.startup.theory]
+belief_family_id = "startup_realization"
+evidence_mapping_id = "startup_realization_v1"
+curation_rule_id = "startup_realization"
+maintained_condition_id = "startup_realization"
+strategy_theory_id = "startup_realization"
+authority_policy_id = "startup_nonce_local"

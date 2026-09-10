@@ -26,18 +26,22 @@ cargo install --path .
 ## Quick Start
 
 ```bash
-# Initialize meld in your project
+# Prepare bundled Startup without a workspace or provider
 meld init
 
-# Scan the filesystem to build the tree
-meld scan
+# Run the native flywheel; Ctrl-C requests drain
+meld runtime run
 
-# Check workspace status
-meld status
-
-# Generate context for the codebase
-meld context generate
+# Inspect progress from another terminal, or retained evidence after stopping
+meld runtime startup-account --agent-id startup-agent
 ```
+
+`meld init --json` reports native preparation receipts. Repeating it preserves
+prepared identities. Incompatible older configuration remains untouched; the
+error explains how to create a separate configuration with `--config`.
+Initialization no longer creates Reader/Writer profiles or prompt templates;
+`init --force` and `init --list` are retired. The context/profile commands below
+remain separate legacy tooling.
 
 ## Core Commands
 
@@ -155,6 +159,15 @@ Context Views (bounded retrieval)
 ```
 
 ## Development
+
+Local Cargo builds and checks are routine. Publication is separate: the CI
+release job requires a manual dispatch on `master` with `publish_release`
+explicitly enabled. Ordinary pushes and verification dispatches do not authorize
+release tags, artifacts or crates.io publication. Release dispatch still requires
+explicit owner approval.
+
+
+For external command feedback, use the [Meld Eval first-use probe](../meld-eval/README.md#probe-first-use) with an existing compiled binary. It records the artifact identity and public command results in isolated directories without building or opening domain stores.
 
 ```bash
 # Run tests

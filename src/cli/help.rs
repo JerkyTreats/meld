@@ -288,13 +288,7 @@ pub fn typed_summary_event(
             )),
             ContextCommands::Get { .. } => None,
         },
-        Commands::Init { force, list } => Some(crate::init::summary::command(
-            *force,
-            *list,
-            ok,
-            duration_ms,
-            error,
-        )),
+        Commands::Init { .. } => Some(crate::init::summary::command(ok, duration_ms, error)),
         Commands::Workflow { command } => Some(crate::workflow::summary::command(
             workflow_command_name(command),
             ok,

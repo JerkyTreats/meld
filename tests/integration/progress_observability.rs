@@ -390,14 +390,6 @@ fn command_families_emit_typed_summaries_with_command_summary() {
                 "config_mutation_summary",
             ),
             (
-                Commands::Init {
-                    force: false,
-                    list: true,
-                },
-                "init",
-                "init_summary",
-            ),
-            (
                 Commands::Workflow {
                     command: WorkflowCommands::List {
                         format: "text".to_string(),

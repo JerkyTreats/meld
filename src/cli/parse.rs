@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 /// Merkle CLI - Deterministic filesystem state management
 #[derive(Parser)]
-#[command(name = "meld")]
+#[command(name = "meld", version)]
 #[command(about = "Deterministic filesystem state management using Merkle trees")]
 pub struct Cli {
     #[command(subcommand)]
@@ -113,15 +113,14 @@ pub enum Commands {
         #[command(subcommand)]
         command: ProviderCommands,
     },
-    /// Initialize default agents and prompts
+    /// Prepare the configured native product, or bundled Startup on first use
     Init {
-        /// Force re-initialization (overwrite existing)
+        /// Package source for an explicitly configured product
         #[arg(long)]
-        force: bool,
-
-        /// List what would be initialized without creating
+        package: Option<PathBuf>,
+        /// Print native preparation receipts as JSON
         #[arg(long)]
-        list: bool,
+        json: bool,
     },
     /// Context operations (generate and retrieve frames)
     Context {

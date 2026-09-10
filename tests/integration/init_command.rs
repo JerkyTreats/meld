@@ -1,320 +1,137 @@
-//! Integration tests for Init CLI command
+//! Native initialization through the real binary with isolated user state.
 
-use meld::agent::{AgentStorage, XdgAgentStorage};
-use meld::config::xdg;
-use meld::init;
 use std::fs;
+use std::path::Path;
+use std::process::{Command, Output};
+
+use serde_json::Value;
 use tempfile::TempDir;
 
-use crate::integration::with_xdg_env;
+fn invoke(root: &Path, args: &[&str]) -> Output {
+    let workspace = root.join("workspace");
+    fs::create_dir_all(&workspace).unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_meld"));
+    command
+        .args(args)
+        .current_dir(workspace)
+        .env_clear()
+        .env("HOME", root.join("home"));
+    for name in ["config", "data", "state", "cache", "runtime"] {
+        let key = if name == "runtime" {
+            "XDG_RUNTIME_DIR".into()
+        } else {
+            format!("XDG_{}_HOME", name.to_uppercase())
+        };
+        command.env(key, root.join(name));
+    }
+    command.output().unwrap()
+}
+
+fn receipt(output: Output) -> Value {
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
+}
 
 #[test]
-fn init_does_not_install_or_replace_workflow_applications() {
-    let test_dir = TempDir::new().unwrap();
-    with_xdg_env(&test_dir, || {
-        let workflows = meld::config::WorkflowConfig::default()
-            .resolve_user_profile_dir()
-            .unwrap();
-        init::initialize_all(false).unwrap();
-        assert!(
-            !workflows.exists(),
-            "init must not provision a legacy application"
+fn native_init_prepares_once_without_a_workspace_or_provider() {
+    let root = TempDir::new().unwrap();
+    let first = receipt(invoke(root.path(), &["init", "--json"]));
+    let second = receipt(invoke(root.path(), &["init", "--json"]));
+    let first_stages = first["stage_reports"].as_array().unwrap();
+    let second_stages = second["stage_reports"].as_array().unwrap();
+    assert_eq!(first_stages.len(), 4);
+    assert_eq!(second_stages.len(), 4);
+    for (first, second) in first_stages.iter().zip(second_stages) {
+        assert_eq!(first["record_ids"], second["record_ids"]);
+        assert_eq!(second["disposition"], "Unchanged");
+    }
+    let config = root.path().join("config/meld");
+    assert!(!config.join("agents/reader.toml").exists());
+    assert!(!config.join("prompts/code-analyzer.md").exists());
+    assert_eq!(
+        fs::read_dir(root.path().join("workspace")).unwrap().count(),
+        0
+    );
+    let account = receipt(invoke(
+        root.path(),
+        &[
+            "runtime",
+            "startup-account",
+            "--agent-id",
+            "startup-agent",
+            "--format",
+            "json",
+        ],
+    ));
+    let positions = account["positions"].as_array().unwrap();
+    for name in ["product_compiled", "agent_genesis"] {
+        assert_eq!(
+            positions
+                .iter()
+                .find(|item| item["position"] == name)
+                .unwrap()["state"],
+            "available"
         );
-
-        fs::create_dir_all(&workflows).unwrap();
-        let supplied = workflows.join("docs_writer_thread_v1.yaml");
-        let content = "# independently supplied profile; not owned by meld init\n";
-        fs::write(&supplied, content).unwrap();
-        init::initialize_all(true).unwrap();
-        assert_eq!(fs::read_to_string(supplied).unwrap(), content);
-        assert!(!workflows.join("packages").exists());
-        assert!(!workflows.join("prompts").exists());
-    });
+    }
+    assert!(
+        account["generation_id"].is_null(),
+        "init must not activate the product"
+    );
 }
 
 #[test]
-fn test_init_creates_default_agents() {
-    let test_dir = TempDir::new().unwrap();
-    with_xdg_env(&test_dir, || {
-        let summary = init::initialize_all(false).unwrap();
-
-        // Check that all default agents were created
-        assert_eq!(summary.agents.created.len(), 3);
-        assert!(summary.agents.created.contains(&"reader".to_string()));
-        assert!(summary
-            .agents
-            .created
-            .contains(&"code-analyzer".to_string()));
-        assert!(summary.agents.created.contains(&"docs-writer".to_string()));
-
-        // Verify files exist
-        let agents_dir = XdgAgentStorage::new().agents_dir().unwrap();
-        assert!(agents_dir.join("reader.toml").exists());
-        assert!(agents_dir.join("code-analyzer.toml").exists());
-        assert!(agents_dir.join("docs-writer.toml").exists());
-    });
+fn legacy_configuration_is_preserved_and_explicit_fresh_setup_works() {
+    let root = TempDir::new().unwrap();
+    let config = root.path().join("config/meld");
+    fs::create_dir_all(&config).unwrap();
+    let old = "[system.storage]\nproduct_root = '/old/product'\n";
+    fs::write(config.join("config.toml"), old).unwrap();
+    let result = invoke(root.path(), &["init", "--json"]);
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("--config"));
+    assert_eq!(fs::read_to_string(config.join("config.toml")).unwrap(), old);
+    assert!(!root.path().join("data").exists());
+    let alternate = root.path().join("separate/config.toml");
+    receipt(invoke(
+        root.path(),
+        &["--config", alternate.to_str().unwrap(), "init", "--json"],
+    ));
+    assert_eq!(fs::read_to_string(config.join("config.toml")).unwrap(), old);
 }
 
 #[test]
-fn test_init_creates_prompts() {
-    let test_dir = TempDir::new().unwrap();
-    with_xdg_env(&test_dir, || {
-        let summary = init::initialize_prompts(false).unwrap();
-
-        // Check that all default prompts were created
-        assert_eq!(summary.created.len(), 2);
-        assert!(summary.created.contains(&"code-analyzer.md".to_string()));
-        assert!(summary.created.contains(&"docs-writer.md".to_string()));
-
-        // Verify files exist
-        let prompts_dir = xdg::prompts_dir().unwrap();
-        assert!(prompts_dir.join("code-analyzer.md").exists());
-        assert!(prompts_dir.join("docs-writer.md").exists());
-
-        // Verify content is not empty
-        let content = fs::read_to_string(prompts_dir.join("code-analyzer.md")).unwrap();
-        assert!(!content.is_empty());
-    });
+fn init_refuses_concurrent_preparation_and_resumes_after_lock_release() {
+    use fs2::FileExt;
+    let root = TempDir::new().unwrap();
+    let config = root.path().join("config/meld");
+    fs::create_dir_all(&config).unwrap();
+    let lock = fs::File::create(config.join(".init.lock")).unwrap();
+    FileExt::lock_exclusive(&lock).unwrap();
+    let result = invoke(root.path(), &["init", "--json"]);
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("another initialization"));
+    assert!(!config.join("config.toml").exists());
+    drop(lock);
+    receipt(invoke(root.path(), &["init", "--json"]));
 }
 
 #[test]
-fn test_init_idempotent() {
-    let test_dir = TempDir::new().unwrap();
-    with_xdg_env(&test_dir, || {
-        // First initialization
-        let summary1 = init::initialize_all(false).unwrap();
-        assert_eq!(summary1.agents.created.len(), 3);
-        assert_eq!(summary1.prompts.created.len(), 2);
-
-        // Second initialization (should skip existing)
-        let summary2 = init::initialize_all(false).unwrap();
-        assert_eq!(summary2.agents.created.len(), 0);
-        assert_eq!(summary2.agents.skipped.len(), 3);
-        assert_eq!(summary2.prompts.created.len(), 0);
-        assert_eq!(summary2.prompts.skipped.len(), 2);
-    });
-}
-
-#[test]
-fn test_init_force_overwrites() {
-    let test_dir = TempDir::new().unwrap();
-    with_xdg_env(&test_dir, || {
-        // First initialization
-        let summary1 = init::initialize_all(false).unwrap();
-        assert_eq!(summary1.agents.created.len(), 3);
-
-        // Modify a file
-        let agents_dir = XdgAgentStorage::new().agents_dir().unwrap();
-        fs::write(
-            agents_dir.join("reader.toml"),
-            "# Modified content\nagent_id = \"reader\"\nrole = \"Reader\"",
-        )
+fn tampered_bundled_package_is_not_overwritten_or_accepted() {
+    let root = TempDir::new().unwrap();
+    receipt(invoke(root.path(), &["init", "--json"]));
+    let package = fs::read_dir(root.path().join("data/meld/packages"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.is_dir())
         .unwrap();
-
-        // Force re-initialization
-        let summary2 = init::initialize_all(true).unwrap();
-        assert_eq!(summary2.agents.created.len(), 3);
-        assert_eq!(summary2.agents.skipped.len(), 0);
-
-        // Verify file was overwritten
-        let content = fs::read_to_string(agents_dir.join("reader.toml")).unwrap();
-        assert!(content.contains("agent_id = \"reader\""));
-        assert!(!content.contains("# Modified content"));
-    });
-}
-
-#[test]
-fn test_init_list_mode() {
-    let test_dir = TempDir::new().unwrap();
-    with_xdg_env(&test_dir, || {
-        // List before initialization
-        let preview1 = init::list_initialization().unwrap();
-        assert_eq!(preview1.prompts.len(), 2);
-        assert_eq!(preview1.agents.len(), 3);
-
-        // Initialize
-        init::initialize_all(false).unwrap();
-
-        // List after initialization
-        let preview2 = init::list_initialization().unwrap();
-        assert_eq!(preview2.prompts.len(), 0);
-        assert_eq!(preview2.agents.len(), 0);
-    });
-}
-
-#[test]
-fn test_init_validates_agents() {
-    let test_dir = TempDir::new().unwrap();
-    with_xdg_env(&test_dir, || {
-        let summary = init::initialize_all(false).unwrap();
-
-        // All agents should be valid
-        for (agent_id, is_valid, errors) in &summary.validation.results {
-            assert!(
-                is_valid,
-                "Agent {} failed validation: {:?}",
-                agent_id, errors
-            );
-        }
-
-        assert_eq!(summary.validation.results.len(), 3);
-    });
-}
-
-#[test]
-fn test_init_creates_xdg_directories() {
-    let test_dir = TempDir::new().unwrap();
-    with_xdg_env(&test_dir, || {
-        // Directories should not exist initially
-        let config_home = xdg::config_home().unwrap();
-        let meld_dir = config_home.join("meld");
-        assert!(!meld_dir.exists());
-
-        // Initialize
-        init::initialize_all(false).unwrap();
-
-        // Directories should now exist
-        assert!(meld_dir.exists());
-        assert!(meld_dir.join("agents").exists());
-        assert!(meld_dir.join("prompts").exists());
-        // Providers directory should exist (created by providers_dir() call)
-        // Note: It may not exist if never accessed, but init ensures it exists
-        let _ = xdg::providers_dir();
-        assert!(meld_dir.join("providers").exists());
-    });
-}
-
-#[test]
-fn test_init_handles_existing_files() {
-    let test_dir = TempDir::new().unwrap();
-    with_xdg_env(&test_dir, || {
-        // Create a custom agent file
-        let agents_dir = XdgAgentStorage::new().agents_dir().unwrap();
-        fs::write(
-            agents_dir.join("reader.toml"),
-            "# Custom content\nagent_id = \"reader\"\nrole = \"Reader\"",
-        )
-        .unwrap();
-
-        // Initialize without force
-        let summary = init::initialize_all(false).unwrap();
-
-        // Reader should be skipped
-        assert!(summary.agents.skipped.contains(&"reader".to_string()));
-
-        // File should still have custom content
-        let content = fs::read_to_string(agents_dir.join("reader.toml")).unwrap();
-        assert!(content.contains("# Custom content"));
-    });
-}
-
-#[test]
-fn test_init_preserves_user_customizations() {
-    let test_dir = TempDir::new().unwrap();
-    with_xdg_env(&test_dir, || {
-        // Initialize once
-        init::initialize_all(false).unwrap();
-
-        // User modifies a prompt file
-        let prompts_dir = xdg::prompts_dir().unwrap();
-        let original_content = fs::read_to_string(prompts_dir.join("code-analyzer.md")).unwrap();
-        fs::write(
-            prompts_dir.join("code-analyzer.md"),
-            "# Custom modified prompt\n\nThis is a user customization.",
-        )
-        .unwrap();
-
-        // Initialize again without force
-        let summary = init::initialize_all(false).unwrap();
-
-        // Prompt should be skipped
-        assert!(summary
-            .prompts
-            .skipped
-            .contains(&"code-analyzer.md".to_string()));
-
-        // Custom content should be preserved
-        let content = fs::read_to_string(prompts_dir.join("code-analyzer.md")).unwrap();
-        assert!(content.contains("# Custom modified prompt"));
-        assert!(!content.contains(&original_content));
-    });
-}
-
-#[test]
-fn test_init_error_handling() {
-    let test_dir = TempDir::new().unwrap();
-    with_xdg_env(&test_dir, || {
-        // Create a read-only directory to test error handling
-        let config_home = xdg::config_home().unwrap();
-        let meld_dir = config_home.join("meld");
-        let prompts_dir = meld_dir.join("prompts");
-
-        // Initialize normally first
-        init::initialize_all(false).unwrap();
-
-        // Make directory read-only (Unix only)
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(&prompts_dir).unwrap().permissions();
-            perms.set_mode(0o444); // Read-only
-            fs::set_permissions(&prompts_dir, perms).unwrap();
-
-            // Try to initialize with force (should fail on write)
-            let result = init::initialize_prompts(true);
-
-            // Restore permissions for cleanup
-            let mut perms = fs::metadata(&prompts_dir).unwrap().permissions();
-            perms.set_mode(0o755);
-            fs::set_permissions(&prompts_dir, perms).unwrap();
-
-            // Should have errors
-            if let Ok(summary) = result {
-                assert!(!summary.errors.is_empty());
-            }
-        }
-    });
-}
-
-#[test]
-fn test_init_agent_configs_valid() {
-    let test_dir = TempDir::new().unwrap();
-    with_xdg_env(&test_dir, || {
-        init::initialize_all(false).unwrap();
-
-        let agents_dir = XdgAgentStorage::new().agents_dir().unwrap();
-
-        // Verify each agent config is valid TOML
-        for agent_id in &["reader", "code-analyzer", "docs-writer"] {
-            let config_path = agents_dir.join(format!("{}.toml", agent_id));
-            let content = fs::read_to_string(&config_path).unwrap();
-
-            // Should parse as TOML
-            let _: toml::Value = toml::from_str(&content).unwrap();
-
-            // Should contain agent_id
-            assert!(content.contains(&format!("agent_id = \"{}\"", agent_id)));
-        }
-    });
-}
-
-#[test]
-fn test_init_prompts_have_content() {
-    let test_dir = TempDir::new().unwrap();
-    with_xdg_env(&test_dir, || {
-        init::initialize_prompts(false).unwrap();
-
-        let prompts_dir = xdg::prompts_dir().unwrap();
-
-        for prompt_file in &["code-analyzer.md", "docs-writer.md"] {
-            let content = fs::read_to_string(prompts_dir.join(prompt_file)).unwrap();
-
-            // Should not be empty
-            assert!(!content.is_empty());
-
-            // Should be valid UTF-8 (read_to_string already verified this)
-            // Should contain markdown structure
-            assert!(content.contains("#"));
-        }
-    });
+    let manifest = package.join("pds-package.json");
+    fs::write(&manifest, "tampered").unwrap();
+    let result = invoke(root.path(), &["init", "--json"]);
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("content differs"));
+    assert_eq!(fs::read_to_string(manifest).unwrap(), "tampered");
 }

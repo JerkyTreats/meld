@@ -386,9 +386,14 @@ impl RunContext {
                 command,
                 session_id,
             ),
-            Commands::Init { force, list } => {
-                crate::init::tooling::handle_cli_command(*force, *list)
-            }
+            Commands::Init { package, json } => crate::init::tooling::handle_cli_command(
+                self.assembly.product_runtime().as_ref(),
+                &self.config,
+                &self.workspace_root,
+                package.as_deref(),
+                *json,
+                session_id,
+            ),
             Commands::Context { command } => crate::context::tooling::handle_cli_command(
                 Arc::clone(self.assembly.api()),
                 &self.workspace_root,

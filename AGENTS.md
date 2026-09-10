@@ -35,3 +35,11 @@
 ## Comment Policy 
 
 Use comments appropriately under the [Contribution Policy](governance/contribution_policy.md).
+
+## External Command Harness
+
+Use the sibling [Meld Eval harness](../meld-eval/README.md#probe-first-use) for compiled-command feedback. Its first-use entrypoint needs an explicit binary and output directory, captures public command results and never builds implicitly. Extend the exercised journey as runtime gaps are repaired.
+
+## Local Builds And Release Publication
+
+Local Cargo builds, tests, checks, lint and package verification are routine delivery work and need no separate approval. Release publication is a separate action: do not publish to crates.io, create release tags, publish candidate artifacts or dispatch release-capable CI workflows without explicit release authorization. Inspect workflow effects before dispatch. Successful local validation never authorizes a release.

@@ -71,7 +71,7 @@ These commands address native Agents, not Reader/Writer configuration files.
 | --- | --- | --- |
 | `meld agent list` | List native Agents in the selected product. | None. |
 | `meld agent show [AGENT]` | Show an Agent's maintained intention, current state, Goal disposition and outstanding work. | None. |
-| `meld agent request [AGENT]` | Request reconciliation of an installed intention. Does not invent an intention or guarantee another effect. | `--request-key KEY` repeats the same request; generated when omitted. |
+| `meld agent request [AGENT]` | Request reconciliation where the installed intention supports explicit requests. Lifecycle-scoped Startup rejects this operation; the command explains that boundary. | `--request-key KEY` repeats the same request; generated when omitted. |
 | `meld agent request-status KEY [AGENT]` | Inspect acceptance and completion of an existing reconciliation request without creating it. | None. |
 
 Omitted Agent identity resolves only when unambiguous. New Agent genesis occurs through product initialization; there is no profile-based `agent create`.

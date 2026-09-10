@@ -1,6 +1,6 @@
 # Meld 3: prove the flywheel through excellent commands
 
-Date: 2026-09-10. Mode: delivery authorized following the design commit. Implementation has not started at this commit boundary.
+Date: 2026-09-10. Mode: active delivery following design commit `06fe52fc`. The native first-use journey is locally verified; the delivery loop remains active.
 Source reference: `f2af45c8` on `feat/meld-3-candidate`, with working design changes.
 
 ## Outcome
@@ -23,7 +23,7 @@ Use fast iterations through the external harness. Explore and improve the produc
 
 Start with an available identifiable artifact when useful. If a missing command prevents a journey, expose the smallest existing capability needed to try it, then return to runtime feedback. Code inspection and focused tests explain or repair observed gaps; they do not replace product proof. Avoid accumulating speculative fixes or redesigning the complete command surface before exercising it.
 
-Keep one current journey and a short record of the command, artifact, observation, correction and rerun result in the [first journey record](m3_01_installed_startup.md). Ordinary implementation choices, small harness changes and evidence formatting do not require a separate design cycle. Under implementation and build authority, routine iterations continue without repeated approval requests. Consequential changes to meaning or ownership invoke the circuit breaker below.
+Keep one current journey and a short record of the command, artifact, observation, correction and rerun result in the [first journey record](m3_01_installed_startup.md). Ordinary implementation choices, small harness changes and evidence formatting do not require a separate design cycle. Under implementation authority, routine iterations continue without repeated approval requests. Consequential changes to meaning or ownership invoke the circuit breaker below.
 
 The user identifies Meld Wallpaper session `8ab30d18-9700-4f05-861a-3695221cf3f2` in `~/meld-wallpaper` as the working-method reference: fast feedback, runtime exploration and product remediation through the product. This session description is user-provided; its transcript was not retrieved here. The local [native harness guide](../../../../../meld-wallpaper/docs/native-harness.md) supports exposing existing behavior and honestly reporting absence. Transfer that feedback method, not simulation stepping, UI components or a prescribed harness architecture.
 
@@ -44,7 +44,7 @@ When the breaker trips, stop feature work and dependent qualification. Preserve 
 
 ## First journey and later exploration
 
-Start with native Startup because it exercises the loop without a provider or workspace. Through public commands: initialize, start, observe nonce and independent Goal evidence, request reconciliation, follow progress, stop, inspect retained evidence and start again. Repeat initialization and requests where supported, and check that old success cannot satisfy a new activation. The [M3-01 notes](m3_01_installed_startup.md) guide this journey without freezing its implementation.
+Start with native Startup because it exercises the loop without a provider or workspace. Through public commands: initialize, start, observe nonce and independent Goal evidence, inspect progress, stop, read retained evidence and start again. Exercise explicit requests only where the native contract supports them; Startup rejects them because lifecycle initiates admission-epoch work. Repeat initialization and supported requests, and check that old success cannot satisfy a new activation. The [M3-01 notes](m3_01_installed_startup.md) guide this journey without freezing its implementation.
 
 The existing M3 labels remain navigation for backlog outcomes, not six fixed phases or six fully specified implementations:
 
@@ -81,10 +81,12 @@ Historical Startup and reconciliation evidence supports beginning the exploratio
 
 ## Authority and qualification
 
-The user approved this design, requested its commit, and authorized proceeding with the program delivery loop. Commit the six program/design documents, then begin the Startup journey, including bounded runtime/command implementation and external harness changes needed to exercise it. This does not authorize builds, installation over the user's existing Meld, subsequent implementation commits, push or publication. Previous R5/Startup commits remain historical evidence; no acceptance judgment is changed here.
+The local CI workflow now gates its release job on an explicit manual `publish_release` opt-in on `master`, defaulting to false. This closes the previous automatic master-publication path in the proposed change; it is not active on GitHub until merged. No workflow was dispatched or publication attempted.
 
-The standing explicit user requirement for separate crate-build authorization remains. Do not run compilation-producing commands, including Cargo check, test, clippy, run, install or package verification, through tools, scripts or CI without that instruction. A build authorization may cover a stated iteration scope; do not ask again within authority already granted. Fast feedback runs within that authority rather than treating it as implicit permission to build.
+The user approved this design, requested its commit, and authorized proceeding with the program delivery loop. The design is committed. Continue bounded runtime/command implementation and external harness changes, committing at natural checkpoints until the command control plane is complete or the architectural circuit breaker trips. This does not authorize release publication, installation over the user's existing Meld, push or publication. Previous R5/Startup commits remain historical evidence; no acceptance judgment is changed here.
+
+The user clarified that local Cargo builds and checks are routine and freely authorized for delivery. The earlier separate-build gate was a misinterpretation and is removed. Build, test, check, lint and local package verification may proceed without further approval. The guard concerns accidental release, especially through CI: crates.io publication, release tags, published candidate artifacts and release-capable workflow dispatch require explicit release authorization. Inspect workflow effects before dispatch; a local build or successful check never authorizes publication.
 
 For each runtime iteration, retain an identifiable artifact, the exercised command and enough output to explain the observed result. For the final candidate, preserve the requested matching CI checks, Cargo/package status, build command/toolchain, exact source and artifact identities, relevant regressions and installed-product evidence. Older binaries or unrelated green checks cannot qualify a changed candidate. Publication, push and deployment remain separately controlled.
 
-The user now supersedes the earlier design-first implementation gates, journaled-migration prerequisite, mandatory harness decomposition and requirement to finalize future contracts before starting. This plan revision establishes a method and circuit breaker, not executable qualification. No runtime evidence from this revision establishes that the flywheel works or fails; the authorized iteration loop will test that premise.
+The user now supersedes the earlier design-first implementation gates, journaled-migration prerequisite, mandatory harness decomposition and requirement to finalize future contracts before starting. Design commit `06fe52fc` records that method and circuit breaker. The [iteration record](m3_01_installed_startup.md#iteration-record) retains help/version, native initialization and live Startup proof, plus the correction to misleading request-rejection diagnostics. Two native epochs have reached independent Goal satisfaction through public commands. Managed controls and wider product qualification remain open; no architectural breaker has tripped.

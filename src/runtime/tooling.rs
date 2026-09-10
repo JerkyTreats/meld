@@ -438,10 +438,17 @@ pub fn try_live_runtime_request(
             agent_id: agent_id.into(),
             request_key: request_key.into(),
         })
-        .map_err(|error| {
-            runtime_message(format!(
-                "live request failed; retry the same request key: {error}"
-            ))
+        .map_err(|error| match error {
+            ureq::Error::Status(code, response) => {
+                let detail = response
+                    .into_json::<crate::serve::routes::RouteError>()
+                    .map(|body| body.error)
+                    .unwrap_or_else(|_| "response did not contain a readable error".into());
+                runtime_message(format!("live request returned HTTP {code}: {detail}"))
+            }
+            transport => runtime_message(format!(
+                "live request outcome is unknown; retry only with the same request key: {transport}"
+            )),
         })?;
         let status: meld_world_model::agent::AgentReconciliationRequestStatus = response
             .into_json()

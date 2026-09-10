@@ -11,7 +11,25 @@ use std::process;
 use tracing::{error, info};
 
 fn main() {
-    let cli = Cli::parse();
+    let mut arguments: Vec<_> = std::env::args_os().collect();
+    if arguments.len() == 1 {
+        arguments.push("-h".into());
+    }
+    let mut cli = Cli::parse_from(arguments);
+    let _preparation = if let Commands::Init { package, .. } = &cli.command {
+        match meld::init::prepare_configuration(cli.config.as_deref(), package.as_deref()) {
+            Ok(prepared) => {
+                cli.config = Some(prepared.path.clone());
+                Some(prepared)
+            }
+            Err(error) => {
+                eprintln!("{}", meld::cli::map_error(&error));
+                process::exit(2);
+            }
+        }
+    } else {
+        None
+    };
     let logging_workspace =
         danger_workspace_override(&cli).unwrap_or_else(|| cli.workspace.clone());
 
