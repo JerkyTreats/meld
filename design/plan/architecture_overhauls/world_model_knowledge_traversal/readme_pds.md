@@ -1,7 +1,7 @@
 # README PDS: make excellent reasoning maintainable
 
 Date: 2026-09-10
-Status: first runtime package slice authorized and active. No README product qualification is claimed.
+Status: runtime package work authorized; initial owner implementation approach invalidated by the package boundary correction below. No README product qualification is claimed.
 Source basis: `cdc13446`, with the README and this requirement authored in the working tree.
 
 ## Candidate outcome
@@ -93,3 +93,11 @@ Write scope is the Docs owner, a separate README package and journey in `meld-ev
 Tripwires remain changes to core intention, authorization, planning, evidence or satisfaction, a second scheduler or writer, and invented native semantic evidence. General script synthesis and arbitrary data admission remain hypotheses until this package exposes a concrete need. Reusing existing native capabilities is an acceptable first package implementation; it is not evidence of automatic Capability Synthesis.
 
 Logical review, source/style review and composed package acceptance will be recorded against the resulting candidate. A local-model run can establish observed behavior on this leaf, not the smaller-model economics or serious root README outcome. If applied, this commit preserves the accepted README outcome and the first authorized experiment without publishing a release.
+
+### Package boundary correction
+
+The user clarified during implementation: “Thou shalt not have domain theory in my runtime.” The initial attempt added README-specific types and an editorial instruction to the compiled Docs owner under `owners/docs/src/docs`. Although that owner is a separate executable, this placed the new product semantics in the Meld repository. All uncommitted source changes from that attempt were removed. The initial build check failed before any runtime experiment, and no implementation commit or package qualification resulted.
+
+This correction supersedes the active slice's selected implementation location and build-ready status. README domain theory, synthesized data and product-specific implementations belong in the external package in `meld-eval`. Meld changes may expose domain-neutral public contracts needed to admit and operate that package. No README-specific type, evaluator or instruction may be introduced into Meld runtime code to make this experiment pass.
+
+The next investigation is the existing external owner contract as a package-owned implementation boundary. The earlier corpus remains experimental domain material. Existing Docs freshness behavior remains intact. If executing the package requires a new core semantic mechanism rather than a bounded public contract correction, flag that gap before implementing it.
