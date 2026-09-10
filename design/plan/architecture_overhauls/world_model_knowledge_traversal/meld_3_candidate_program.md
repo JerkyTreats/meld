@@ -69,7 +69,15 @@ Commands need useful defaults, clear help, explicit selection when ambiguous, re
 
 The [command reference](m3_command_reference.md), [control matrix](m3_control_matrix.md) and [workspace assessment](m3_workspace_assessment.md) are working hypotheses and source evidence. They are not a checklist of components to invent or a requirement to implement every proposed spelling. Update them as runtime exploration establishes useful behavior. Future TUI, dashboard and direct harness HTTP support create no acceptance obligations now.
 
-PDS expression/compiler work and compiled instrumentation/runtime-graph experiments remain deferred. Boot-time service installation, automatic process crash restart and hosted interfaces are not requirements for the first command journey.
+General PDS expression/compiler work and compiled instrumentation/runtime-graph experiments remain deferred. The README PDS candidate outcome below reopens only the product representation and owner-contract questions necessary to maintain the actual document. Boot-time service installation, automatic process crash restart and hosted interfaces are not requirements for the first command journey.
+
+## README PDS candidate requirement
+
+The user adds a production acceptance outcome: a serious Meld README, at the quality demanded by its code and architecture, must be fully managed by **README PDS**. `docs_freshness` remains a separate internal maintenance and harness product. The command-control completion and deterministic Docs checks do not qualify this new outcome.
+
+The [README PDS record](readme_pds.md) preserves the accepted outcome, the newly authored document baseline, source-grounded gaps and the hypothesis of making strong initial reasoning durable enough for economical ongoing maintenance. Product quality, including structure and subtle joy in the voice, must survive meaningful changes. Representation and semantic acceptance remain under discovery; a new core component or general language compiler is not a prerequisite established by this requirement.
+
+The current circuit breaker remains active. Establish whether existing semantic owners can carry and judge this richer product definition before interpreting the requirement as permission to redesign the core flywheel. Candidate acceptance remains open until the production document is actually maintained through the product.
 
 ## Existing architecture and evidence
 
