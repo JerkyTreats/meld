@@ -76,3 +76,14 @@ Validation: four native-init integration tests cover fresh/repeated preparation,
 Logical review: the native owners retain preparation and runtime meaning; the old bootstrap authority is removed and callers migrated. Style review: preparation behavior lives under init, with thin adapters and no new domain store or semantic component. Composed local proof: the bounded first-use journey passes; no architectural breaker has tripped. Managed start/stop/follow, broader command cutover, accepted requests for eligible products, and advertised product/release qualification remain open.
 
 The local CI workflow now requires manual `publish_release` opt-in on `master` before its release job can run. YAML parsing confirms the input defaults to false. This proposed guard is not active remotely until merged. No push, release dispatch, tag or publication occurred. The user authorized implementation commits at natural checkpoints and continued delivery until completion or the architectural breaker. The next runtime question is how to expose managed control through the existing supervisor without changing its semantics.
+
+
+### Managed runtime checkpoint
+
+First-use implementation is commit `3a19d5e3`. The next probe verified detached `runtime start`, repeated start returning the same live instance, exact-instance stop refusal, independent `runtime follow`, orderly restart, a new native Startup epoch and repeated stop returning the same retained shutdown record. Report: `/home/jerkytreats/.local/state/meld-eval/m3/managed-8x_54xnn/report.json`, all 16 checks passed. The runtime CLI integration suite passed all 14 cases and strict library/binary Clippy passed.
+
+Control uses the existing unauthenticated public listener. Stop signals the existing supervisor cancellation boundary; its acknowledgement means received, while native shutdown completion remains the supervisor record. Restart waits for both native completion and release of supervisor store ownership. The native shutdown identity already supplies idempotent exact-instance stop, so a second control-request store and caller-key mapping are unnecessary for this journey. Readiness failure reports the unresolved instance and PID; it never fabricates startup success or force-kills a process.
+
+The probe found that pure description used the pre-assignment supervisor path. Description and assembly now share the scoped path resolver, and live control verifies the selected assignment. Discovery publication is atomic. Listener failure triggers native drain rather than leaving an uncontrollable run.
+
+The configured Docs fixture still carried old declaration, subject and provider-response assumptions. Those are harness adaptation gaps, not evidence of a native architectural failure. Wider product qualification and command inspection ergonomics remain in progress.

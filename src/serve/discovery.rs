@@ -7,6 +7,7 @@
 //! trusted on its own — and its removal on shutdown is best effort.
 
 use std::fs;
+use std::io::Write;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
@@ -38,7 +39,13 @@ pub fn write(product_root: &Path, addr: SocketAddr) -> std::io::Result<()> {
     let body = serde_json::to_vec_pretty(&record)
         .map_err(|error| std::io::Error::other(error.to_string()))?;
     fs::create_dir_all(product_root)?;
-    fs::write(discovery_path(product_root), body)
+    let mut pending = tempfile::NamedTempFile::new_in(product_root)?;
+    pending.write_all(&body)?;
+    pending.as_file().sync_all()?;
+    pending
+        .persist(discovery_path(product_root))
+        .map_err(|e| e.error)?;
+    Ok(())
 }
 
 /// Read the advertised surface, if any process has advertised one.

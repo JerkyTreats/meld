@@ -16,6 +16,37 @@ fn main() {
         arguments.push("-h".into());
     }
     let mut cli = Cli::parse_from(arguments);
+    if let Commands::Runtime {
+        command:
+            meld::cli::RuntimeCommands::Start {
+                foreground: true,
+                tick_ms,
+                json,
+            },
+    } = &cli.command
+    {
+        cli.command = Commands::Runtime {
+            command: meld::cli::RuntimeCommands::Run {
+                instance_id: None,
+                tick_ms: *tick_ms,
+                duration_ms: None,
+                format: if *json { "json" } else { "text" }.into(),
+                restart_policy: "on-heartbeat-expiry".into(),
+                restart_attempt_limit: 3,
+                restart_backoff_ms: 0,
+            },
+        };
+    }
+    if let Some(result) = meld::runtime::managed::execute(&cli) {
+        match result {
+            Ok(output) => println!("{output}"),
+            Err(error) => {
+                eprintln!("{}", meld::cli::map_error(&error));
+                process::exit(1);
+            }
+        }
+        return;
+    }
     let _preparation = if let Commands::Init { package, .. } = &cli.command {
         match meld::init::prepare_configuration(cli.config.as_deref(), package.as_deref()) {
             Ok(prepared) => {
@@ -162,10 +193,12 @@ fn try_execute_live_runtime_command(cli: &Cli) -> Option<Result<String, meld::er
         return None;
     }
     // Configuration failures fall through so the normal path reports them.
-    let config = match &cli.config {
-        Some(path) => ConfigLoader::load_from_file(path).ok()?,
-        None => ConfigLoader::load(&cli.workspace).ok()?,
-    };
+    let config = RunContext::selected_config(
+        &cli.workspace,
+        cli.config.as_deref(),
+        cli.assignment.as_deref(),
+    )
+    .ok()?;
     match command {
         meld::cli::RuntimeCommands::StartupAccount {
             agent_id,

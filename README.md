@@ -30,7 +30,9 @@ cargo install --path .
 meld init
 
 # Run the native flywheel; Ctrl-C requests drain
-meld runtime run
+meld runtime start
+meld runtime follow
+meld runtime stop
 
 # Inspect progress from another terminal, or retained evidence after stopping
 meld runtime startup-account --agent-id startup-agent

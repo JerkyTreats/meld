@@ -224,6 +224,12 @@ pub fn handle_cli_command_with_account_writer(
     account_writer: &mut dyn Write,
 ) -> Result<String, ApiError> {
     match command {
+        RuntimeCommands::Start { .. }
+        | RuntimeCommands::Stop { .. }
+        | RuntimeCommands::Restart { .. }
+        | RuntimeCommands::Follow { .. } => Err(runtime_message(
+            "managed commands require the process command entrypoint",
+        )),
         RuntimeCommands::StartupAccount {
             agent_id,
             generation_id,
@@ -681,11 +687,19 @@ fn runtime_run(
     // The running foreground process serves the substrate: store access
     // is single-process, so live observation must come from here. The
     // surface serves owner reads and explicit Agent intake. A bind failure
-    // never gates the run; dropping the handle withdraws discovery.
+    // failure drains the supervisor; dropping the handle withdraws discovery.
+    let mut serve_error = None;
     let _serve_handle =
         match crate::serve::sources::ServeSources::from_assembly(assembly).and_then(|sources| {
             crate::serve::listener::serve_with_discovery(
-                sources.with_reconciliation_requests(),
+                sources.with_reconciliation_requests().with_runtime_control(
+                    crate::runtime::control::RuntimeControl::new(
+                        assembly.product_root().to_path_buf(),
+                        instance_id.clone(),
+                        assembly.supervisor_store().clone(),
+                        Arc::clone(&cancelled),
+                    ),
+                ),
                 0,
                 assembly.product_root(),
             )
@@ -695,7 +709,8 @@ fn runtime_run(
                 Some(handle)
             }
             Err(error) => {
-                tracing::warn!(error = %error, "served substrate unavailable for this run");
+                serve_error = Some(error.to_string());
+                cancelled.store(true, Ordering::SeqCst);
                 None
             }
         };
@@ -738,6 +753,11 @@ fn runtime_run(
             ),
             None => format!("shutdown failed after startup: {shutdown_error}"),
         }));
+    }
+    if let Some(error) = serve_error {
+        return Err(runtime_message(format!(
+            "runtime control unavailable; supervisor drained: {error}"
+        )));
     }
     startup_status.map_err(runtime_error)?;
     tick_result.map_err(runtime_error)?;

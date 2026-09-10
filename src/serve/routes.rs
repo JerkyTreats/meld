@@ -81,6 +81,22 @@ pub struct StartupAccountReadRequest {
 /// Dispatch one request against the served sources.
 pub fn dispatch(sources: &ServeSources, method: &str, path: &str, body: &[u8]) -> RouteResponse {
     match (method, path) {
+        ("GET", "/v1/runtime/status") => respond(
+            sources
+                .control
+                .as_ref()
+                .ok_or_else(|| "runtime control is unavailable".to_string())
+                .and_then(|control| control.status()),
+        ),
+        ("POST", "/v1/runtime/stop") => {
+            handle(body, |request: crate::runtime::control::StopRequest| {
+                sources
+                    .control
+                    .as_ref()
+                    .ok_or("runtime control is unavailable")?
+                    .request_stop(&request)
+            })
+        }
         ("POST", "/v1/projections/startup_nonce_account") => {
             handle(body, |request: StartupAccountReadRequest| {
                 if request.product_root != sources.product_root {

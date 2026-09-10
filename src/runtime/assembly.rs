@@ -1198,15 +1198,18 @@ impl ProductRuntimeAssembly {
     ) -> Result<ProductRuntimeDescription, RuntimeAssemblyError> {
         let selected = PhysicalBinding::resolve_for_target(config, workspace_root)
             .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?;
-        let product_root = match selected {
-            Some(binding) => binding.storage_root,
+        let product_root = match &selected {
+            Some(binding) => binding.storage_root.clone(),
             None => config
                 .system
                 .storage
                 .resolve_product_root(workspace_root)
                 .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?,
         };
-        Self::describe(ProductRuntimeConfig::for_product_root(product_root))
+        let mut runtime_config = ProductRuntimeConfig::for_product_root(product_root.clone());
+        runtime_config.supervisor_store_path =
+            Some(supervisor_path(&product_root, selected.as_ref()));
+        Self::describe(runtime_config)
     }
 
     /// Describe runtime infrastructure from explicit config without side effects.
@@ -1397,17 +1400,9 @@ impl ProductRuntimeAssembly {
             .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?;
         stores.owners = owners;
         let stores = Arc::new(stores);
-        let supervisor_store_path =
-            config
-                .supervisor_store_path
-                .unwrap_or_else(|| match &physical_binding {
-                    Some(binding) => layout
-                        .root
-                        .join("supervisors")
-                        .join(binding.assignment_scope_id())
-                        .join("supervisor.sled"),
-                    None => layout.root.join("supervisor.sled"),
-                });
+        let supervisor_store_path = config
+            .supervisor_store_path
+            .unwrap_or_else(|| supervisor_path(&layout.root, physical_binding.as_ref()));
         let fallback_desired_runtime_state = desired_runtime_state(
             &registry,
             config.enabled_runtime_ids.clone(),
@@ -12016,5 +12011,15 @@ mod tests {
             report.fatal_errors[0].code,
             "publication_task_network_unresolved"
         );
+    }
+}
+
+fn supervisor_path(root: &Path, binding: Option<&PhysicalBinding>) -> PathBuf {
+    match binding {
+        Some(binding) => root
+            .join("supervisors")
+            .join(binding.assignment_scope_id())
+            .join("supervisor.sled"),
+        None => root.join("supervisor.sled"),
     }
 }

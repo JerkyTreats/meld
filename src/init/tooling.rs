@@ -18,7 +18,7 @@ pub fn handle_cli_command(
     let format = if json { "json" } else { "text" };
     let mut output = crate::cli::format_world_init_report(&report, format)?;
     if !json {
-        output.push_str("\nPrepared. Start with: meld runtime run\n");
+        output.push_str("\nPrepared. Start with: meld runtime start\n");
     }
     Ok(output)
 }

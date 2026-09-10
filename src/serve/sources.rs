@@ -25,6 +25,7 @@ use crate::runtime::supervisor::SupervisorReportStore;
 
 /// Owned domain surfaces for one served root.
 pub struct ServeSources {
+    pub(crate) control: Option<crate::runtime::control::RuntimeControl>,
     pub(crate) startup: crate::harness::startup::StartupAccountReader,
     pub(crate) product_root: std::path::PathBuf,
     pub(crate) accepts_reconciliation_requests: bool,
@@ -56,6 +57,7 @@ impl ServeSources {
         // never serves a previous boot's declarations as current state.
         let action_floor = reports.sequence_watermark();
         Ok(Self {
+            control: None,
             startup: crate::harness::startup::StartupAccountReader::over_assembly(assembly),
             product_root: assembly.product_root().to_path_buf(),
             accepts_reconciliation_requests: false,
@@ -84,6 +86,7 @@ impl ServeSources {
     /// present as current state.
     pub fn with_full_history(mut self) -> Self {
         self.action_floor = 0;
+        self.control = None;
         self.accepts_reconciliation_requests = false;
         self
     }
@@ -91,6 +94,15 @@ impl ServeSources {
     /// Enable native intake only on the foreground runtime's live surface.
     pub fn with_reconciliation_requests(mut self) -> Self {
         self.accepts_reconciliation_requests = true;
+        self
+    }
+
+    /// Attach the live supervisor's operational cancellation and read contracts.
+    pub fn with_runtime_control(
+        mut self,
+        control: crate::runtime::control::RuntimeControl,
+    ) -> Self {
+        self.control = Some(control);
         self
     }
 

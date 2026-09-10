@@ -40,6 +40,10 @@ pub fn event_command_name(command: &EventCommands) -> &'static str {
 
 pub fn runtime_command_name(command: &RuntimeCommands) -> &'static str {
     match command {
+        RuntimeCommands::Start { .. } => "start",
+        RuntimeCommands::Stop { .. } => "stop",
+        RuntimeCommands::Restart { .. } => "restart",
+        RuntimeCommands::Follow { .. } => "follow",
         RuntimeCommands::StartupAccount { .. } => "startup-account",
         RuntimeCommands::Request { .. } => "request",
         RuntimeCommands::Status { .. } => "status",

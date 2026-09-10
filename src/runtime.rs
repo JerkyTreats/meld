@@ -4,6 +4,10 @@
 pub mod assembly;
 /// Supervisor-facing worker report contracts.
 pub mod contracts;
+/// Public operational control over the existing supervisor.
+pub mod control;
+/// Managed command process launch and observation.
+pub mod managed;
 /// Owner preparation for an exact native Agent epoch specification.
 pub mod epoch;
 /// Runtime assembly and port error surfaces.

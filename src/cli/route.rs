@@ -123,17 +123,16 @@ impl RunContext {
         Self::with_assignment(workspace_root, config_path, enable_runtime_ids, None)
     }
 
-    /// Select a named assignment without claiming exclusive ownership of its target.
-    pub fn with_assignment(
-        workspace_root: PathBuf,
-        config_path: Option<PathBuf>,
-        enable_runtime_ids: &[String],
+    /// Load the same selected declaration for local assembly and live commands.
+    pub fn selected_config(
+        workspace_root: &std::path::Path,
+        config_path: Option<&std::path::Path>,
         assignment: Option<&str>,
-    ) -> Result<Self, ApiError> {
-        let mut config = if let Some(ref cfg_path) = config_path {
+    ) -> Result<crate::config::MerkleConfig, ApiError> {
+        let mut config = if let Some(cfg_path) = config_path {
             ConfigLoader::load_from_file(cfg_path)?
         } else {
-            ConfigLoader::load(&workspace_root)?
+            ConfigLoader::load(workspace_root)?
         };
         if let Some(id) = assignment {
             let selected = config
@@ -151,6 +150,17 @@ impl RunContext {
                 std::collections::BTreeMap::from([(id.into(), selected.declaration)]);
             config.stewardship.docs_freshness = None;
         }
+        Ok(config)
+    }
+
+    /// Select a named assignment without claiming exclusive ownership of its target.
+    pub fn with_assignment(
+        workspace_root: PathBuf,
+        config_path: Option<PathBuf>,
+        enable_runtime_ids: &[String],
+        assignment: Option<&str>,
+    ) -> Result<Self, ApiError> {
+        let config = Self::selected_config(&workspace_root, config_path.as_deref(), assignment)?;
         // Resolve physical scope before any branch or storage metadata writes.
         let selected = PhysicalBinding::resolve_for_target(&config, &workspace_root)?;
         let runtime_workspace = selected.as_ref().map_or_else(

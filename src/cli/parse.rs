@@ -337,6 +337,37 @@ pub enum EventCommands {
 
 #[derive(Subcommand)]
 pub enum RuntimeCommands {
+    /// Start the native supervisor and wait for its public control surface
+    Start {
+        /// Keep the supervisor attached to this terminal
+        #[arg(long)]
+        foreground: bool,
+        #[arg(long, default_value_t = 1000)]
+        tick_ms: u64,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Drain the exact live supervisor and wait for its durable shutdown result
+    Stop {
+        #[arg(long)]
+        instance: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Drain the current supervisor before starting a successor
+    Restart {
+        #[arg(long, default_value_t = 1000)]
+        tick_ms: u64,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Observe native actor reports without owning the runtime lifetime
+    Follow {
+        #[arg(long)]
+        instance: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Inspect the native Startup nonce path without advancing any owner
     StartupAccount {
         #[arg(long)]
