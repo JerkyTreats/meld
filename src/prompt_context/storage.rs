@@ -35,6 +35,11 @@ impl PromptContextArtifactStorage {
         kind: PromptContextArtifactKind,
         bytes: &[u8],
     ) -> Result<PromptContextArtifactRef, ApiError> {
+        if kind == PromptContextArtifactKind::BeliefContextBundle {
+            return Err(ApiError::ConfigError(
+                "historical Belief context artifacts are read-only".into(),
+            ));
+        }
         if bytes.len() > kind.max_bytes() {
             return Err(ApiError::PromptContextArtifactBudgetExceeded {
                 kind: kind.as_str().to_string(),
@@ -256,6 +261,33 @@ mod tests {
     use crate::prompt_context::contracts::PromptContextArtifactKind;
     use std::time::{Duration, UNIX_EPOCH};
     use tempfile::TempDir;
+
+    #[test]
+    fn retired_belief_artifacts_remain_readable_but_cannot_be_authored() {
+        let temp = TempDir::new().unwrap();
+        let storage = PromptContextArtifactStorage::new(temp.path()).unwrap();
+        let bytes = br#"{"contract":"belief_context_bundle","entries":[]}"#;
+        let digest = blake3::hash(bytes).to_hex().to_string();
+        let artifact = PromptContextArtifactRef {
+            artifact_id: digest.clone(),
+            digest: digest.clone(),
+            byte_len: bytes.len(),
+            kind: PromptContextArtifactKind::BeliefContextBundle,
+        };
+        assert!(storage.write_bytes(artifact.kind, bytes).is_err());
+        let path = storage.artifact_path_for_digest(&digest);
+        assert!(!path.exists());
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, bytes).unwrap();
+        let restored: PromptContextArtifactRef =
+            serde_json::from_slice(&serde_json::to_vec(&artifact).unwrap()).unwrap();
+        assert_eq!(storage.read_verified(&restored).unwrap(), bytes);
+        assert_eq!(
+            storage.read_by_artifact_id_verified(&digest).unwrap(),
+            bytes
+        );
+        assert!(storage.write_bytes(restored.kind, bytes).is_err());
+    }
 
     #[test]
     fn write_is_content_addressed_and_deduped() {

@@ -15,6 +15,18 @@ pub fn load(path: &Path) -> Result<BranchCatalog, ApiError> {
 }
 
 pub fn save(path: &Path, catalog: &BranchCatalog) -> Result<(), ApiError> {
+    // The global catalog still describes target workspaces. Validate its actual
+    // destination against every known target before creating even a temp file.
+    let mut destination = path.to_path_buf();
+    for branch in &catalog.branches {
+        destination = crate::config::validate_runtime_state_path(
+            path.to_path_buf(),
+            Path::new(&branch.canonical_locator),
+            None,
+            None,
+        )?;
+    }
+    let path = destination.as_path();
     let parent = path.parent().ok_or_else(|| {
         ApiError::ConfigError(format!(
             "Branch catalog path missing parent: {}",
@@ -76,6 +88,21 @@ mod tests {
             },
         );
 
+        let workspace = tempfile::tempdir().unwrap();
+        branch_catalog.branches[0].canonical_locator =
+            workspace.path().to_string_lossy().into_owned();
+        let internal = workspace.path().join("state/catalog.json");
+        assert!(save(&internal, &branch_catalog).is_err());
+        assert!(!workspace.path().join("state").exists());
+        #[cfg(unix)]
+        {
+            let link = dir.path().join("workspace-link");
+            std::os::unix::fs::symlink(workspace.path(), &link).unwrap();
+            assert!(save(&link.join("state/catalog.json"), &branch_catalog).is_err());
+            assert!(!workspace.path().join("state").exists());
+        }
+
+        save(&path, &branch_catalog).unwrap();
         save(&path, &branch_catalog).unwrap();
         let loaded = load(&path).unwrap();
         assert_eq!(loaded, branch_catalog);

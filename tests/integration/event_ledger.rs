@@ -1,8 +1,7 @@
-use meld::events::AppendMode;
+use meld::events::{AppendMode, EventEnvelope};
 use meld::session::policy::PrunePolicy;
 use meld::task::ExecutionTaskEventData;
 use meld::telemetry::emission::emit_command_summary;
-use meld::telemetry::events::ProgressEnvelope;
 use meld::telemetry::{DomainObjectRef, EventRelation};
 use meld_events::events::test_support::{
     EventStore as ProgressStore, EventStoreTestSupport as _, EventWriter,
@@ -99,7 +98,7 @@ fn mixed_spine_events_replay_with_object_refs() {
         .authority
         .append_capability()
         .append_durable(
-            ProgressEnvelope::with_now_domain(
+            EventEnvelope::with_now_domain(
                 session_id.to_string(),
                 "execution".to_string(),
                 "run_a".to_string(),
@@ -207,14 +206,14 @@ fn slow_or_missing_consumer_does_not_break_append() {
         let writer = EventWriter::spawn(store.clone());
         let seq = writer
             .append_durable(
-                ProgressEnvelope::with_now("s1", "session_started", json!({})),
+                EventEnvelope::with_now("s1", "session_started", json!({})),
                 false,
             )
             .unwrap();
         assert_eq!(seq, 1);
         writer
             .append_best_effort(
-                ProgressEnvelope::with_now("s1", "session_ended", json!({})),
+                EventEnvelope::with_now("s1", "session_ended", json!({})),
                 false,
             )
             .unwrap();
@@ -292,7 +291,7 @@ fn idempotent_append_reuses_existing_record_id() {
     let runtime = &fixture.progress;
     let session_id = runtime.start_command_session("graph".to_string()).unwrap();
 
-    let envelope = ProgressEnvelope::with_now_domain(
+    let envelope = EventEnvelope::with_now_domain(
         session_id.clone(),
         "world_state".to_string(),
         "graph".to_string(),
@@ -328,7 +327,7 @@ fn non_idempotent_append_keeps_duplicate_record_ids() {
     let runtime = &fixture.progress;
     let session_id = runtime.start_command_session("graph".to_string()).unwrap();
 
-    let envelope = ProgressEnvelope::with_now_domain(
+    let envelope = EventEnvelope::with_now_domain(
         session_id.clone(),
         "world_state".to_string(),
         "graph".to_string(),

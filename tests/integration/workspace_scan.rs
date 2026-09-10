@@ -2,7 +2,7 @@
 
 use crate::integration::test_utils::open_authority_progress;
 use meld::agent::AgentRegistry;
-use meld::compat::ContextApi;
+use meld::api::ContextApi;
 use meld::concurrency::NodeLockManager;
 use meld::heads::HeadIndex;
 use meld::prompt_context::PromptContextArtifactStorage;

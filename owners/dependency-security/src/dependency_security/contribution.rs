@@ -36,7 +36,7 @@ pub fn bind_selected_policy(
     }
     let selected: Vec<_> = references
         .iter()
-        .filter(|reference| reference.registry == "dependency_security_policy")
+        .filter(|reference| reference.registry == super::policy::REGISTRY)
         .collect();
     let reference = match selected.as_slice() {
         [] => return Ok(bindings),

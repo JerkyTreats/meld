@@ -396,49 +396,6 @@ pub trait WorkspaceScanPort: Send + Sync {
         -> Result<Self::ScanOutcome, Self::Error>;
 }
 
-/// Historical belief status label carried in explicitly supplied Context artifacts.
-///
-/// Mirrors the world model's belief status set: this crate cannot depend on
-/// the world model, so the owning adapter maps its status into this label at
-/// the port boundary and must be extended in lockstep. Serialized as the
-/// bare variant name (`"Settled"`), byte-identical to the string labels it
-/// replaced, so existing bundle canonical JSON and digests are unchanged.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum BeliefStatusLabel {
-    /// View is settled on a current revision.
-    Settled,
-    /// View is flagged stale by freshness tracking.
-    Stale,
-    /// View needs a new observation before it can settle.
-    NeedsObservation,
-    /// View needs assessment of gathered observations.
-    NeedsAssessment,
-    /// Assessment is queued but not complete.
-    AssessmentPending,
-    /// View is invalid and must not be trusted.
-    Invalid,
-}
-
-impl BeliefStatusLabel {
-    /// Stable string form, identical to the serde-serialized value.
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            BeliefStatusLabel::Settled => "Settled",
-            BeliefStatusLabel::Stale => "Stale",
-            BeliefStatusLabel::NeedsObservation => "NeedsObservation",
-            BeliefStatusLabel::NeedsAssessment => "NeedsAssessment",
-            BeliefStatusLabel::AssessmentPending => "AssessmentPending",
-            BeliefStatusLabel::Invalid => "Invalid",
-        }
-    }
-}
-
-impl std::fmt::Display for BeliefStatusLabel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
 /// Composite context required for deterministic execution planning.
 pub trait ExecutionContext:
     ContextReadPort

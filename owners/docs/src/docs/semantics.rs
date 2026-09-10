@@ -11,6 +11,9 @@ use crate::provider::{ChatMessage, MessageRole};
 #[serde(deny_unknown_fields)]
 pub struct DocsSemanticTheory {
     pub schema_version: u32,
+    /// Absent in historical theory. New observations bind one selected grammar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim_extraction: Option<super::claim_validation::DocsClaimExtraction>,
     /// Historical revisions can be read, but cannot author new observations without scope.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<super::scope::DocsScopePolicy>,
@@ -76,7 +79,16 @@ impl DocsJudgmentOperation {
 
 impl DocsSemanticTheory {
     pub fn validate(&self) -> Result<(), ApiError> {
+        self.claim_extraction()?;
         self.repair_actions()?;
+        if self
+            .repair_actions()?
+            .contains(&DocsRepairAction::PruneRejectedClaimsV1)
+        {
+            return Err(invalid(
+                "historical line-pruning repair cannot author a document",
+            ));
+        }
         self.scope()?.validate()?;
         if self.schema_version != 1 {
             return Err(invalid("unsupported Docs semantic theory schema"));
@@ -105,6 +117,13 @@ impl DocsSemanticTheory {
         self.scope
             .as_ref()
             .ok_or_else(|| invalid("Docs theory requires an explicit scope selection"))
+    }
+
+    pub(crate) fn claim_extraction(
+        &self,
+    ) -> Result<super::claim_validation::DocsClaimExtraction, ApiError> {
+        self.claim_extraction
+            .ok_or_else(|| invalid("Docs theory requires an explicit claim extraction mechanism"))
     }
 
     pub(crate) fn repair_actions(&self) -> Result<&[DocsRepairAction], ApiError> {

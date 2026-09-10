@@ -1,6 +1,5 @@
 //! Prompt context contracts for artifact refs and lineage payload.
 
-use crate::context::belief_context::BELIEF_CONTEXT_BUNDLE_ARTIFACT_TYPE_ID;
 use serde::{Deserialize, Serialize};
 
 pub const MAX_PROMPT_ARTIFACT_BYTES: usize = 256 * 1024;
@@ -13,7 +12,9 @@ pub enum PromptContextArtifactKind {
     UserPromptTemplate,
     RenderedPrompt,
     ContextPayload,
-    /// Canonical belief context bundle that conditioned a rendered prompt.
+    /// Stable historical artifact tag, retained for existing lineage inspection only.
+    /// Remove with its optional lineage field only after those records are migrated
+    /// or historical inspection support is explicitly retired.
     BeliefContextBundle,
 }
 
@@ -34,9 +35,7 @@ impl PromptContextArtifactKind {
             PromptContextArtifactKind::UserPromptTemplate => "user_prompt_template",
             PromptContextArtifactKind::RenderedPrompt => "rendered_prompt",
             PromptContextArtifactKind::ContextPayload => "context_payload",
-            PromptContextArtifactKind::BeliefContextBundle => {
-                BELIEF_CONTEXT_BUNDLE_ARTIFACT_TYPE_ID
-            }
+            PromptContextArtifactKind::BeliefContextBundle => "belief_context_bundle",
         }
     }
 }
@@ -58,8 +57,8 @@ pub struct PromptContextLineageContract {
     pub user_prompt_template: PromptContextArtifactRef,
     pub rendered_prompt: PromptContextArtifactRef,
     pub context_payload: PromptContextArtifactRef,
-    /// Digest-addressed belief context bundle, present only for
-    /// `belief_context`-conditioned generations.
+    /// Historical lineage reference. New generation never authors this artifact;
+    /// read-only metadata inspection preserves its original digest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub belief_context_bundle: Option<PromptContextArtifactRef>,
 }

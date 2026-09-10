@@ -11,18 +11,18 @@ pub fn route_handler(
     store: crate::dependency_security::theory::DependencySecurityPolicyRegistry,
 ) -> Arc<PortBackedTheoryRouteHandler> {
     let validate = Arc::new(|owner_id: &str, bytes: &[u8]| {
-        let body: crate::dependency_security::policy::DependencySecurityPolicyV1 = decode(bytes)?;
+        let body: crate::dependency_security::policy::DependencySecurityPolicyV2 = decode(bytes)?;
         body.validate().map_err(owner_failure)?;
         require_id(owner_id, &body.policy_id)
     });
     let install_store = store.clone();
     let install = Arc::new(move |owner_id: &str, bytes: &[u8], seq| {
-        let body: crate::dependency_security::policy::DependencySecurityPolicyV1 = decode(bytes)?;
+        let body: crate::dependency_security::policy::DependencySecurityPolicyV2 = decode(bytes)?;
         require_id(owner_id, &body.policy_id)?;
         install_store.install(body, seq).map_err(owner_failure)
     });
     let verify = Arc::new(move |reference: &TheoryRevisionRef| {
-        require_registry(reference, "dependency_security_policy")?;
+        require_registry(reference, crate::dependency_security::policy::REGISTRY)?;
         require_found(store.resolve(reference).map_err(owner_failure)?.is_some())
     });
     Arc::new(PortBackedTheoryRouteHandler::new(
@@ -36,10 +36,10 @@ pub fn route_handler(
 
 fn contract(owner: &str, kind: &str, cardinality: RouteCardinality) -> TheoryRouteContract {
     TheoryRouteContract {
-        route: TheoryRouteId::new(owner, kind, 1),
-        accepted_component_schema: VersionRange { min: 1, max: 1 },
+        route: TheoryRouteId::new(owner, kind, 2),
+        accepted_component_schema: VersionRange { min: 2, max: 2 },
         package_cardinality: cardinality,
-        handler_contract_version: 1,
+        handler_contract_version: 2,
     }
 }
 

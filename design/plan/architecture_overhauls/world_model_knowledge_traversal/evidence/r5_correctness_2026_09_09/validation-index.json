@@ -1,0 +1,141 @@
+[
+  {
+    "suite": "Docs owner unit",
+    "retained_log": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r5-closeout-20260909/logs/meld-r5-docs-final5.log.gz",
+    "uncompressed_sha256": "a12d92c919a94e15355b07417780d09cdbde57b40fd292c328723624a67d80cb",
+    "result_lines": [
+      "    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.22s",
+      "test result: ok. 89 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.27s"
+    ]
+  },
+  {
+    "suite": "Docs hosting",
+    "retained_log": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r5-closeout-20260909/logs/meld-r5-docs-hosting-final.log.gz",
+    "uncompressed_sha256": "e35431924a27595a89b62979a43c8ff438cbd9843d994953a681b9a4d78a3f4e",
+    "result_lines": [
+      "    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.83s",
+      "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.62s"
+    ]
+  },
+  {
+    "suite": "Security owner and hosting",
+    "retained_log": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r5-closeout-20260909/logs/meld-r5-owners-final.log.gz",
+    "uncompressed_sha256": "60eca6a2a3b9f73d1bec9362698e077a714733baf03bf913280dd4225831dd12",
+    "result_lines": [
+      "    Finished `test` profile [unoptimized + debuginfo] target(s) in 19.00s",
+      "test result: ok. 31 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.04s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.30s",
+      "test result: FAILED. 86 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.83s"
+    ],
+    "scope_note": "Security sections passed: 31 unit and 1 hosting. This combined earlier command later failed a Docs migration test; that correction is covered by the final 89-case Docs owner run. Do not treat the whole earlier command as passed."
+  },
+  {
+    "suite": "Native Docs",
+    "retained_log": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r5-closeout-20260909/logs/meld-r5-docs-native-final.log.gz",
+    "uncompressed_sha256": "bd9015f95ccbd51545fad651f71a1e2bfaa8b2f96621302cbd5397e27c9ee69a",
+    "result_lines": [
+      "    Finished `test` profile [unoptimized + debuginfo] target(s) in 17.17s",
+      "test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 535 filtered out; finished in 200.13s"
+    ]
+  },
+  {
+    "suite": "Native Security",
+    "retained_log": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r5-closeout-20260909/logs/meld-r5-security-native-final3.log.gz",
+    "uncompressed_sha256": "ef09e21b1dc65e2b0c18540e6383e4ac76a96602766be4b28f02fb52e783a491",
+    "result_lines": [
+      "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.10s",
+      "test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 536 filtered out; finished in 1444.60s"
+    ]
+  },
+  {
+    "suite": "Integration",
+    "retained_log": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r5-closeout-20260909/logs/meld-r5-integration-final2.log.gz",
+    "uncompressed_sha256": "cfbb19a690ad6fffd740471412f6c8139875e9082ebcc712d8858d6946aaddb2",
+    "result_lines": [
+      "    Finished `test` profile [unoptimized + debuginfo] target(s) in 9.80s",
+      "test result: ok. 341 passed; 0 failed; 3 ignored; 0 measured; 0 filtered out; finished in 22.19s"
+    ]
+  },
+  {
+    "suite": "Context",
+    "retained_log": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r5-closeout-20260909/logs/meld-r5-context-final.log.gz",
+    "uncompressed_sha256": "52bdff516155443298d5b3233c212c15c16d30126076f5103d0285c3d854f5b3",
+    "result_lines": [
+      "    Finished `test` profile [unoptimized + debuginfo] target(s) in 10.22s",
+      "test result: ok. 72 passed; 0 failed; 0 ignored; 0 measured; 476 filtered out; finished in 2.20s"
+    ]
+  },
+  {
+    "suite": "Storage",
+    "retained_log": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r5-closeout-20260909/logs/meld-r5-storage-final2.log.gz",
+    "uncompressed_sha256": "6be234f927a75cb354cd2f39d0609907085aa1e62fe8fa567a338f2d9dd3c54b",
+    "result_lines": [
+      "    Finished `test` profile [unoptimized + debuginfo] target(s) in 41.35s",
+      "test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 532 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "suite": "Branches",
+    "retained_log": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r5-closeout-20260909/logs/meld-r5-branches-final.log.gz",
+    "uncompressed_sha256": "7c9c898acc64cd93e98e08389588880dbac2e14251ff5f444ca3de2a9765433e",
+    "result_lines": [
+      "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.11s",
+      "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 542 filtered out; finished in 0.00s"
+    ]
+  },
+  {
+    "suite": "Telemetry",
+    "retained_log": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r5-closeout-20260909/logs/meld-r5-telemetry-final.log.gz",
+    "uncompressed_sha256": "b18d3b93f5831231067dd746bf2414788828cddac159bdff1655c0b34d0cecd3",
+    "result_lines": [
+      "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.10s",
+      "test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 542 filtered out; finished in 0.03s"
+    ]
+  },
+  {
+    "suite": "Strict workspace Clippy",
+    "retained_log": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r5-closeout-20260909/logs/meld-r5-clippy-final4.log.gz",
+    "uncompressed_sha256": "b73dbfaf2423a8a889d5e063a81758f9ed4eb4a20871f7e5dec8ca6f001e9860",
+    "result_lines": [
+      "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.29s"
+    ]
+  },
+  {
+    "suite": "Theory semantics",
+    "retained_log": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r5-closeout-20260909/logs/meld-r5-semantics-final.log.gz",
+    "uncompressed_sha256": "eaed654187aa5573ab1d4b4d21ae6f0cb618dc28815e6516d69e3e97c49c97de",
+    "result_lines": [
+      "    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.43s",
+      "test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 78 filtered out; finished in 0.10s"
+    ]
+  },
+  {
+    "suite": "Final binary build",
+    "retained_log": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r5-closeout-20260909/logs/meld-r5-build-final5.log.gz",
+    "uncompressed_sha256": "590095d1cf24e943945e08427d179fb9a9cdeddecd80b828a3f17d498c562d34",
+    "result_lines": [
+      "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.14s"
+    ]
+  },
+  {
+    "suite": "Actual Qwen",
+    "retained_log": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r5-closeout-20260909/logs/meld-r5-qwen-final5.log.gz",
+    "uncompressed_sha256": "7184e4cb9c3ec34ec6ba3fe60a8c19157dfc700f3790a86a876f08985dd725d4",
+    "result_lines": [
+      "complete /home/jerkytreats/.local/state/meld-flywheel-remediation/r5-qwen-20260909T192945Z"
+    ]
+  },
+  {
+    "suite": "Final formatting",
+    "command": "cargo fmt --all -- --check",
+    "exit_code": 0,
+    "retained_log": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r5-closeout-20260909/logs/meld-r5-format-final.log.gz",
+    "uncompressed_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "suite": "Final patch whitespace",
+    "command": "git diff --check",
+    "exit_code": 0
+  }
+]

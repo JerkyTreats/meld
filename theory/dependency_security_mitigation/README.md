@@ -4,7 +4,7 @@ This package extends the native Cargo Security reconciliation path with an expli
 
 The Method constructs two complete Tasks. The first reads the declared proposal and materializes its exact replacements for existing files. The second independently acquires inventory and advisories, assesses them, and verifies the assessment. The installed settlement rule requires Agent to accept the mutation Task's operational return before authorizing successor verification. Planned Curation, Belief assessment and Agent's Goal judgment remain separate from both Tasks.
 
-Missing or incomplete coverage cannot authorize the mutation. The package retains the same bounded Cargo and declared-advisory semantics as the read-only Security package. It does not generate patches or treat an attempted intervention as proof of resolution.
+Missing or incomplete coverage cannot authorize the mutation. Version `2.0.0` selects Security policy V2: complete transitive inventory, coverage of every component, and independent recalculation. It retains the same bounded Cargo and declared-advisory semantics as the read-only Security package. Old boolean policy declarations are incompatible and require explicit reinstallation; retained history is not rewritten. It does not generate patches or treat an attempted intervention as proof of resolution.
 
 The proposal is a canonical serialized `CodeChangeSet` with exact prior content hashes, replacement text and declared reason references. It is read during execution from `code-change.proposal`. The native file materializer currently requires Unix. This policy grants six exact actions to `workspace-owner` for `workspace_fs/node/dependency-graph`; another principal or logical subject requires its corresponding policy.
 

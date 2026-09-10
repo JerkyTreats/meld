@@ -6,7 +6,7 @@ pub use route::{route_contract, route_handler};
 use serde::{Deserialize, Serialize};
 use sled::{Db, Tree};
 
-use super::policy::DependencySecurityPolicyV1;
+use super::policy::DependencySecurityPolicyV2;
 use crate::theory::TheoryRevisionRef;
 
 pub const PACKAGE_ID: &str = "meld.dependency-security-fixture";
@@ -24,12 +24,13 @@ pub fn install_package(
     )
 }
 
-const TREE: &str = "dependency_security_policy_revisions_v1";
+const LEGACY_TREE: &str = "dependency_security_policy_revisions_v1";
+const TREE: &str = "dependency_security_policy_revisions_v2";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DependencySecurityPolicyRevision {
     pub reference: TheoryRevisionRef,
-    pub policy: DependencySecurityPolicyV1,
+    pub policy: DependencySecurityPolicyV2,
     pub installed_at_seq: u64,
 }
 
@@ -41,12 +42,23 @@ pub struct DependencySecurityPolicyRegistry {
 
 impl DependencySecurityPolicyRegistry {
     pub fn new(db: Db) -> Result<Self, String> {
+        if db
+            .tree_names()
+            .iter()
+            .any(|name| name.as_ref() == LEGACY_TREE.as_bytes())
+            && !db
+                .open_tree(LEGACY_TREE)
+                .map_err(|error| error.to_string())?
+                .is_empty()
+        {
+            return Err("retained dependency-security policy v1 revisions are incompatible with the fixed v2 contract; preserve the history and migrate it explicitly".into());
+        }
         let revisions = db.open_tree(TREE).map_err(|e| e.to_string())?;
         Ok(Self { db, revisions })
     }
     pub fn install(
         &self,
-        policy: DependencySecurityPolicyV1,
+        policy: DependencySecurityPolicyV2,
         seq: u64,
     ) -> Result<TheoryRevisionRef, String> {
         let reference = policy.revision_ref()?;
@@ -91,6 +103,7 @@ fn key(reference: &TheoryRevisionRef) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::policy::REGISTRY;
     use crate::runtime::storage::{OpenProductStores, ProductStorageLayout};
     use crate::theory::{
         ActivationParticipantPlanV1, ActivationParticipantSpec, ParticipantKind,
@@ -118,6 +131,7 @@ mod tests {
             "graph_owner_event_route.security.json",
             "epistemic_rule.security.json",
             "graph_owner_event_route.condition.json",
+            "product_topology.json",
         ] {
             let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../..")
@@ -145,7 +159,16 @@ mod tests {
             .join("theory/dependency_security");
         let receipt = super::install_package(&stores, &package_root, 1).unwrap();
         assert_eq!(receipt.package_id, super::PACKAGE_ID);
+        assert_eq!(receipt.package_version, "2.0.0");
         assert_eq!(receipt.components.len(), 16);
+        let policy = receipt
+            .components
+            .iter()
+            .find(|component| component.component_id == "security-policy")
+            .unwrap();
+        assert_eq!(policy.route.route_version, 2);
+        assert_eq!(policy.component_schema_version, 2);
+        assert_eq!(policy.owner_revision.registry, REGISTRY);
         let owners: std::collections::BTreeSet<_> = receipt
             .components
             .iter()
@@ -162,6 +185,40 @@ mod tests {
         );
         let repeated = super::install_package(&stores, &package_root, 99).unwrap();
         assert_eq!(receipt.receipt_id, repeated.receipt_id);
+    }
+
+    #[test]
+    fn legacy_policy_revision_identity_is_not_resolved_as_v2() {
+        let registry = super::DependencySecurityPolicyRegistry::new(
+            sled::Config::new().temporary(true).open().unwrap(),
+        )
+        .unwrap();
+        let policy = serde_json::from_str(include_str!(
+            "../../../../theory/dependency_security/policy.cargo_fixture.json"
+        ))
+        .unwrap();
+        let current = registry.install(policy, 1).unwrap();
+        let legacy = crate::theory::TheoryRevisionRef {
+            registry: "dependency_security_policy".into(),
+            id: current.id.clone(),
+            content_hash: current.content_hash.clone(),
+        };
+        assert!(registry.resolve(&legacy).unwrap().is_none());
+        assert!(registry.resolve(&current).unwrap().is_some());
+    }
+
+    #[test]
+    fn nonempty_legacy_policy_tree_requires_explicit_migration() {
+        let db = sled::Config::new().temporary(true).open().unwrap();
+        db.open_tree(super::LEGACY_TREE)
+            .unwrap()
+            .insert(b"legacy-ref", b"retained-v1-policy")
+            .unwrap();
+        let error = super::DependencySecurityPolicyRegistry::new(db)
+            .err()
+            .unwrap();
+        assert!(error.contains("policy v1 revisions are incompatible"));
+        assert!(error.contains("migrate it explicitly"));
     }
 
     #[test]

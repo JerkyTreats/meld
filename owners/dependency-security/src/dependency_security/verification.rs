@@ -1,12 +1,12 @@
 use super::assessment::assess;
 use super::contracts::*;
-use super::policy::DependencySecurityPolicyV1;
+use super::policy::DependencySecurityPolicyV2;
 
 pub fn verify(
     assessment: &DependencySecurityAssessmentV1,
     inventory: &DependencyInventorySnapshotV1,
     advisory: &AdvisoryKnowledgeSnapshotV1,
-    policy: &DependencySecurityPolicyV1,
+    policy: &DependencySecurityPolicyV2,
 ) -> Result<DependencySecurityVerificationV1, String> {
     let recomputed = assess(
         &assessment.subject,
@@ -65,7 +65,7 @@ pub fn verify(
 mod tests {
     use super::*;
     use crate::dependency_security::policy::{
-        CoverageRequirementV1, CurrencyRequirementV1, VerificationRequirementV1,
+        CoverageContractV2, CurrencyRequirementV1, VerificationContractV2,
     };
     use meld_events::DomainObjectRef;
 
@@ -102,24 +102,18 @@ mod tests {
             10,
         )
         .unwrap();
-        let policy = DependencySecurityPolicyV1 {
+        let policy = DependencySecurityPolicyV2 {
             policy_id: "policy".into(),
             subject_kind: "workspace".into(),
             ecosystem: PackageEcosystem::Cargo,
             required_advisory_source_id: "fixture".into(),
-            required_coverage: CoverageRequirementV1 {
-                require_complete_inventory: true,
-                require_all_components_covered: true,
-                require_transitive_dependencies: true,
-            },
+            coverage_contract: CoverageContractV2::CompleteTransitiveAllComponents,
             currency: CurrencyRequirementV1 {
                 maximum_source_age_seconds: 10,
                 maximum_inventory_age_seconds: 10,
             },
             severity_threshold: SeverityV1::High,
-            verification: VerificationRequirementV1 {
-                require_independent_calculation: true,
-            },
+            verification_contract: VerificationContractV2::IndependentRecalculation,
         };
         let assessment = assess(&subject, Some(&inventory), Some(&advisory), &policy, 10).unwrap();
         assert!(
@@ -127,5 +121,18 @@ mod tests {
                 .unwrap()
                 .verified
         );
+
+        let mut altered = assessment;
+        altered.posture = DependencySecurityPosture::Violated;
+        let verification = verify(&altered, &inventory, &advisory, &policy).unwrap();
+        assert!(!verification.verified);
+        assert_eq!(
+            verification.independently_computed_posture,
+            DependencySecurityPosture::CleanWithinCoverage
+        );
+        assert!(verification
+            .checks
+            .iter()
+            .any(|check| check == "calculation_differs"));
     }
 }

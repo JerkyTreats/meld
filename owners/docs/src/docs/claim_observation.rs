@@ -147,7 +147,7 @@ pub(crate) async fn advance_observed_claims(
                 content_hash,
                 ..
             } => {
-                let evidence = evidence_partitions(directory, &accepted_children);
+                let evidence = evidence_partitions(directory, &accepted_children, bundle, policy)?;
                 let patch = ReadmePatch {
                     path: path.clone(),
                     content: content.clone(),

@@ -130,7 +130,13 @@ impl DocsPackageOwner {
                     DRAFT_PATCH_SET => {
                         BTreeSet::from(["docs-readme".into(), "docs-readme-revision".into()])
                     }
-                    VALIDATE_PATCH_SET => provider_observation.clone(),
+                    VALIDATE_PATCH_SET => {
+                        let mut frames = provider_observation.clone();
+                        // Validation executes the selected document revision repair
+                        // before judging the successor patch again.
+                        frames.insert("docs-readme-revision".into());
+                        frames
+                    }
                     _ => BTreeSet::new(),
                 };
                 OwnerCapabilityGrantV1 {

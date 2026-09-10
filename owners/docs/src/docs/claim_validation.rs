@@ -16,10 +16,18 @@ use crate::provider::ProviderCompletionPort;
 
 const CLAIM_BATCH_SIZE: usize = 6;
 const MAX_EVIDENCE_QUOTE_CHARS: usize = 160;
-const MAX_REVISION_REPORT_CHARS: usize = 8 * 1024;
-const MAX_CHILD_README_BYTES: usize = 3 * 1024;
 
+mod extraction;
+mod historical;
 mod registry;
+
+pub use extraction::{extract_selected_claims, DocsClaimExtraction};
+pub(crate) use historical::extract_historical_claims;
+
+#[cfg(test)]
+pub(crate) fn extract_claims(path: &str, content: &str) -> Vec<ReadmeClaim> {
+    extract_selected_claims(DocsClaimExtraction::MarkdownSentencesV2, path, content)
+}
 
 pub use registry::{
     DocsClaimPolicyRegistryStore, DocsClaimPolicyRevision, DocsClaimPolicyRevisionRef,
@@ -53,6 +61,8 @@ pub struct DocsClaimPolicy {
 #[serde(rename_all = "snake_case")]
 pub enum DocsAcceptanceEvaluator {
     WeightedClaimMassV1,
+    /// Document structure is judged explicitly but carries no factual support mass.
+    DocumentClaimMassV2,
 }
 
 impl DocsClaimPolicy {
@@ -138,8 +148,10 @@ impl DocsClaimPolicy {
     }
 
     fn retains_claim(&self, assessment: &ClaimAssessment) -> bool {
-        assessment.verdict == ClaimVerdict::Supported
-            && assessment.confidence >= self.minimum_claim_confidence
+        matches!(
+            assessment.verdict,
+            ClaimVerdict::Supported | ClaimVerdict::NonAssertive
+        ) && assessment.confidence >= self.minimum_claim_confidence
     }
 
     pub(crate) fn accepts_metrics(&self, metrics: (f64, f64, f64)) -> Result<bool, ApiError> {
@@ -154,7 +166,8 @@ impl DocsClaimPolicy {
             ));
         }
         match self.acceptance_evaluator.expect("validated evaluator") {
-            DocsAcceptanceEvaluator::WeightedClaimMassV1 => Ok(groundedness
+            DocsAcceptanceEvaluator::WeightedClaimMassV1
+            | DocsAcceptanceEvaluator::DocumentClaimMassV2 => Ok(groundedness
                 >= self.minimum_groundedness
                 && unsupported <= self.maximum_unsupported_claim_mass
                 && contradiction <= self.maximum_contradiction_claim_mass),
@@ -183,7 +196,8 @@ pub enum ClaimKind {
     TableRow,
 }
 
-/// One complete assertion extracted from a candidate README.
+/// One addressable README statement candidate. Semantic judgment must support
+/// every factual clause before the candidate can count as supported.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReadmeClaim {
     pub claim_id: String,
@@ -201,6 +215,9 @@ pub enum ClaimVerdict {
     Supported,
     Unsupported,
     Contradicted,
+    /// Navigation or connective language with no factual assertion. This is not
+    /// evidence and cannot establish correspondence to a required source claim.
+    NonAssertive,
 }
 
 /// Evidence partition cited by the semantic verifier.
@@ -319,7 +336,11 @@ pub fn verify_validated_patch_set(
             .iter()
             .map(|assessment| assessment.claim.clone())
             .collect::<Vec<_>>();
-        let mut expected = extract_claims(&patch.path, &patch.content);
+        let mut expected = extract_selected_claims(
+            policy.semantics()?.claim_extraction()?,
+            &patch.path,
+            &patch.content,
+        );
         actual.sort_by(|a, b| a.claim_id.cmp(&b.claim_id));
         expected.sort_by(|a, b| a.claim_id.cmp(&b.claim_id));
         if actual != expected {
@@ -521,7 +542,7 @@ pub async fn validate_patch_set<P: ProviderCompletionPort + ?Sized>(
                 "docs patch set is missing expected README '{path}'"
             ))
         })?;
-        let partitions = evidence_partitions(directory, &accepted_by_directory);
+        let partitions = evidence_partitions(directory, &accepted_by_directory, bundle, policy)?;
         let judge = ProviderDocsClaimJudge {
             api,
             config,
@@ -556,8 +577,9 @@ pub async fn validate_patch_set<P: ProviderCompletionPort + ?Sized>(
                     report = assess_readme(&assessment, &patch, revision_attempt).await?;
                 }
                 DocsRepairAction::PruneRejectedClaimsV1 => {
-                    (patch, report) =
-                        prune_rejected_claims(policy, &patch, &report, revision_attempt)?;
+                    return Err(ApiError::ConfigError(
+                        "historical line-pruning repair is no longer executable".into(),
+                    ));
                 }
             }
         }
@@ -639,7 +661,11 @@ async fn assess_readme(
     revision_attempt: usize,
 ) -> Result<ReadmeClaimReport, ApiError> {
     context.policy.validate()?;
-    let claims = extract_claims(&patch.path, &patch.content);
+    let claims = extract_selected_claims(
+        context.policy.semantics()?.claim_extraction()?,
+        &patch.path,
+        &patch.content,
+    );
     if claims.is_empty() {
         return Err(ApiError::ConfigError(format!(
             "README '{}' contains no assessable claims",
@@ -907,10 +933,21 @@ fn validate_assessment_integrity(
                 "claim verdict confidence is invalid".into(),
             ));
         }
-        if assessment.verdict != ClaimVerdict::Unsupported && assessment.citations.is_empty() {
+        if matches!(
+            assessment.verdict,
+            ClaimVerdict::Supported | ClaimVerdict::Contradicted
+        ) && assessment.citations.is_empty()
+        {
             return Err(ApiError::ConfigError(
                 "supported or contradicted verdict has no evidence citation".into(),
             ));
+        }
+        if assessment.verdict == ClaimVerdict::NonAssertive
+            && (!assessment.citations.is_empty()
+                || !assessment.claim.literal_requirements.is_empty()
+                || assessment.claim.kind == ClaimKind::CodeLine)
+        {
+            return Err(ApiError::ConfigError("nonassertive text cannot carry evidence, literal requirements or executable examples".into()));
         }
         for citation in &assessment.citations {
             if citation.quote.trim().is_empty()
@@ -1015,7 +1052,7 @@ async fn revise_readme<P: ProviderCompletionPort + ?Sized>(
         DocsJudgmentOperation::Revision,
         serde_json::json!({
             "directory": directory.path,
-            "rejected_claim_report": truncate_chars(&rejected, MAX_REVISION_REPORT_CHARS),
+            "rejected_claim_report": truncate_chars(&rejected, policy.semantics()?.scope()?.capture_limits.as_ref().expect("validated capture limits").maximum_revision_report_chars),
             "inventory": evidence.inventory,
             "direct_evidence": evidence.direct,
             "descendant_evidence": evidence.descendant,
@@ -1040,97 +1077,6 @@ async fn revise_readme<P: ProviderCompletionPort + ?Sized>(
         content_hash: blake3::hash(content.as_bytes()).to_hex().to_string(),
         content,
     })
-}
-
-fn prune_rejected_claims(
-    policy: &DocsClaimPolicy,
-    patch: &ReadmePatch,
-    report: &ReadmeClaimReport,
-    revision_attempt: usize,
-) -> Result<(ReadmePatch, ReadmeClaimReport), ApiError> {
-    let rejected_lines = report
-        .assessments
-        .iter()
-        .filter(|assessment| !policy.retains_claim(assessment))
-        .flat_map(|assessment| {
-            assessment.claim.source_line_start..=assessment.claim.source_line_end
-        })
-        .collect::<BTreeSet<_>>();
-    let mut content = patch
-        .content
-        .lines()
-        .enumerate()
-        .filter(|(index, _)| !rejected_lines.contains(&(index + 1)))
-        .map(|(_, line)| line)
-        .collect::<Vec<_>>()
-        .join("\n");
-    content = normalize_pruned_markdown(&content);
-    if content.trim().is_empty() || content == patch.content {
-        return Err(ApiError::ConfigError(format!(
-            "deterministic README pruning made no valid progress for '{}'",
-            patch.path
-        )));
-    }
-    let pruned_patch = ReadmePatch {
-        path: patch.path.clone(),
-        content_hash: blake3::hash(content.as_bytes()).to_hex().to_string(),
-        content,
-    };
-    let mut supported_by_statement = report
-        .assessments
-        .iter()
-        .filter(|assessment| policy.retains_claim(assessment))
-        .cloned()
-        .fold(
-            BTreeMap::<String, VecDeque<ClaimAssessment>>::new(),
-            |mut supported, assessment| {
-                supported
-                    .entry(claim_statement_key(&assessment.claim))
-                    .or_default()
-                    .push_back(assessment);
-                supported
-            },
-        );
-    let mut assessments = Vec::new();
-    for claim in extract_claims(&pruned_patch.path, &pruned_patch.content) {
-        let key = claim_statement_key(&claim);
-        let mut assessment = if let Some(assessment) = supported_by_statement
-            .get_mut(&key)
-            .and_then(VecDeque::pop_front)
-        {
-            assessment
-        } else {
-            return Err(ApiError::ConfigError(format!(
-                "deterministic README pruning cannot preserve a supported assessment for '{}'",
-                claim.statement
-            )));
-        };
-        assessment.claim = claim;
-        assessments.push(assessment);
-    }
-    if assessments.is_empty() {
-        return Err(ApiError::ConfigError(format!(
-            "deterministic README pruning removed every claim from '{}'",
-            patch.path
-        )));
-    }
-    let (groundedness, unsupported, contradiction) = aggregate_assessments(policy, &assessments);
-    let accepted = policy.accepts(&assessments)?;
-    let pruned_report = ReadmeClaimReport {
-        path: pruned_patch.path.clone(),
-        content_hash: pruned_patch.content_hash.clone(),
-        revision_attempts: revision_attempt,
-        assessments,
-        weighted_groundedness: groundedness,
-        unsupported_claim_mass: unsupported,
-        contradiction_claim_mass: contradiction,
-        accepted,
-    };
-    Ok((pruned_patch, pruned_report))
-}
-
-fn claim_statement_key(claim: &ReadmeClaim) -> String {
-    format!("{:?}\0{}", claim.kind, claim.statement)
 }
 
 fn citations_cover_each_clause(statement: &str, citations: &[ClaimCitation]) -> bool {
@@ -1192,85 +1138,12 @@ fn meaningful_terms(value: &str) -> BTreeSet<String> {
         .collect()
 }
 
-fn normalize_pruned_markdown(value: &str) -> String {
-    let mut lines = Vec::new();
-    let mut ordered_index = 0_usize;
-    let mut in_code_block = false;
-    for raw_line in value.lines() {
-        let trimmed = raw_line.trim();
-        if trimmed.starts_with("```") {
-            in_code_block = !in_code_block;
-            ordered_index = 0;
-            lines.push(trimmed.to_string());
-            continue;
-        }
-        if in_code_block {
-            lines.push(raw_line.to_string());
-            continue;
-        }
-        if trimmed.is_empty() {
-            if lines.last().is_some_and(|line| !line.is_empty()) {
-                lines.push(String::new());
-            }
-            continue;
-        }
-        if trimmed.starts_with('#') {
-            ordered_index = 0;
-            lines.push(trimmed.to_string());
-            continue;
-        }
-        if let Some(item) = strip_ordered_list_marker(trimmed) {
-            ordered_index += 1;
-            lines.push(format!("{ordered_index}. {item}"));
-            continue;
-        }
-        if strip_unordered_list_marker(trimmed).is_some() {
-            ordered_index = 0;
-            lines.push(trimmed.to_string());
-            continue;
-        }
-        ordered_index = 0;
-        lines.push(trimmed.to_string());
-    }
-    while lines.last().is_some_and(String::is_empty) {
-        lines.pop();
-    }
-    format!("{}\n", lines.join("\n"))
-}
-
-fn strip_ordered_list_marker(line: &str) -> Option<&str> {
-    let digits = line
-        .chars()
-        .take_while(|character| character.is_ascii_digit())
-        .count();
-    if digits == 0 {
-        return None;
-    }
-    line.get(digits..)
-        .and_then(|rest| rest.strip_prefix(". "))
-        .map(str::trim)
-}
-
-fn strip_unordered_list_marker(line: &str) -> Option<&str> {
-    ["- ", "* ", "+ "]
-        .into_iter()
-        .find_map(|marker| line.strip_prefix(marker).map(str::trim))
-}
-
-pub(crate) fn supported_readme_evidence(report: &ReadmeClaimReport, content: &str) -> String {
-    let supported_lines = report
+pub(crate) fn supported_readme_evidence(report: &ReadmeClaimReport, _content: &str) -> String {
+    report
         .assessments
         .iter()
         .filter(|assessment| assessment.verdict == ClaimVerdict::Supported)
-        .flat_map(|assessment| {
-            assessment.claim.source_line_start..=assessment.claim.source_line_end
-        })
-        .collect::<BTreeSet<_>>();
-    content
-        .lines()
-        .enumerate()
-        .filter(|(index, _)| supported_lines.contains(&(index + 1)))
-        .map(|(_, line)| line)
+        .map(|assessment| assessment.claim.statement.as_str())
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -1279,6 +1152,7 @@ pub(crate) fn supported_readme_evidence(report: &ReadmeClaimReport, content: &st
 pub(crate) fn verify_publication_evidence(
     bundle: &DocsEvidenceBundle,
     validated: &ValidatedDocsPatchSet,
+    policy: &DocsClaimPolicy,
 ) -> Result<(), ApiError> {
     let mut descendants = BTreeMap::new();
     for directory in &bundle.directories {
@@ -1297,7 +1171,7 @@ pub(crate) fn verify_publication_evidence(
             .ok_or_else(|| {
                 ApiError::ConfigError("docs publication is missing a managed README patch".into())
             })?;
-        let evidence = evidence_partitions(directory, &descendants);
+        let evidence = evidence_partitions(directory, &descendants, bundle, policy)?;
         validate_assessment_integrity(&report.assessments, Some(&evidence))?;
         descendants.insert(
             directory.path.clone(),
@@ -1315,13 +1189,41 @@ pub(crate) fn verify_publication_evidence(
 pub(crate) fn evidence_partitions(
     directory: &DirectoryEvidence,
     accepted_by_directory: &BTreeMap<String, String>,
-) -> EvidencePartitions {
-    let inventory = format!(
+    bundle: &DocsEvidenceBundle,
+    policy: &DocsClaimPolicy,
+) -> Result<EvidencePartitions, ApiError> {
+    let scope = policy.semantics()?.scope()?;
+    let limit = scope
+        .capture_limits
+        .as_ref()
+        .ok_or_else(|| ApiError::ConfigError("Docs capture limits are absent".into()))?
+        .maximum_child_readme_bytes;
+    let mut inventory = format!(
         "current directory: {}\ndirect files:\n{}\nchild directories:\n{}",
         directory.path,
         list_or_none(&directory.direct_files),
         list_or_none(&directory.child_directories)
     );
+    // Paths come from actual source captures, not expected entities or child prose.
+    // This retains qualified child paths when the parent compares the whole subtree.
+    if let Some(observation) = &bundle.observation {
+        let document = scope.document_path(&directory.path);
+        let paths = observation
+            .sources
+            .iter()
+            .filter(|source| {
+                scope.compares(&document, &source.path)
+                    && !directory.direct_files.contains(&source.path)
+            })
+            .map(|source| source.path.clone())
+            .collect::<Vec<_>>();
+        if !paths.is_empty() {
+            inventory.push_str(&format!(
+                "\nobserved descendant source paths:\n{}",
+                list_or_none(&paths)
+            ));
+        }
+    }
     let descendant = directory
         .child_directories
         .iter()
@@ -1333,15 +1235,15 @@ pub(crate) fn evidence_partitions(
         .map(|(child, content)| {
             format!(
                 "\n--- child {child} README ---\n{}\n",
-                truncate_chars(content, MAX_CHILD_README_BYTES)
+                super::scope::truncate_utf8_bytes(content, limit)
             )
         })
         .collect::<String>();
-    EvidencePartitions {
+    Ok(EvidencePartitions {
         inventory,
         direct: directory.evidence.clone(),
         descendant,
-    }
+    })
 }
 
 fn list_or_none(values: &[String]) -> String {
@@ -1356,187 +1258,16 @@ fn list_or_none(values: &[String]) -> String {
     }
 }
 
-/// Deterministically enumerate all assertion-bearing Markdown blocks.
-pub fn extract_claims(path: &str, content: &str) -> Vec<ReadmeClaim> {
-    let mut claims = Vec::new();
-    let mut paragraph = Vec::<(usize, String)>::new();
-    let mut in_code_block = false;
-    for (index, raw_line) in content.lines().enumerate() {
-        let line_number = index + 1;
-        let trimmed = raw_line.trim();
-        if trimmed.starts_with("```") {
-            flush_paragraph(path, &mut paragraph, &mut claims);
-            in_code_block = !in_code_block;
-            continue;
-        }
-        if in_code_block {
-            if !trimmed.is_empty() {
-                push_claim(
-                    path,
-                    trimmed.to_string(),
-                    ClaimKind::CodeLine,
-                    line_number,
-                    line_number,
-                    &mut claims,
-                );
-            }
-            continue;
-        }
-        if trimmed.is_empty() {
-            flush_paragraph(path, &mut paragraph, &mut claims);
-            continue;
-        }
-        if let Some(title) = trimmed.strip_prefix("# ") {
-            flush_paragraph(path, &mut paragraph, &mut claims);
-            push_claim(
-                path,
-                title.trim().to_string(),
-                ClaimKind::Title,
-                line_number,
-                line_number,
-                &mut claims,
-            );
-            continue;
-        }
-        if trimmed.starts_with('#') || is_table_separator(trimmed) {
-            flush_paragraph(path, &mut paragraph, &mut claims);
-            continue;
-        }
-        if let Some(item) = strip_list_marker(trimmed) {
-            flush_paragraph(path, &mut paragraph, &mut claims);
-            push_claim(
-                path,
-                item.to_string(),
-                ClaimKind::ListItem,
-                line_number,
-                line_number,
-                &mut claims,
-            );
-            continue;
-        }
-        if trimmed.starts_with('|') && trimmed.ends_with('|') {
-            flush_paragraph(path, &mut paragraph, &mut claims);
-            push_claim(
-                path,
-                trimmed.to_string(),
-                ClaimKind::TableRow,
-                line_number,
-                line_number,
-                &mut claims,
-            );
-            continue;
-        }
-        paragraph.push((
-            line_number,
-            trimmed.trim_start_matches('>').trim().to_string(),
-        ));
-    }
-    flush_paragraph(path, &mut paragraph, &mut claims);
-    claims
-}
-
-fn flush_paragraph(
-    path: &str,
-    paragraph: &mut Vec<(usize, String)>,
-    claims: &mut Vec<ReadmeClaim>,
-) {
-    if paragraph.is_empty() {
-        return;
-    }
-    let start = paragraph.first().unwrap().0;
-    let end = paragraph.last().unwrap().0;
-    let statement = paragraph
-        .iter()
-        .map(|(_, line)| line.as_str())
-        .collect::<Vec<_>>()
-        .join(" ");
-    paragraph.clear();
-    push_claim(path, statement, ClaimKind::Prose, start, end, claims);
-}
-
-fn push_claim(
-    path: &str,
-    statement: String,
-    kind: ClaimKind,
-    start: usize,
-    end: usize,
-    claims: &mut Vec<ReadmeClaim>,
-) {
-    if statement.trim().is_empty() {
-        return;
-    }
-    let seed = format!("{path}::{start}::{end}::{kind:?}::{statement}");
-    claims.push(ReadmeClaim {
-        claim_id: format!("claim-{}", blake3::hash(seed.as_bytes()).to_hex()),
-        literal_requirements: literal_requirements(&statement),
-        statement,
-        kind,
-        source_line_start: start,
-        source_line_end: end,
-    });
-}
-
-fn literal_requirements(statement: &str) -> Vec<String> {
-    let mut literals = BTreeSet::new();
-    let mut remaining = statement;
-    while let Some(start) = remaining.find('`') {
-        let after_start = &remaining[start + 1..];
-        let Some(end) = after_start.find('`') else {
-            break;
-        };
-        let literal = &after_start[..end];
-        if !literal.trim().is_empty() {
-            literals.insert(literal.to_string());
-        }
-        remaining = &after_start[end + 1..];
-    }
-    for token in statement.split_whitespace() {
-        let candidate = token.trim_matches(|character: char| {
-            matches!(
-                character,
-                '(' | ')' | '[' | ']' | '<' | '>' | ',' | '.' | ';' | ':' | '"' | '\''
-            )
-        });
-        if candidate.starts_with("https://") || candidate.starts_with("http://") {
-            literals.insert(candidate.to_string());
-        }
-    }
-    literals.into_iter().collect()
-}
-
-fn strip_list_marker(line: &str) -> Option<&str> {
-    for marker in ["- ", "* ", "+ "] {
-        if let Some(item) = line.strip_prefix(marker) {
-            return Some(item.trim());
-        }
-    }
-    let digits = line
-        .chars()
-        .take_while(|character| character.is_ascii_digit())
-        .count();
-    if digits > 0 {
-        return line
-            .get(digits..)
-            .and_then(|rest| rest.strip_prefix(". "))
-            .map(str::trim);
-    }
-    None
-}
-
-fn is_table_separator(line: &str) -> bool {
-    line.starts_with('|')
-        && line.ends_with('|')
-        && line
-            .chars()
-            .all(|character| matches!(character, '|' | '-' | ':' | ' '))
-}
-
 fn aggregate_assessments(
     policy: &DocsClaimPolicy,
     assessments: &[ClaimAssessment],
 ) -> (f64, f64, f64) {
     let total = assessments
         .iter()
+        .filter(|assessment| {
+            policy.acceptance_evaluator != Some(DocsAcceptanceEvaluator::DocumentClaimMassV2)
+                || assessment.verdict != ClaimVerdict::NonAssertive
+        })
         .map(|assessment| policy.weight(assessment.claim.kind))
         .sum::<f64>();
     if total <= 0.0 {
@@ -1660,13 +1391,14 @@ mod tests {
             "README.md",
             "# Tool\n\nA useful tool.\n\n## API\n\n- `run` starts it.\n\n| Name | Meaning |\n| --- | --- |\n| api | HTTP |\n\n```sh\npython -m tool\n```\n",
         );
-        assert_eq!(claims.len(), 6);
+        assert_eq!(claims.len(), 7);
         assert_eq!(claims[0].kind, ClaimKind::Title);
         assert_eq!(claims[1].kind, ClaimKind::Prose);
-        assert_eq!(claims[2].literal_requirements, vec!["run"]);
-        assert_eq!(claims[3].kind, ClaimKind::TableRow);
+        assert_eq!(claims[2].statement, "API");
+        assert_eq!(claims[3].literal_requirements, vec!["run"]);
         assert_eq!(claims[4].kind, ClaimKind::TableRow);
-        assert_eq!(claims[5].kind, ClaimKind::CodeLine);
+        assert_eq!(claims[5].kind, ClaimKind::TableRow);
+        assert_eq!(claims[6].kind, ClaimKind::CodeLine);
     }
 
     #[test]
@@ -1701,6 +1433,47 @@ mod tests {
         );
         assert_eq!(assessments[0].verdict, ClaimVerdict::Unsupported);
         assert!(assessments[0].rationale.contains("invented.yaml"));
+    }
+
+    #[test]
+    fn markdown_destination_requires_literal_evidence_even_when_model_says_supported() {
+        let claim = extract_selected_claims(
+            DocsClaimExtraction::MarkdownSentencesV2,
+            "README.md",
+            "See the [guide](https://invented.example/guide).",
+        )
+        .remove(0);
+        let mut assessments = vec![ClaimAssessment {
+            execution: None,
+            claim,
+            verdict: ClaimVerdict::Supported,
+            confidence: 1.0,
+            citations: vec![],
+            rationale: "proposed support".into(),
+        }];
+        let policy = policy();
+        let guards = &policy.semantics().unwrap().claim_guards;
+        apply_deterministic_guards(
+            guards,
+            &EvidencePartitions {
+                inventory: "guide.md".into(),
+                direct: "See the guide".into(),
+                descendant: String::new(),
+            },
+            &mut assessments,
+        );
+        assert_eq!(assessments[0].verdict, ClaimVerdict::Unsupported);
+        assessments[0].verdict = ClaimVerdict::Supported;
+        apply_deterministic_guards(
+            guards,
+            &EvidencePartitions {
+                inventory: String::new(),
+                direct: "https://invented.example/guide".into(),
+                descendant: String::new(),
+            },
+            &mut assessments,
+        );
+        assert_eq!(assessments[0].verdict, ClaimVerdict::Supported);
     }
 
     #[test]
@@ -1917,7 +1690,11 @@ mod tests {
             child_directories: vec![],
             evidence: "pub fn run() {}".into(),
         };
-        let evidence = evidence_partitions(&directory, &BTreeMap::new());
+        let evidence = EvidencePartitions {
+            inventory: String::new(),
+            direct: directory.evidence.clone(),
+            descendant: String::new(),
+        };
         let patch = ReadmePatch {
             path: "README.md".into(),
             content: "# Tool\n\n`run` exists.\n".into(),
@@ -1983,7 +1760,8 @@ mod tests {
         .unwrap();
         let bundle = crate::docs::capability::inspect_scope(root.path()).unwrap();
         let directory = &bundle.directories[0];
-        let evidence = evidence_partitions(directory, &BTreeMap::new());
+        let evidence =
+            evidence_partitions(directory, &BTreeMap::new(), &bundle, &policy()).unwrap();
         let content = "# Supported fact\n\nUnknown fact.\n\nContradicted fact.\n".to_string();
         let patch = ReadmePatch {
             path: "README.md".into(),
@@ -2152,119 +1930,148 @@ mod tests {
     }
 
     #[test]
-    fn final_bounded_revision_deterministically_removes_rejected_claim_blocks() {
-        let content = "# Tool\n\nSupported summary.\n\nInvented behavior.\n\n- `run` exists.\n";
-        let patch = ReadmePatch {
-            path: "README.md".to_string(),
-            content: content.to_string(),
-            content_hash: blake3::hash(content.as_bytes()).to_hex().to_string(),
-        };
-        let mut assessments = extract_claims(&patch.path, &patch.content)
+    fn navigation_cannot_inflate_factual_support_or_export_unverified_neighbours() {
+        let mut selected = policy();
+        selected.acceptance_evaluator = Some(DocsAcceptanceEvaluator::DocumentClaimMassV2);
+        let claims = extract_claims("README.md", "## Usage\n\nSupported fact. Invented fact.\n");
+        let mut assessments = claims
             .into_iter()
-            .map(|claim| ClaimAssessment {
+            .enumerate()
+            .map(|(index, claim)| ClaimAssessment {
                 execution: None,
                 claim,
-                verdict: ClaimVerdict::Supported,
-                confidence: 0.9,
-                citations: vec![ClaimCitation {
-                    scope: CitationScope::Direct,
-                    quote: "run".to_string(),
-                }],
-                rationale: "supported".to_string(),
+                verdict: if index == 0 {
+                    ClaimVerdict::NonAssertive
+                } else if index == 1 {
+                    ClaimVerdict::Supported
+                } else {
+                    ClaimVerdict::Unsupported
+                },
+                confidence: 1.0,
+                citations: if index == 1 {
+                    vec![ClaimCitation {
+                        scope: CitationScope::Direct,
+                        quote: "Supported fact.".into(),
+                    }]
+                } else {
+                    vec![]
+                },
+                rationale: String::new(),
             })
             .collect::<Vec<_>>();
-        assessments
-            .iter_mut()
-            .find(|assessment| assessment.claim.statement == "Invented behavior.")
-            .unwrap()
-            .verdict = ClaimVerdict::Unsupported;
+        assert_eq!(
+            aggregate_assessments(&selected, &assessments),
+            (0.5, 0.5, 0.0)
+        );
+        assert!(!selected.accepts(&assessments).unwrap());
+        assert!(!selected.accepts(&assessments[..1]).unwrap());
         let report = ReadmeClaimReport {
-            path: patch.path.clone(),
-            content_hash: patch.content_hash.clone(),
-            revision_attempts: 1,
-            assessments,
-            weighted_groundedness: 0.75,
-            unsupported_claim_mass: 0.25,
-            contradiction_claim_mass: 0.0,
-            accepted: false,
-        };
-
-        let (pruned, pruned_report) = prune_rejected_claims(&policy(), &patch, &report, 1).unwrap();
-
-        assert!(pruned.content.contains("Supported summary."));
-        assert!(pruned.content.contains("`run` exists."));
-        assert!(!pruned.content.contains("Invented behavior."));
-        assert!(pruned_report.accepted);
-        assert_eq!(pruned_report.content_hash, pruned.content_hash);
-        assert_eq!(pruned_report.assessments.len(), 3);
-    }
-
-    #[test]
-    fn pruning_removes_a_rejected_title_without_authoring_replacement_evidence() {
-        let content = "# Invented product\n\nThe tool runs.\n";
-        let patch = ReadmePatch {
-            path: "README.md".to_string(),
-            content: content.to_string(),
-            content_hash: blake3::hash(content.as_bytes()).to_hex().to_string(),
-        };
-        let mut assessments = extract_claims(&patch.path, &patch.content)
-            .into_iter()
-            .map(|claim| ClaimAssessment {
-                execution: None,
-                claim,
-                verdict: ClaimVerdict::Supported,
-                confidence: 0.9,
-                citations: vec![ClaimCitation {
-                    scope: CitationScope::Direct,
-                    quote: "The tool runs.".to_string(),
-                }],
-                rationale: "supported".to_string(),
-            })
-            .collect::<Vec<_>>();
-        assessments[0].verdict = ClaimVerdict::Unsupported;
-        assessments[0].citations.clear();
-        let report = ReadmeClaimReport {
-            path: patch.path.clone(),
-            content_hash: patch.content_hash.clone(),
-            revision_attempts: 1,
-            assessments,
+            path: "README.md".into(),
+            content_hash: String::new(),
+            revision_attempts: 0,
+            assessments: assessments.clone(),
             weighted_groundedness: 0.5,
             unsupported_claim_mass: 0.5,
             contradiction_claim_mass: 0.0,
             accepted: false,
         };
-
-        let (pruned, accepted) = prune_rejected_claims(&policy(), &patch, &report, 1).unwrap();
-        assert_eq!(pruned.content, "The tool runs.\n");
-        assert!(accepted.accepted);
-        assert_eq!(accepted.assessments.len(), 1);
-        assert_eq!(accepted.assessments[0].claim.statement, "The tool runs.");
-        assert_eq!(
-            accepted.assessments[0].citations,
-            report.assessments[1].citations
-        );
-        let mut uncertain = report.clone();
-        uncertain.assessments[0].verdict = ClaimVerdict::Supported;
-        uncertain.assessments[0].confidence = 0.2;
-        uncertain.assessments[0].citations = report.assessments[1].citations.clone();
-        assert!(!policy().accepts(&uncertain.assessments).unwrap());
-        let (without_uncertain, accepted) =
-            prune_rejected_claims(&policy(), &patch, &uncertain, 1).unwrap();
-        assert_eq!(without_uncertain, pruned);
-        assert!(accepted.accepted);
-        assert_eq!(uncertain.assessments[0].verdict, ClaimVerdict::Supported);
-        assert_eq!(uncertain.assessments[0].confidence, 0.2);
+        let exported = supported_readme_evidence(&report, "Supported fact. Invented fact.");
+        assert_eq!(exported, "Supported fact.");
+        assessments[1].verdict = ClaimVerdict::NonAssertive;
+        assert!(validate_assessment_integrity(&assessments, None).is_err());
     }
 
     #[test]
-    fn pruned_markdown_flattens_orphaned_lists_and_repairs_ordering() {
-        let normalized = normalize_pruned_markdown(
-            "# Tool\n\n    - kept child\n    1. first\n    3. third  \n\n    trailing prose\n",
+    fn parent_grounding_uses_observed_qualified_paths_without_accepting_invented_children() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("pkg/sub")).unwrap();
+        // Nested shape adapted from meld-eval's synthetic sample_nested fixture.
+        std::fs::write(
+            root.path().join("pkg/sub/notes.md"),
+            "The helper normalizes records.\n",
+        )
+        .unwrap();
+        let bundle = crate::docs::capability::inspect_scope(root.path()).unwrap();
+        let parent = bundle
+            .directories
+            .iter()
+            .find(|directory| directory.path == ".")
+            .unwrap();
+        let selected = policy();
+        let accepted = BTreeMap::from([("pkg".into(), "The helper normalizes records.".into())]);
+        let evidence = evidence_partitions(parent, &accepted, &bundle, &selected).unwrap();
+        assert!(evidence.inventory.contains("pkg/sub/notes.md"));
+        assert!(evidence
+            .descendant
+            .contains("The helper normalizes records."));
+        assert!(!evidence.direct.contains("The helper"));
+        let mut assessments = extract_claims(
+            "README.md",
+            "`pkg/sub/notes.md` describes normalization. `pkg/sub/missing.md` exists.",
+        )
+        .into_iter()
+        .map(|claim| ClaimAssessment {
+            execution: None,
+            claim,
+            verdict: ClaimVerdict::Supported,
+            confidence: 1.0,
+            citations: vec![ClaimCitation {
+                scope: CitationScope::Descendant,
+                quote: "The helper normalizes records.".into(),
+            }],
+            rationale: String::new(),
+        })
+        .collect::<Vec<_>>();
+        apply_deterministic_guards(
+            &[DocsClaimGuard::LiteralPresenceV1],
+            &evidence,
+            &mut assessments,
         );
+        assert_eq!(assessments[0].verdict, ClaimVerdict::Supported);
+        assert_eq!(assessments[1].verdict, ClaimVerdict::Unsupported);
+        let mut direct = selected.clone();
+        direct
+            .semantic_theory
+            .as_mut()
+            .unwrap()
+            .scope
+            .as_mut()
+            .unwrap()
+            .comparison = super::super::scope::DocsSourceComparison::DirectDirectoryV1;
+        assert!(!evidence_partitions(parent, &accepted, &bundle, &direct)
+            .unwrap()
+            .inventory
+            .contains("pkg/sub/notes.md"));
+    }
 
-        assert_eq!(
-            normalized,
-            "# Tool\n\n- kept child\n1. first\n2. third\n\ntrailing prose\n"
-        );
+    #[test]
+    fn child_readme_evidence_respects_multibyte_byte_limit() {
+        let mut selected = policy();
+        selected
+            .semantic_theory
+            .as_mut()
+            .unwrap()
+            .scope
+            .as_mut()
+            .unwrap()
+            .capture_limits
+            .as_mut()
+            .unwrap()
+            .maximum_child_readme_bytes = 5;
+        let directory = DirectoryEvidence {
+            path: ".".into(),
+            direct_files: vec![],
+            child_directories: vec!["child".into()],
+            evidence: String::new(),
+        };
+        let bundle = DocsEvidenceBundle {
+            source_fingerprint: String::new(),
+            directories: vec![directory.clone()],
+            observation: None,
+        };
+        let accepted = BTreeMap::from([("child".into(), "éé🙂".into())]);
+        let evidence = evidence_partitions(&directory, &accepted, &bundle, &selected).unwrap();
+        assert_eq!(evidence.descendant, "\n--- child child README ---\néé\n");
+        assert!(!evidence.descendant.contains('🙂'));
     }
 }

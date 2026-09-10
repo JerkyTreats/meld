@@ -8,7 +8,6 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::observation::MAX_DIRECTORY_EVIDENCE_BYTES;
 use super::semantics::DocsJudgmentOperation;
 use crate::capability::{
     ArtifactSchemaVersionRange, CapabilityInvocationPayload, CapabilityInvocationResult,
@@ -35,7 +34,6 @@ pub const VALIDATED_PATCH_SET: &str = "docs_validated_patch_set";
 pub const PUBLICATION_RECEIPT: &str = "docs_publication_receipt";
 
 const VERSION: u32 = 1;
-const MAX_CHILD_README_BYTES: usize = 3 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct DocsCapabilityConfig {
@@ -505,6 +503,7 @@ impl InspectScopeCapability {
         let bundle = super::observation::inspect_scope_selected(
             &self.config.target_root,
             self.policy.semantics()?.scope()?,
+            self.policy.semantics()?.claim_extraction()?,
         )
         .map_err(terminalize_docs_error)?;
         Ok(single_artifact(
@@ -622,6 +621,12 @@ pub(crate) async fn draft_patch_set<P: crate::provider::ProviderCompletionPort +
 ) -> Result<DocsPatchSet, ApiError> {
     super::observation::validate_selected_scope(policy, bundle)?;
     policy.validate()?;
+    let limits = policy
+        .semantics()?
+        .scope()?
+        .capture_limits
+        .as_ref()
+        .expect("validated capture limits");
     let mut child_readmes = BTreeMap::<String, String>::new();
     let mut patches = Vec::new();
     for directory in &bundle.directories {
@@ -632,7 +637,7 @@ pub(crate) async fn draft_patch_set<P: crate::provider::ProviderCompletionPort +
             .map(|(child, readme)| {
                 format!(
                     "\n--- child {child} README ---\n{}\n",
-                    truncate_chars(readme, MAX_CHILD_README_BYTES)
+                    super::scope::truncate_utf8_bytes(readme, limits.maximum_child_readme_bytes)
                 )
             })
             .collect::<String>();
@@ -686,7 +691,16 @@ async fn generate_readme<P: crate::provider::ProviderCompletionPort + ?Sized>(
     current_readme: Option<&str>,
     event_context: Option<&ExecutionEventContext>,
 ) -> Result<String, ApiError> {
-    let mut evidence_limit = MAX_DIRECTORY_EVIDENCE_BYTES + MAX_CHILD_README_BYTES;
+    let limits = policy
+        .semantics()?
+        .scope()?
+        .capture_limits
+        .as_ref()
+        .expect("validated capture limits");
+    let mut evidence_limit = limits
+        .maximum_directory_evidence_bytes
+        .saturating_add(limits.maximum_child_readme_bytes);
+    let selected_evidence_limit = evidence_limit;
     let mut last_error = None;
     for retry in 0..=2 {
         let generation = policy.semantics()?.generation(
@@ -699,6 +713,7 @@ async fn generate_readme<P: crate::provider::ProviderCompletionPort + ?Sized>(
                 child_evidence,
                 current_readme,
                 evidence_limit,
+                limits.maximum_directory_evidence_bytes,
             ),
             retry,
             0,
@@ -723,7 +738,7 @@ async fn generate_readme<P: crate::provider::ProviderCompletionPort + ?Sized>(
                 last_error = Some(message);
             }
         }
-        evidence_limit = (evidence_limit / 2).max(2 * 1024);
+        evidence_limit = next_evidence_limit(evidence_limit, selected_evidence_limit);
     }
     Err(ApiError::ConfigError(format!(
         "README generation failed for '{}': {}",
@@ -738,17 +753,25 @@ fn readme_input(
     child_evidence: &str,
     current_readme: Option<&str>,
     evidence_limit: usize,
+    maximum_directory_evidence_bytes: usize,
 ) -> serde_json::Value {
-    let direct_limit = evidence_limit.min(MAX_DIRECTORY_EVIDENCE_BYTES);
+    let direct_limit = evidence_limit.min(maximum_directory_evidence_bytes);
     let child_limit = evidence_limit.saturating_sub(direct_limit);
     serde_json::json!({
         "directory": directory.path,
         "direct_files": directory.direct_files,
         "child_directories": directory.child_directories,
-        "direct_evidence": truncate_chars(direct_evidence, direct_limit),
-        "descendant_drafts": truncate_chars(child_evidence, child_limit),
+        "direct_evidence": super::scope::truncate_utf8_bytes(direct_evidence, direct_limit),
+        "descendant_drafts": super::scope::truncate_utf8_bytes(child_evidence, child_limit),
         "current_readme": current_readme,
     })
+}
+
+fn next_evidence_limit(current: usize, selected_maximum: usize) -> usize {
+    (current / 2)
+        .max(selected_maximum.min(2 * 1024))
+        .min(current)
+        .min(selected_maximum)
 }
 
 fn is_context_limit_error(message: &str) -> bool {
@@ -771,13 +794,17 @@ pub(super) fn publish_patch_set(
 ) -> Result<DocsPublicationReceipt, ApiError> {
     verify_validated_patch_set(policy, patches)?;
     let root = root.canonicalize().map_err(io_error)?;
-    let bundle = super::observation::inspect_scope_selected(&root, policy.semantics()?.scope()?)?;
+    let bundle = super::observation::inspect_scope_selected(
+        &root,
+        policy.semantics()?.scope()?,
+        policy.semantics()?.claim_extraction()?,
+    )?;
     if bundle.source_fingerprint != patches.source_fingerprint {
         return Err(ApiError::ConfigError(
             "docs source changed after claim validation".into(),
         ));
     }
-    super::claim_validation::verify_publication_evidence(&bundle, patches)?;
+    super::claim_validation::verify_publication_evidence(&bundle, patches, policy)?;
     let mut published = Vec::new();
     for patch in &patches.patches {
         let relative = safe_document_path(&patch.path, policy.semantics()?.scope()?)?;
@@ -893,10 +920,6 @@ fn safe_document_path(
         )));
     }
     Ok(relative)
-}
-
-fn truncate_chars(value: &str, max: usize) -> String {
-    value.chars().take(max).collect()
 }
 
 fn normalize_markdown(value: &str) -> String {
@@ -1346,6 +1369,10 @@ mod tests {
         assert!(is_context_limit_error("maximum context length exceeded"));
         assert!(is_context_limit_error("too many tokens"));
         assert!(!is_context_limit_error("connection refused"));
+        assert_eq!(next_evidence_limit(1_024, 1_024), 1_024);
+        assert_eq!(next_evidence_limit(4_096, 4_096), 2_048);
+        assert!(next_evidence_limit(17, 17) <= 17);
+        assert_eq!(next_evidence_limit(0, 17), 0);
     }
 
     #[test]
@@ -1416,11 +1443,18 @@ mod tests {
             "",
             "child draft",
             Some("Existing documented behavior."),
-            MAX_DIRECTORY_EVIDENCE_BYTES + MAX_CHILD_README_BYTES,
+            24 * 1024 + 3 * 1024,
+            24 * 1024,
         );
         assert_eq!(input["directory"], "production");
         assert_eq!(input["direct_files"], serde_json::json!([]));
         assert_eq!(input["descendant_drafts"], "child draft");
         assert_eq!(input["current_readme"], "Existing documented behavior.");
+
+        let multibyte = readme_input(&directory, "éé", "🙂x", None, 5, 3);
+        assert_eq!(multibyte["direct_evidence"], "é");
+        assert_eq!(multibyte["descendant_drafts"], "");
+        assert!(multibyte["direct_evidence"].as_str().unwrap().len() <= 3);
+        assert!(multibyte["descendant_drafts"].as_str().unwrap().len() <= 2);
     }
 }

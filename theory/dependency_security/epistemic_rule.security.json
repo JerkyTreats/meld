@@ -15,7 +15,7 @@
   "realization": {
     "observed_object": "source_root",
     "required_qualifications": {
-      "policy_revision": "a26928a1c99b82cfe4486e98e2e78c81a5f272e569aca1bc46802a89e44e89be",
+      "policy_revision": "b01f2968c8aac4a525fd438f111f8691ec09c240f66794a949d9b47ae2c3aaf1",
       "verified_clean": "true"
     },
     "realized_relation_type": "realizes",

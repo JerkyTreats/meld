@@ -1,5 +1,0 @@
-//! Explicit compatibility surface for temporary migration seams.
-
-pub use crate::api::ContextApi;
-pub use crate::world_state::graph::runtime::GraphRuntime;
-pub use crate::world_state::graph::store::TraversalStore;

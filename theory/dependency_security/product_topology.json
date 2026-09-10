@@ -8,7 +8,7 @@
         {
           "owner_domain": "dependency-security",
           "component_kind": "policy",
-          "route_version": 1
+          "route_version": 2
         },
         {
           "owner_domain": "world-model",

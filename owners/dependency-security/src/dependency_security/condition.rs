@@ -341,7 +341,7 @@ pub(crate) fn current_state(
 /// Acquisition times and our own assessment returns are not changed domain inputs.
 fn work_input_basis(
     subject: &DependencySecuritySubjectV1,
-    policy: &super::policy::DependencySecurityPolicyV1,
+    policy: &super::policy::DependencySecurityPolicyV2,
     inventory: Option<&DependencyInventorySnapshotV1>,
     advisory: Option<&AdvisoryKnowledgeSnapshotV1>,
 ) -> Result<Option<String>, String> {
@@ -497,7 +497,7 @@ mod input_basis_tests {
 
     #[test]
     fn security_inputs_ignore_acquisition_churn_and_track_material_changes() {
-        let policy: super::super::policy::DependencySecurityPolicyV1 = serde_json::from_str(
+        let policy: super::super::policy::DependencySecurityPolicyV2 = serde_json::from_str(
             include_str!("../../../../theory/dependency_security/policy.cargo_fixture.json"),
         )
         .unwrap();

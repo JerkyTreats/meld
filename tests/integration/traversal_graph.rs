@@ -2,7 +2,7 @@
 use crate::integration::test_utils::open_authority_progress;
 use crate::integration::with_xdg_env;
 use meld::agent::{AgentIdentity, AgentRegistry, AgentRole};
-use meld::compat::ContextApi;
+use meld::api::ContextApi;
 use meld::concurrency::NodeLockManager;
 use meld::context::frame::{Basis, Frame, FrameStorage};
 use meld::context::head::CurrentFrameHeadRead;
@@ -189,7 +189,8 @@ fn context_source_controls_selection_withdrawal_restore_and_replay() {
             selected_frames(&graph, &restored),
             vec![hex::encode(frame_id)]
         );
-        let reopened = HeadIndex::load_from_disk(HeadIndex::persistence_path(&workspace)).unwrap();
+        let reopened =
+            HeadIndex::load_from_disk(HeadIndex::persistence_path(&workspace).unwrap()).unwrap();
         assert_eq!(
             head_publication(&reopened, api.frame_storage()).unwrap(),
             restored

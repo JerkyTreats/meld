@@ -10,7 +10,7 @@ use super::{
     capability::{SecurityCapability, ADVISORIES, INVENTORY},
     condition::{CurrentSecurityCondition, ProductPosition},
     contracts::*,
-    policy::DependencySecurityPolicyV1,
+    policy::DependencySecurityPolicyV2,
     publication::OWNER,
 };
 
@@ -20,7 +20,7 @@ pub(super) const PRODUCT: &str = "dependency_security_currency";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct CurrencyObservation {
     pub subject: DependencySecuritySubjectV1,
-    pub policy: DependencySecurityPolicyV1,
+    pub policy: DependencySecurityPolicyV2,
     pub source_positions: BTreeMap<String, ProductPosition>,
     pub previous_reference_time: u64,
     pub reference_time: u64,
@@ -38,7 +38,7 @@ fn sources(products: &BTreeMap<String, ProductPosition>) -> BTreeMap<String, Pro
 }
 
 fn crosses_boundary(
-    policy: &DependencySecurityPolicyV1,
+    policy: &DependencySecurityPolicyV2,
     bodies: &BTreeMap<String, Value>,
     previous: u64,
     at: u64,
@@ -91,7 +91,9 @@ impl CurrencyObservation {
     }
 
     pub fn from_record(record: &EventRecord, ledger: LedgerIdentity) -> Result<Self, String> {
-        let value: Self = serde_json::from_value(record.data.clone()).map_err(|e| e.to_string())?;
+        let value: Self = serde_json::from_value(record.data.clone()).map_err(|error| {
+            format!("Security currency observation is incompatible with policy v2: {error}")
+        })?;
         value.policy.validate()?;
         value
             .subject

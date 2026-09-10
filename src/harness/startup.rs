@@ -311,9 +311,14 @@ impl StartupAccountReader {
             );
         }
         let generation_id = request.generation_id.as_ref().or_else(|| {
-            assignment
-                .as_ref()
-                .and_then(|a| a.current_generation_id.as_ref())
+            assignment.as_ref().and_then(|a| {
+                a.current_generation_id.as_ref().or_else(|| {
+                    a.generations
+                        .values()
+                        .max_by_key(|generation| generation.generation_number)
+                        .map(|generation| &generation.generation_id)
+                })
+            })
         });
         let generation = generation_id.and_then(|id| assignment.as_ref()?.generations.get(id));
         account.generation_id = generation_id.cloned();

@@ -1,0 +1,50 @@
+[
+  {
+    "symbol": "BeliefStatusLabel",
+    "status": "absent",
+    "matches": "",
+    "errors": ""
+  },
+  {
+    "symbol": "MELD_BELIEF_CONTEXT",
+    "status": "absent",
+    "matches": "",
+    "errors": ""
+  },
+  {
+    "symbol": "build_prompt_messages_with_belief",
+    "status": "absent",
+    "matches": "",
+    "errors": ""
+  },
+  {
+    "symbol": "ProgressEnvelope",
+    "status": "absent",
+    "matches": "",
+    "errors": ""
+  },
+  {
+    "symbol": "ProgressEvent",
+    "status": "absent",
+    "matches": "",
+    "errors": ""
+  },
+  {
+    "symbol": "ContextFacade",
+    "status": "absent",
+    "matches": "",
+    "errors": ""
+  },
+  {
+    "symbol": "meld::compat",
+    "status": "absent",
+    "matches": "",
+    "errors": ""
+  },
+  {
+    "symbol": "events::compat",
+    "status": "absent",
+    "matches": "",
+    "errors": ""
+  }
+]

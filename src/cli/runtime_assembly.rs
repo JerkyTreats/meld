@@ -150,7 +150,7 @@ impl CliRuntimeAssembly {
         )));
 
         let head_index = match &runtime_workspace {
-            Some(workspace) => HeadIndex::load_from_disk(HeadIndex::persistence_path(workspace))
+            Some(workspace) => HeadIndex::load_from_disk(HeadIndex::persistence_path(workspace)?)
                 .map_err(ApiError::from)?,
             None => HeadIndex::new(),
         };
@@ -158,7 +158,7 @@ impl CliRuntimeAssembly {
             let heads = &head_index;
             if let Some(workspace) = &runtime_workspace {
                 heads
-                    .save_to_disk(HeadIndex::persistence_path(workspace))
+                    .save_to_disk(HeadIndex::persistence_path(workspace)?)
                     .map_err(ApiError::from)?;
             }
             publish_heads(

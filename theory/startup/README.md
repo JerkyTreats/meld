@@ -27,7 +27,7 @@ From the repository root, install and prepare the product, then run the ordinary
 
 ```sh
 cargo run --bin meld -- world init --theory-source theory/startup --format json
-cargo run --bin meld -- runtime run --duration-ms 3000 --format json
+cargo run --bin meld -- runtime run --tick-ms 50 --duration-ms 5000 --format json
 cargo run --bin meld -- runtime status --format json
 ```
 
@@ -43,6 +43,6 @@ cargo run --bin meld -- runtime startup-account --agent-id startup-agent --forma
 
 The account names the first missing position from native preparation through separate Goal satisfaction. Its `initial_assessment` position accepts standing or Agent-planned observation whose source cut precedes the nonce publication; confirmation remains a separate position. A durable nonce with lagging Graph projection names `graph_visibility`; an outstanding Execution callback remains a separate obligation even after the nonce Goal is satisfied. Native owner identities, current generation and admission epoch, perspective, branch scope and inspection positions are returned together. This account makes no whole-runtime health claim and never advances an owner.
 
-The command uses the live process's existing stores, or reads them offline when no process holds them. After shutdown, the closed generation and epoch remain visible as historical evidence. Use `--generation-id`, `--admission-epoch` and `--nonce-id` to address an exact retained instance. A successor epoch cannot borrow its predecessor's nonce. Supplying a returned `--inspection-fence` requires the same owner positions; changed positions produce a stale read and require fresh inspection. The fence detects change rather than reconstructing an earlier snapshot.
+The command uses the live process's existing stores, or reads them offline when no process holds them. By default it selects the current generation, or the latest retained generation after shutdown. The closed generation and epoch remain visible as historical evidence, with current-generation and open-admission positions marked stale. Use `--generation-id`, `--admission-epoch` and `--nonce-id` to address an exact retained instance. A successor epoch cannot borrow its predecessor's nonce. Supplying a returned `--inspection-fence` requires the same owner positions; changed positions produce a stale read and require fresh inspection. The fence detects change rather than reconstructing an earlier snapshot.
 
 The same read contract is served at `POST /v1/projections/startup_nonce_account`. Its envelope contains `product_root` and an intact `request` with `agent_id` and optional generation, epoch, nonce and inspection-fence fields. The live and offline paths use the same read-only projection.

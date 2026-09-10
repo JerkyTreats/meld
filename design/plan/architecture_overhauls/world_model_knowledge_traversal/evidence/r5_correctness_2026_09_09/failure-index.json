@@ -1,0 +1,62 @@
+[
+  {
+    "run": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r5-qwen-20260909T170504Z",
+    "completed_proof": false,
+    "provider_requests": 15,
+    "task_failures": [],
+    "runtime_issues": [
+      "Configuration error: Docs correspondence names unknown claims or invalid evidence"
+    ]
+  },
+  {
+    "run": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r5-qwen-20260909T171022Z",
+    "completed_proof": false,
+    "provider_requests": 34,
+    "task_failures": [],
+    "runtime_issues": [
+      "Configuration error: Docs correspondence invalid for docs-source-claim::0aab88b356b2a51552676e3d891ff15bc6b40433c463ae40e27b71f76ead07bd: unknown_ids=false, duplicate_ids=false, empty_rationale=false, confidence=0.5, required_confidence=0.8"
+    ]
+  },
+  {
+    "run": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r5-qwen-20260909T185050Z",
+    "completed_proof": false,
+    "provider_requests": 15,
+    "task_failures": [
+      "Terminal capability failure: Generation failed: terminal_capability_failure: Terminal capability failure: Configuration error: owner_callback_not_granted: provider request differs from the selected binding or native operation scope"
+    ],
+    "runtime_issues": []
+  },
+  {
+    "run": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r5-qwen-20260909T185659Z",
+    "completed_proof": false,
+    "provider_requests": 19,
+    "task_failures": [
+      "Terminal capability failure: Generation failed: terminal_capability_failure: Terminal capability failure: Configuration error: provider returned invalid keyed claim response JSON: EOF while parsing a list at line 235 column 9",
+      "Terminal capability failure: Generation failed: terminal_capability_failure: Terminal capability failure: Configuration error: provider returned invalid keyed claim response JSON: EOF while parsing a list at line 331 column 9"
+    ],
+    "runtime_issues": []
+  },
+  {
+    "run": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r5-qwen-20260909T190752Z",
+    "completed_proof": false,
+    "provider_requests": 12,
+    "task_failures": [
+      "Generation failed: owner_connection_unavailable: the child connection failed; native recovery must reconnect it",
+      "Generation failed: owner_operation_timed_out: native owner operation exceeded its declared transport deadline"
+    ],
+    "runtime_issues": [
+      "Generation failed: owner_connection_unavailable: the child connection failed; native recovery must reconnect it",
+      "Generation failed: owner_operation_timed_out: native owner operation exceeded its declared transport deadline",
+      "the child connection failed; native recovery must reconnect it"
+    ]
+  },
+  {
+    "run": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r5-qwen-20260909T191626Z",
+    "completed_proof": false,
+    "provider_requests": 18,
+    "task_failures": [
+      "Terminal capability failure: Generation failed: terminal_capability_failure: Terminal capability failure: Configuration error: provider returned invalid keyed claim response JSON: EOF while parsing a list at line 951 column 9"
+    ],
+    "runtime_issues": []
+  }
+]

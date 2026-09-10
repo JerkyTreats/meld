@@ -1,0 +1,118 @@
+{
+  "status": "passed",
+  "run_root": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r5-qwen-20260909T192945Z",
+  "evidence_workspace": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r5-closeout-20260909",
+  "baseline_commit": "cd2144b436e8ac4e475933b6e4516bca7384589e",
+  "runtime_source_manifest_sha256": "08bcf83c8f1b5c71da78146479fffcb9ab1e86c5daf74ad5033749dedbf84372",
+  "core_binary_sha256": "2ed6f988960497628ce29c7b38679b0dbfd285f7db229f040360726cccae6fc1",
+  "docs_owner_binary_sha256": "2fb49be70a3e136cf198bcc45f5ab41fc92635691176de26f5ad27978983c7ef",
+  "owner_selection": {
+    "executable": {
+      "path": "/home/jerkytreats/.local/state/meld-flywheel-remediation/r5-qwen-20260909T192945Z/meld-docs-owner",
+      "content_hash": "08841676f70472d6a664ce0b7d8dfb96b066bf0d7f52644ce99602b0e2bedcc2"
+    },
+    "limits": {
+      "request_timeout_ms": 600000,
+      "max_message_bytes": 16777216
+    },
+    "binding_ids": [
+      "workspace",
+      "provider",
+      "agent",
+      "subject"
+    ]
+  },
+  "docs_policy_component_blake3": "e718ae611e51dbbc4e90c3c03f7f005ad26ff1fb5090c959fefea72595351f40",
+  "docs_runtime_policy_identity": "docs-claim-policy-fa92af7ca216e0829616bfbb88cf55b17754488ccb1f2aedbd017f9bfd351f1f",
+  "selected_model": "qwen3-coder-next",
+  "provider_requested_and_reported_model": "local",
+  "provider_max_tokens": 8192,
+  "initial": {
+    "readmes": {
+      "README.md": {
+        "sha256": "e44998a51b8b32f7acc314203846feeb78463c449887f6574d38ead0b143dc46",
+        "mtime_ns": 1788982185287832898
+      }
+    },
+    "provider_requests": 4,
+    "events": 40
+  },
+  "repaired": {
+    "readmes": {
+      "README.md": {
+        "sha256": "bc053c1bfc3d2d757f71fe45e931da48257e156b38854aea7512caeb155c0306",
+        "mtime_ns": 1788982585026474009
+      }
+    },
+    "provider_requests": 21,
+    "events": 142
+  },
+  "idle": {
+    "readmes": {
+      "README.md": {
+        "sha256": "bc053c1bfc3d2d757f71fe45e931da48257e156b38854aea7512caeb155c0306",
+        "mtime_ns": 1788982585026474009
+      }
+    },
+    "provider_requests": 21,
+    "events": 142
+  },
+  "reopened": {
+    "readmes": {
+      "README.md": {
+        "sha256": "bc053c1bfc3d2d757f71fe45e931da48257e156b38854aea7512caeb155c0306",
+        "mtime_ns": 1788982585026474009
+      }
+    },
+    "provider_requests": 21,
+    "events": 148
+  },
+  "patch_publications": 1,
+  "publication_seq": 117,
+  "independent_observation_seq": 133,
+  "independent_observation_revision": "docs-revision::e99ca43067088a6dc954c7eea9e8199036595a53358a1ba5386faf9feb1eb846",
+  "independent_observation_status": "complete",
+  "accepted_by_policy": true,
+  "assertions_supported": true,
+  "exact_repair": "README bytes equal original with 8000 replaced by 9000",
+  "goal_dispositions": [
+    {
+      "accepted_milestone_ids": [
+        "agent-belief-return-v1::5d01b4db799c8f6a55408b46df72905235b8f6054b6629c7338045bbfd0a0983",
+        "agent-milestone-acceptance-v1::db054b6fd8f06e2ac1dbe1ce8ae0bb466391ddc7e25fe31a0a08c1fda17ba9cc",
+        "agent-task-milestone-acceptance-v1::42f6edec0c38d5543bc9b94e9962694576ae63794f00f1eaa12db67704c9672c"
+      ],
+      "activation_generation": "a8064c89b8e4634abff0a2e925ad74e0012d466a01f4f3dd669290065f6dc7d0",
+      "agent_id": "docs-writer",
+      "disposition_id": "agent-goal-disposition-v2::0adabe5b5b2a6f30e899a7a46d5d80e49363d72b25ef97fc378fabd0aafd3edd",
+      "goal_id": "agent-goal::docs-writer::docs_freshness::a8064c89b8e4634abff0a2e925ad74e0012d466a01f4f3dd669290065f6dc7d0::epoch::341e96278c182ca9578768a77398a8385f84fd7eadcc68d47169fe1679dd03aa",
+      "lifecycle": {
+        "Satisfied": {
+          "at_seq": 142
+        }
+      },
+      "plan_revision_id": "strategy-plan-v2::58b1f321fea2b57ac5c92c98f83ab3ccb9874def638786fa87e956eaa5ddebb0",
+      "planner_cut_id": "planner-cut-v1::e92904ebe4cba61222a0baf8832eb17c7b4326f6cb32f39c5a4456ff437f9abb"
+    },
+    {
+      "accepted_milestone_ids": [
+        "agent-belief-return-v1::7007f88ff8c70116d63718e5f5208f21cef9e19c828ffd9726534a30a7312952",
+        "agent-milestone-acceptance-v1::b9f7a23ccfe19b2da5cf991a3efd50a0331d25da61b792533883ec6b82e07ae4",
+        "agent-task-milestone-acceptance-v1::63855e344f14bfdb02642c34d38812ce85a7d0f35ac992a97f8fe038fa0f84e4"
+      ],
+      "activation_generation": "a8064c89b8e4634abff0a2e925ad74e0012d466a01f4f3dd669290065f6dc7d0",
+      "agent_id": "docs-writer",
+      "disposition_id": "agent-goal-disposition-v2::97d678f178c7e9d79f82a8046a9ede075758b09ca40566c3d92d56812fd7faf3",
+      "goal_id": "agent-goal::docs-writer::docs_freshness::agent-request-v1::9f83edfffea019ef56afe72a856f2a9f965aaf7145873c52f09732c344d46978",
+      "lifecycle": {
+        "Satisfied": {
+          "at_seq": 138
+        }
+      },
+      "plan_revision_id": "strategy-plan-v2::4039a1665283523e46906512ba0c2d53a9998b074016c95922fb49a39c720e88",
+      "planner_cut_id": "planner-cut-v1::db07d0c6050d871bd8039772b368ba69d4c8e9ef41d9b29013a45b6f05deb2c6"
+    }
+  ],
+  "retained_recovered_failure": "First validation returned invalid non_assertive for code-line content; refused with no write. Native successor plan repaired and published once.",
+  "scope_limit": "Bounded R5 actual-Qwen outcome; final integrated workspace freeze remains R6."
+}

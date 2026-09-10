@@ -37,7 +37,6 @@ fn context_lineage_maps_to_valid_prompt_link_record() {
             user_prompt_template: "template".to_string(),
             rendered_prompt: "rendered".to_string(),
             context_payload: "context".to_string(),
-            belief_context_bundle: None,
         },
     )
     .unwrap();

@@ -138,10 +138,29 @@ pub struct CapabilityContributionDiagnostic {
     pub code: String,
     pub message: String,
     pub owner_domain: Option<String>,
+    context: Box<CapabilityContributionDiagnosticContext>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapabilityContributionDiagnosticContext {
     pub contract_ref: Option<CapabilityContractRevisionRef>,
     pub implementation_ref: Option<String>,
     pub assignment_id: Option<String>,
     pub activation_id: Option<String>,
+}
+
+impl std::ops::Deref for CapabilityContributionDiagnostic {
+    type Target = CapabilityContributionDiagnosticContext;
+
+    fn deref(&self) -> &Self::Target {
+        &self.context
+    }
+}
+
+impl std::ops::DerefMut for CapabilityContributionDiagnostic {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.context
+    }
 }
 
 impl CapabilityContributionDiagnostic {
@@ -150,10 +169,12 @@ impl CapabilityContributionDiagnostic {
             code: code.into(),
             message: message.into(),
             owner_domain: None,
-            contract_ref: None,
-            implementation_ref: None,
-            assignment_id: None,
-            activation_id: None,
+            context: Box::new(CapabilityContributionDiagnosticContext {
+                contract_ref: None,
+                implementation_ref: None,
+                assignment_id: None,
+                activation_id: None,
+            }),
         }
     }
 }

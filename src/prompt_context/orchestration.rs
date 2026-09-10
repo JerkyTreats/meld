@@ -11,9 +11,6 @@ pub struct PromptContextLineageInput {
     pub user_prompt_template: String,
     pub rendered_prompt: String,
     pub context_payload: String,
-    /// Canonical belief context bundle JSON; persisted as one more
-    /// digest-addressed lineage artifact when present.
-    pub belief_context_bundle: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -41,15 +38,6 @@ pub fn persist_prompt_context_lineage(
         PromptContextArtifactKind::ContextPayload,
         &input.context_payload,
     )?;
-    let belief_context_bundle = input
-        .belief_context_bundle
-        .as_deref()
-        .map(|bundle| {
-            storage
-                .write_prompt_artifact_utf8(PromptContextArtifactKind::BeliefContextBundle, bundle)
-        })
-        .transpose()?;
-
     Ok(PromptContextLineageContract {
         prompt_link_id: build_prompt_link_id(&rendered_prompt.digest),
         prompt_digest: rendered_prompt.digest.clone(),
@@ -58,7 +46,7 @@ pub fn persist_prompt_context_lineage(
         user_prompt_template,
         rendered_prompt,
         context_payload,
-        belief_context_bundle,
+        belief_context_bundle: None,
     })
 }
 
@@ -88,7 +76,6 @@ mod tests {
                 user_prompt_template: "template".to_string(),
                 rendered_prompt: "rendered".to_string(),
                 context_payload: "context".to_string(),
-                belief_context_bundle: None,
             },
         )
         .unwrap();

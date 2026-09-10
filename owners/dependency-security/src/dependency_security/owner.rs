@@ -348,6 +348,7 @@ impl PackageOwner for SecurityPackageOwner {
         }
     }
 }
+
 fn remote_events(
     ledger: meld_events::LedgerIdentity,
     callbacks: Arc<dyn OwnerCallbackPort>,
@@ -359,4 +360,24 @@ fn remote_events(
 }
 fn failure(error: impl ToString) -> OwnerDiagnosticV1 {
     OwnerDiagnosticV1::new("security_owner_invalid", error)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn owner_refuses_the_legacy_policy_tree_and_publishes_only_v2_route() {
+        let description = SecurityPackageOwner::description();
+        assert!(description
+            .incompatible_legacy_trees
+            .contains("dependency_security_policy_revisions_v1"));
+        assert_eq!(
+            description.routes,
+            vec![super::super::theory::route_contract()]
+        );
+        assert_eq!(description.routes[0].route.route_version, 2);
+        assert_eq!(description.routes[0].accepted_component_schema.min, 2);
+        assert_eq!(description.routes[0].accepted_component_schema.max, 2);
+    }
 }

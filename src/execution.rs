@@ -5,7 +5,7 @@ pub mod ports;
 
 pub use contracts::{ProviderExecutionBinding, ProviderRuntimeOverrides};
 pub use ports::{
-    BeliefStatusLabel, ContextReadPort, ContextWritePort, EventPublicationPort, ExecutionContext,
+    ContextReadPort, ContextWritePort, EventPublicationPort, ExecutionContext,
     ExecutionEventContext, ExecutionFrame, ExecutionNodeContext, ExecutionNodeKind,
     ExecutionNodeRecord, ExecutionProgressPort, ExecutionRuntimeContext, GeneratedMetadataPort,
     NodeResolutionPort, PromptArtifactReadPort, PromptLineagePort, ProviderExecutionPort,

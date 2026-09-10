@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "package_id": "meld.dependency-security-mitigation",
-  "package_version": "1.0.0",
+  "package_version": "2.0.0",
   "description": "Declared existing-file interventions with separately authorized successor Security verification",
   "imports": [],
   "components": [
@@ -11,13 +11,13 @@
       "route": {
         "owner_domain": "dependency-security",
         "component_kind": "policy",
-        "route_version": 1
+        "route_version": 2
       },
-      "component_schema_version": 1,
+      "component_schema_version": 2,
       "content": {
         "kind": "relative_file",
         "path": "policy.cargo_fixture.json",
-        "content_hash": "25bec03a49997ace536c20079c56bf01583c136ec76c370c7135360490ef6ef4"
+        "content_hash": "0fd46132b111efc860bf0606248490643ff0f501a43146a9478bd758b01d463e"
       },
       "requires": []
     },
@@ -229,7 +229,7 @@
       "content": {
         "kind": "relative_file",
         "path": "epistemic_rule.security.json",
-        "content_hash": "5c924ebaf0c0a0b587a2af5792481f5b7ea16b01e39af8b2251f7fb82bab9143"
+        "content_hash": "8b7d66bd05edc11a9c830db067ecb4c901e75afc15500a2877a95e84ee7d46a0"
       },
       "requires": []
     },
@@ -311,7 +311,7 @@
       "content": {
         "kind": "relative_file",
         "path": "product_topology.json",
-        "content_hash": "07c0ae56d14ecde556dacdaad58769ce2eb493014cf353e394e2d64c1de63bfb"
+        "content_hash": "197a6e4b812689e5dd00dfd581e40c10392d0c626e324ef9804eb7605f3e8ddc"
       },
       "requires": []
     }

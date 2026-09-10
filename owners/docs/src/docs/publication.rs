@@ -381,8 +381,8 @@ impl DocsObservationRevision {
                                         .assessments
                                         .iter()
                                         .all(|assessment| {
-                                            assessment.verdict
-                                                == super::claim_validation::ClaimVerdict::Supported
+                                            matches!(assessment.verdict,
+                                                super::claim_validation::ClaimVerdict::Supported | super::claim_validation::ClaimVerdict::NonAssertive)
                                         })
                                         .to_string(),
                                 ),
@@ -414,6 +414,7 @@ impl DocsObservationRevision {
                             super::claim_validation::ClaimVerdict::Supported => "supported",
                             super::claim_validation::ClaimVerdict::Unsupported => "unsupported",
                             super::claim_validation::ClaimVerdict::Contradicted => "contradicted",
+                            super::claim_validation::ClaimVerdict::NonAssertive => "non_assertive",
                         };
                         semantic_qualifications.insert(
                             claim_judgment,
@@ -481,6 +482,8 @@ impl DocsObservationRevision {
                                 "correspondence".into(),
                                 if claim.readme_claim_ids.is_empty() {
                                     "missing"
+                                } else if !report.establishes_match(claim) {
+                                    "uncertain"
                                 } else {
                                     "represented"
                                 }
@@ -497,7 +500,11 @@ impl DocsObservationRevision {
             }
         }
         if self.correspondence.as_ref().is_some_and(|report| {
-            report.contract_revision == super::correspondence::CORRESPONDENCE_CONTRACT
+            [
+                super::correspondence::CORRESPONDENCE_CONTRACT,
+                super::correspondence::PREVIOUS_CORRESPONDENCE_CONTRACT,
+            ]
+            .contains(&report.contract_revision.as_str())
         }) {
             semantic_qualifications
                 .entry(root.clone())
@@ -558,8 +565,8 @@ impl DocsObservationRevision {
                                 judgment
                                     .is_some_and(|report| {
                                         report.assessments.iter().all(|assessment| {
-                                            assessment.verdict
-                                                == super::claim_validation::ClaimVerdict::Supported
+                                            matches!(assessment.verdict,
+                                                super::claim_validation::ClaimVerdict::Supported | super::claim_validation::ClaimVerdict::NonAssertive)
                                         })
                                     })
                                     .to_string(),
@@ -588,7 +595,7 @@ impl DocsObservationRevision {
                         _ => None,
                     });
                 for claim in &readme.claims {
-                    let supported = !claim.readme_claim_ids.is_empty()
+                    let supported = report.establishes_match(claim)
                         && claim.readme_claim_ids.iter().all(|id| {
                             assessments.is_some_and(|assessments| {
                                 assessments.iter().any(|assessment| {

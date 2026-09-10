@@ -1,0 +1,19 @@
+{
+  "algorithm": "sha256",
+  "files": {
+    "README.md": "90246c92062f138e9a5b67180903d3e05fee0f40f0845a913a5057ae56ea0a51",
+    "failure-index.json": "a92a5aec5e3c948584a9de02c931c132617a5e056f40e8e344df6eb4ad21c889",
+    "model-status.json": "015f8f8734dfd4a274b662a174b306e659208cca8c72636941053e83cd50a67d",
+    "native-agent-evidence.json.gz": "c6eb65577c092b00e96bd2f04708cd76ef3b1697ace7c24aabc0455552b0d1f7",
+    "neutral-review.md": "644e174518fbc3c73d09b6c97fd6f52c2224e2af9ff0f6558fde9cc1a277cee0",
+    "proof-summary.json": "8c7fe4c40291a2232a543c1d0e10c0e2d22922019325cbaaf93c999c6d67901a",
+    "publication-and-observation.json": "4e5785285d233dfcb475564530072d1edaa6c9b4414bc4dcb9bdd77ad75e21dc",
+    "readme-after.md": "bc053c1bfc3d2d757f71fe45e931da48257e156b38854aea7512caeb155c0306",
+    "readme-before.md": "e44998a51b8b32f7acc314203846feeb78463c449887f6574d38ead0b143dc46",
+    "retirement.json": "9721a6ea02cec350ca69365fabd599d36c1f5a0d8d1ccbc24389be002c7fa321",
+    "runtime-source-manifest.json.gz": "d24c4bda1be365457fdf3c3bbefd3db9b595b7f6ed5bbd87641caebb43b0bc58",
+    "source-after.py.txt": "4d4d327564bc17540c7cdfb782ad0a8a5cea4f14316a9c5a991abc0decf54a49",
+    "source-before.py.txt": "ad7ed6e33344b69dd06c104d6f3769c98d43b14b4b33b827c7514c1da0fe3298",
+    "validation-index.json": "3ed830aea8e9457819e30c0ce59e59524ae2521ee33a8de1db7b81068be1b251"
+  }
+}

@@ -1,9 +1,12 @@
 //! StorageConfig and resolve_paths for workspace storage.
 
+use crate::config::paths::external::{
+    normalize_absolute, path_is_within, resolve_existing_ancestor, validate_external_product_root,
+};
 use crate::config::xdg;
 use crate::error::ApiError;
 use serde::{Deserialize, Serialize};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 fn default_store_path() -> PathBuf {
     PathBuf::from(".meld/store")
@@ -136,80 +139,6 @@ fn resolve_workspace_state_path(
         });
     }
     validate_external_product_root(candidate, &workspace, Some(&resolved_xdg_root), None)
-}
-
-fn validate_external_product_root(
-    candidate: PathBuf,
-    workspace: &Path,
-    required_root: Option<&Path>,
-    replacement: Option<PathBuf>,
-) -> Result<PathBuf, ApiError> {
-    let resolved = resolve_existing_ancestor(&candidate)?;
-    if path_is_within(&resolved, workspace) {
-        return Err(ApiError::ProductRootInsideWorkspace {
-            old_path: candidate,
-            new_path: replacement.unwrap_or(resolved),
-        });
-    }
-    if required_root.is_some_and(|root| !path_is_within(&resolved, root)) {
-        return Err(ApiError::ConfigError(format!(
-            "Relative product runtime root resolves outside workspace XDG data root: {}",
-            resolved.display()
-        )));
-    }
-    Ok(resolved)
-}
-
-fn normalize_absolute(path: &Path) -> Result<PathBuf, ApiError> {
-    if !path.is_absolute() {
-        return Err(ApiError::ConfigError(format!(
-            "Product runtime path must resolve to an absolute path: {}",
-            path.display()
-        )));
-    }
-
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
-            Component::RootDir => normalized.push(component.as_os_str()),
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normalized.pop();
-            }
-            Component::Normal(segment) => normalized.push(segment),
-        }
-    }
-    Ok(normalized)
-}
-
-fn resolve_existing_ancestor(path: &Path) -> Result<PathBuf, ApiError> {
-    for ancestor in path.ancestors() {
-        if ancestor.exists() {
-            let resolved = ancestor.canonicalize().map_err(|error| {
-                ApiError::ConfigError(format!(
-                    "Failed to resolve product runtime path {}: {error}",
-                    path.display()
-                ))
-            })?;
-            let suffix = path.strip_prefix(ancestor).map_err(|error| {
-                ApiError::ConfigError(format!(
-                    "Failed to normalize product runtime path {}: {error}",
-                    path.display()
-                ))
-            })?;
-            return Ok(resolved.join(suffix));
-        }
-    }
-
-    Err(ApiError::ConfigError(format!(
-        "Product runtime path has no resolvable ancestor: {}",
-        path.display()
-    )))
-}
-
-fn path_is_within(path: &Path, root: &Path) -> bool {
-    path == root || path.starts_with(root)
 }
 
 impl Default for StorageConfig {
@@ -581,6 +510,33 @@ mod tests {
             assert_eq!(store, data_dir.join("store"));
             assert_eq!(frames, data_dir.join("frames"));
             assert_eq!(artifacts, data_dir.join("artifacts"));
+        });
+    }
+    #[test]
+    fn direct_workspace_state_callers_refuse_an_internal_xdg_root_before_writing() {
+        with_isolated_xdg_data_home(|| {
+            let workspace = tempfile::tempdir().unwrap();
+            std::env::set_var("XDG_DATA_HOME", workspace.path().join("state"));
+            assert!(crate::heads::HeadIndex::persistence_path(workspace.path()).is_err());
+            assert!(crate::ignore::sync_gitignore_to_ignore_list(workspace.path()).is_err());
+            assert!(crate::branches::locator::resolve_active_branch(workspace.path()).is_err());
+            assert!(!workspace.path().join("state").exists());
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn direct_workspace_state_callers_refuse_xdg_symlinks_into_the_workspace() {
+        with_isolated_xdg_data_home(|| {
+            let workspace = tempfile::tempdir().unwrap();
+            let external = tempfile::tempdir().unwrap();
+            let link = external.path().join("state");
+            std::os::unix::fs::symlink(workspace.path(), &link).unwrap();
+            std::env::set_var("XDG_DATA_HOME", &link);
+            assert!(crate::heads::HeadIndex::persistence_path(workspace.path()).is_err());
+            assert!(crate::ignore::sync_gitignore_to_ignore_list(workspace.path()).is_err());
+            assert!(crate::branches::locator::resolve_active_branch(workspace.path()).is_err());
+            assert_eq!(std::fs::read_dir(workspace.path()).unwrap().count(), 0);
         });
     }
 }

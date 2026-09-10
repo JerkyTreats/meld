@@ -52,7 +52,7 @@ impl TheoryRouterDiagnostic {
 pub struct TheoryRouterError {
     pub diagnostic_code: String,
     pub message: String,
-    pub diagnostic: TheoryRouterDiagnostic,
+    pub diagnostic: Box<TheoryRouterDiagnostic>,
 }
 
 impl From<TheoryRouterDiagnostic> for TheoryRouterError {
@@ -60,7 +60,7 @@ impl From<TheoryRouterDiagnostic> for TheoryRouterError {
         Self {
             diagnostic_code: diagnostic.code.clone(),
             message: diagnostic.message.clone(),
-            diagnostic,
+            diagnostic: Box::new(diagnostic),
         }
     }
 }

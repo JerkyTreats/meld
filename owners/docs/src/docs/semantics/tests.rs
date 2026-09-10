@@ -49,6 +49,8 @@ struct RecordingProvider {
     reject_first: bool,
     forged_quote: bool,
     reject_invented: bool,
+    document: Option<String>,
+    classify_navigation: bool,
 }
 impl meld_execution::ProviderValidationPort for RecordingProvider {
     type Error = ApiError;
@@ -121,11 +123,15 @@ impl meld_execution::ProviderExecutionPort for RecordingProvider {
                 }
                 let supported = !(instruction.contains("reject all")
                     || self.reject_first && request.retry_count == 0);
-                let assessments = input["claims"].as_array().unwrap().iter().map(|claim| serde_json::json!({
+                let assessments = input["claims"].as_array().unwrap().iter().map(|claim| {
+                    if self.classify_navigation && matches!(claim["statement"].as_str(), Some("Usage" | "Welcome!")) {
+                        return serde_json::json!({"claim_id":claim["claim_id"], "verdict":"non_assertive", "confidence":1.0, "citations":[], "rationale":"navigation without a factual assertion"});
+                    }
+                    serde_json::json!({
                     "claim_id":claim["claim_id"], "verdict":if supported && !(self.reject_invented && claim["statement"].as_str().unwrap().contains("invented")) {"supported"} else {"unsupported"}, "confidence":1.0,
                     "citations":if supported {vec![serde_json::json!({"scope":"direct","quote":if self.forged_quote {"foreign text"} else {"pub fn run"}})]} else {vec![]},
                     "rationale":"deterministic proposal under selected test instruction"
-                })).collect::<Vec<_>>();
+                })}).collect::<Vec<_>>();
                 serde_json::json!({"assessments":assessments}).to_string()
             }
             "docs-claim-correspondence" => {
@@ -136,9 +142,10 @@ impl meld_execution::ProviderExecutionPort for RecordingProvider {
                 })).collect::<Vec<_>>();
                 serde_json::json!({"complete":true,"claims":claims}).to_string()
             }
-            "docs-readme" | "docs-readme-revision" => {
-                "# Installed theory title\n\n`run` exists.\n".into()
-            }
+            "docs-readme" | "docs-readme-revision" => self
+                .document
+                .clone()
+                .unwrap_or_else(|| "# Installed theory title\n\n`run` exists.\n".into()),
             other => panic!("unexpected provider operation {other}"),
         };
         self.calls.lock().unwrap().push((request.clone(), messages));
@@ -510,7 +517,7 @@ async fn selected_guards_change_semantic_admissibility_but_cannot_admit_forged_e
     std::fs::write(root.path().join("lib.rs"), "pub fn run() {}\n").unwrap();
     let bundle = inspect_scope(root.path()).unwrap();
     let directory = &bundle.directories[0];
-    let evidence = evidence_partitions(directory, &BTreeMap::new());
+    let evidence = evidence_partitions(directory, &BTreeMap::new(), &bundle, &policy()).unwrap();
     let content = "`invented` exists.\n";
     let patch = ReadmePatch {
         path: "README.md".into(),
@@ -578,7 +585,7 @@ async fn selected_guards_change_semantic_admissibility_but_cannot_admit_forged_e
 }
 
 #[tokio::test]
-async fn installed_repair_responses_choose_refusal_revision_or_pruning() {
+async fn installed_repair_responses_preserve_revision_and_refuse_retired_pruning() {
     let root = tempfile::tempdir().unwrap();
     std::fs::write(root.path().join("lib.rs"), "pub fn run() {}\n").unwrap();
     let bundle = inspect_scope(root.path()).unwrap();
@@ -607,6 +614,14 @@ async fn installed_repair_responses_choose_refusal_revision_or_pruning() {
     ] {
         let mut selected = policy();
         selected.semantic_theory.as_mut().unwrap().repair_actions = Some(actions.clone());
+        if actions.contains(&DocsRepairAction::PruneRejectedClaimsV1) {
+            assert!(store
+                .install(selected, 1)
+                .unwrap_err()
+                .to_string()
+                .contains("line-pruning"));
+            continue;
+        }
         let (_, revision) = store.install(selected, 1).unwrap();
         let api = RecordingProvider {
             reject_invented: true,
@@ -682,9 +697,12 @@ async fn installed_scope_controls_capture_comparison_and_publication() {
             .unwrap();
     let (_, revision) = store.install(selected, 1).unwrap();
     let selected = &revision.policy;
-    let bundle =
-        inspect_scope_selected(root.path(), selected.semantics().unwrap().scope().unwrap())
-            .unwrap();
+    let bundle = inspect_scope_selected(
+        root.path(),
+        selected.semantics().unwrap().scope().unwrap(),
+        selected.semantics().unwrap().claim_extraction().unwrap(),
+    )
+    .unwrap();
     let paths = bundle
         .observation
         .as_ref()
@@ -749,9 +767,12 @@ async fn installed_scope_controls_capture_comparison_and_publication() {
     assert!(
         crate::docs::capability::publish_patch_set(root.path(), &policy(), &validated).is_err()
     );
-    let captured =
-        inspect_scope_selected(root.path(), selected.semantics().unwrap().scope().unwrap())
-            .unwrap();
+    let captured = inspect_scope_selected(
+        root.path(),
+        selected.semantics().unwrap().scope().unwrap(),
+        selected.semantics().unwrap().claim_extraction().unwrap(),
+    )
+    .unwrap();
     let reopened = serde_json::from_slice(&serde_json::to_vec(&captured).unwrap()).unwrap();
     validate_selected_scope(selected, &reopened).unwrap();
     assert_eq!(captured, reopened);
@@ -774,6 +795,7 @@ fn scope_changes_invalidate_observation_identity_and_missing_selection_cannot_wr
     let second = crate::docs::observation::inspect_scope_selected(
         root.path(),
         selected.semantics().unwrap().scope().unwrap(),
+        selected.semantics().unwrap().claim_extraction().unwrap(),
     )
     .unwrap();
     assert_eq!(first.source_fingerprint, second.source_fingerprint);
@@ -791,4 +813,57 @@ fn model_output_cannot_author_execution_provenance() {
     assert!(
         serde_json::from_value::<crate::docs::source_claims::ProposedSourceClaims>(fake).is_err()
     );
+}
+
+#[tokio::test]
+async fn narrative_document_preserves_navigation_and_same_paragraph_facts_through_publication() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("lib.rs"), "pub fn run() {}\n").unwrap();
+    let bundle = inspect_scope(root.path()).unwrap();
+    let config = config(root.path());
+    let selected = policy();
+    let document = "# Run module\n\nWelcome!\n\n## Usage\n\n`run` exists. It is callable.\n";
+    let api = RecordingProvider {
+        document: Some(document.into()),
+        classify_navigation: true,
+        ..Default::default()
+    };
+    let draft = draft_patch_set(&api, &config, &selected, &bundle, None)
+        .await
+        .unwrap();
+    let accepted = validate_patch_set(&api, &config, &selected, &bundle, &draft, None)
+        .await
+        .unwrap();
+    assert_eq!(accepted.patches[0].content, document);
+    assert_eq!(accepted.reports[0].revision_attempts, 0);
+    assert_eq!(
+        accepted.reports[0]
+            .assessments
+            .iter()
+            .filter(|assessment| assessment.verdict
+                == crate::docs::claim_validation::ClaimVerdict::NonAssertive)
+            .count(),
+        2
+    );
+    crate::docs::capability::publish_patch_set(root.path(), &selected, &accepted).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(root.path().join("README.md")).unwrap(),
+        document
+    );
+    let captured = inspect_scope(root.path()).unwrap();
+    let judge = ProviderDocsClaimJudge {
+        api: &api,
+        config: &config,
+        event_context: None,
+    };
+    let observed =
+        crate::docs::claim_observation::assess_observed_claims(&judge, &selected, &captured)
+            .await
+            .unwrap();
+    assert!(observed.complete);
+    let evidence =
+        crate::docs::claim_validation::supported_readme_evidence(&accepted.reports[0], document);
+    assert!(!evidence.contains("Welcome"));
+    assert!(!evidence.contains("Usage"));
+    assert!(evidence.contains("It is callable."));
 }

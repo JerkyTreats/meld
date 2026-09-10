@@ -1,6 +1,6 @@
 //! Durable, standing Security source observations. These are source evidence, never Task returns.
 
-use super::{capability::*, contracts::*, policy::DependencySecurityPolicyV1, publication::OWNER};
+use super::{capability::*, contracts::*, policy::DependencySecurityPolicyV2, publication::OWNER};
 use meld_events::{
     AppendMode, EventAppendCapability, EventEnvelope, EventRecord, EventReplayCapability,
     LedgerCursor, ReplayRequest,
@@ -16,7 +16,7 @@ pub(super) const UNAVAILABLE: &str = "dependency_security_advisory_unavailable";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct SourceObservation {
     pub subject: DependencySecuritySubjectV1,
-    pub policy: DependencySecurityPolicyV1,
+    pub policy: DependencySecurityPolicyV2,
     pub authority: AuthorityPolicyBinding,
     pub binding_id: String,
     pub predecessor_source_id: Option<String>,
@@ -166,7 +166,9 @@ impl SourceObservation {
         record: &EventRecord,
         ledger: meld_events::LedgerIdentity,
     ) -> Result<Self, String> {
-        let value: Self = serde_json::from_value(record.data.clone()).map_err(|e| e.to_string())?;
+        let value: Self = serde_json::from_value(record.data.clone()).map_err(|error| {
+            format!("Security source observation is incompatible with policy v2: {error}")
+        })?;
         value.validate()?;
         for cause in &value.execution_causes {
             cause.validate(ledger, record.seq)?;
@@ -601,7 +603,7 @@ pub(super) mod tests {
         #[derive(Serialize)]
         struct RetainedAdvisoryV1<'a> {
             subject: &'a DependencySecuritySubjectV1,
-            policy: &'a DependencySecurityPolicyV1,
+            policy: &'a DependencySecurityPolicyV2,
             authority: &'a AuthorityPolicyBinding,
             binding_id: &'a str,
             predecessor_source_id: &'a Option<String>,

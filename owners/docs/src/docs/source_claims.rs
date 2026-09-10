@@ -506,7 +506,7 @@ mod tests {
         for source in &mut observed.sources {
             source.text = None;
         }
-        let seed = serde_json::to_vec(&(
+        let mut seed = serde_json::to_vec(&(
             &capture.source_fingerprint,
             &capture.directories,
             &observed.sources,
@@ -515,6 +515,9 @@ mod tests {
             &observed.coverage_gaps,
         ))
         .unwrap();
+        if let Some(claim_extraction) = observed.claim_extraction {
+            seed.extend(serde_json::to_vec(&claim_extraction).unwrap());
+        }
         observed.revision_id = format!("docs-observation::{}", blake3::hash(&seed).to_hex());
         let bytes = serde_json::to_vec(&capture).unwrap();
         let historical: DocsEvidenceBundle = serde_json::from_slice(&bytes).unwrap();

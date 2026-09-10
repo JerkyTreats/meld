@@ -97,6 +97,20 @@ fn docs_package_installs_observes_invokes_and_reopens_through_native_ports() {
             installed.components.clone(),
         )
         .unwrap();
+    let validation = resources
+        .capability_grants
+        .iter()
+        .find(|grant| {
+            grant.selection.contract_ref.selector.capability_type_id
+                == meld_docs_owner::docs::capability::VALIDATE_PATCH_SET
+        })
+        .unwrap();
+    assert!(validation
+        .provider_frame_types
+        .contains("docs-readme-revision"));
+    assert!(!resources
+        .observation_provider_frame_types
+        .contains("docs-readme-revision"));
     let authority = Arc::new(
         EventAuthority::open(
             sled::open(state.path().join("events")).unwrap(),

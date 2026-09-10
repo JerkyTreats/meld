@@ -624,6 +624,9 @@ fn runtime_run(
     // names one unresolved binding the composed runtimes will truthfully
     // report as unresolved. Emission is observational and never gates.
     for diagnostic in assembly.diagnostics() {
+        if diagnostic.code == "dispatch_route_unresolved" && assembly.dispatch_routes_bound() {
+            continue;
+        }
         let line = if options.format == "json" {
             serde_json::json!({
                 "type": "assembly_diagnostic",

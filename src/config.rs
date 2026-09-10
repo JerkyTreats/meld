@@ -31,6 +31,7 @@ mod stewardship;
 mod workspace;
 
 pub use facade::ConfigLoader;
+pub(crate) use paths::external::validate_external_product_root as validate_runtime_state_path;
 pub use stewardship::activation::{
     AdapterPlacement, OperationalLimits, PhysicalBindingRef, RuntimeIsolationRequirements,
     StewardshipActivationV1,

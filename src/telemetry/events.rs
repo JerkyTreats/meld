@@ -2,8 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 
-pub use crate::events::compat::{ProgressEnvelope, ProgressEvent};
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionStartedData {
     pub command: String,
@@ -57,13 +55,12 @@ pub struct SummaryEventData {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::events::{EventEnvelope, EventRecord};
     use serde_json::json;
 
     #[test]
     fn event_round_trip() {
-        let event: ProgressEvent = EventRecord::from_envelope(
+        let event = EventRecord::from_envelope(
             EventEnvelope::new(
                 "2026-02-14T12:34:56.789Z".to_string(),
                 "s1".to_string(),
@@ -73,7 +70,7 @@ mod tests {
             1,
         );
         let serialized = serde_json::to_string(&event).unwrap();
-        let parsed: ProgressEvent = serde_json::from_str(&serialized).unwrap();
+        let parsed: EventRecord = serde_json::from_str(&serialized).unwrap();
         assert_eq!(parsed.session, "s1");
         assert_eq!(parsed.seq, 1);
         assert_eq!(parsed.domain_id, "telemetry");
@@ -84,7 +81,7 @@ mod tests {
     #[test]
     fn unknown_fields_are_ignored() {
         let raw = r#"{"ts":"2026-02-14T12:34:56.789Z","session":"s1","seq":1,"type":"session_started","data":{"command":"scan"},"future":"ok"}"#;
-        let parsed = serde_json::from_str::<ProgressEvent>(raw)
+        let parsed = serde_json::from_str::<EventRecord>(raw)
             .unwrap()
             .normalize_legacy_defaults();
         assert_eq!(parsed.session, "s1");
@@ -97,7 +94,7 @@ mod tests {
 
     #[test]
     fn timestamp_is_iso_8601_with_milliseconds() {
-        let env = ProgressEnvelope::with_now("s1", "session_started", json!({}));
+        let env = EventEnvelope::with_now("s1", "session_started", json!({}));
         let parsed = chrono::DateTime::parse_from_rfc3339(&env.ts).unwrap();
         assert_eq!(env.ts.len(), 24);
         assert_eq!(env.recorded_at, env.ts);

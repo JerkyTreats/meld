@@ -8,7 +8,7 @@
 
 use meld::agent::profile::prompt_contract::PromptContract;
 use meld::agent::{AgentIdentity, AgentRole};
-use meld::compat::ContextApi;
+use meld::api::ContextApi;
 use meld::context::frame::storage::FrameStorage;
 use meld::context::generation::contracts::GenerationOrchestrationRequest;
 use meld::context::generation::prompt_collection::{

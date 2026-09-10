@@ -182,7 +182,7 @@ impl ContextService {
         let head_index = self.head_index.write();
         if let Some(ref workspace_root) = self.workspace_root {
             head_index
-                .save_to_disk(HeadIndex::persistence_path(workspace_root))
+                .save_to_disk(HeadIndex::persistence_path(workspace_root)?)
                 .map_err(ApiError::from)?;
         }
         if let Some(append) = self.durable_event_append() {

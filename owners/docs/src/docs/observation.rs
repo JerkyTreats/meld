@@ -2,7 +2,7 @@
 //! Observed claims are assertions found in a README, not judgments of correctness.
 
 use super::capability::{DirectoryEvidence, DocsEvidenceBundle};
-use super::claim_validation::ReadmeClaim;
+use super::claim_validation::{DocsClaimExtraction, ReadmeClaim};
 use super::scope::DocsScopePolicy;
 use crate::error::ApiError;
 use serde::{Deserialize, Serialize};
@@ -10,15 +10,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use walkdir::{DirEntry, WalkDir};
 
-const MAX_DIRECTORIES: usize = 64;
-const MAX_FILE_BYTES: usize = 8 * 1024;
-pub(crate) const MAX_DIRECTORY_EVIDENCE_BYTES: usize = 24 * 1024;
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocsScopeObservation {
     pub revision_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<DocsScopePolicy>,
+    /// Absent only for captures made before extraction became selected.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claim_extraction: Option<DocsClaimExtraction>,
     pub sources: Vec<ObservedSource>,
     pub readmes: Vec<ObservedReadme>,
     /// Entries outside the inspected textual scope, with their selection reason.
@@ -70,19 +69,19 @@ fn io_error(error: std::io::Error) -> ApiError {
 pub fn inspect_scope_selected(
     root: &Path,
     scope: &DocsScopePolicy,
+    claim_extraction: DocsClaimExtraction,
 ) -> Result<DocsEvidenceBundle, ApiError> {
     scope.validate()?;
-    inspect_scope_with_selected_read(root, scope, |path| std::fs::read(path).map_err(io_error))
+    inspect_scope_with_selected_read(root, scope, claim_extraction, |path| {
+        std::fs::read(path).map_err(io_error)
+    })
 }
 
 #[cfg(any(test, feature = "test-support"))]
 pub fn inspect_scope(root: &Path) -> Result<DocsEvidenceBundle, ApiError> {
-    inspect_scope_selected(
-        root,
-        super::claim_observation::test_support::policy()
-            .semantics()?
-            .scope()?,
-    )
+    let policy = super::claim_observation::test_support::policy();
+    let semantics = policy.semantics()?;
+    inspect_scope_selected(root, semantics.scope()?, semantics.claim_extraction()?)
 }
 
 #[cfg(test)]
@@ -90,11 +89,12 @@ fn inspect_scope_with_read(
     root: &Path,
     read: impl FnMut(&Path) -> Result<Vec<u8>, ApiError>,
 ) -> Result<DocsEvidenceBundle, ApiError> {
+    let policy = super::claim_observation::test_support::policy();
+    let semantics = policy.semantics()?;
     inspect_scope_with_selected_read(
         root,
-        super::claim_observation::test_support::policy()
-            .semantics()?
-            .scope()?,
+        semantics.scope()?,
+        semantics.claim_extraction()?,
         read,
     )
 }
@@ -112,6 +112,16 @@ pub(crate) fn validate_selected_scope(
     {
         return Err(ApiError::ConfigError(
             "Docs capture belongs to another scope selection".into(),
+        ));
+    }
+    if bundle
+        .observation
+        .as_ref()
+        .and_then(|capture| capture.claim_extraction)
+        != Some(policy.semantics()?.claim_extraction()?)
+    {
+        return Err(ApiError::ConfigError(
+            "Docs capture belongs to another claim extraction selection".into(),
         ));
     }
     Ok(())
@@ -157,8 +167,16 @@ pub fn validate_observation(bundle: &DocsEvidenceBundle) -> Result<(), ApiError>
             claims,
         } = &readme.state
         {
+            let extracted = match observed.claim_extraction {
+                Some(extraction) => super::claim_validation::extract_selected_claims(
+                    extraction,
+                    &readme.path,
+                    content,
+                ),
+                None => super::claim_validation::extract_historical_claims(&readme.path, content),
+            };
             if blake3::hash(content.as_bytes()).to_hex().as_str() != content_hash
-                || *claims != super::claim_validation::extract_claims(&readme.path, content)
+                || *claims != extracted
             {
                 return Err(ApiError::ConfigError(
                     "Docs README observation disagrees with its captured bytes".into(),
@@ -176,9 +194,19 @@ pub fn validate_observation(bundle: &DocsEvidenceBundle) -> Result<(), ApiError>
     ))
     .map_err(|error| ApiError::ConfigError(error.to_string()))?;
     if let Some(scope) = &observed.scope {
-        scope.validate()?;
+        if scope.capture_limits.is_some() {
+            scope.validate()?;
+        } else {
+            scope.validate_historical()?;
+        }
         seed.extend(
             serde_json::to_vec(scope).map_err(|error| ApiError::ConfigError(error.to_string()))?,
+        );
+    }
+    if let Some(claim_extraction) = observed.claim_extraction {
+        seed.extend(
+            serde_json::to_vec(&claim_extraction)
+                .map_err(|error| ApiError::ConfigError(error.to_string()))?,
         );
     }
     if observed.revision_id != format!("docs-observation::{}", blake3::hash(&seed).to_hex()) {
@@ -192,8 +220,10 @@ pub fn validate_observation(bundle: &DocsEvidenceBundle) -> Result<(), ApiError>
 fn inspect_scope_with_selected_read(
     root: &Path,
     scope: &DocsScopePolicy,
+    claim_extraction: DocsClaimExtraction,
     mut read: impl FnMut(&Path) -> Result<Vec<u8>, ApiError>,
 ) -> Result<DocsEvidenceBundle, ApiError> {
+    let limits = scope.capture_limits()?;
     let root = root.canonicalize().map_err(|error| {
         ApiError::ConfigError(format!(
             "docs target '{}' is unavailable: {error}",
@@ -279,14 +309,14 @@ fn inspect_scope_with_selected_read(
                 path: relative_path.clone(),
                 content_hash: blake3::hash(&bytes).to_hex().to_string(),
                 byte_length: bytes.len(),
-                text: if bytes.len() <= MAX_FILE_BYTES {
+                text: if bytes.len() <= limits.maximum_file_bytes {
                     std::str::from_utf8(&bytes).ok().map(str::to_owned)
                 } else {
                     None
                 },
             },
         );
-        if bytes.len() > MAX_FILE_BYTES || std::str::from_utf8(&bytes).is_err() {
+        if bytes.len() > limits.maximum_file_bytes || std::str::from_utf8(&bytes).is_err() {
             coverage_gaps.push(ObservationExclusion {
                 path: relative_path,
                 reason: "source_text_not_fully_represented".into(),
@@ -294,7 +324,7 @@ fn inspect_scope_with_selected_read(
         }
         captured.insert(
             path.to_path_buf(),
-            bytes[..bytes.len().min(MAX_FILE_BYTES)].to_vec(),
+            bytes[..bytes.len().min(limits.maximum_file_bytes)].to_vec(),
         );
         direct_files
             .entry(parent.to_path_buf())
@@ -320,10 +350,11 @@ fn inspect_scope_with_selected_read(
             cursor = path.parent();
         }
     }
-    if meaningful.len() > MAX_DIRECTORIES {
+    if meaningful.len() > limits.maximum_directories {
         return Err(ApiError::ConfigError(format!(
-            "docs scope contains {} meaningful directories, exceeding the bound of {MAX_DIRECTORIES}",
-            meaningful.len()
+            "docs scope contains {} meaningful directories, exceeding the selected bound of {}",
+            meaningful.len(),
+            limits.maximum_directories
         )));
     }
 
@@ -368,7 +399,7 @@ fn inspect_scope_with_selected_read(
             );
             let text = String::from_utf8_lossy(bytes);
             let section = format!("\n--- {} ---\n{}\n", relative.display(), text);
-            if rendered.len() + section.len() > MAX_DIRECTORY_EVIDENCE_BYTES {
+            if rendered.len() + section.len() > limits.maximum_directory_evidence_bytes {
                 coverage_gaps.push(ObservationExclusion {
                     path,
                     reason: "directory_evidence_budget".into(),
@@ -384,7 +415,11 @@ fn inspect_scope_with_selected_read(
                 Ok(content) => ObservedReadmeState::Present {
                     content: content.into(),
                     content_hash: blake3::hash(bytes).to_hex().to_string(),
-                    claims: super::claim_validation::extract_claims(&path, content),
+                    claims: super::claim_validation::extract_selected_claims(
+                        claim_extraction,
+                        &path,
+                        content,
+                    ),
                 },
                 Err(_) => ObservedReadmeState::Unavailable {
                     reason: "README is not UTF-8".into(),
@@ -433,12 +468,17 @@ fn inspect_scope_with_selected_read(
     seed.extend(
         serde_json::to_vec(scope).map_err(|error| ApiError::ConfigError(error.to_string()))?,
     );
+    seed.extend(
+        serde_json::to_vec(&claim_extraction)
+            .map_err(|error| ApiError::ConfigError(error.to_string()))?,
+    );
     Ok(DocsEvidenceBundle {
         source_fingerprint,
         directories: evidence,
         observation: Some(DocsScopeObservation {
             revision_id: format!("docs-observation::{}", blake3::hash(&seed).to_hex()),
             scope: Some(scope.clone()),
+            claim_extraction: Some(claim_extraction),
             sources,
             readmes,
             exclusions: excluded,
@@ -464,6 +504,15 @@ fn relative_display(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn selected_capture() -> (DocsScopePolicy, DocsClaimExtraction) {
+        let policy = super::super::claim_observation::test_support::policy();
+        let semantics = policy.semantics().unwrap();
+        (
+            semantics.scope().unwrap().clone(),
+            semantics.claim_extraction().unwrap(),
+        )
+    }
 
     #[test]
     fn observation_retains_current_readme_claims_without_repair_or_publication() {
@@ -540,10 +589,19 @@ mod tests {
     #[test]
     fn bounded_evidence_keeps_full_inventory_and_names_every_coverage_gap() {
         let root = tempfile::tempdir().unwrap();
+        let policy = super::super::claim_observation::test_support::policy();
+        let maximum_file_bytes = policy
+            .semantics()
+            .unwrap()
+            .scope()
+            .unwrap()
+            .capture_limits()
+            .unwrap()
+            .maximum_file_bytes;
         for index in 0..5 {
             std::fs::write(
                 root.path().join(format!("source-{index}.rs")),
-                "x".repeat(MAX_FILE_BYTES + 10),
+                "x".repeat(maximum_file_bytes + 10),
             )
             .unwrap();
         }
@@ -554,7 +612,7 @@ mod tests {
         assert!(observation
             .sources
             .iter()
-            .all(|source| source.byte_length == MAX_FILE_BYTES + 10));
+            .all(|source| source.byte_length == maximum_file_bytes + 10));
         for source in &observation.sources {
             assert!(observation
                 .coverage_gaps
@@ -566,6 +624,165 @@ mod tests {
             .coverage_gaps
             .iter()
             .any(|gap| gap.reason == "directory_evidence_budget"));
+    }
+
+    #[test]
+    fn selected_file_and_directory_evidence_limits_hold_at_the_exact_boundary() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("lib.rs"), "abcd").unwrap();
+        let (mut scope, extraction) = selected_capture();
+        let section_bytes = "\n--- lib.rs ---\nabcd\n".len();
+        let limits = scope.capture_limits.as_mut().unwrap();
+        limits.maximum_file_bytes = 4;
+        limits.maximum_directory_evidence_bytes = section_bytes;
+        let exact = inspect_scope_selected(root.path(), &scope, extraction).unwrap();
+        let exact_observation = exact.observation.as_ref().unwrap();
+        assert_eq!(exact_observation.sources[0].text.as_deref(), Some("abcd"));
+        assert_eq!(exact.directories[0].evidence.len(), section_bytes);
+        assert!(exact_observation.coverage_gaps.is_empty());
+
+        std::fs::write(root.path().join("lib.rs"), "abcde").unwrap();
+        let over_file = inspect_scope_selected(root.path(), &scope, extraction).unwrap();
+        let over_file = over_file.observation.unwrap();
+        assert!(over_file.sources[0].text.is_none());
+        assert!(over_file.coverage_gaps.iter().any(|gap| {
+            gap.path == "lib.rs" && gap.reason == "source_text_not_fully_represented"
+        }));
+
+        std::fs::write(root.path().join("lib.rs"), "abcd").unwrap();
+        scope
+            .capture_limits
+            .as_mut()
+            .unwrap()
+            .maximum_directory_evidence_bytes -= 1;
+        let under_evidence = inspect_scope_selected(root.path(), &scope, extraction).unwrap();
+        assert!(under_evidence.directories[0].evidence.is_empty());
+        assert!(under_evidence
+            .observation
+            .unwrap()
+            .coverage_gaps
+            .iter()
+            .any(|gap| gap.path == "lib.rs" && gap.reason == "directory_evidence_budget"));
+    }
+
+    #[test]
+    fn selected_directory_limit_refuses_only_after_the_boundary() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("child")).unwrap();
+        std::fs::write(root.path().join("child/lib.rs"), "source\n").unwrap();
+        let (mut scope, extraction) = selected_capture();
+        scope.capture_limits.as_mut().unwrap().maximum_directories = 2;
+        inspect_scope_selected(root.path(), &scope, extraction).unwrap();
+        scope.capture_limits.as_mut().unwrap().maximum_directories = 1;
+        let error = inspect_scope_selected(root.path(), &scope, extraction).unwrap_err();
+        assert!(error.to_string().contains("selected bound of 1"));
+    }
+
+    #[test]
+    fn successor_limit_selection_changes_capture_identity_and_validation() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("lib.rs"), "source\n").unwrap();
+        let first_policy = super::super::claim_observation::test_support::policy();
+        let first_semantics = first_policy.semantics().unwrap();
+        let first = inspect_scope_selected(
+            root.path(),
+            first_semantics.scope().unwrap(),
+            first_semantics.claim_extraction().unwrap(),
+        )
+        .unwrap();
+        let mut successor_policy = first_policy.clone();
+        successor_policy
+            .semantic_theory
+            .as_mut()
+            .unwrap()
+            .scope
+            .as_mut()
+            .unwrap()
+            .capture_limits
+            .as_mut()
+            .unwrap()
+            .maximum_revision_report_chars += 1;
+        let successor_semantics = successor_policy.semantics().unwrap();
+        let successor = inspect_scope_selected(
+            root.path(),
+            successor_semantics.scope().unwrap(),
+            successor_semantics.claim_extraction().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(first.source_fingerprint, successor.source_fingerprint);
+        assert_ne!(
+            first.observation.as_ref().unwrap().revision_id,
+            successor.observation.as_ref().unwrap().revision_id
+        );
+        validate_selected_scope(&first_policy, &first).unwrap();
+        validate_selected_scope(&successor_policy, &successor).unwrap();
+        assert!(validate_selected_scope(&first_policy, &successor).is_err());
+        assert!(validate_selected_scope(&successor_policy, &first).is_err());
+    }
+
+    #[test]
+    fn historical_observation_reopens_with_its_exact_unselected_identity() {
+        let scope: DocsScopePolicy = serde_json::from_str(
+            r#"{"operator":"document_per_source_directory_v1","document_name":"README.md","exclude_document_names_case_insensitive":true,"exclude_hidden_directories":true,"excluded_directory_names":[],"comparison":"directory_subtree_v1"}"#,
+        )
+        .unwrap();
+        let content = "# Tool\n\nIt runs.\n";
+        let readmes = vec![ObservedReadme {
+            path: "README.md".into(),
+            state: ObservedReadmeState::Present {
+                content: content.into(),
+                content_hash: blake3::hash(content.as_bytes()).to_hex().to_string(),
+                claims: super::super::claim_validation::extract_historical_claims(
+                    "README.md",
+                    content,
+                ),
+            },
+        }];
+        let source_fingerprint = "historical-source".to_string();
+        let directories = Vec::<DirectoryEvidence>::new();
+        let sources = Vec::<ObservedSource>::new();
+        let exclusions = Vec::<ObservationExclusion>::new();
+        let coverage_gaps = Vec::<ObservationExclusion>::new();
+        let mut seed = serde_json::to_vec(&(
+            &source_fingerprint,
+            &directories,
+            &sources,
+            &readmes,
+            &exclusions,
+            &coverage_gaps,
+        ))
+        .unwrap();
+        seed.extend(serde_json::to_vec(&scope).unwrap());
+        let revision_id = format!("docs-observation::{}", blake3::hash(&seed).to_hex());
+        assert_eq!(
+            revision_id,
+            "docs-observation::116032ffc3031820f26ea5fed3545c8c8d046d925811a245f9d9b8c1e85c9f1f"
+        );
+        let historical = DocsEvidenceBundle {
+            source_fingerprint,
+            directories,
+            observation: Some(DocsScopeObservation {
+                revision_id,
+                scope: Some(scope),
+                claim_extraction: None,
+                sources,
+                readmes,
+                exclusions,
+                coverage_gaps,
+            }),
+        };
+        let bytes = serde_json::to_vec(&historical).unwrap();
+        let encoded = std::str::from_utf8(&bytes).unwrap();
+        assert!(!encoded.contains("capture_limits"));
+        assert!(!encoded.contains("claim_extraction"));
+        let reopened: DocsEvidenceBundle = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(reopened, historical);
+        validate_observation(&reopened).unwrap();
+        assert!(validate_selected_scope(
+            &super::super::claim_observation::test_support::policy(),
+            &reopened,
+        )
+        .is_err());
     }
 
     #[test]

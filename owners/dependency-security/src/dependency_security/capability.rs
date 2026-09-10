@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use super::contracts::*;
 use super::inventory::cargo::CargoInventoryLimits;
-use super::policy::DependencySecurityPolicyV1;
+use super::policy::DependencySecurityPolicyV2;
 use crate::capability::*;
 use crate::error::ApiError;
 use crate::execution::{ExecutionEventContext, ExecutionRuntimeContext};
@@ -100,7 +100,7 @@ pub(crate) struct SecurityCapability {
     pub publication_gate: std::sync::Arc<tokio::sync::Mutex<()>>,
     pub id: String,
     pub subject: DependencySecuritySubjectV1,
-    pub policy: DependencySecurityPolicyV1,
+    pub policy: DependencySecurityPolicyV2,
     pub workspace: Option<PathBuf>,
     pub cargo: Option<PathBuf>,
     pub advisories: Option<PathBuf>,

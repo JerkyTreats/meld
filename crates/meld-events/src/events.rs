@@ -1,11 +1,11 @@
-//! Canonical event domain contracts and compatibility surface.
+//! Canonical event domain contracts.
 //!
 //! This domain owns unsequenced envelopes, persisted event records, graph
 //! materialization references, single-writer ingestion with group commit,
 //! durable and best-effort emission, and append-only event storage.
 //!
-//! Inputs are producer envelopes from telemetry, execution, workflow, world
-//! model, and compatibility callers. Outputs are sequenced event records,
+//! Inputs are producer envelopes from telemetry, execution, workflow, and world
+//! model callers. Outputs are sequenced event records,
 //! session-scoped reads, runtime-wide cursor reads, and object references for
 //! downstream graph materializers.
 //!
@@ -42,8 +42,6 @@ use serde_json::Value;
 
 /// Identity-bound event authority and its derived capabilities.
 pub mod authority;
-/// Compatibility aliases for pre-extraction event callers.
-pub mod compat;
 /// Durable consumer cursor contract owned by the events domain.
 pub mod consumer;
 /// Domain object and relation records carried by event envelopes.

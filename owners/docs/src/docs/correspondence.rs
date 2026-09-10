@@ -9,7 +9,10 @@ use crate::provider::ProviderCompletionPort;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-pub const CORRESPONDENCE_CONTRACT: &str = "docs.claim-correspondence.v2";
+pub const CORRESPONDENCE_CONTRACT: &str = "docs.claim-correspondence.v3";
+pub(crate) const PREVIOUS_CORRESPONDENCE_CONTRACT: &str = "docs.claim-correspondence.v2";
+// Retained V1 reports upgrade projection without another semantic judgment.
+// Remove this reader only after V1 owner histories are migrated or support is retired.
 const LEGACY_CORRESPONDENCE_CONTRACT: &str = "docs.claim-correspondence.v1";
 
 /// A source assertion selected from this README's directory subtree. Selection
@@ -62,6 +65,9 @@ pub struct DocsCorrespondenceReport {
     pub input_id: String,
     pub contract_revision: String,
     pub policy_identity: String,
+    /// Absent only in historical reports whose nonempty matches passed admission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimum_match_confidence: Option<f64>,
     pub complete: bool,
     pub readmes: Vec<ReadmeCorrespondence>,
 }
@@ -88,17 +94,18 @@ pub(crate) fn input_identity(
     )
 }
 
-pub(crate) fn legacy_input_identity(
+pub(crate) fn legacy_input_identities(
     policy: &DocsClaimPolicy,
     bundle: &DocsEvidenceBundle,
     sources: &DocsSourceClaimReport,
-) -> Result<String, ApiError> {
-    input_for_policy(
+) -> Result<Vec<String>, ApiError> {
+    [
+        PREVIOUS_CORRESPONDENCE_CONTRACT,
         LEGACY_CORRESPONDENCE_CONTRACT,
-        &policy.content_identity(),
-        bundle,
-        sources,
-    )
+    ]
+    .iter()
+    .map(|contract| input_for_policy(contract, &policy.content_identity(), bundle, sources))
+    .collect()
 }
 
 fn input_for_policy(
@@ -212,7 +219,9 @@ pub(crate) async fn advance_correspondence(
     let input_id = input_identity(policy, bundle, sources)?;
     if let Some(prior) = prior {
         prior.validate_capture(bundle, sources)?;
-        if prior.input_id != input_id {
+        if prior.input_id != input_id
+            || prior.minimum_match_confidence != Some(policy.minimum_claim_confidence)
+        {
             return Err(invalid(
                 "Docs correspondence progress belongs to another input",
             ));
@@ -262,7 +271,7 @@ pub(crate) async fn advance_correspondence(
         result
             .claims
             .sort_by(|a, b| a.source_claim_id.cmp(&b.source_claim_id));
-        validate_readme(&result, readme, &selected, policy.minimum_claim_confidence)?;
+        validate_readme(&result, readme, &selected)?;
         results.push(result);
     }
     let mut report = DocsCorrespondenceReport {
@@ -270,6 +279,7 @@ pub(crate) async fn advance_correspondence(
         input_id,
         contract_revision: CORRESPONDENCE_CONTRACT.into(),
         policy_identity: policy.content_identity(),
+        minimum_match_confidence: Some(policy.minimum_claim_confidence),
         complete: results.len() == readmes.len(),
         readmes: results,
     };
@@ -283,11 +293,18 @@ impl DocsCorrespondenceReport {
         &self,
         bundle: &DocsEvidenceBundle,
         sources: &DocsSourceClaimReport,
+        previous: bool,
     ) -> Self {
         let mut old = self.clone();
-        old.contract_revision = LEGACY_CORRESPONDENCE_CONTRACT.into();
+        old.contract_revision = if previous {
+            PREVIOUS_CORRESPONDENCE_CONTRACT
+        } else {
+            LEGACY_CORRESPONDENCE_CONTRACT
+        }
+        .into();
+        old.minimum_match_confidence = None;
         old.input_id = input_for_policy(
-            LEGACY_CORRESPONDENCE_CONTRACT,
+            &old.contract_revision,
             &self.policy_identity,
             bundle,
             sources,
@@ -301,11 +318,18 @@ impl DocsCorrespondenceReport {
     /// projection adds native support predicates without repeating semantic judgment.
     pub(crate) fn upgraded(
         &self,
+        policy: &DocsClaimPolicy,
         bundle: &DocsEvidenceBundle,
         sources: &DocsSourceClaimReport,
     ) -> Result<Self, ApiError> {
         self.validate_capture(bundle, sources)?;
+        if self.policy_identity != policy.content_identity() {
+            return Err(invalid(
+                "Docs correspondence upgrade requires its exact selected policy",
+            ));
+        }
         let mut next = self.clone();
+        next.minimum_match_confidence = Some(policy.minimum_claim_confidence);
         next.contract_revision = CORRESPONDENCE_CONTRACT.into();
         next.input_id = input_for_policy(
             CORRESPONDENCE_CONTRACT,
@@ -317,17 +341,37 @@ impl DocsCorrespondenceReport {
         Ok(next)
     }
 
+    pub(crate) fn establishes_match(&self, claim: &SourceCorrespondence) -> bool {
+        !claim.readme_claim_ids.is_empty()
+            && claim.confidence >= self.minimum_match_confidence.unwrap_or(0.0)
+    }
+
     fn identity(&self) -> Result<String, ApiError> {
-        identity(
-            "docs-correspondence",
-            &(
-                &self.input_id,
-                &self.contract_revision,
-                &self.policy_identity,
-                self.complete,
-                &self.readmes,
+        // Preserve the exact historical digest. New observations additionally bind
+        // the selected threshold so uncertain proposals remain durable evidence.
+        match self.minimum_match_confidence {
+            Some(minimum) => identity(
+                "docs-correspondence",
+                &(
+                    &self.input_id,
+                    &self.contract_revision,
+                    &self.policy_identity,
+                    self.complete,
+                    &self.readmes,
+                    minimum,
+                ),
             ),
-        )
+            None => identity(
+                "docs-correspondence",
+                &(
+                    &self.input_id,
+                    &self.contract_revision,
+                    &self.policy_identity,
+                    self.complete,
+                    &self.readmes,
+                ),
+            ),
+        }
     }
 
     pub(crate) fn validate_capture(
@@ -337,10 +381,19 @@ impl DocsCorrespondenceReport {
     ) -> Result<(), ApiError> {
         sources.validate_capture(bundle)?;
         let readmes = captured_readmes(bundle)?;
-        if !sources.complete
+        if self
+            .minimum_match_confidence
+            .is_some_and(|minimum| !minimum.is_finite() || !(0.0..=1.0).contains(&minimum))
+            || !sources.complete
             || self.policy_identity != sources.policy_identity
-            || ![CORRESPONDENCE_CONTRACT, LEGACY_CORRESPONDENCE_CONTRACT]
-                .contains(&self.contract_revision.as_str())
+            || (self.contract_revision == CORRESPONDENCE_CONTRACT
+                && self.minimum_match_confidence.is_none())
+            || ![
+                CORRESPONDENCE_CONTRACT,
+                PREVIOUS_CORRESPONDENCE_CONTRACT,
+                LEGACY_CORRESPONDENCE_CONTRACT,
+            ]
+            .contains(&self.contract_revision.as_str())
             || self.report_id != self.identity()?
             || self.input_id
                 != input_for_policy(
@@ -364,7 +417,6 @@ impl DocsCorrespondenceReport {
                 result,
                 readme,
                 &selected_sources(&readme.path, sources, bundle),
-                0.0,
             )?;
         }
         Ok(())
@@ -375,7 +427,6 @@ fn validate_readme(
     result: &ReadmeCorrespondence,
     readme: &ObservedReadme,
     selected: &[CorrespondenceSource<'_>],
-    minimum_confidence: f64,
 ) -> Result<(), ApiError> {
     let expected = selected
         .iter()
@@ -410,11 +461,12 @@ fn validate_readme(
             || claim.rationale.trim().is_empty()
             || !claim.confidence.is_finite()
             || !(0.0..=1.0).contains(&claim.confidence)
-            || (!matches.is_empty() && claim.confidence < minimum_confidence)
         {
-            return Err(invalid(
-                "Docs correspondence names unknown claims or invalid evidence",
-            ));
+            return Err(invalid(&format!(
+                "Docs correspondence invalid for {}: unknown_ids={}, duplicate_ids={}, empty_rationale={}, confidence={}",
+                claim.source_claim_id, !matches.is_subset(&observed), matches.len() != claim.readme_claim_ids.len(),
+                claim.rationale.trim().is_empty(), claim.confidence,
+            )));
         }
     }
     Ok(())
@@ -670,7 +722,6 @@ mod tests {
             "foreign_readme",
             "duplicate_match",
             "incomplete",
-            "uncertain",
             "unreasoned",
         ] {
             assert!(
@@ -680,6 +731,28 @@ mod tests {
                 "{defect}"
             );
         }
+        let uncertain =
+            advance_correspondence(&BadJudge("uncertain"), &policy, &bundle, &sources, None, 1)
+                .await
+                .unwrap();
+        assert!(uncertain.complete);
+        assert!(!uncertain.readmes[0].claims[0].readme_claim_ids.is_empty());
+        assert!(!uncertain.establishes_match(&uncertain.readmes[0].claims[0]));
+        uncertain.validate_capture(&bundle, &sources).unwrap();
+        let resumed = advance_correspondence(
+            &BadJudge("incomplete"),
+            &policy,
+            &bundle,
+            &sources,
+            Some(&uncertain),
+            1,
+        )
+        .await
+        .unwrap();
+        assert_eq!(resumed, uncertain);
+        let mut tampered = uncertain.clone();
+        tampered.minimum_match_confidence = Some(0.0);
+        assert!(tampered.validate_capture(&bundle, &sources).is_err());
         let unresolved = advance_correspondence(
             &BadJudge("uncertain_missing"),
             &policy,

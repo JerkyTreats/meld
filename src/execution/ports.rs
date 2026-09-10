@@ -25,12 +25,11 @@ use serde_json::Value;
 use std::path::Path;
 
 pub use meld_execution::{
-    BeliefStatusLabel, ExecutionEventContext, ExecutionFrame, ExecutionNodeContext,
-    ExecutionNodeKind, ExecutionNodeRecord, FrameMetadataValidationProgressEventData,
-    PreparedPromptLineage, PreviousMetadataSnapshotView, PromptContextLineageProgressEventData,
-    PromptLineageRequest, PromptLinkContractView, ProviderPreparationView,
-    WorkflowForceResetProgressEventData, WorkflowTargetProgressEventData,
-    WorkflowTurnProgressEventData,
+    ExecutionEventContext, ExecutionFrame, ExecutionNodeContext, ExecutionNodeKind,
+    ExecutionNodeRecord, FrameMetadataValidationProgressEventData, PreparedPromptLineage,
+    PreviousMetadataSnapshotView, PromptContextLineageProgressEventData, PromptLineageRequest,
+    PromptLinkContractView, ProviderPreparationView, WorkflowForceResetProgressEventData,
+    WorkflowTargetProgressEventData, WorkflowTurnProgressEventData,
 };
 
 pub trait ContextReadPort:
@@ -536,7 +535,6 @@ impl meld_execution::PromptLineagePort for ContextApi {
                 user_prompt_template: input.user_prompt_template.clone(),
                 rendered_prompt: input.rendered_prompt.clone(),
                 context_payload: input.context_payload.clone(),
-                belief_context_bundle: input.belief_context_bundle.clone(),
             },
         )?;
         let prompt_link_contract = PromptLinkContractV1::from_lineage(&prepared.lineage);

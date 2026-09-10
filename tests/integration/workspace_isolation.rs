@@ -196,8 +196,8 @@ fn test_workspace_isolation_persistence_isolation() {
         let frame_id2 = write_head(&ctx2, node_id, b"second");
 
         // Verify persistence files are in different locations
-        let persistence_path1 = HeadIndex::persistence_path(workspace1.path());
-        let persistence_path2 = HeadIndex::persistence_path(workspace2.path());
+        let persistence_path1 = HeadIndex::persistence_path(workspace1.path()).unwrap();
+        let persistence_path2 = HeadIndex::persistence_path(workspace2.path()).unwrap();
         assert_ne!(
             persistence_path1, persistence_path2,
             "Persistence files should be in different locations"

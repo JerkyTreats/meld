@@ -55,7 +55,7 @@ pub fn workspace_data_dir(workspace_root: &Path) -> Result<PathBuf, ApiError> {
         }
     }
 
-    Ok(data_dir)
+    super::external::validate_external_product_root(data_dir, &canonical, None, None)
 }
 
 /// Get XDG config home directory

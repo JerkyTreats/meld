@@ -1,0 +1,12 @@
+{
+  "context_size": 262144,
+  "error": null,
+  "model_path": "/home/jerkytreats/.local/share/lmserver/models/qwen3-coder-next/Qwen3-Coder-Next-UD-Q3_K_M.gguf",
+  "observed_at": "2026-09-09T19:20:57.290835Z",
+  "public_alias": "local",
+  "ready": true,
+  "selected_model": "qwen3-coder-next",
+  "served_model": "qwen3-coder-next",
+  "service_state": "active",
+  "transitioning": false
+}

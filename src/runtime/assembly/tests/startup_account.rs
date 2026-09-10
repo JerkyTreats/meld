@@ -242,6 +242,17 @@ fn startup_account_names_graph_lag_and_keeps_uncertain_execution_separate() {
         EvidenceState::Stale
     );
     supervisor.request_shutdown(3_000).unwrap();
+    let stopped = reader.inspect(&request).unwrap();
+    assert_eq!(stopped.generation_id, recovered.generation_id);
+    assert_eq!(stopped.nonce_id, recovered.nonce_id);
+    assert_eq!(
+        stopped.first_missing,
+        Some(StartupPosition::GenerationCurrent)
+    );
+    assert!(stopped.positions.iter().any(|position| {
+        position.position == StartupPosition::GoalSatisfied
+            && position.state == EvidenceState::Available
+    }));
     drop(reader);
     drop(supervisor);
     drop(graph);
@@ -271,6 +282,14 @@ fn startup_account_names_graph_lag_and_keeps_uncertain_execution_separate() {
     assert_ne!(successor.nonce_id, complete.nonce_id);
     assert_eq!(successor.first_missing, None, "{successor:?}");
     supervisor.request_shutdown(1_000_600).unwrap();
+    let stopped_successor = reader.inspect(&request).unwrap();
+    assert_eq!(stopped_successor.generation_id, successor.generation_id);
+    assert_eq!(stopped_successor.nonce_id, successor.nonce_id);
+    assert_ne!(stopped_successor.nonce_id, stopped.nonce_id);
+    assert_eq!(
+        stopped_successor.first_missing,
+        Some(StartupPosition::GenerationCurrent)
+    );
 }
 
 #[test]

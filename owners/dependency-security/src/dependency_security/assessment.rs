@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use serde::Serialize;
 
 use super::contracts::*;
-use super::policy::DependencySecurityPolicyV1;
+use super::policy::DependencySecurityPolicyV2;
 
 #[derive(Serialize)]
 struct Identity<'a> {
@@ -22,7 +22,7 @@ pub fn assess(
     subject: &DependencySecuritySubjectV1,
     inventory: Option<&DependencyInventorySnapshotV1>,
     advisory: Option<&AdvisoryKnowledgeSnapshotV1>,
-    policy: &DependencySecurityPolicyV1,
+    policy: &DependencySecurityPolicyV2,
     reference_time: u64,
 ) -> Result<DependencySecurityAssessmentV1, String> {
     policy.validate()?;
@@ -152,25 +152,19 @@ mod tests {
     use crate::dependency_security::policy::*;
     use meld_events::DomainObjectRef;
 
-    fn policy() -> DependencySecurityPolicyV1 {
-        DependencySecurityPolicyV1 {
+    fn policy() -> DependencySecurityPolicyV2 {
+        DependencySecurityPolicyV2 {
             policy_id: "policy".into(),
             subject_kind: "workspace".into(),
             ecosystem: PackageEcosystem::Cargo,
             required_advisory_source_id: "fixture".into(),
-            required_coverage: CoverageRequirementV1 {
-                require_complete_inventory: true,
-                require_all_components_covered: true,
-                require_transitive_dependencies: true,
-            },
+            coverage_contract: CoverageContractV2::CompleteTransitiveAllComponents,
             currency: CurrencyRequirementV1 {
                 maximum_source_age_seconds: 10,
                 maximum_inventory_age_seconds: 10,
             },
             severity_threshold: SeverityV1::High,
-            verification: VerificationRequirementV1 {
-                require_independent_calculation: true,
-            },
+            verification_contract: VerificationContractV2::IndependentRecalculation,
         }
     }
     fn subject() -> DependencySecuritySubjectV1 {
