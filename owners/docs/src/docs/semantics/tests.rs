@@ -220,7 +220,10 @@ fn evidence_choice_contracts_preserve_exact_text_without_inventing_citations() {
     }
     assert!(bound.get("x-meld-enum-from-lines").is_none());
     assert!(bind_evidence_choices(&format, &serde_json::json!({"source":""})).is_err());
-    assert!(bind_evidence_choices(&format, &serde_json::json!({"source":"","empty":""})).is_err());
+    assert_eq!(
+        bind_evidence_choices(&format, &serde_json::json!({"source":"","empty":""})).unwrap(),
+        serde_json::Value::Bool(false)
+    );
     let missing_selection = serde_json::json!({"type":"string"});
     assert_eq!(
         bind_evidence_choices(&missing_selection, &input).unwrap(),

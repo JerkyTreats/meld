@@ -311,7 +311,10 @@ fn bind_evidence_choices(
                         }
                     }
                     if choices.is_empty() {
-                        return Err(invalid("evidence choice contract has no captured text"));
+                        // Empty captured text supplies no legal quotation. A false
+                        // item schema still permits the caller's empty claim array;
+                        // absent capture remains an error above.
+                        return Ok(Value::Bool(false));
                     }
                     bound.insert(
                         "enum".into(),
