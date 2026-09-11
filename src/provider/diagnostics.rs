@@ -53,6 +53,7 @@ impl ProviderDiagnosticsService {
 
     pub fn resolve_api_key_status(provider: &ProviderConfig) -> String {
         match provider.provider_type {
+            ProviderType::Codex => "Managed by Codex CLI login".to_string(),
             ProviderType::OpenAI => {
                 if provider.api_key.is_some() {
                     "Set (from config)".to_string()
@@ -125,6 +126,13 @@ impl ProviderDiagnosticsService {
         }
 
         match provider.provider_type {
+            ProviderType::Codex => match provider.validate() {
+                Ok(()) => result.add_check(
+                    "Codex configuration is valid; login is managed by Codex",
+                    true,
+                ),
+                Err(error) => result.add_error(error),
+            },
             ProviderType::OpenAI | ProviderType::Anthropic => {
                 let api_key_available = provider.api_key.is_some()
                     || match provider.provider_type {

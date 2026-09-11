@@ -34,6 +34,11 @@ pub fn prepare_provider_for_request_from_api(
         .get_or_error(&request.provider.provider_name)?
         .clone();
     request.provider.runtime_overrides.validate()?;
+    if provider_config.provider_type == super::ProviderType::Codex {
+        super::codex::validate_request_overrides(
+            &request.provider.runtime_overrides.extra_body_fields,
+        )?;
+    }
     if let Some(model_override) = request.provider.runtime_overrides.model_override.as_ref() {
         provider_config.model = model_override.clone();
     }
@@ -117,6 +122,16 @@ pub async fn execute_completion_from_api(
     {
         Ok(r) => Ok(r),
         Err(e) => {
+            if let (ApiError::ProviderExecutionFailed { metadata, .. }, Some(ctx)) =
+                (&e, event_context)
+            {
+                let _ = <crate::api::ContextApi as meld_execution::ExecutionProgressPort>::emit_progress_event(
+                    api, ctx, "provider_execution_failed",
+                    json!({"request_id": request.request_id,
+                        "provider_name": request.provider.provider_name,
+                        "execution_metadata": metadata}),
+                );
+            }
             emit_provider_event(
                 api,
                 event_context,
@@ -157,6 +172,16 @@ pub async fn execute_completion_from_api(
     }?;
 
     let duration = start.elapsed();
+    if !response.execution_metadata.is_empty() {
+        if let Some(ctx) = event_context {
+            let _ = <crate::api::ContextApi as meld_execution::ExecutionProgressPort>::emit_progress_event(
+                api, ctx, "provider_execution_completed",
+                json!({"request_id": request.request_id,
+                    "provider_name": request.provider.provider_name,
+                    "execution_metadata": response.execution_metadata}),
+            );
+        }
+    }
     info!(
         request_id = request.request_id,
         node_id = %hex::encode(request.node_id),

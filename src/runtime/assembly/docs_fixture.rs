@@ -332,6 +332,7 @@ impl crate::provider::ProviderCompletionPort for JudgeProvider {
                     total_tokens: 2,
                 },
                 finish_reason: Some("stop".into()),
+                execution_metadata: Default::default(),
             },
         })
     }

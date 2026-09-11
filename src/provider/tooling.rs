@@ -295,7 +295,7 @@ fn create_interactive() -> Result<ProviderCreationDialogResult, ApiError> {
 
     let type_selection = Select::new()
         .with_prompt("Provider type")
-        .items(&["openai", "anthropic", "ollama", "local"])
+        .items(&["openai", "anthropic", "ollama", "local", "codex"])
         .default(0)
         .interact()
         .map_err(|e| ApiError::ConfigError(format!("Failed to get user input: {}", e)))?;
@@ -305,6 +305,7 @@ fn create_interactive() -> Result<ProviderCreationDialogResult, ApiError> {
         1 => crate::provider::ProviderType::Anthropic,
         2 => crate::provider::ProviderType::Ollama,
         3 => crate::provider::ProviderType::LocalCustom,
+        4 => crate::provider::ProviderType::Codex,
         _ => unreachable!(),
     };
 
@@ -312,6 +313,19 @@ fn create_interactive() -> Result<ProviderCreationDialogResult, ApiError> {
         .with_prompt("Model name")
         .interact_text()
         .map_err(|e| ApiError::ConfigError(format!("Failed to get user input: {}", e)))?;
+
+    if provider_type == crate::provider::ProviderType::Codex {
+        return Ok((
+            provider_type,
+            model,
+            None,
+            None,
+            crate::provider::CompletionOptions {
+                temperature: None,
+                ..Default::default()
+            },
+        ));
+    }
 
     let default_endpoint = ProviderCommandService::default_endpoint(provider_type);
     let endpoint = if provider_type == crate::provider::ProviderType::LocalCustom {

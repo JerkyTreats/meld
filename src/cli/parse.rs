@@ -748,7 +748,7 @@ pub enum ProviderCommands {
         /// Output format (text or json)
         #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
         format: String,
-        /// Filter by provider type (openai, anthropic, ollama, local)
+        /// Filter by provider type (codex, openai, anthropic, ollama, local)
         #[arg(long)]
         type_filter: Option<String>,
     },
@@ -792,7 +792,7 @@ pub enum ProviderCommands {
     Create {
         /// Provider name
         provider_name: String,
-        /// Provider type (openai, anthropic, ollama, local)
+        /// Provider type (codex, openai, anthropic, ollama, local)
         #[arg(long, name = "type")]
         type_: Option<String>,
         /// Model name

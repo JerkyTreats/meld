@@ -158,6 +158,7 @@ impl meld_execution::ProviderExecutionPort for RecordingProvider {
                 total_tokens: 0,
             },
             finish_reason: None,
+            execution_metadata: Default::default(),
         })
     }
 }

@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub mod clients;
+mod codex;
 pub mod commands;
 pub mod completion;
 pub mod diagnostics;
@@ -42,6 +43,9 @@ pub use profile::{ProviderConfig, ProviderType, ValidationResult};
 /// Model provider configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ModelProvider {
+    Codex {
+        model: String,
+    },
     OpenAI {
         model: String,
         api_key: String,
@@ -305,6 +309,7 @@ impl ModelProviderClient for OpenAIClient {
                 total_tokens: usage.total_tokens,
             },
             finish_reason: choice.finish_reason.clone(),
+            execution_metadata: Default::default(),
         })
     }
 
@@ -495,6 +500,7 @@ impl ModelProviderClient for AnthropicClient {
                 total_tokens: usage.input_tokens + usage.output_tokens,
             },
             finish_reason: Some("stop".to_string()),
+            execution_metadata: Default::default(),
         })
     }
 
@@ -618,6 +624,7 @@ impl ModelProviderClient for OllamaClient {
                 total_tokens: usage.total_tokens,
             },
             finish_reason: choice.finish_reason.clone(),
+            execution_metadata: Default::default(),
         })
     }
 
@@ -770,6 +777,7 @@ impl ModelProviderClient for CustomLocalClient {
                 total_tokens: usage.total_tokens,
             },
             finish_reason: choice.finish_reason.clone(),
+            execution_metadata: Default::default(),
         })
     }
 
@@ -843,6 +851,7 @@ impl ProviderFactory {
         provider: &ModelProvider,
     ) -> Result<Box<dyn ModelProviderClient>, ApiError> {
         match provider {
+            ModelProvider::Codex { model } => Ok(Box::new(codex::CodexClient::new(model.clone()))),
             ModelProvider::OpenAI {
                 model,
                 api_key,
@@ -1054,6 +1063,7 @@ impl ModelProviderClient for MockProvider {
                 total_tokens: 30,
             },
             finish_reason: Some("stop".to_string()),
+            execution_metadata: Default::default(),
         })
     }
 

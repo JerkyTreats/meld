@@ -85,6 +85,9 @@ pub struct CompletionResponse {
     pub usage: TokenUsage,
     /// Provider finish reason when one was reported.
     pub finish_reason: Option<String>,
+    /// Provider-authored execution evidence, absent from historical responses.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub execution_metadata: BTreeMap<String, Value>,
 }
 
 /// Request to run one generation orchestration against a workspace node.

@@ -43,6 +43,10 @@ impl ProviderCompletionPort for RecordingCompletion {
                     total_tokens: 3,
                 },
                 finish_reason: Some("stop".into()),
+                execution_metadata: std::collections::BTreeMap::from([(
+                    "fixture".into(),
+                    serde_json::json!({"version":"captured"}),
+                )]),
             },
         })
     }
@@ -102,6 +106,10 @@ fn provider_callbacks_keep_the_native_selection_context_and_provenance() {
     );
     assert_eq!(completed.preparation.requested_model, "selected-model");
     assert_eq!(completed.response.content, "owner-result");
+    assert_eq!(
+        completed.response.execution_metadata["fixture"]["version"],
+        "captured"
+    );
     assert_eq!(*native.contexts.lock().unwrap(), vec![Some(context)]);
     let forged = ExecutionEventContext {
         session_id: "another-session".into(),

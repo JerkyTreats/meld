@@ -87,6 +87,9 @@ impl From<ApiError> for ProviderCompletionFailure {
             ApiError::ProviderError(message) => Self::ProviderError(message),
             ApiError::ProviderNotConfigured(message) => Self::ProviderNotConfigured(message),
             ApiError::ProviderRequestFailed(message) => Self::ProviderRequestFailed(message),
+            ApiError::ProviderExecutionFailed { message, .. } => {
+                Self::ProviderRequestFailed(message)
+            }
             ApiError::ProviderRequestRejected { status, message } => {
                 Self::ProviderRequestRejected { status, message }
             }

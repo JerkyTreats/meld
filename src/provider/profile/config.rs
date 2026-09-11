@@ -32,6 +32,7 @@ pub struct ProviderConfig {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderType {
+    Codex,
     #[serde(rename = "openai")]
     OpenAI,
     #[serde(rename = "anthropic")]
@@ -108,6 +109,15 @@ impl ProviderConfig {
 
     /// Validate provider configuration.
     pub fn validate(&self) -> Result<(), String> {
+        if self.provider_type == ProviderType::Codex {
+            if self.endpoint.is_some() || self.api_key.is_some() {
+                return Err(
+                    "Codex uses CLI authentication; endpoint and api_key are not supported".into(),
+                );
+            }
+            crate::provider::codex::validate_options(&self.default_options)
+                .map_err(|error| error.to_string())?;
+        }
         if self.model.trim().is_empty() {
             return Err("Model name cannot be empty".to_string());
         }
@@ -139,6 +149,12 @@ impl ProviderConfig {
         });
 
         match self.provider_type {
+            ProviderType::Codex => {
+                self.validate().map_err(ApiError::ConfigError)?;
+                Ok(ModelProvider::Codex {
+                    model: self.model.clone(),
+                })
+            }
             ProviderType::OpenAI => {
                 let api_key = api_key.ok_or_else(|| {
                     ApiError::ProviderNotConfigured(

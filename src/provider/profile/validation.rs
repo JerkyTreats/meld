@@ -46,6 +46,7 @@ impl ValidationResult {
 
 pub fn provider_type_slug(provider_type: ProviderType) -> &'static str {
     match provider_type {
+        ProviderType::Codex => "codex",
         ProviderType::OpenAI => "openai",
         ProviderType::Anthropic => "anthropic",
         ProviderType::Ollama => "ollama",

@@ -183,6 +183,13 @@ pub enum ApiError {
     #[error("Provider request failed: {0}")]
     ProviderRequestFailed(String),
 
+    /// Provider-owned execution evidence retained when no completion is accepted.
+    #[error("Provider execution failed: {message}")]
+    ProviderExecutionFailed {
+        message: String,
+        metadata: std::collections::BTreeMap<String, serde_json::Value>,
+    },
+
     /// The provider rejected the request before producing a completion.
     #[error("Provider rejected request with HTTP {status}: {message}")]
     ProviderRequestRejected { status: u16, message: String },
@@ -323,6 +330,12 @@ impl Clone for ApiError {
             }
             ApiError::ProviderRequestFailed(message) => {
                 ApiError::ProviderRequestFailed(message.clone())
+            }
+            ApiError::ProviderExecutionFailed { message, metadata } => {
+                ApiError::ProviderExecutionFailed {
+                    message: message.clone(),
+                    metadata: metadata.clone(),
+                }
             }
             ApiError::ProviderRequestRejected { status, message } => {
                 ApiError::ProviderRequestRejected {

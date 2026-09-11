@@ -58,12 +58,13 @@ pub struct ProviderTestResult {
 impl ProviderCommandService {
     pub fn parse_provider_type(type_str: &str) -> Result<ProviderType, ApiError> {
         match type_str {
+            "codex" => Ok(ProviderType::Codex),
             "openai" => Ok(ProviderType::OpenAI),
             "anthropic" => Ok(ProviderType::Anthropic),
             "ollama" => Ok(ProviderType::Ollama),
             "local" => Ok(ProviderType::LocalCustom),
             _ => Err(ApiError::ConfigError(format!(
-                "Invalid type filter: {}. Must be openai, anthropic, ollama, or local",
+                "Invalid type filter: {}. Must be codex, openai, anthropic, ollama, or local",
                 type_str
             ))),
         }
@@ -73,7 +74,7 @@ impl ProviderCommandService {
         match provider_type {
             ProviderType::OpenAI => Some("https://api.openai.com/v1".to_string()),
             ProviderType::Ollama => Some("http://localhost:11434".to_string()),
-            ProviderType::LocalCustom | ProviderType::Anthropic => None,
+            ProviderType::Codex | ProviderType::LocalCustom | ProviderType::Anthropic => None,
         }
     }
 
@@ -81,7 +82,7 @@ impl ProviderCommandService {
         match provider_type {
             ProviderType::OpenAI => Some("OPENAI_API_KEY"),
             ProviderType::Anthropic => Some("ANTHROPIC_API_KEY"),
-            ProviderType::Ollama | ProviderType::LocalCustom => None,
+            ProviderType::Codex | ProviderType::Ollama | ProviderType::LocalCustom => None,
         }
     }
 
