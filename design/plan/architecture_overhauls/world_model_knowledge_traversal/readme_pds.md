@@ -4,6 +4,14 @@ Date: 2026-09-10
 Status: runtime package work authorized; initial owner implementation approach invalidated by the package boundary correction below. No README product qualification is claimed.
 Source basis: `cdc13446`, with the README and this requirement authored in the working tree.
 
+## Current proposed architecture
+
+The independent [README program architecture](../../../../../meld-readme/ARCHITECTURE.md) is the canonical reconciliation of current code with the user-directed runtime–harness–WAD loop. It traces external authorship through Events, domain admission, qualified entities, Graph, Curation, native judgment and repair. It includes the current domain sweep, runtime versus WAD change accounting, architecture diagrams, a proposed WAD tree and exact supporting source identities.
+
+Luna-low is the fixed runtime model constraint. PDS representation and verification are the experimental variables; runtime and harness changes enable the composed journey where evidence requires them. Live capability adoption is deferred, with restart and existing preparation allowed for installed-code or theory changes. Data contributions must reconcile live through Events. No direct Graph authorship or README semantics in the Meld runtime are introduced.
+
+The assessment identifies contribution consumption, complete document publication, uncertainty handling, semantic dependency checks and public exact-input proof as the central connections to establish. Existing native contracts provide most candidate seams; their composed successor behavior remains unqualified. This is an architecture checkpoint, not implementation or acceptance of the proposed claim judge. Earlier sections below retain historical experiments and their bounded conclusions.
+
 ## Candidate outcome
 
 Meld 3 must do at least one useful thing well: fully manage a serious README for Meld, with quality appropriate to its code and architecture. The production product is **README PDS**. `docs_freshness` remains a separate internal maintenance and harness PDS. A separate product does not by itself require a new semantic owner.
