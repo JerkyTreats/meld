@@ -1,6 +1,6 @@
 # Event-authored README candidate
 
-The actual Meld README is now written and confirmed by the independent README PDS using Luna-low. The full live maintenance challenge passes, including exact repair and unchanged-claim reuse. Recovery from a flattened root document remains under qualification at this checkpoint.
+The initial root-and-leaf README candidate is qualified. The actual Meld README is written and confirmed by the independent README PDS using Luna-low. The final nineteen-obligation program accepts that document, reconstructs a flattened root README and passes the complete live maintenance challenge. The [qualification record](../../../../../meld-readme/QUALIFICATION.md) owns the final scope and evidence matrix.
 
 Both Meld and Meld Eval use `feat/readme-pds-event-claims`. The [README domain](../../../../../meld-readme/README.md) remains outside Meld and deliberately unversioned. Its [architecture](../../../../../meld-readme/ARCHITECTURE.md), [implemented account](../../../../../meld-readme/experiments/event-claims/IMPLEMENTATION.md) and [delivery record](../../../../../meld-readme/DELIVERY.md) retain the design, Event-to-component landing account, WAD tree and complete experiment history.
 
@@ -30,15 +30,23 @@ The requested model is `gpt-5.6-luna` with reasoning effort `low`. The core exec
 | Same run, `source-loss` and `source-restored` | Missing source withholds confirmation; restoration reuses all assessments with zero calls. |
 | Leaf, `20260911T184825Z-237f5160` | Missing-document authorship, implementation change, flattened-prose repair, native confirmations and source-loss withholding pass. Each maintenance repair uses three calls; both quiet restarts use zero. |
 | Actual checkout, `20260911T191207Z-1ddf06b4` | Native PDS repair and all nine harness assertions pass. Seven total calls include initial assessment, a live source-evidence addition and repair. Only the introduction and retired-context-tooling paragraphs change; nine sections and all headings are preserved. |
+| Actual checkout, `20260911T193356Z-61da14c4` | Final knowledge matches compiled v16. All nineteen obligations and nine native assertions pass. The maintained README remains byte-identical; restart confirms it with zero calls. |
+| Reconstruction, `20260911T192325Z-cc762bbb/reconstruction-current` | Six calls recover a 2,128-word root document from a flattened inventory. Every exemplar heading remains, the changed source option is correct, and fresh native observation and request completion confirm the result. |
+| Same retained run, `live-claims-final` | All sixteen checks pass under the final program, including another independent rename to `--observe` and exact preservation of every other byte. Four attempts include one rejected tool-assisted completion and a successful retry. The final restart confirms the repaired document with zero calls. |
+| Final leaf, `20260911T195251Z-db49e949` | The v16 owner passes missing-document authorship, implementation change and flattened-prose repair. Both repairs use three calls; both restarts use zero. |
 | [CPU probes](../../../../../meld-readme/evidence/cpu-option-v10/report.json) | Stale spelling is rejected, corrected spelling and aliases are accepted, and computed names remain unresolved. All four runs use zero model calls. |
 
 [The actual-checkout assessment](../../../../../meld-readme/evidence/actual-checkout-v11/report.json) verifies the written document, source-preserving diff and unrelated workspace identities. Its accepted knowledge matches compiled v12 except for the live predecessor reference. The document remains substantial at 2,148 words. This is an installed root assignment, not automatic management of the 199 authored corpus documents.
 
-## Failure interpretation and remaining qualification
+## Failure interpretation and qualification boundary
 
 The experiment retains its failures. Exact quotations alone allowed false equality judgments. Broad syntax review overlooked a JSON alias and needlessly changed supported prose, so its native success failed the independent preservation check. The successor supplies explicit language conventions through the PDS and CPU checks for selected literal relationships. Missing selected evidence is resolved by adding the actual source through Events, not by weakening acceptance.
 
-The flattened-root test correctly rejected an inventory but could not repair it because the missing welcome passage was classified as unknown. The successor makes a required passage's absence a deterministic domain failure while retaining uncertainty for missing source evidence. That correction is external domain code and is currently being exercised in a fresh compiled candidate.
+The flattened-root test initially rejected an inventory but could not repair it because the missing welcome passage was classified as unknown. The successor makes a required passage's absence a deterministic domain failure while retaining uncertainty for missing source evidence. Reconstruction then exposed broad obligations that mixed lifecycle prose with syntax, an omitted bootstrap caller and stale guide evidence. Data revisions separate those claims and select the current call path, command contract and crate API source. The final reconstruction passes without new core authority.
+
+The [reconstruction assessment](../../../../../meld-readme/evidence/reconstruction-v16/report.json) includes independent prose and source checks. Its installed executable and native component files match v16 exactly; live Events supply the revised knowledge. The [final actual-checkout assessment](../../../../../meld-readme/evidence/actual-checkout-v16/report.json) verifies all nineteen obligations, compiled-program equivalence and unchanged document bytes. The [final CPU suite](../../../../../meld-readme/evidence/cpu-option-v16/report.json) repeats all four declaration cases without model calls.
+
+The useful abstraction is a claim tied to the evidence that can decide it. A quoted fragment alone cannot make a weak model compare literals correctly, and a helper implementation alone cannot explain its caller's bootstrap behavior. Domain capabilities handle represented mechanical relationships; authored source selection and questions carry semantic context; the exemplar and preservation policy carry the voice. Meld retains and reconciles their results through its existing authorities.
 
 No demonstrated failure has required a new core planner, scheduler, semantic authority or Graph writer. The architectural circuit breaker has therefore not tripped. The previously recorded long-call lease finding remains separately unqualified. Current bounded journeys do not establish unbounded scalability, exhaustive semantic truth or a corpus rollout.
 
