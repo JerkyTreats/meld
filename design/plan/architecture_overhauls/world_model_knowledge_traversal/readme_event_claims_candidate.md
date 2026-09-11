@@ -1,37 +1,45 @@
 # Event-authored README candidate
 
-The user authorized a new branch and full candidate experiment toward Luna-low plus Meld maintaining exemplar READMEs. Both Meld and Meld Eval use `feat/readme-pds-event-claims`. The independent [README domain](../../../../../meld-readme/README.md) remains outside Meld and deliberately unversioned. Its [architecture](../../../../../meld-readme/ARCHITECTURE.md), [active slice](../../../../../meld-readme/ACTIVE_SLICE.md) and [delivery record](../../../../../meld-readme/DELIVERY.md) retain the scope and changing evidence.
+The actual Meld README is now written and confirmed by the independent README PDS using Luna-low. The full live maintenance challenge passes, including exact repair and unchanged-claim reuse. Recovery from a flattened root document remains under qualification at this checkpoint.
+
+Both Meld and Meld Eval use `feat/readme-pds-event-claims`. The [README domain](../../../../../meld-readme/README.md) remains outside Meld and deliberately unversioned. Its [architecture](../../../../../meld-readme/ARCHITECTURE.md), [implemented account](../../../../../meld-readme/experiments/event-claims/IMPLEMENTATION.md) and [delivery record](../../../../../meld-readme/DELIVERY.md) retain the design, Event-to-component landing account, WAD tree and complete experiment history.
 
 ## Responsibility and implementation
 
-Meld commit `5ec258fc` adds public exact Event submission and committed readback. The command reaches the existing live Event authority, retains envelope identity, reuses an identical retry and refuses conflicting bytes. It introduces no README semantics or second writer. Meld Eval `5a135d4` proves that transport through 38 managed-command checks, including restart retention. Harness `fd2a3f3` adds exact Event inputs during native runs and public Event-field matching for observation probes.
+| Boundary | Delivered behavior |
+| --- | --- |
+| Meld runtime | `5ec258fc` exposes exact Event append and committed readback through the existing live authority. Identical retries reuse their position; conflicting bytes are refused. No README semantics or competing writer entered core. |
+| Meld Eval | `5a135d4` proves transport through 38 managed-command checks. `fd2a3f3` adds live Event inputs and Event-field probe matching. `6788772` adds explicit existing-workspace targets while retaining isolated product state and transcripts. |
+| README domain | The owner admits Event-authored obligations and attributed source documents, captures selected sources, publishes pending and complete views, retains per-obligation assessments, checks explicit option relationships by CPU and performs authorized native repairs. |
+| Authored WAD | The compiler selects native PDS components, an exact external executable, installed policy and a contribution Event. Data revisions reconcile live; executable or installed-policy changes use a new package and activation. |
 
-The external owner replaces whole-document factual verdicts with Event-authored obligations. It admits compatible contributions, retains their predecessor and Event identities, publishes pending views before inference, assesses selected source and document passages, and publishes the resulting domain view through the existing owner-publication contract. Native Graph, Curation, Agent, authorization, Task execution and lifecycle keep their responsibilities.
+Native Graph, Curation, Agent judgment, authorization, Task execution and lifecycle retain their responsibilities. External authors never write Graph or accepted owner state. A committed Event receipt, a domain admission and native Goal satisfaction remain distinct evidence.
 
-The README WAD compiler emits installed native components, an exact executable, contributed knowledge as an Event and artifact hashes. It does not write Graph or inject success. Live data revisions can select additional normal relative source files inside the authorized workspace. Capture bounds and path containment still apply. Installed capability or policy changes use a new compiled candidate and restart.
+The owner resolves model-selected evidence fragments into exact source quotations. CPU verifiers derive literal Clap names and aliases from Rust declarations. Exact edits preserve untouched bytes, and retries build on the preceding candidate. The final write still checks the original captured workspace and admitted program. Provenance does not prove model entailment; independent harness expectations remain necessary.
 
-The model selects identified evidence fragments. CPU code resolves exact source quotations, validates the response, retains assessments by their selected input basis and applies unique nonoverlapping text edits. It preserves untouched bytes. These checks make model interpretation attributable; they do not prove that a quotation entails a verdict. The harness must still challenge actual product behavior.
+## Established results
 
-## Established bounded results
+The requested model is `gpt-5.6-luna` with reasoning effort `low`. The core executable SHA256 is `3d04d85733eb37fdbfeae83f810750173ca9ab5e7691b54251b37d14a9adae58`. Every compiled external candidate retains its own executable, policy, contribution and artifact hashes.
 
-The model remains `gpt-5.6-luna` with reasoning effort `low`. The core executable SHA256 is `3d04d85733eb37fdbfeae83f810750173ca9ab5e7691b54251b37d14a9adae58`. Each external owner and policy candidate has its own immutable compiled directory.
+| Evidence | Result and scope |
+| --- | --- |
+| Root baseline, `20260911T184733Z-a8c58ada` | Seventeen obligations and all nine native assertions pass. The repair preserves every heading and nine unaffected sections. |
+| Same run, `alias-conventions` | A language-rule revision arrives through an Event, uses one new assessment, preserves the document and reaches native confirmation. |
+| Same run, `live-claims-v11` | All sixteen checks pass: live admission, uncertainty, resolution, duplicate and rejected revisions, reuse, independent `--stream` source mutation, exact repair, native confirmation and drain. Repair uses three model calls. Restart and unchanged-input paths use zero. |
+| Same run, `extend-sources` | A new source file and eighteenth obligation are admitted live, captured exactly and confirmed with one new model call. |
+| Same run, `source-loss` and `source-restored` | Missing source withholds confirmation; restoration reuses all assessments with zero calls. |
+| Leaf, `20260911T184825Z-237f5160` | Missing-document authorship, implementation change, flattened-prose repair, native confirmations and source-loss withholding pass. Each maintenance repair uses three calls; both quiet restarts use zero. |
+| Actual checkout, `20260911T191207Z-1ddf06b4` | Native PDS repair and all nine harness assertions pass. Seven total calls include initial assessment, a live source-evidence addition and repair. Only the introduction and retired-context-tooling paragraphs change; nine sections and all headings are preserved. |
+| [CPU probes](../../../../../meld-readme/evidence/cpu-option-v10/report.json) | Stale spelling is rejected, corrected spelling and aliases are accepted, and computed names remain unresolved. All four runs use zero model calls. |
 
-| Candidate and evidence | Result | Limit |
-| --- | --- | --- |
-| Three-obligation probes under `event-claims-v1` | Two fresh stale-command detections and an accepted unchanged-source control | Initial repair failed source-citation validation |
-| `event-claims-v2`, run `20260911T173652Z-b11f83d2` | Native root repair and confirmation, exact local edit, ten unaffected sections preserved, 2,104 words retained | Three obligations do not cover the entire document |
-| Same run, `live-claims` | Live admission, unresolved and resolving contributions, predecessor rejection, unrelated-input reuse, another command repair and native drain | Held-out repair used three provider calls |
-| Same run, `currentness-confirmation-2` | Twenty-second unresolved window, duplicate semantic input, exact Event retry and native recovery all pass | Demonstrates the represented input path |
-| `full-root-v4`, run `20260911T174838Z-36a9aa19` | Fifteen baseline obligations across all root sections passed | Held-out repair remained unconfirmed because an unrelated broader claim lacked source evidence |
-| `event-claims-leaf-v4`, run `20260911T175004Z-0b75a629` | Missing README authorship, implementation change, flattened-prose repair and native confirmations passed | Leaf scope only; each maintenance change used three calls, quiet restarts used zero |
-| `event-claims-leaf-v5`, run `20260911T175943Z-65ae50f3` | Missing selected source correctly withholds native confirmation | This corrects a previously demonstrated stale-view bug in the external owner |
-
-The full-root successor is qualifying with source-only factual evidence, explicit capture failures, narrower CLI selections and added context-history sources. A baseline or a detected defect alone is not root production acceptance. The broader corpus contains 199 authored READMEs; it is not 199 installed managed assignments.
+[The actual-checkout assessment](../../../../../meld-readme/evidence/actual-checkout-v11/report.json) verifies the written document, source-preserving diff and unrelated workspace identities. Its accepted knowledge matches compiled v12 except for the live predecessor reference. The document remains substantial at 2,148 words. This is an installed root assignment, not automatic management of the 199 authored corpus documents.
 
 ## Failure interpretation and remaining qualification
 
-The experiments exposed domain representation and owner-contract bugs: reconstructed quotations, citations to the claim itself, stale acceptance after capture failure, and incomplete source selection for a broader claim. The external domain corrections fit existing runtime contracts. No new planner, scheduler, semantic owner or competing writer was needed, so these results have not tripped the architectural circuit breaker.
+The experiment retains its failures. Exact quotations alone allowed false equality judgments. Broad syntax review overlooked a JSON alias and needlessly changed supported prose, so its native success failed the independent preservation check. The successor supplies explicit language conventions through the PDS and CPU checks for selected literal relationships. Missing selected evidence is resolved by adding the actual source through Events, not by weakening acceptance.
 
-A prior fifteen-minute provider and lease-liveness flaw remains separately recorded. These experiments do not qualify that long-call case. The current owner transport budget permits bounded multi-assessment repairs below the native lease duration; it does not establish unbounded program scaling.
+The flattened-root test correctly rejected an inventory but could not repair it because the missing welcome passage was classified as unknown. The successor makes a required passage's absence a deterministic domain failure while retaining uncertainty for missing source evidence. That correction is external domain code and is currently being exercised in a fresh compiled candidate.
 
-Final qualification must retain the exact full-root candidate, native changed-source repair, editorial preservation, incomplete-input behavior, Event revision behavior and restart reuse. Release and corpus-wide rollout remain separate. No push, release tag, crates.io publication or release workflow was authorized or performed by this experiment.
+No demonstrated failure has required a new core planner, scheduler, semantic authority or Graph writer. The architectural circuit breaker has therefore not tripped. The previously recorded long-call lease finding remains separately unqualified. Current bounded journeys do not establish unbounded scalability, exhaustive semantic truth or a corpus rollout.
+
+No push, release tag, crates.io publication or release workflow was performed. Local commits and builds do not authorize release publication.

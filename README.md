@@ -4,7 +4,7 @@ Meld is a runtime for keeping software intentions true as the world changes. Giv
 
 A useful insight should have a life beyond the conversation that produced it. Meld's ambition is to make expensive reasoning durable: preserve its conclusions, the evidence they depend on and the conditions under which they remain useful. Spend intelligence on understanding and change. Let persistent state and ordinary computation carry that understanding forward.
 
-The native flywheel and command control plane are implemented. The next product acceptance target is **README PDS**: maintain this project's README at the standard of the software it explains. This document is the initial editorial baseline; it is not yet maintained or qualified by that product.
+The native flywheel and command control plane are implemented. **README PDS** is an independent domain program for maintaining this project's README at the standard of the software it explains. Its current candidate implements Event intake, identified obligations, source evidence fragments and retained local assessments; wider production qualification remains an experiment with outcomes recorded in its delivery record. This document is maintained through that program, but its quality and release implications remain separately qualified.
 
 ## What Meld maintains
 
@@ -155,7 +155,7 @@ A revised package does not silently rewrite an existing Agent's genesis. Follow 
 
 ## Existing context tooling
 
-Meld also retains filesystem and stored-context commands, including `scan`, `workspace validate`, `context get` and `context generate`. The filesystem tooling uses Merkle identities; stored context frames preserve content-addressed history.
+Meld also retains filesystem and stored-context commands, including `scan`, `workspace validate` and `context get`. The direct `context generate` and `context regenerate` entrypoints are retired and report migration guidance rather than providing usable generation. The filesystem tooling uses Merkle identities; stored context frames preserve content-addressed history.
 
 Legacy Reader and Writer configuration lives under `meld profile`. Those profiles are distinct from native Agents. Legacy Workflow execution is retired, and old profile output does not establish native Goal satisfaction. Use the product guides for executable stewardship and command help for the retained context tools.
 
