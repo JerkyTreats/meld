@@ -2,7 +2,7 @@
 
 The initial root-and-leaf README candidate is qualified. The actual Meld README is written and confirmed by the independent README PDS using Luna-low. The final nineteen-obligation program accepts that document, reconstructs a flattened root README and passes the complete live maintenance challenge. The [qualification record](../../../../../meld-readme/QUALIFICATION.md) owns the final scope and evidence matrix.
 
-Both Meld and Meld Eval use `feat/readme-pds-event-claims`. The [README domain](../../../../../meld-readme/README.md) remains outside Meld and deliberately unversioned. Its [architecture](../../../../../meld-readme/ARCHITECTURE.md), [implemented account](../../../../../meld-readme/experiments/event-claims/IMPLEMENTATION.md) and [delivery record](../../../../../meld-readme/DELIVERY.md) retain the design, Event-to-component landing account, WAD tree and complete experiment history.
+Both Meld and Meld Eval use `feat/readme-pds-event-claims`. The [README domain](../../../../../meld-readme/README.md) remains outside Meld in its own [private repository](https://github.com/JerkyTreats/meld-readme). Its [architecture](../../../../../meld-readme/ARCHITECTURE.md), [implemented account](../../../../../meld-readme/experiments/event-claims/IMPLEMENTATION.md) and [delivery record](../../../../../meld-readme/DELIVERY.md) retain the design, Event-to-component landing account, WAD tree and complete experiment history.
 
 ## Responsibility and implementation
 
@@ -51,3 +51,9 @@ The useful abstraction is a claim tied to the evidence that can decide it. A quo
 No demonstrated failure has required a new core planner, scheduler, semantic authority or Graph writer. The architectural circuit breaker has therefore not tripped. The previously recorded long-call lease finding remains separately unqualified. Current bounded journeys do not establish unbounded scalability, exhaustive semantic truth or a corpus rollout.
 
 No push, release tag, crates.io publication or release workflow was performed. Local commits and builds do not authorize release publication.
+
+## Transfer to Gmail Operator
+
+The same owner executable now qualifies a second repository through project data alone. [The Gmail Operator definition](https://github.com/JerkyTreats/meld-readme/tree/main/projects/gmail-operator) uses the existing README as a fallible exemplar and ten externally authored obligations. Source associations and a required-passage representation were improved through Events. The real README was maintained by a native Task; an isolated authentication change was repaired in three Luna-low calls, and final restarts reused judgments with zero calls.
+
+No automatic claim discovery, new owner capability or Meld runtime change was needed for that transfer. The source and concise evidence are committed in the private domain repository; compiled packages and full runtime histories remain local. Gmail Operator's README commit is `91b6466` on its unpushed `feat/readme-pds-maintenance` branch.
