@@ -1,4 +1,4 @@
-//! Event ledger observability CLI adapter.
+//! Event ledger command adapter.
 //!
 //! Parses the `meld event` command family and delegates each subcommand to
 //! its unit module. The adapter routes and renders only; every ledger read is
@@ -50,6 +50,9 @@ pub fn handle_cli_command(
         }
     }
     match command {
+        EventCommands::Append { .. } => Err(ApiError::ConfigError(
+            "event append requires a live runtime; use runtime start".into(),
+        )),
         EventCommands::Status { format } => {
             validate_format(format)?;
             status::run(observability, format)

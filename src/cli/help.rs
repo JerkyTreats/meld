@@ -31,6 +31,7 @@ pub fn command_name(command: &Commands) -> String {
 
 pub fn event_command_name(command: &EventCommands) -> &'static str {
     match command {
+        EventCommands::Append { .. } => "append",
         EventCommands::Status { .. } => "status",
         EventCommands::Tail { .. } => "tail",
         EventCommands::Trace { .. } => "trace",

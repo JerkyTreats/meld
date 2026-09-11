@@ -87,6 +87,12 @@ pub struct StartupAccountReadRequest {
 /// Dispatch one request against the served sources.
 pub fn dispatch(sources: &ServeSources, method: &str, path: &str, body: &[u8]) -> RouteResponse {
     match (method, path) {
+        ("POST", "/v1/events/committed_record") => handle(
+            body,
+            |request: meld_events::remote::CommittedRecordRequest| {
+                sources.events.committed_record(request)
+            },
+        ),
         ("POST", "/v1/events/newest_page") => {
             handle(body, |request: meld_events::remote::NewestPageRequest| {
                 sources.events.newest_page(request)

@@ -275,6 +275,14 @@ pub enum DangerCommands {
 
 #[derive(Subcommand)]
 pub enum EventCommands {
+    /// Append an identity-bearing envelope to the live ledger and verify its content
+    Append {
+        /// JSON EventEnvelope with a stable record_id
+        #[arg(long)]
+        file: std::path::PathBuf,
+        #[arg(long, visible_alias = "json", num_args = 0..=1, default_missing_value = "json", default_value = "text")]
+        format: String,
+    },
     /// Show ledger health: tip, watermark, retention, drops, consumer lag
     Status {
         /// Output format

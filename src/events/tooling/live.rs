@@ -1,11 +1,12 @@
-//! Served Event reads preserve native identity, cursors and retention coverage.
+//! Served Event commands preserve native identity, content and retention coverage.
 
 use super::{flow, render, session, status, tail, trace, validate_format};
 use crate::cli::EventCommands;
 use crate::error::ApiError;
 use crate::runtime::assembly::ProductRuntimeAssembly;
 use meld_events::remote::{
-    FlowRequest, HealthRequest, NewestPageRequest, SessionRequest, TraceRequest,
+    CommittedRecordRequest, CommittedRecordResponse, DurableAppendRequest, FlowRequest,
+    HealthRequest, NewestPageRequest, SessionRequest, TraceRequest,
 };
 use meld_events::{
     EventFlowReport, EventHealthReport, EventPage, EventTraceReport, FlowWindow, LedgerCursor,
@@ -48,6 +49,11 @@ pub fn try_live(
     let target = ProductRuntimeAssembly::describe_for_workspace(workspace, config).ok()?;
     let (url, instance) = match crate::runtime::managed::discover_live(&target) {
         Ok(Some(live)) => live,
+        Ok(None) if matches!(command, EventCommands::Append { .. }) => {
+            return Some(Err(error(
+                "event append requires a live runtime; use runtime start",
+            )));
+        }
         Ok(None) => return None,
         Err(error) => return Some(Err(error)),
     };
@@ -59,6 +65,38 @@ pub fn try_live(
             .into_json()
             .map_err(error)?;
         match command {
+            EventCommands::Append { file, format } => {
+                validate_format(format)?;
+                let envelope: meld_events::EventEnvelope =
+                    serde_json::from_reader(std::fs::File::open(file).map_err(error)?)
+                        .map_err(error)?;
+                let record_id = envelope
+                    .record_id
+                    .clone()
+                    .filter(|id| !id.trim().is_empty())
+                    .ok_or_else(|| error("event append requires a nonempty record_id"))?;
+                let receipt: meld_events::AppendReceipt = post(
+                    &url,
+                    "/v1/events/durable_append",
+                    &DurableAppendRequest {
+                        ledger_id,
+                        envelope: envelope.clone(),
+                        mode: meld_events::AppendMode::Idempotent,
+                    },
+                )?;
+                let committed: CommittedRecordResponse = post(
+                    &url,
+                    "/v1/events/committed_record",
+                    &CommittedRecordRequest {
+                        ledger_id,
+                        record_id,
+                    },
+                )?;
+                verify_appended(ledger_id, &receipt, &envelope, &committed)?;
+                render(format, &receipt, |r| {
+                    format!("Event verified at {}:{}", r.ledger_id, r.seq)
+                })
+            }
             EventCommands::Status { format } => {
                 validate_format(format)?;
                 let report: EventHealthReport =
@@ -189,4 +227,31 @@ pub fn try_live(
             }
         }
     })())
+}
+
+// An idempotent receipt can name an older record. Readback must establish that
+// this submission, including its original provenance, is the retained content.
+fn verify_appended(
+    ledger_id: LedgerIdentity,
+    receipt: &meld_events::AppendReceipt,
+    expected: &meld_events::EventEnvelope,
+    committed: &CommittedRecordResponse,
+) -> Result<(), ApiError> {
+    if receipt.ledger_id != ledger_id || committed.ledger_id != ledger_id {
+        return Err(error("Event append proof belongs to another ledger"));
+    }
+    let record = committed
+        .record
+        .as_ref()
+        .ok_or_else(|| error("appended Event is unavailable for exact readback"))?;
+    if receipt.seq == 0
+        || record.seq != receipt.seq
+        || serde_json::to_value(&record.envelope).map_err(error)?
+            != serde_json::to_value(expected).map_err(error)?
+    {
+        return Err(error(
+            "committed Event differs from submitted envelope; record_id conflict",
+        ));
+    }
+    Ok(())
 }
