@@ -1,16 +1,24 @@
 # Native Strategy planning for README excellence
 
-Date: 2026-09-12. Lifecycle: active delivery under corrected continuous-reconciliation acceptance. Active slice: [autonomous reconciliation after material source change](strategy_planning_active_slice.md), `strategy-continuous-reconciliation-2`, accepted for autonomous reconciliation of the tracked claim. Branch: `feat/strategy-planning` in all four repositories.
+Date: 2026-09-12. Lifecycle: closed by explicit user acceptance. Branch: `feat/strategy-planning` in Meld, Meld README, Codebase Semantics and Meld Eval. The [slice record](strategy_planning_active_slice.md) retains the accepted implementation and continuous-reconciliation proofs.
 
 The user explicitly clarified that executing against an older observed basis is expected. The required behavior is continuous Agent reconciliation after newly admitted material information. The earlier fail-on-stale-output gate was an assistant-authored design-contract error, and its circuit-breaker classification is withdrawn. Historical captures remain unchanged. This correction authorizes measurement of the complete native response before proposing runtime mechanisms. Settling delays and action-cost policy are deferred.
 
 This document owns the successor experiment's objective, assertion assessment, scope and delivery direction. It supersedes the next-work instructions of the [codebase semantics experiment](codebase_semantics_experiment.md) for shared README maintenance. Earlier captures retain their exact observations. The user-corrected acceptance below supersedes the earlier source-drift failure classification. [Cognitive Architecture](../../../cognitive_architecture/README.md) remains evergreen design truth; this document records current evidence and intended delivery.
 
+## Experiment closure and disposition
+
+The user accepts this experiment as closed and directs the next exercise to go wide from Events upward using Gmail Operator. Acceptance covers the demonstrated foundation: bounded Tree-sitter observations reach native knowledge, domain-authored methods undergo recursive Strategy decomposition, and an Agent autonomously constructs successor work when new material evidence contradicts its tracked condition. The 26-check continuous-reconciliation proof uses unchanged binaries and no operator repair request.
+
+Closure does not claim whole-repository sensing, general syntax/semantic coverage, automatic discovery of README claims, complete prose maintenance or full causal search explanation. The untracked obsolete paragraph remains recorded evidence of the current claim boundary. Full serious README qualification through broad shared semantics is transferred to later work rather than declared complete. The former stale-output circuit breaker remains withdrawn.
+
+The next sequence is whole-repository Tree-sitter Event ingestion, evaluation of the existing language against the resulting repository relationships, then claims curation and reconsideration of the current README PDS. Domain meaning remains external. The old one-Boolean README obligation is retained as regression evidence, not the target architecture for broad ingestion. This closes the experiment's active delivery authority; the newly requested phase receives its own scope and branch.
+
 ## Continuous-reconciliation result
 
 The [corrected command journey](../../../../../meld-readme/evidence/continuous-reconciliation-v1/CLOSEOUT.md) passes 26 checks with unchanged runtime and WAD binaries. The native Agent responds to newly admitted source semantics, requests a successor Plan, authorizes the resulting work and independently confirms the corrected tracked assertion. Two draft calls occur; no operator request, restart or harness-authored README drives correction. The prior freshness stop is withdrawn.
 
-The final document also exposes a narrower domain limitation: a paragraph outside the single tracked assertion retains obsolete guard wording. This is evidence for richer README claim coverage and correspondence, not a failure to perform native successor planning. Full root/leaf quality and the complete causal search account remain program goals. Cost-sensitive delay for rapidly changing facts remains deferred.
+The final document also exposes a narrower domain limitation: a paragraph outside the single tracked assertion retains obsolete guard wording. This is evidence for richer README claim coverage and correspondence, not a failure to perform native successor planning. Full root/leaf quality and the complete causal search account transfer as broader program goals beyond this closed experiment. Cost-sensitive delay for rapidly changing facts remains deferred.
 
 ## Implementation checkpoint
 
@@ -18,7 +26,7 @@ Native method refinement now recursively expands abstract Goals, applies hypothe
 
 The [closeout and evidence](../../../../../meld-readme/evidence/strategy-decomposition-v1/CLOSEOUT.md) accept ordinary Luna-low shared maintenance, CPU regression, first-use commands and a normally compiled leaf package. The serious shared-semantic root README, comprehensive causal search account and support-aware reconstruction remain open.
 
-The [earlier drift experiment](../../../../../meld-readme/evidence/strategy-decomposition-v1/DRIFT.md) stopped at stale output. It showed changed-source contribution before the write and semantic admission afterward, but never measured subsequent reconciliation. The active slice continues through that interval and asks whether new material evidence autonomously changes the Plan and restores the desired condition. No universal producer freshness gate is selected. Provider latency remains a measured responsiveness limitation.
+The [earlier drift experiment](../../../../../meld-readme/evidence/strategy-decomposition-v1/DRIFT.md) stopped at stale output. It showed changed-source contribution before the write and semantic admission afterward, but never measured subsequent reconciliation. The completed continuous-reconciliation slice followed that interval and proved that new material evidence autonomously changes the Plan and restores the tracked desired condition. No universal producer freshness gate is selected. Provider latency remains a measured responsiveness limitation.
 
 ## Outcome and reason
 

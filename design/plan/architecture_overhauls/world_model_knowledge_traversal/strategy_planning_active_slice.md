@@ -1,5 +1,8 @@
 # Continuous reconciliation after changed material evidence
 
+Experiment status: closed by explicit user acceptance on September 12. This file is a historical record of accepted slices. The next authorized exercise starts from whole-repository Tree-sitter Events for Gmail Operator; it does not inherit a full-README qualification claim from this experiment.
+
+
 Slice: `strategy-continuous-reconciliation-2`. Lifecycle: closed. Readiness: accepted for autonomous reconciliation of the tracked claim. Baselines: Meld `b7c6ec5c`, README `53821c4`, Codebase Semantics `1768fab`, Eval `c4f8665` on `feat/strategy-planning`.
 
 The user corrected the previous acceptance condition: acting on an older observed basis is expected in a changing world. The required behavior is autonomous reconciliation after newly admitted material evidence. This explicitly supersedes the inferred requirement to prevent every stale intermediate README and lifts the associated program stop. The earlier timeline remains evidence, but the harness stopped before measuring the intended outcome.
