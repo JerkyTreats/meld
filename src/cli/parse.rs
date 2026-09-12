@@ -434,6 +434,18 @@ pub enum RuntimeCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Read completed pass accounts from an exact managed instance log
+    Accounts {
+        #[arg(long)]
+        instance: String,
+        /// Byte offset returned by the preceding page
+        #[arg(long, default_value_t = 0)]
+        after: u64,
+        #[arg(long, default_value_t = 100)]
+        limit: usize,
+        #[arg(long)]
+        json: bool,
+    },
     /// Observe native actor reports without owning the runtime lifetime
     Follow {
         #[arg(long)]

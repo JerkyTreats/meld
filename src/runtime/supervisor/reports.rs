@@ -25,8 +25,9 @@ use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::runtime::contracts::{
     RuntimeActionRecord, RuntimeActionRecordCompatV1, RuntimeActionRecordCompatV2,
-    RuntimeStatusCacheRecord, RuntimeStatusCacheRecordCompatV1, RuntimeStatusCacheRecordCompatV2,
-    RuntimeStatusPublisher, RuntimeStatusReader,
+    RuntimeActionRecordCompatV3, RuntimeStatusCacheRecord, RuntimeStatusCacheRecordCompatV1,
+    RuntimeStatusCacheRecordCompatV2, RuntimeStatusCacheRecordCompatV3, RuntimeStatusPublisher,
+    RuntimeStatusReader,
 };
 
 use super::store::{SupervisorStore, SupervisorStoreError};
@@ -328,41 +329,51 @@ fn encode<T: Serialize>(record: &T) -> Result<Vec<u8>, SupervisorStoreError> {
 /// localized to the record's tail can never be mistaken for a legacy
 /// record with the tail silently discarded.
 fn decode_action(raw: &[u8]) -> Result<RuntimeActionRecord, SupervisorStoreError> {
-    match bincode::deserialize::<RuntimeActionRecord>(raw) {
-        Ok(record) => Ok(record),
-        Err(current_error) => match try_decode_exact::<RuntimeActionRecordCompatV2>(raw) {
-            Ok(record) => Ok(RuntimeActionRecord::from(record)),
-            Err(compat_v2_error) => match try_decode_exact::<RuntimeActionRecordCompatV1>(raw) {
-                Ok(record) => Ok(RuntimeActionRecord::from(record)),
-                Err(compat_v1_error) => Err(compatibility_decode_error(
-                    current_error,
-                    compat_v2_error,
-                    compat_v1_error,
-                )),
-            },
-        },
-    }
+    decode_shapes::<
+        RuntimeActionRecord,
+        RuntimeActionRecordCompatV3,
+        RuntimeActionRecordCompatV2,
+        RuntimeActionRecordCompatV1,
+    >(raw)
 }
 
-/// Decode one status snapshot, falling back to the shape whose embedded
-/// action window predates the waiting-on field.
+/// Snapshots embed action rows and must retain the same compatibility boundary.
 fn decode_snapshot(raw: &[u8]) -> Result<RuntimeStatusCacheRecord, SupervisorStoreError> {
-    match bincode::deserialize::<RuntimeStatusCacheRecord>(raw) {
-        Ok(record) => Ok(record),
-        Err(current_error) => match try_decode_exact::<RuntimeStatusCacheRecordCompatV2>(raw) {
-            Ok(record) => Ok(RuntimeStatusCacheRecord::from(record)),
-            Err(compat_v2_error) => {
-                match try_decode_exact::<RuntimeStatusCacheRecordCompatV1>(raw) {
-                    Ok(record) => Ok(RuntimeStatusCacheRecord::from(record)),
-                    Err(compat_v1_error) => Err(compatibility_decode_error(
-                        current_error,
-                        compat_v2_error,
-                        compat_v1_error,
-                    )),
-                }
-            }
-        },
-    }
+    decode_shapes::<
+        RuntimeStatusCacheRecord,
+        RuntimeStatusCacheRecordCompatV3,
+        RuntimeStatusCacheRecordCompatV2,
+        RuntimeStatusCacheRecordCompatV1,
+    >(raw)
+}
+
+fn decode_shapes<T, V3, V2, V1>(raw: &[u8]) -> Result<T, SupervisorStoreError>
+where
+    T: DeserializeOwned + From<V3> + From<V2> + From<V1>,
+    V3: DeserializeOwned,
+    V2: DeserializeOwned,
+    V1: DeserializeOwned,
+{
+    let current_error = match try_decode_exact::<T>(raw) {
+        Ok(record) => return Ok(record),
+        Err(error) => error,
+    };
+    let v3_error = match try_decode_exact::<V3>(raw) {
+        Ok(record) => return Ok(record.into()),
+        Err(error) => error,
+    };
+    let v2_error = match try_decode_exact::<V2>(raw) {
+        Ok(record) => return Ok(record.into()),
+        Err(error) => error,
+    };
+    try_decode_exact::<V1>(raw)
+        .map(Into::into)
+        .map_err(|v1_error| {
+            SupervisorStoreError::Codec(format!(
+                "record decodes as neither the current shape ({current_error}), nor byte-exact \
+             pre-timing ({v3_error}), legacy waiting ({v2_error}), or pre-wait ({v1_error}) shapes"
+            ))
+        })
 }
 
 /// Byte-exact legacy decode: same fixint encoding as the store's writes,
@@ -373,18 +384,6 @@ fn try_decode_exact<T: DeserializeOwned>(raw: &[u8]) -> Result<T, bincode::Error
         .with_fixint_encoding()
         .with_no_limit()
         .deserialize(raw)
-}
-
-fn compatibility_decode_error(
-    current_error: bincode::Error,
-    compat_v2_error: bincode::Error,
-    compat_v1_error: bincode::Error,
-) -> SupervisorStoreError {
-    SupervisorStoreError::Codec(format!(
-        "record decodes as neither the current shape ({current_error}), the byte-exact \
-         waiting declaration legacy shape ({compat_v2_error}), nor the pre-wait shape \
-         ({compat_v1_error})"
-    ))
 }
 
 fn decode_sequence(key: &[u8]) -> Result<u64, SupervisorStoreError> {
@@ -730,6 +729,87 @@ mod tests {
         assert!(decoded[0].waiting_on[0].wake_refs.is_empty());
         assert_eq!(decoded[0].generation_id, None);
         assert_eq!(decoded[0].incarnation_id, None);
+    }
+
+    #[test]
+    fn pre_timing_snapshots_preserve_lineage_and_multiple_action_boundaries() {
+        use crate::runtime::contracts::{
+            RuntimeStatusCacheRecordCompatV3, RuntimeStatusSnapshot, RuntimeStatusWriterIdentity,
+        };
+
+        let (_temp, reports) = open_report_store();
+        let mut action = action("action-wait-snapshot", "event.append", 10, 0, 0);
+        action
+            .waiting_on
+            .push(crate::runtime::contracts::WaitingOnDeclaration {
+                condition: "legacy_condition".into(),
+                subject_key: None,
+                detail: "legacy detail".into(),
+                wake_refs: Vec::new(),
+            });
+        action.generation_id = Some("generation".into());
+        action.incarnation_id = Some("incarnation".into());
+        let legacy_action: RuntimeActionRecordCompatV3 =
+            serde_json::from_value(serde_json::to_value(&action).unwrap()).unwrap();
+        let bytes = bincode::serialize(&legacy_action).unwrap();
+        assert_eq!(decode_action(&bytes).unwrap(), action);
+        let mut corrupt = bytes.clone();
+        corrupt.push(2); // Invalid timing Option, not a legacy record.
+        assert!(decode_action(&corrupt).is_err());
+        let legacy = RuntimeStatusCacheRecordCompatV3 {
+            schema_version: 1,
+            product_root: "/tmp/product".into(),
+            supervisor_store_path: "/tmp/product/supervisor.sled".into(),
+            status_cache_path: "/tmp/product/status".into(),
+            writer: RuntimeStatusWriterIdentity {
+                instance_id: Some("runtime-cli-1".into()),
+                process_id: Some(42),
+                parent_process_id: Some(41),
+                run_mode: crate::runtime::contracts::RuntimeRunMode::Foreground,
+                launch_status: crate::runtime::contracts::RuntimeLaunchStatus::Ready,
+            },
+            snapshot: RuntimeStatusSnapshot {
+                instance: None,
+                process: None,
+                shutdown: None,
+                runtimes: Vec::new(),
+                health_counts: crate::runtime::contracts::RuntimeStatusHealthCounts {
+                    unknown: 0,
+                    starting: 0,
+                    healthy: 0,
+                    degraded: 0,
+                    unhealthy: 0,
+                    stopped: 0,
+                },
+                ledger: None,
+                warnings: Vec::new(),
+            },
+            recent_actions: vec![legacy_action.clone(), legacy_action],
+            written_at_ms: 11,
+        };
+        reports
+            .snapshots
+            .insert(LATEST_SNAPSHOT_KEY, bincode::serialize(&legacy).unwrap())
+            .unwrap();
+
+        let decoded = reports.read_latest_snapshot().unwrap().unwrap();
+        assert_eq!(decoded.recent_actions, vec![action.clone(), action]);
+        assert_eq!(decoded.written_at_ms, 11);
+        assert!(decoded
+            .recent_actions
+            .iter()
+            .all(|row| row.timing.is_none()));
+        let mut timed = decoded;
+        timed.recent_actions[0].timing = Some(crate::runtime::contracts::RuntimeActionTiming {
+            started_at_ms: 123,
+            bounded_step_us: 456,
+            idle_receipt_us: 78,
+        });
+        reports
+            .snapshots
+            .insert(LATEST_SNAPSHOT_KEY, bincode::serialize(&timed).unwrap())
+            .unwrap();
+        assert_eq!(reports.read_latest_snapshot().unwrap().unwrap(), timed);
     }
 
     #[test]

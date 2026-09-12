@@ -159,6 +159,19 @@ pub struct RuntimeTickAccount {
     pub active_idle: bool,
     /// One entry per bounded actor invocation this pass.
     pub actors: Vec<RuntimeTickActorAccount>,
+    /// Monotonic wall time for the pass boundaries, when measured.
+    pub timing: Option<RuntimePassTiming>,
+}
+
+/// Non-overlapping pass measurements before account emission and sleep.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RuntimePassTiming {
+    /// Full supervisor tick, including actor calls, lifecycle writes and flush.
+    pub supervisor_tick_us: u64,
+    /// Post-tick status projection, including native wake resolution.
+    pub status_snapshot_us: u64,
+    /// Ledger health read and threshold observation.
+    pub health_observation_us: u64,
 }
 
 /// Per-actor slice of one foreground tick account.
@@ -275,7 +288,8 @@ pub fn handle_cli_command_with_account_writer(
         | RuntimeCommands::Stop { .. }
         | RuntimeCommands::Restart { .. }
         | RuntimeCommands::Follow { .. }
-        | RuntimeCommands::Actions { .. } => Err(runtime_message(
+        | RuntimeCommands::Actions { .. }
+        | RuntimeCommands::Accounts { .. } => Err(runtime_message(
             "managed commands require the process command entrypoint",
         )),
         RuntimeCommands::StartupAccount {
@@ -836,12 +850,15 @@ fn run_tick_loop(
 
         let now_ms = current_time_ms_for_supervisor()?;
         *last_supervisor_time_ms = (*last_supervisor_time_ms).max(now_ms);
+        let boundary = Instant::now();
         let tick_report = supervisor.tick(now_ms)?;
+        let supervisor_tick_us = boundary.elapsed().as_micros() as u64;
         *tick_count += 1;
 
         // One post-tick snapshot serves the restart watcher and the account
         // lifecycle projection; a failed read skips both observations
         // rather than failing the loop.
+        let boundary = Instant::now();
         let status_snapshot = match supervisor.status_snapshot(now_ms) {
             Ok(snapshot) => Some(snapshot),
             Err(error) => {
@@ -849,6 +866,9 @@ fn run_tick_loop(
                 None
             }
         };
+
+        let status_snapshot_us = boundary.elapsed().as_micros() as u64;
+        let boundary = Instant::now();
 
         // Promote threshold crossings after the tick; a failed health read
         // skips the observation rather than failing the loop.
@@ -884,6 +904,11 @@ fn run_tick_loop(
             now_ms,
             status_snapshot.as_ref(),
             &tick_report.actions,
+            RuntimePassTiming {
+                supervisor_tick_us,
+                status_snapshot_us,
+                health_observation_us: boundary.elapsed().as_micros() as u64,
+            },
         );
 
         if cancelled.load(Ordering::SeqCst) || duration_elapsed(started, duration_ms) {
@@ -965,8 +990,10 @@ impl TickAccountEmitter<'_> {
         at_ms: u64,
         status: Option<&SupervisorStatusSnapshot>,
         actions: &[RuntimeActionRecord],
+        timing: RuntimePassTiming,
     ) {
-        let account = build_tick_account(tick, at_ms, &self.instance_id, status, actions);
+        let mut account = build_tick_account(tick, at_ms, &self.instance_id, status, actions);
+        account.timing = Some(timing);
         let line = if self.json {
             crate::cli::render_runtime_tick_account_json(&account)
         } else {
@@ -1041,6 +1068,7 @@ fn build_tick_account(
         instance_id: instance_id.to_string(),
         active_idle,
         actors,
+        timing: None,
     }
 }
 
@@ -1715,6 +1743,9 @@ mod tests {
             assert_eq!(account["type"], "runtime_tick_account");
             assert_eq!(account["tick"], (index + 1) as u64);
             assert_eq!(account["instance_id"], "tooling-account");
+            assert!(account["timing"]["supervisor_tick_us"].is_u64());
+            assert!(account["timing"]["status_snapshot_us"].is_u64());
+            assert!(account["timing"]["health_observation_us"].is_u64());
             // Plain composition still has active maintenance actors. Their
             // clean passes are operationally active-idle only.
             assert_eq!(account["active_idle"], true);

@@ -97,6 +97,7 @@ mod tests {
             instance_id: "instance-a".to_string(),
             active_idle,
             actors,
+            timing: None,
         }
     }
 

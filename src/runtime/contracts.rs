@@ -330,6 +330,38 @@ pub(crate) struct RuntimeStatusCacheRecordCompatV1 {
     pub written_at_ms: u64,
 }
 
+/// Stored snapshot with action records predating invocation timing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct RuntimeStatusCacheRecordCompatV3 {
+    pub schema_version: u16,
+    pub product_root: PathBuf,
+    pub supervisor_store_path: PathBuf,
+    pub status_cache_path: PathBuf,
+    pub writer: RuntimeStatusWriterIdentity,
+    pub snapshot: RuntimeStatusSnapshot,
+    pub recent_actions: Vec<RuntimeActionRecordCompatV3>,
+    pub written_at_ms: u64,
+}
+
+impl From<RuntimeStatusCacheRecordCompatV3> for RuntimeStatusCacheRecord {
+    fn from(record: RuntimeStatusCacheRecordCompatV3) -> Self {
+        RuntimeStatusCacheRecord {
+            schema_version: record.schema_version,
+            product_root: record.product_root,
+            supervisor_store_path: record.supervisor_store_path,
+            status_cache_path: record.status_cache_path,
+            writer: record.writer,
+            snapshot: record.snapshot,
+            recent_actions: record
+                .recent_actions
+                .into_iter()
+                .map(RuntimeActionRecord::from)
+                .collect(),
+            written_at_ms: record.written_at_ms,
+        }
+    }
+}
+
 /// Byte shape of [`RuntimeStatusCacheRecord`] with legacy waiting declarations
 /// and without activation lineage on embedded action records.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -801,6 +833,42 @@ pub struct RuntimeActionRecord {
     pub generation_id: Option<String>,
     /// Exact participant incarnation observed by the owner, when activated.
     pub incarnation_id: Option<String>,
+    /// Measured owner invocation wall time; absent on records written before instrumentation.
+    #[serde(default)]
+    pub timing: Option<RuntimeActionTiming>,
+}
+
+/// Stored action shape before invocation timing. Retained for existing products.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct RuntimeActionRecordCompatV3 {
+    pub action_id: String,
+    pub observed_at_ms: u64,
+    pub runtime_id: String,
+    pub domain_id: String,
+    pub actor_id: String,
+    pub object_ref: RuntimeObjectRef,
+    pub action_kind: RuntimeActionKind,
+    pub cause: RuntimeActionCause,
+    pub outcome: RuntimeActionOutcome,
+    pub metrics: RuntimeActionMetrics,
+    pub checkpoints: Vec<RuntimeCheckpointObservation>,
+    pub issues: Vec<RuntimeActionIssueSummary>,
+    pub redaction: RuntimeRedactionState,
+    pub waiting_on: Vec<WaitingOnDeclaration>,
+    pub generation_id: Option<String>,
+    pub incarnation_id: Option<String>,
+}
+
+/// Supervisor measurements around a bounded invocation. Durations use a monotonic
+/// clock and include blocking I/O and provider waits; they are not CPU time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RuntimeActionTiming {
+    /// Actual invocation start on the Unix wall clock, unlike the pass timestamp.
+    pub started_at_ms: u64,
+    /// Time inside the actor's bounded step, including returned failures.
+    pub bounded_step_us: u64,
+    /// Time obtaining an idle lifecycle receipt after the step.
+    pub idle_receipt_us: u64,
 }
 
 /// Byte shape of [`RuntimeActionRecord`] before the waiting-on field.
@@ -846,6 +914,30 @@ pub(crate) struct RuntimeActionRecordCompatV2 {
     pub waiting_on: Vec<WaitingOnDeclarationCompatV1>,
 }
 
+impl From<RuntimeActionRecordCompatV3> for RuntimeActionRecord {
+    fn from(record: RuntimeActionRecordCompatV3) -> Self {
+        RuntimeActionRecord {
+            action_id: record.action_id,
+            observed_at_ms: record.observed_at_ms,
+            runtime_id: record.runtime_id,
+            domain_id: record.domain_id,
+            actor_id: record.actor_id,
+            object_ref: record.object_ref,
+            action_kind: record.action_kind,
+            cause: record.cause,
+            outcome: record.outcome,
+            metrics: record.metrics,
+            checkpoints: record.checkpoints,
+            issues: record.issues,
+            redaction: record.redaction,
+            waiting_on: record.waiting_on,
+            generation_id: record.generation_id,
+            incarnation_id: record.incarnation_id,
+            timing: None,
+        }
+    }
+}
+
 impl From<RuntimeActionRecordCompatV2> for RuntimeActionRecord {
     fn from(record: RuntimeActionRecordCompatV2) -> Self {
         RuntimeActionRecord {
@@ -869,6 +961,7 @@ impl From<RuntimeActionRecordCompatV2> for RuntimeActionRecord {
                 .collect(),
             generation_id: None,
             incarnation_id: None,
+            timing: None,
         }
     }
 }
@@ -892,6 +985,7 @@ impl From<RuntimeActionRecordCompatV1> for RuntimeActionRecord {
             waiting_on: Vec::new(),
             generation_id: None,
             incarnation_id: None,
+            timing: None,
         }
     }
 }
@@ -983,6 +1077,7 @@ impl RuntimeActionRecord {
             waiting_on: report.waiting_on,
             generation_id: None,
             incarnation_id: None,
+            timing: None,
         }
     }
 }
@@ -1795,6 +1890,7 @@ mod tests {
             waiting_on: Vec::new(),
             generation_id: None,
             incarnation_id: None,
+            timing: None,
         };
         let snapshot = RuntimeStatusSnapshot {
             instance: Some(RuntimeStatusInstanceSummary {

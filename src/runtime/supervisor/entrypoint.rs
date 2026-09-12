@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use thiserror::Error;
 
@@ -10,8 +11,8 @@ use crate::runtime::assembly::{
     SupervisorStartupPackage,
 };
 use crate::runtime::contracts::{
-    ActorBoundedStep, RuntimeActionOutcome, RuntimeActionRecord, RuntimeStatusPublisher,
-    WorkBudget, WorkerTickReport,
+    ActorBoundedStep, RuntimeActionOutcome, RuntimeActionRecord, RuntimeActionTiming,
+    RuntimeStatusPublisher, WorkBudget, WorkerTickReport,
 };
 use crate::runtime::error::RuntimeAssemblyError;
 use crate::runtime::lifecycle::{
@@ -886,6 +887,11 @@ impl<'a> RuntimeSupervisor<'a> {
             let Some(runtime) = self.handles.get_mut(owner.runtime_id.as_str()) else {
                 continue;
             };
+            let started_at_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            let step_started = Instant::now();
             // Exactly one bounded invocation per active actor per pass.
             let mut report = runtime
                 .actor
@@ -900,6 +906,8 @@ impl<'a> RuntimeSupervisor<'a> {
                         error.message,
                     )
                 });
+            let bounded_step_us = step_started.elapsed().as_micros() as u64;
+            let receipt_started = Instant::now();
             let native_wait = if !report.made_progress()
                 && report.retryable_errors.is_empty()
                 && report.fatal_errors.is_empty()
@@ -913,6 +921,7 @@ impl<'a> RuntimeSupervisor<'a> {
             } else {
                 None
             };
+            let idle_receipt_us = receipt_started.elapsed().as_micros() as u64;
             let health_status = health_status_from_tick_report(&report);
             self.record_tick_liveness(owner.runtime_id.as_str(), &report, native_wait)?;
 
@@ -934,6 +943,11 @@ impl<'a> RuntimeSupervisor<'a> {
                     context.incarnation_id.clone(),
                 );
             }
+            action.timing = Some(RuntimeActionTiming {
+                started_at_ms,
+                bounded_step_us,
+                idle_receipt_us,
+            });
             self.report_store.publish_action(&action)?;
             actions.push(action);
 
@@ -2980,6 +2994,19 @@ mod tests {
             let report = supervisor.tick(120 + pass as u64 * 10).unwrap();
             assert_eq!(report.renewed_runtime_ids.len(), expected.len());
             assert_eq!(report.actions.len(), expected.len());
+            for action in &report.actions {
+                let timing = action
+                    .timing
+                    .as_ref()
+                    .expect("every invocation is measured");
+                assert!(timing.started_at_ms > action.observed_at_ms);
+                let stored = supervisor
+                    .report_store
+                    .latest_action_for_runtime(&action.runtime_id)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(stored.timing, action.timing);
+            }
             assert_eq!(
                 report
                     .renewed_runtime_ids

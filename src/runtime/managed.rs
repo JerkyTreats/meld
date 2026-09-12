@@ -13,6 +13,8 @@ use crate::cli::{Cli, Commands, RunContext, RuntimeCommands};
 use crate::error::ApiError;
 use serde::Serialize;
 
+mod accounts;
+
 const DEADLINE: Duration = Duration::from_secs(15);
 
 fn error(message: impl ToString) -> ApiError {
@@ -34,6 +36,7 @@ pub fn execute(cli: &Cli) -> Option<Result<String, ApiError>> {
             | RuntimeCommands::Restart { .. }
             | RuntimeCommands::Follow { .. }
             | RuntimeCommands::Actions { .. }
+            | RuntimeCommands::Accounts { .. }
     ) {
         return None;
     }
@@ -130,6 +133,21 @@ pub fn execute(cli: &Cli) -> Option<Result<String, ApiError>> {
                 after,
                 json,
             } => follow(&target, instance.as_deref(), *after, *json),
+            RuntimeCommands::Accounts {
+                instance,
+                after,
+                limit,
+                json,
+            } => {
+                let page = accounts::read(&target.product_root, instance, *after, *limit)?;
+                render(&page, *json, || {
+                    format!(
+                        "{} completed pass accounts; next --after {}",
+                        page.records.len(),
+                        page.next_after
+                    )
+                })
+            }
             RuntimeCommands::Actions { after, limit, json } => {
                 let page = if let Some((url, _)) = discover_live(&target)? {
                     action_page(&url, *after, *limit)?

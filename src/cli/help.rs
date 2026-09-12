@@ -52,6 +52,7 @@ pub fn runtime_command_name(command: &RuntimeCommands) -> &'static str {
         RuntimeCommands::Restart { .. } => "restart",
         RuntimeCommands::Follow { .. } => "follow",
         RuntimeCommands::Actions { .. } => "actions",
+        RuntimeCommands::Accounts { .. } => "accounts",
         RuntimeCommands::StartupAccount { .. } => "startup-account",
         RuntimeCommands::Request { .. } => "request",
         RuntimeCommands::Status { .. } => "status",
