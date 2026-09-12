@@ -1,6 +1,6 @@
 # Go wide from repository Events to shared meaning
 
-Date: 2026-09-12. Lifecycle: opened. Readiness: assessment-only for the first implementation slice. Branch: `feat/event-up-go-wide` in Meld, Meld Codebase Semantics, Meld README and Meld Eval. This ledger owns the new exercise. The user authorized closure and full commit/push of the preceding experiment, then this branch transition and direction. The first implementation contract is to be selected from the repository inventory and current ingestion boundaries, rather than an assumed schema.
+Date: 2026-09-12. Lifecycle: open. Repository Event ingestion is implemented and qualified under the [completed active slice](event_up_go_wide_active_slice.md). Branch: `feat/event-up-go-wide` in Meld, Meld Codebase Semantics, Meld README and Meld Eval. This ledger owns the exercise. The user authorized event ingestion and checkpoint commits and pushes. Native language adequacy and claims curation remain subsequent boundaries.
 
 ## Reason and outcome
 
@@ -72,12 +72,12 @@ Stale intermediate effects remain compatible with continuous reconciliation. The
 
 ## First implementation decision and limits
 
-The next bounded assessment inventories source paths and constructs, the available Tree-sitter grammar path, Event payload and replay constraints, and current producer scope/admission contracts. Its purpose is to freeze the smallest repository-wide Event ingestion slice. A language overhaul or claims-curator implementation is not selected at this checkpoint.
+The first assessment selected an external repository observer using existing native ticks and the Event outbox. Gmail Operator's 31-path baseline yields 26 parsed Python/YAML/TOML files and five explicit grammar exclusions, with 12,184 syntax nodes. Per-file Events fit the existing command payload boundary; a final scan manifest links source revisions, retained file Events and the previous scan. The [closeout](../../../../../meld-code-semantics/evidence/repository-events-v1/CLOSEOUT.md) records 137 passing repository checks and 89 passing single-file regression checks, with zero model calls and no runtime source changes. A language overhaul or claims-curator implementation is not selected at this checkpoint.
 
 Record difficulties as measured gaps: affected source examples, failed public command or query, the information lost or ambiguous, and the responsible domain. The user expects nontrivial challenges but their presence is not presumed. Avoid a speculative universal ontology or an exhaustive advance implementation plan.
 
 A deeper architectural circuit breaker requires evidence that the canonical Event/native-knowledge/reconciliation path cannot carry the required behavior without a competing semantic authority or a major redesign. Unsupported grammar, missing domain rules or a thin public API gap are ordinary experimental findings. New stores, coordinators, Graph writers or broad core-language changes require explicit reassessment; do not invent them to make a fixture pass.
 
-The foundation is exploratory. Closure of the previous experiment does not promote repository coverage or claim derivation to production maturity. No whole-repository parser run, Event-ingestion qualification, language-adequacy verdict or README replacement is claimed by this branch-transition document.
+The foundation is exploratory. Closure of the previous experiment does not promote repository coverage or claim derivation to production maturity. The bounded repository Event slice is qualified. No language-adequacy verdict or README replacement is claimed.
 
-If applied, this commit opens the Gmail Operator exercise with repository-wide Event evidence first, native representation second and claims curation afterward, while retaining the accepted predecessor and its limits.
+The next boundary is native representation of observed repository relationships, grounded in the captured syntax and its explicit coverage limits.
