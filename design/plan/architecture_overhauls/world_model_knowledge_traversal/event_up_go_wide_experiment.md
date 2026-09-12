@@ -82,8 +82,14 @@ The foundation is exploratory. Closure of the previous experiment does not promo
 
 The [faithful representation closeout](../../../../../meld-code-semantics/evidence/faithful-representation-v1/CLOSEOUT.md) records exact reconstruction of all 31 observations and 12,184 nodes, language queries, changed-source reconciliation and retained-state restart proof. It also records the roughly 32 MB full-publication cost and an unresolved generic owner-crash recovery gap. Only the two measured Event and Graph command deadlines changed in Meld core; conversion remains external.
 
-The next unimplemented boundary is semantic elevation from faithful observed structure into supported, useful relationships, before claims curation. This ledger does not prescribe which relationships deserve elevation.
+At that checkpoint, the next unimplemented boundary was semantic elevation from faithful observed structure into supported, useful relationships, before claims curation. This ledger does not prescribe which relationships deserve elevation.
 
 ## Remaining experiment authorized
 
 The user authorizes completion of the experiment as designed, deferring broader mathematical implications. The active [repository relationships and README claims slice](semantic_claims_active_slice.md) carries the remaining bounded path through native semantic queries, automatically derived claim obligations and existing Strategy-driven README maintenance. Earlier fidelity qualification remains intact.
+
+## Bounded experiment technically qualified
+
+The [repository-derived claims closeout](../../../../../meld-readme/evidence/repository-claims-v1/CLOSEOUT.md) closes the remaining bounded path: repository Events, native declaration relationships, README-owned Contribution Events, CPU correspondence and existing native recursive Strategy. The main journey passes 35 checks with three Luna-low draft calls and zero-call restart. Cross-file ambiguity and restoration complete with unchanged import associations, document bytes and zero model calls; the initial harness array-order mistake is preserved alongside corrected native-product verification.
+
+Qualification applies to selected declaration tables. Existing narrative, general behavioral meaning and producer Agent directive reconciliation remain outside it. The inherited producer `semantic_snapshot` currentness goal does not match repository publication, and runtime latency remains substantial. The [active-slice closeout](semantic_claims_active_slice.md) accounts for both. The experiment remains exploratory; broader implications and successor architecture are deferred under the user's instruction.

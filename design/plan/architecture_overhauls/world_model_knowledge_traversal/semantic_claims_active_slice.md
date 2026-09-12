@@ -1,6 +1,6 @@
 # Repository relationships and README claims
 
-Slice `repository-claims-v1`. Lifecycle: active. Readiness: build-ready. Baselines: Meld `15924ab1`, Codebase Semantics `59338cf`, README `93b3960`, Eval `1d4a9d7`. The user explicitly authorizes finishing the event-up experiment as designed, retaining its architecture and deferring broader implications of mathematical semantic density. Standing checkpoint commit and push authority remains effective.
+Slice `repository-claims-v1`. Lifecycle: delivered. Readiness: technically qualified for the bounded claim journey. Baselines: Meld `15924ab1`, Codebase Semantics `59338cf`, README `93b3960`, Eval `1d4a9d7`. The user explicitly authorizes finishing the event-up experiment as designed, retaining its architecture and deferring broader implications of mathematical semantic density. Standing checkpoint commit and push authority remains effective.
 
 ## Observable contract
 
@@ -32,7 +32,7 @@ Start with deterministic semantic construction and native inspection. Measure se
 
 This initiative remains exploratory. A need for new stores, competing semantic authorities or major admission redesign triggers the existing architectural circuit breaker. The generic owner-crash recovery gap remains open. The complete-snapshot publication protocol and parse caching are not redesigned in this slice. Meaning-mode selection may narrow the materialized native view while source Events and the separately selected faithful mode retain the complete syntax product. No mathematical semantic-density metric or general per-PDS converter architecture is introduced.
 
-Logical, source-quality and gate self-review will judge the exact candidate in order. If applied, this commit connects repository-derived claims to the existing native README planning and maintenance loop. Completion requires actual command evidence and checkpoint publication; broader README quality and arbitrary semantic inference remain outside the bounded claim contract.
+Logical, source-quality and gate self-review evaluated the exact candidate in order. If applied, this commit connects repository-derived claims to the existing native README planning and maintenance loop. Completion requires actual command evidence and checkpoint publication; broader README quality and arbitrary semantic inference remain outside the bounded claim contract.
 
 ## Native findings during delivery
 
@@ -47,3 +47,9 @@ Measured full-tree projection cost made the first native draft/publish cycle tak
 Consumer review found that a parse failure must not masquerade as an empty declaration catalog. Coverage objects now accompany the selected native families. Unavailable relevant source withholds README judgment; observed absence permits removal. This is consumer-owned interpretation of source coverage, not a global action freshness rule. The harness includes malformed-source recovery alongside unsupported literal recovery.
 
 The declaration rules are bounded to the observed forms. Quoted or aliased YAML structures, dynamic Python calls, relative import resolution and general TOML layouts are not qualified. Syntax retention does not imply that every unsupported semantic form is recognized as a claim. This slice supplies coverage and explicit unresolved values for the exercised rules; broader rule completeness remains a domain-development question.
+
+## Technical closeout
+
+The [consumer closeout](../../../../../meld-readme/evidence/repository-claims-v1/CLOSEOUT.md) records the 35-check native maintenance and restart journey, completed cross-file reconciliation and corrected identity oracle over the exact captured native products. The original relationship report remains failed only for comparing unordered publication arrays; the corrected comparison preserves declaration-name-to-object associations. Three Luna-low calls perform document drafts, and zero calls are needed for restart or unselected relationship changes. Producer regressions pass 137 repository checks, 89 bounded sensor checks and retained-v1 conversion parity. The actual Gmail Operator checkout is unchanged.
+
+No core source or language changes are part of this slice. This qualifies declaration reference sections and the native README planning path, not arbitrary prose entailment or production maturity. The producer still carries a predecessor `semantic_snapshot` currentness goal that repository mode does not supply. Sensory publication continues and the README Agent completes, but producer Agent directive reconciliation is unqualified. Debug-build contribution-to-acceptance times grow from 110 to 205 to 417 seconds, exceeding provider latency substantially. These domain and cost findings remain explicit; no new core authority or broader mathematical design is selected to explain them away.
