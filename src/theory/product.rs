@@ -4,6 +4,9 @@
 //! separate product boundary that selects an exact package set and makes it
 //! selectable only after every package has one complete installation receipt.
 
+mod selection;
+pub use selection::position_packages;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
@@ -50,6 +53,9 @@ pub struct ProductAgentSubscriptionV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProductAgentPositionV1 {
+    /// Exact WAD package identity in the composition's retained receipt closure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_id: Option<String>,
     pub position_id: String,
     pub directive: String,
     pub required_owner_routes: Vec<TheoryRouteId>,
@@ -98,6 +104,10 @@ pub(super) fn valid_agent_topology(
             == positions.len()
         && positions.iter().all(|position| {
             !position.position_id.trim().is_empty()
+                && position
+                    .package_id
+                    .as_ref()
+                    .is_none_or(|id| !id.trim().is_empty())
                 && !position.directive.trim().is_empty()
                 && !position.required_owner_routes.is_empty()
                 && !position.observation_scope_component_id.trim().is_empty()
@@ -266,22 +276,22 @@ impl ProductCompilationReceiptV1 {
                 .map(|receipt| receipt.receipt_id.clone())
                 .collect::<Vec<_>>(),
         )?;
-        let available_routes = receipts
-            .iter()
-            .flat_map(|receipt| receipt.components.iter().map(|component| &component.route))
-            .collect::<BTreeSet<_>>();
-        if declaration.agent_topology.iter().any(|position| {
-            position
+        for position in &declaration.agent_topology {
+            let selected = position_packages(position, &receipts, package_store)?;
+            let available_routes = selected
+                .iter()
+                .flat_map(|receipt| receipt.components.iter().map(|c| &c.route))
+                .collect::<BTreeSet<_>>();
+            if position
                 .required_owner_routes
                 .iter()
                 .any(|route| !available_routes.contains(route))
-        }) {
-            return Err(error(
-                "product_compilation_incomplete",
-                "Agent topology requires an owner route absent from the selected package set",
-            ));
-        }
-        for position in &declaration.agent_topology {
+            {
+                return Err(error(
+                    "product_compilation_incomplete",
+                    "Agent WAD requires an owner route absent from its selected package closure",
+                ));
+            }
             let required_components =
                 std::iter::once(position.observation_scope_component_id.as_str()).chain(
                     position
@@ -290,7 +300,7 @@ impl ProductCompilationReceiptV1 {
                         .map(|subscription| subscription.source_contract_component_id.as_str()),
                 );
             for component_id in required_components {
-                let matches = receipts
+                let matches = selected
                     .iter()
                     .flat_map(|receipt| receipt.components.iter())
                     .filter(|component| component.component_id == component_id)
@@ -1239,6 +1249,7 @@ mod tests {
                 package_content_hash: format!("package-hash-{product_id}"),
             }],
             vec![ProductAgentPositionV1 {
+                package_id: None,
                 position_id: "steward".to_string(),
                 directive: format!("steward {product_id}"),
                 required_owner_routes: vec![route],
@@ -1263,6 +1274,93 @@ mod tests {
             ProductCompilationReceiptV1::compile(&declaration, vec![package], &package_store, 1)
                 .unwrap();
         (declaration, compilation)
+    }
+
+    #[test]
+    fn positions_select_exact_wads_without_renaming_local_components() {
+        let (base, baseline) = product_records(
+            "selection",
+            AgentTheoryRef {
+                registry: "belief_family".into(),
+                id: "family".into(),
+                content_hash: "revision".into(),
+            },
+        );
+        let store =
+            PdsPackageStore::new(sled::Config::new().temporary(true).open().unwrap()).unwrap();
+        let mut packages = Vec::new();
+        let mut positions = Vec::new();
+        for name in ["first", "second", "third"] {
+            let mut components = baseline.installed_owner_revisions.clone();
+            components[0].owner_revision.id = name.into();
+            let package = PdsPackageInstallationReceiptV1::new(
+                name.into(),
+                "1".into(),
+                format!("hash-{name}"),
+                1,
+                vec![],
+                components,
+                1,
+            )
+            .unwrap();
+            store.install_receipt(&package).unwrap();
+            let mut position = base.agent_topology[0].clone();
+            position.position_id = name.into();
+            position.package_id = Some(name.into());
+            positions.push(position);
+            packages.push(package);
+        }
+        let declare = |positions| {
+            ProductDeclarationV1::new(
+                base.product_id.clone(),
+                base.principal_id.clone(),
+                packages
+                    .iter()
+                    .map(|p| ProductPackageSelectionV1 {
+                        package_id: p.package_id.clone(),
+                        package_version: p.package_version.clone(),
+                        package_content_hash: p.package_content_hash.clone(),
+                    })
+                    .collect(),
+                positions,
+                base.participant_plan.clone(),
+                base.requested_authority_ref.clone(),
+                base.principal_grant_ref.clone(),
+                base.compilation_policy_revision.clone(),
+            )
+            .unwrap()
+        };
+        let declaration = declare(positions.clone());
+        let compiled =
+            ProductCompilationReceiptV1::compile(&declaration, packages.clone(), &store, 1)
+                .unwrap();
+        for position in &positions {
+            let selected = compiled.position_packages(position, &store).unwrap();
+            assert_eq!(selected.len(), 1);
+            assert_eq!(
+                selected[0].components[0].owner_revision.id,
+                position.position_id
+            );
+        }
+        positions[0].package_id = None;
+        assert!(ProductCompilationReceiptV1::compile(
+            &declare(positions.clone()),
+            packages.clone(),
+            &store,
+            1
+        )
+        .is_err());
+        positions[0].package_id = Some("absent".into());
+        assert!(
+            ProductCompilationReceiptV1::compile(&declare(positions), packages, &store, 1).is_err()
+        );
+        let historical = &base.agent_topology[0];
+        let encoded = serde_json::to_value(historical).unwrap();
+        assert!(encoded.get("package_id").is_none());
+        assert_eq!(
+            serde_json::from_value::<ProductAgentPositionV1>(encoded).unwrap(),
+            *historical
+        );
     }
 
     #[test]

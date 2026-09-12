@@ -1,6 +1,6 @@
 # From one Agent to many
 
-Status: proposed design. The user requested a dependency matrix after the shared-semantics circuit breaker. This document designs the next experiment; it does not activate implementation. Baseline: Meld `29e2b9b7`, code-semantics `9c58413`. The [program ledger](codebase_semantics_experiment.md) owns delivery status.
+Status: accepted architecture; implementation authorized. The user requested a dependency matrix after the shared-semantics circuit breaker. This document designs the next experiment; it does not activate implementation. Baseline: Meld `29e2b9b7`, code-semantics `9c58413`. The [program ledger](codebase_semantics_experiment.md) owns delivery status.
 
 Meld needs to realize several independently governed Agents over shared knowledge. Multiplicity belongs in prepared bindings and native runtime instances. It must not create another Graph writer, Event authority or coordinating Agent.
 
@@ -207,3 +207,5 @@ Still open for bounded implementation design: the precise versioned reference sh
 The prior commit/push authorization covers this design checkpoint. The present request authorizes architecture work; it does not by itself resume implementation across the circuit breaker. No release action is authorized.
 
 If applied, this commit records the ownership, identities and dependency order needed to turn the existing single-Agent proof into native multi-Agent composition without relocating domain theory into Meld.
+
+The user subsequently accepted this architecture and authorized implementation through the harness. The program ledger and active slice now own the resumed delivery state.

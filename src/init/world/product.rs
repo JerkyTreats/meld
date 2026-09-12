@@ -45,8 +45,24 @@ pub fn product_declaration(
     package: &crate::theory::ResolvedPdsPackage,
     products: &crate::theory::PdsProductStore,
 ) -> Result<ProductDeclarationV1, TheoryRouterError> {
-    let topologies = package.components_by_route.get(&ProductTopologyV1::route());
-    let component = match topologies.map(Vec::as_slice) {
+    // A composition owns its topology. Imported packages retain their standalone
+    // topology without becoming a second active composition declaration.
+    let roots = package
+        .receipt
+        .components
+        .iter()
+        .filter(|c| c.route == ProductTopologyV1::route())
+        .cloned()
+        .collect::<Vec<_>>();
+    let topologies = if roots.is_empty() {
+        package
+            .components_by_route
+            .get(&ProductTopologyV1::route())
+            .map(Vec::as_slice)
+    } else {
+        Some(roots.as_slice())
+    };
+    let component = match topologies {
         Some([component]) => component,
         _ => {
             return Err(source_error(

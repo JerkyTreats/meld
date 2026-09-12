@@ -220,6 +220,12 @@ pub(crate) fn compile_product_initialization<'a>(
         observed_seq,
     )
     .map_err(|error| world_init_error(error.to_string()))?;
+    let selected_components = compilation
+        .position_packages(position, &stores.pds_packages)
+        .map_err(|e| world_init_error(e.to_string()))?
+        .into_iter()
+        .flat_map(|p| p.components)
+        .collect::<Vec<_>>();
     let topology_id = product_topology_id(&declaration.agent_topology)
         .map_err(|error| world_init_error(error.to_string()))?;
     let subject = binding.subject.clone();
@@ -245,7 +251,7 @@ pub(crate) fn compile_product_initialization<'a>(
             .map_err(|error| world_init_error(error.to_string()))?;
     let selected_contracts = executable_contract_refs(&complete_contracts_for_product(
         &capability_inventory,
-        &compilation,
+        &selected_components,
     )?);
     let selected_implementations = selected_contracts
         .iter()
@@ -259,7 +265,7 @@ pub(crate) fn compile_product_initialization<'a>(
     let capability_bindings = crate::runtime::owners::preparation::prepare_owner_bindings(
         stores,
         binding,
-        &compilation.installed_owner_revisions,
+        &selected_components,
     )
     .map_err(|error| world_init_error(error.to_string()))?;
     let placement = stores
@@ -276,6 +282,7 @@ pub(crate) fn compile_product_initialization<'a>(
     Ok(CompleteProductInitialization {
         owners: &stores.owners,
         product_store: stores.pds_products.as_ref(),
+        package_store: stores.pds_packages.as_ref(),
         maintained_conditions: stores.maintained_condition_registry.as_ref(),
         curation_store: stores.curation_store.as_ref(),
         declaration,
@@ -289,10 +296,9 @@ pub(crate) fn compile_product_initialization<'a>(
 
 fn complete_contracts_for_product(
     inventory: &ProductCapabilityInventory,
-    compilation: &ProductCompilationReceiptV1,
+    components: &[crate::theory::InstalledTheoryComponentRef],
 ) -> Result<Vec<meld_execution::capability::CapabilityContractRevision>, ApiError> {
-    let selected = compilation
-        .installed_owner_revisions
+    let selected = components
         .iter()
         .filter(|component| {
             component.route.owner_domain == "execution"

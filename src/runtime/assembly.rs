@@ -674,12 +674,37 @@ fn activate_exact_capabilities(
         .ok_or_else(|| {
             crate::error::ApiError::ConfigError("prepared product compilation is absent".into())
         })?;
-    let owner_bindings = crate::runtime::owners::preparation::prepare_owner_bindings(
-        stores,
-        binding,
-        &compilation.installed_owner_revisions,
-    )
-    .map_err(|error| crate::error::ApiError::ConfigError(error.to_string()))?;
+    let declaration = stores
+        .pds_products
+        .declaration(&compilation.product_revision_id)
+        .map_err(|e| crate::error::ApiError::ConfigError(e.to_string()))?
+        .ok_or_else(|| {
+            crate::error::ApiError::ConfigError("prepared declaration missing".into())
+        })?;
+    let assigned = closure
+        .assignment
+        .agent_positions
+        .iter()
+        .find(|p| p.agent_id == binding.agent_id)
+        .ok_or_else(|| {
+            crate::error::ApiError::ConfigError("prepared Agent position missing".into())
+        })?;
+    let position = declaration
+        .agent_topology
+        .iter()
+        .find(|p| p.position_id == assigned.position_id)
+        .ok_or_else(|| {
+            crate::error::ApiError::ConfigError("declared Agent position missing".into())
+        })?;
+    let components = compilation
+        .position_packages(position, &stores.pds_packages)
+        .map_err(|e| crate::error::ApiError::ConfigError(e.to_string()))?
+        .into_iter()
+        .flat_map(|p| p.components)
+        .collect::<Vec<_>>();
+    let owner_bindings =
+        crate::runtime::owners::preparation::prepare_owner_bindings(stores, binding, &components)
+            .map_err(|error| crate::error::ApiError::ConfigError(error.to_string()))?;
     let prepared = inventory
         .prepare(
             ExactCapabilityActivationRequest {

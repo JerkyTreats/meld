@@ -1,6 +1,6 @@
 # Codebase semantics experiment
 
-Status: stopped at the architecture circuit breaker, exploratory. Current slice: shared semantics consumer boundary assessment.
+Status: active delivery, exploratory. Current slice: Agent WAD selection through native initialization.
 
 First slice result: bounded representation feasibility accepted. Thirteen source cases and public transport/lifecycle checks pass all 66 assertions with zero model calls. Existing `meld-lang` is sufficient for this selected syntax relationship. The next slice has now exercised native admission and currentness. Sensing and multi-agent consumption remain open.
 
@@ -189,3 +189,13 @@ Accepted sensing, admission and representation results remain valid. The [active
 The user accepted the one-Agent proof as the initial baseline and requested a dependency matrix for one-to-many delivery. The [dependency design](multi_agent_dependency_matrix.md) separates package composition, per-position theory and bindings, Agent genesis, scoped runtime instances, owner grants, native current-cut consumption and README effects. It recommends one product runtime with two independently authored PDSs as the first proof, preserving shared Event and Graph authorities.
 
 This is design work across the circuit breaker, not resumed runtime implementation. The matrix names three observable checkpoints: independent CPU Agents, shared semantic consumption, then Luna-low README maintenance. Exact migration and retirement scope must be frozen before the first implementation slice.
+
+## Architecture acceptance and resumed delivery
+
+The user accepted the one-to-many architecture, clarified a reusable WAD per Agent role as the initial model, and authorized implementation through the harness with minimum architecture. The circuit breaker is resolved for the accepted scope. The [active contract](../../../../../meld-code-semantics/ACTIVE_SLICE.md) first proves exact WAD selection inside a composition, then delivery continues to independent native Agent instances and shared semantic consumption. Checkpoint commits and pushes remain authorized. No release actions are authorized.
+
+## Exact WAD selection checkpoint
+
+A position can select `package_id` within the composition's exact imported receipt set. Root topology selection excludes imported standalone topologies from active selection. Genesis, prepared runtime theory, Curation and capability-owner reconstruction use the same selected WAD closure. The [harness report](../../../../../meld-code-semantics/evidence/package-selection-v1/report.json) passes 12 checks with colliding component names, native requests, restart and ambiguity rejection; the existing automatic sensing journey passes 88 checks. No Event, Graph, language or scheduler authority changed.
+
+The first failed journey revealed one remaining whole-compilation owner reconstruction path during capability activation. It was corrected before acceptance. Rust source callers constructing `ProductAgentPositionV1` must add its optional `package_id` field; existing serialized WADs preserve their identities. The next authorized work is binding and realizing multiple native Agent instances through this selection path.

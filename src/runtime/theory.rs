@@ -326,18 +326,29 @@ impl ResolvedStewardshipTheory {
                 "prepared product compilation differs from its exact package receipts".to_string(),
             ));
         }
-        let receipt = receipt_from_components(
-            selection,
-            &compilation.installed_owner_revisions,
-            compilation.compiled_at_seq,
-        )?;
+        let [position] = declaration.agent_topology.as_slice() else {
+            return Err(TheoryResolutionError::Inconsistent(
+                "runtime binding requires one selected Agent position".into(),
+            ));
+        };
+        let selected_packages = compilation
+            .position_packages(position, &stores.pds_packages)
+            .map_err(owner_error)?;
+        let components = selected_packages
+            .iter()
+            .flat_map(|p| p.components.clone())
+            .collect::<Vec<_>>();
+        let receipt = receipt_from_components(selection, &components, compilation.compiled_at_seq)?;
         Self::resolve_exact_with_lineage(
             stores,
             selection,
             Some(subject),
             receipt,
             Some(compilation.compilation_receipt_id),
-            compilation.package_receipt_ids,
+            selected_packages
+                .into_iter()
+                .map(|p| p.receipt_id)
+                .collect(),
             Some(closure),
         )
     }
@@ -536,8 +547,30 @@ impl ResolvedStewardshipTheory {
             .compilation(&closure.assignment.product_compilation_receipt_id)
             .map_err(owner_error)?
             .ok_or_else(|| missing("prepared product compilation"))?;
-        let templates: Vec<_> = compilation
-            .installed_owner_revisions
+        let declaration = stores
+            .pds_products
+            .declaration(&compilation.product_revision_id)
+            .map_err(owner_error)?
+            .ok_or_else(|| missing("prepared product declaration"))?;
+        let assigned = closure
+            .assignment
+            .agent_positions
+            .iter()
+            .find(|p| p.agent_id == agent.agent_id)
+            .ok_or_else(|| missing("assigned Agent position"))?;
+        let position = declaration
+            .agent_topology
+            .iter()
+            .find(|p| p.position_id == assigned.position_id)
+            .ok_or_else(|| missing("declared Agent position"))?;
+        let selected = compilation
+            .position_packages(position, &stores.pds_packages)
+            .map_err(owner_error)?;
+        let components = selected
+            .into_iter()
+            .flat_map(|p| p.components)
+            .collect::<Vec<_>>();
+        let templates: Vec<_> = components
             .iter()
             .filter(|component| {
                 component.owner_revision.registry

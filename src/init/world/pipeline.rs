@@ -115,6 +115,7 @@ pub(crate) struct RoutedTheoryInstall {
 pub(crate) struct CompleteProductInitialization<'a> {
     pub(crate) owners: &'a crate::runtime::owners::catalog::OwnerCatalog,
     pub(crate) product_store: &'a PdsProductStore,
+    pub(crate) package_store: &'a crate::theory::PdsPackageStore,
     pub(crate) maintained_conditions: &'a AgentMaintainedConditionRegistryStore,
     pub(crate) curation_store: &'a meld_world_model::CurationStore,
     pub(crate) declaration: ProductDeclarationV1,
@@ -333,37 +334,9 @@ impl<'a> WorldInitPipeline<'a> {
             .as_ref()
             .expect("complete product checked");
         verify_current_product(product)?;
-        let curation_ref =
-            compilation_world_ref(&product.compilation, "world-model", "agent-curation-rule")?;
-        let maintained_ref = compilation_world_ref(
-            &product.compilation,
-            "world-model",
-            "agent-maintained-condition",
-        )?;
-        let maintained = product
-            .maintained_conditions
-            .resolve(&maintained_ref.id, &maintained_ref.content_hash)
-            .map_err(|error| WorldInitError::Identity(error.to_string()))?
-            .ok_or_else(|| {
-                WorldInitError::Identity(
-                    "installed maintained condition revision is missing".to_string(),
-                )
-            })?
-            .binding()
-            .map_err(|error| WorldInitError::Identity(error.to_string()))?;
         let perspective = assignment_perspective(&product.assignment)?;
         let branch_scope = BranchScope::new(product.assignment.branch_id.clone())
             .map_err(|error| WorldInitError::Identity(error.to_string()))?;
-        let installed_owner_revisions = product
-            .compilation
-            .installed_owner_revisions
-            .iter()
-            .map(|component| meld_world_model::belief::TheoryRevisionRef {
-                registry: component.owner_revision.registry.clone(),
-                id: component.owner_revision.id.clone(),
-                content_hash: component.owner_revision.content_hash.clone(),
-            })
-            .collect::<Vec<_>>();
         let mut receipts = Vec::new();
         let mut changed = false;
         for assigned in &product.assignment.agent_positions {
@@ -377,10 +350,38 @@ impl<'a> WorldInitPipeline<'a> {
                         "assignment contains an Agent position absent from the product".to_string(),
                     )
                 })?;
-            let observation_ref = compilation_component_ref(
-                &product.compilation,
-                &position.observation_scope_component_id,
-            )?;
+            let components = product
+                .compilation
+                .position_packages(position, product.package_store)
+                .map_err(|e| WorldInitError::Identity(e.to_string()))?
+                .into_iter()
+                .flat_map(|p| p.components)
+                .collect::<Vec<_>>();
+            let curation_ref =
+                compilation_world_ref(&components, "world-model", "agent-curation-rule")?;
+            let maintained_ref =
+                compilation_world_ref(&components, "world-model", "agent-maintained-condition")?;
+            let maintained = product
+                .maintained_conditions
+                .resolve(&maintained_ref.id, &maintained_ref.content_hash)
+                .map_err(|error| WorldInitError::Identity(error.to_string()))?
+                .ok_or_else(|| {
+                    WorldInitError::Identity(
+                        "installed maintained condition revision is missing".to_string(),
+                    )
+                })?
+                .binding()
+                .map_err(|error| WorldInitError::Identity(error.to_string()))?;
+            let installed_owner_revisions = components
+                .iter()
+                .map(|component| meld_world_model::belief::TheoryRevisionRef {
+                    registry: component.owner_revision.registry.clone(),
+                    id: component.owner_revision.id.clone(),
+                    content_hash: component.owner_revision.content_hash.clone(),
+                })
+                .collect::<Vec<_>>();
+            let observation_ref =
+                compilation_component_ref(&components, &position.observation_scope_component_id)?;
             observation_ref
                 .validate_for_registry("belief_family")
                 .map_err(|error| WorldInitError::Identity(error.to_string()))?;
@@ -408,7 +409,7 @@ impl<'a> WorldInitPipeline<'a> {
                         )));
                     }
                     let source_revision = compilation_component_ref(
-                        &product.compilation,
+                        &components,
                         &subscription.source_contract_component_id,
                     )?;
                     if source_revision != observation_ref {
@@ -804,13 +805,12 @@ fn assignment_perspective(
 }
 
 fn compilation_world_ref(
-    receipt: &ProductCompilationReceiptV1,
+    components: &[crate::theory::InstalledTheoryComponentRef],
     owner: &str,
     kind: &str,
 ) -> Result<meld_world_model::belief::TheoryRevisionRef, WorldInitError> {
     let route = crate::theory::TheoryRouteId::new(owner, kind, 1);
-    let mut matches = receipt
-        .installed_owner_revisions
+    let mut matches = components
         .iter()
         .filter(|component| component.route == route);
     let component = matches.next().ok_or_else(|| {
@@ -833,11 +833,10 @@ fn compilation_world_ref(
 }
 
 fn compilation_component_ref(
-    receipt: &ProductCompilationReceiptV1,
+    components: &[crate::theory::InstalledTheoryComponentRef],
     component_id: &str,
 ) -> Result<meld_world_model::belief::TheoryRevisionRef, WorldInitError> {
-    let mut matches = receipt
-        .installed_owner_revisions
+    let mut matches = components
         .iter()
         .filter(|component| component.component_id == component_id);
     let component = matches.next().ok_or_else(|| {
