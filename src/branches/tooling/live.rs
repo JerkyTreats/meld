@@ -10,6 +10,7 @@ pub fn try_live(
 ) -> Option<Result<String, ApiError>> {
     let BranchesCommands::GraphOwnerWalk {
         scope,
+        cut_file,
         owner_id,
         owner_scope_id,
         owner_branch_id,
@@ -41,6 +42,7 @@ pub fn try_live(
     };
     Some((|| {
         let request = OwnerWalkRead {
+            frozen_cut: read_frozen_cut(cut_file.as_deref())?,
             product_root: target.product_root.clone(),
             workspace_root: workspace
                 .canonicalize()

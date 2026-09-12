@@ -1,6 +1,6 @@
 # Graph engine fit and maintenance spike
 
-Slice `graph-engine-fit-v1`. Lifecycle: designed. Readiness: approval-ready. The user authorizes checkpoint commit and push, formulation of this spike, and a subsequent whole-Graph architecture assessment informed by clearer evidence. Prototype execution and production replacement have not started. This record defines the evidence exercise, not a selected database architecture.
+Slice `graph-engine-fit-v1`. Lifecycle: implementing. Readiness: build-ready. The user's subsequent “Proceed” authorizes the bounded prototype comparison, local dependencies and isolated state needed by its arms, harness measurement, and checkpoint commits and pushes. Production replacement remains unselected. This record defines the evidence exercise, not a selected database architecture.
 
 ## Reason and decision
 
@@ -103,6 +103,14 @@ The next assessment must consider the Graph as a whole: publication granularity 
 
 That assessment produces an evidence-backed architecture for performance by default, including operating budgets, tradeoffs, canonical ownership, storage choice, migration and retirement scope, and harness proof. It updates `design/cognitive_architecture` only once the intended design is accepted. This temporal spike record does not preempt evergreen design or authorize implementation of the successor.
 
-Design review: the native path, semantic gates and maintenance comparison are specified; independent prototypes have no production cutover authority. Style review: domain boundaries and evidence limits are explicit, and no runtime code changes are included. Gate judgment: accepted as a formulated spike, not as an executed experiment. Readiness remains approval-ready for prototype execution. The unresolved engine choice and architecture are intended outputs.
+Design review: the native path, semantic gates and maintenance comparison are specified; independent prototypes have no production cutover authority. The initial design was accepted and pushed as `5d137f65`. Execution is now authorized. Runtime implementation judgments and measured results remain pending. The unresolved engine choice and architecture are intended outputs.
 
-Commit effect: If applied, this commit records a bounded comparison that exposes both bespoke maintenance cost and external engine semantic mismatch before selecting Meld's Graph architecture. Current authorization covers this design checkpoint and its push; no prototype or runtime replacement has been performed.
+Commit effect: If applied, this commit records a bounded comparison that exposes both bespoke maintenance cost and external engine semantic mismatch before selecting Meld's Graph architecture. Working branches isolate the evidence ledger, indexed prototype and SQLite prototype. No production cutover is authorized by completion of the spike.
+
+## External shortlist and selected arm
+
+SQLite through rusqlite 0.40.2 is selected for the external prototype. SQLite provides maintained transactional tables and indexes, accepts opaque owner identifiers and qualified relation records, and embeds in the existing command process. The adapter still owns explicit historical revision rows and Meld traversal ordering; those costs must remain visible. The bundled SQLite version will be recorded from the built artifact. SQLite is public domain; rusqlite is MIT licensed and adds a bundled C build. [SQLite durability](https://www.sqlite.org/transactional.html), [isolation](https://www.sqlite.org/isolation.html), [release history](https://sqlite.org/changes.html), [rusqlite](https://docs.rs/rusqlite/0.40.2/rusqlite/).
+
+Redb 4.2.0 is a plausible embedded alternative with transactions and MVCC, but its key-value interface leaves graph indexing and query work with Meld. It is not selected because this arm should test a greater delegation of indexing work than another KV engine. Its recent releases, pure Rust implementation and MIT/Apache-2.0 licensing remain useful comparison facts. [Redb](https://docs.rs/crate/redb/4.2.0).
+
+Oxigraph 0.5.11 is the graph-native shortlist candidate. It offers an embedded Rust RDF/SPARQL store backed by RocksDB under MIT/Apache-2.0 licensing. Mapping occurrence identities, qualifications and historical owner cuts would require explicit RDF records and named-graph conventions. This is possible, not disproved, but introduces a second query representation without an observed need for SPARQL. It is not selected for this bounded prototype; this decision does not establish that graph-specific engines cannot fit Meld. [Oxigraph](https://docs.rs/crate/oxigraph/0.5.11), [architecture](https://github.com/oxigraph/oxigraph/wiki/Architecture).

@@ -332,6 +332,7 @@ impl TraversalStore {
                 )));
             }
         }
+        spike_crash(publication, "before-index");
         let key = encode_seq_index_key(
             publication.source_event.seq,
             &publication.operation.operation_id,
@@ -342,6 +343,12 @@ impl TraversalStore {
                 serde_json::to_vec(publication).map_err(to_storage_data)?,
             )
             .map_err(to_storage_io)?;
+        if std::env::var("MELD_GRAPH_SPIKE_CRASH").ok().as_deref()
+            == Some(format!("{}:after-index", publication.operation.batch.owner_id).as_str())
+        {
+            self.flush()?;
+            spike_crash(publication, "after-index");
+        }
         Ok(())
     }
 
@@ -492,4 +499,13 @@ fn to_storage_io(err: sled::Error) -> StorageError {
 
 fn to_storage_data(err: serde_json::Error) -> StorageError {
     StorageError::IoError(io::Error::new(io::ErrorKind::InvalidData, err.to_string()))
+}
+
+// Spike-only failpoint: external harness selects one owner and persistence boundary.
+fn spike_crash(publication: &ProjectedOwnerPublication, boundary: &str) {
+    if std::env::var("MELD_GRAPH_SPIKE_CRASH").ok().as_deref()
+        == Some(format!("{}:{boundary}", publication.operation.batch.owner_id).as_str())
+    {
+        std::process::exit(86);
+    }
 }

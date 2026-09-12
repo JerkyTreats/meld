@@ -24,6 +24,8 @@ pub struct OwnerWalkRead {
     pub owner_id: String,
     pub owner_scope: OwnerPublicationScope,
     pub traversal: BoundedTraversalRequest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frozen_cut: Option<TraversalCut>,
 }
 
 /// Uses the same federated read contract with the live active store supplied.
@@ -33,13 +35,14 @@ pub fn read_active_owner(
     position: crate::events::LedgerCursor,
 ) -> Result<FederatedOwnerWalkOutput, ApiError> {
     let branch = BranchRuntime::new().resolve_active_branch(&request.workspace_root)?;
-    BranchQueryRuntime::with_active_store(&branch.resolved().branch_id, store).owner_walk(
+    BranchQueryRuntime::with_active_store(&branch.resolved().branch_id, store).owner_walk_at(
         BranchQueryScope::Active,
         Some(&request.workspace_root),
         position,
         &request.owner_id,
         request.owner_scope.clone(),
         &request.traversal,
+        request.frozen_cut.as_ref(),
     )
 }
 
@@ -203,6 +206,28 @@ impl BranchQueryRuntime {
         owner_scope: OwnerPublicationScope,
         request: &BoundedTraversalRequest,
     ) -> Result<FederatedOwnerWalkOutput, ApiError> {
+        self.owner_walk_at(
+            scope,
+            workspace_root,
+            event_position,
+            owner_id,
+            owner_scope,
+            request,
+            None,
+        )
+    }
+
+    /// Read an exact cut through the same native traversal authority as current reads.
+    pub fn owner_walk_at(
+        &self,
+        scope: BranchQueryScope,
+        workspace_root: Option<&Path>,
+        event_position: LedgerCursor,
+        owner_id: &str,
+        owner_scope: OwnerPublicationScope,
+        request: &BoundedTraversalRequest,
+        frozen_cut: Option<&TraversalCut>,
+    ) -> Result<FederatedOwnerWalkOutput, ApiError> {
         let selection = self.select_branches(scope, workspace_root)?;
         let strict_scope = selection.scope.is_strict();
         let mut metadata = self.base_metadata(&selection);
@@ -225,7 +250,17 @@ impl BranchQueryRuntime {
                     projected
                 };
                 let query = TraversalQuery::new(store.as_ref());
-                let cut = query
+                let cut = if let Some(cut) = frozen_cut {
+                    cut.validate_identity().map_err(ApiError::from)?;
+                    if cut.graph_position.ledger_id != projected.ledger_id
+                        || cut.graph_position.after_seq > projected.after_seq
+                        || cut.scope != owner_scope
+                        || !cut.owners.iter().any(|r| r.owner_id == owner_id && r.scope == owner_scope)
+                    {
+                        return Err(ApiError::ConfigError("frozen cut does not belong to the selected owner scope and projected ledger".into()));
+                    }
+                    cut.clone()
+                } else { query
                     .cut(&TraversalCutRequest {
                         owners: vec![TraversalOwnerRequirement {
                             event_source: None,
@@ -237,7 +272,7 @@ impl BranchQueryRuntime {
                         currentness: OwnerCurrentnessPolicy::LatestComplete,
                         event_position,
                     })
-                    .map_err(ApiError::from)?;
+                    .map_err(ApiError::from)? };
                 let result = query.traverse(&cut, request).map_err(ApiError::from)?;
                 Ok(BranchOwnerWalkResult {
                     branch_id: entry.branch_id.clone(),
