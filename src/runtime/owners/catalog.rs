@@ -56,6 +56,27 @@ fn seed_key(owner: &str) -> String {
 }
 
 impl OwnerCatalog {
+    /// One selected owner runtime retains its exact situated preparation. A
+    /// consumer of its output does not prepare a second publisher instance.
+    pub(crate) fn compose_position_bindings(
+        &self,
+        mut common: OwnerBindingView,
+        positions: &[OwnerBindingView],
+    ) -> Result<OwnerBindingView, OwnerDiagnosticV1> {
+        for id in self.owners.keys() {
+            let key = seed_key(id);
+            let selected = positions
+                .iter()
+                .filter_map(|view| view.get(&key))
+                .collect::<Vec<_>>();
+            match selected.as_slice() {
+                [] => {},
+                [seed] => common = common.with_value(key, *seed),
+                _ => return Err(failure(format!("owner '{id}' is selected by multiple positions; distinct same-owner runtime instances require explicit instance bindings"))),
+            }
+        }
+        Ok(common)
+    }
     pub fn open(
         binding: &PhysicalBinding,
         authority: &EventAuthority,

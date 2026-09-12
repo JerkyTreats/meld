@@ -69,6 +69,15 @@ pub struct PhysicalBinding {
 }
 
 impl PhysicalBinding {
+    /// Project one situated Agent over the composition's common physical resources.
+    pub(crate) fn for_agent(&self, agent_id: &str, package: SelectedStewardshipPackage) -> Self {
+        Self {
+            agent_positions: Default::default(),
+            agent_id: agent_id.into(),
+            package,
+            ..self.clone()
+        }
+    }
     /// Resolve the only configured stewardship declaration.
     ///
     /// Compatibility entry point for callers that predate named declaration

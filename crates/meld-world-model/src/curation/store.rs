@@ -282,11 +282,15 @@ impl CurationStore {
             StorageError::InvalidPath("prepared Curation template is missing".into())
         })?;
         let rule = self.resolve_rule(rule_ref)?;
-        if rule.rule
-            != template
-                .template
-                .ground_for_source(binding, source, judgment)?
-        {
+        let mut grounded = template
+            .template
+            .ground_for_source(binding, source, judgment)?;
+        // Retained pre-isolation rules keep their exact output boundary. Remove this
+        // reader only when those immutable prepared revisions are no longer supported.
+        if rule.rule.publication_scope.is_none() {
+            grounded.publication_scope = None;
+        }
+        if rule.rule != grounded {
             return Err(StorageError::InvalidPath(
                 "prepared Curation rule differs from its exact source and judgment context".into(),
             ));

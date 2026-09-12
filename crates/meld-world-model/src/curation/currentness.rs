@@ -29,7 +29,7 @@ impl CurationQuery<'_> {
             return Ok(None);
         }
         let Some(selected) = cut.receipts.iter().find(|receipt| {
-            receipt.owner_id == CURATION_OWNER_ID && receipt.scope == rule.rule.scope
+            receipt.owner_id == CURATION_OWNER_ID && &receipt.scope == rule.rule.publication_scope()
         }) else {
             return Ok(None);
         };

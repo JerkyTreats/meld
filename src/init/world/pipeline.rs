@@ -123,7 +123,7 @@ pub(crate) struct CompleteProductInitialization<'a> {
     pub(crate) assignment: StewardshipAssignmentV1,
     pub(crate) activation: StewardshipActivationV1,
     pub(crate) capability_inventory: ProductCapabilityInventory,
-    pub(crate) capability_bindings: OwnerBindingView,
+    pub(crate) capability_bindings: Option<OwnerBindingView>,
 }
 
 /// Normalize a stage selection to pipeline order without duplicates.
@@ -444,8 +444,8 @@ impl<'a> WorldInitPipeline<'a> {
                     subject: product.assignment.subject.clone(),
                     scope: meld_world_model::world_state::graph::contracts::OwnerPublicationScope {
                         scope_id: product
-                            .assignment
-                            .agent_scope_id(&product.declaration.product_id, &assigned.agent_id)
+                            .declaration
+                            .observation_scope_id(&product.assignment, &assigned.position_id)
                             .map_err(|error| WorldInitError::Identity(error.to_string()))?,
                         branch_id: Some(branch_scope.branch_id.clone()),
                         perspective_id: Some(perspective.perspective_id.clone()),
@@ -566,14 +566,6 @@ impl<'a> WorldInitPipeline<'a> {
                 "complete product inputs are required for activation preparation".to_string(),
             )
         })?;
-        if product
-            .activation
-            .bindings
-            .keys()
-            .any(|key| key.starts_with("agent-position::"))
-        {
-            return Err(WorldInitError::Activation("explicit Agent positions have native genesis but scoped runtime activation is not yet available".into()));
-        }
         verify_current_product(product)?;
         crate::runtime::assembly::RuntimeFactoryRegistry::first_proof_registry()
             .map_err(|error| WorldInitError::Activation(error.to_string()))?
@@ -620,7 +612,9 @@ impl<'a> WorldInitPipeline<'a> {
                     selected_implementations: product.activation.selected_implementations.clone(),
                     compatibility_policy_revision: "capability-compatibility.v1".to_string(),
                 },
-                &product.capability_bindings,
+                product.capability_bindings.as_ref().ok_or_else(|| {
+                    WorldInitError::Activation("exact owner preparation was not requested".into())
+                })?,
             )
             .map_err(|error| WorldInitError::Activation(error.to_string()))?;
         let owner_receipts = product_owner_preparation_refs(&product.compilation)

@@ -53,6 +53,9 @@ pub struct ProductAgentSubscriptionV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProductAgentPositionV1 {
+    /// Position supplying the current observation scope; absent means this position.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observation_source_position_id: Option<String>,
     /// Exact WAD package identity in the composition's retained receipt closure.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub package_id: Option<String>,
@@ -122,6 +125,10 @@ pub(super) fn valid_agent_topology(
                     .as_ref()
                     .is_none_or(|id| !id.trim().is_empty())
                 && !position.directive.trim().is_empty()
+                && position
+                    .observation_source_position_id
+                    .as_ref()
+                    .is_none_or(|source| positions.iter().any(|p| &p.position_id == source))
                 && !position.required_owner_routes.is_empty()
                 && !position.observation_scope_component_id.trim().is_empty()
                 && !position.required_subscriptions.is_empty()
@@ -138,6 +145,30 @@ pub(super) fn valid_agent_topology(
 }
 
 impl ProductDeclarationV1 {
+    /// Resolve source identity independently of consumer membership and goal state.
+    pub fn observation_scope_id(
+        &self,
+        assignment: &StewardshipAssignmentV1,
+        position_id: &str,
+    ) -> Result<String, TheoryRouterError> {
+        let position = self
+            .agent_topology
+            .iter()
+            .find(|p| p.position_id == position_id)
+            .ok_or_else(|| error("observation_binding_invalid", "Agent position is absent"))?;
+        let source = position
+            .observation_source_position_id
+            .as_deref()
+            .unwrap_or(position_id);
+        let assigned = assignment
+            .agent_positions
+            .iter()
+            .find(|p| p.position_id == source)
+            .ok_or_else(|| error("observation_binding_invalid", "source position is unbound"))?;
+        assignment
+            .agent_scope_id(&self.product_id, &assigned.agent_id)
+            .map_err(|e| error("observation_binding_invalid", e.to_string()))
+    }
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         product_id: String,
@@ -1289,6 +1320,7 @@ mod tests {
                 package_content_hash: format!("package-hash-{product_id}"),
             }],
             vec![ProductAgentPositionV1 {
+                observation_source_position_id: None,
                 package_id: None,
                 position_id: "steward".to_string(),
                 directive: format!("steward {product_id}"),

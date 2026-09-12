@@ -301,7 +301,16 @@ pub(super) fn task_source_basis(
             .filter(|receipt| {
                 &receipt.owner_id == owner
                     && (receipt.owner_id != crate::curation::CURATION_OWNER_ID
-                        || receipt.scope != problem.planner_cut.traversal_cut.scope)
+                        || !problem
+                            .planner_cut
+                            .traversal_cut
+                            .owners
+                            .iter()
+                            .any(|owner| {
+                                owner.owner_id == receipt.owner_id
+                                    && owner.scope == receipt.scope
+                                    && !owner.required
+                            }))
             })
             .collect::<Vec<_>>();
         if receipts.is_empty() {
@@ -520,7 +529,8 @@ pub(crate) fn epistemic_products_with_history(
                             .iter()
                             .any(|receipt| {
                                 receipt.owner_id == crate::curation::CURATION_OWNER_ID
-                                    && receipt.scope == operation.operation.source_cut.scope
+                                    && Some(&receipt.scope)
+                                        == operation.operation.publication_scope()
                                     && receipt.revision_id == entry.owner_position_id
                             }))
                     .then(|| prior.as_ref().clone())

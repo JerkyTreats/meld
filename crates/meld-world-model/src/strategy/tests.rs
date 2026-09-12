@@ -962,6 +962,15 @@ fn unsuccessful_confirmation_stops_unchanged_work_but_allows_source_advance_and_
 #[test]
 fn named_confirmation_tracks_owner_evidence_beyond_its_own_curation_return() {
     let mut problem = problem();
+    let operation = &mut problem.curation_operations[0];
+    operation.source_cut.owners.push(TraversalOwnerRequirement {
+        owner_id: crate::curation::CURATION_OWNER_ID.into(),
+        scope: operation.source_cut.scope.clone(),
+        required: false,
+        event_source: None,
+    });
+    operation.source_cut.owners.sort();
+    operation.source_cut.cut_id = traversal_cut_identity(&operation.source_cut).unwrap();
     problem.curation_operations[0] = problem.curation_operations[0]
         .clone()
         .for_request("confirmation".into())

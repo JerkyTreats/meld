@@ -53,6 +53,9 @@ pub struct StandingCurationRule {
     pub agent_id: String,
     pub source_owner_id: String,
     pub scope: OwnerPublicationScope,
+    /// Derived output has its own replacement boundary when source observations are shared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publication_scope: Option<OwnerPublicationScope>,
     pub roots: Vec<DomainObjectRef>,
     pub traversal_direction: TraversalDirection,
     pub bounds: TraversalBounds,
@@ -100,11 +103,17 @@ pub struct CurationRealizationRule {
 }
 
 impl StandingCurationRule {
+    /// Older installed rules retain their original publication boundary.
+    pub fn publication_scope(&self) -> &OwnerPublicationScope {
+        self.publication_scope.as_ref().unwrap_or(&self.scope)
+    }
+
     pub fn validate(&self) -> Result<(), StorageError> {
         require_non_empty("standing Curation rule id", &self.rule_id)?;
         require_non_empty("standing Curation agent id", &self.agent_id)?;
         require_non_empty("standing Curation source owner", &self.source_owner_id)?;
         self.scope.validate()?;
+        self.publication_scope().validate()?;
         if let Some(source) = &self.source_event_route {
             source.validate()?;
         }
@@ -242,6 +251,13 @@ pub struct StandingCurationRuleRevision {
 }
 
 impl StandingCurationRuleRevision {
+    /// Exact source and derived-output selections for Curation and its consumers.
+    pub fn cut_owners(
+        &self,
+    ) -> Vec<crate::world_state::graph::contracts::TraversalOwnerRequirement> {
+        expected_cut_owners(self)
+    }
+
     pub fn validate(&self) -> Result<(), StorageError> {
         self.rule.validate()?;
         if self.rule_id != self.rule.rule_id {
@@ -376,6 +392,15 @@ impl CurationPlannedAuthorization {
 }
 
 impl CurationOperation {
+    /// Output boundary retained in the admitted cut, distinct from source coverage.
+    pub fn publication_scope(&self) -> Option<&OwnerPublicationScope> {
+        self.source_cut
+            .owners
+            .iter()
+            .find(|owner| owner.owner_id == CURATION_OWNER_ID && !owner.required)
+            .map(|owner| &owner.scope)
+    }
+
     pub fn reconstruct(
         authority: CurationAuthority,
         rule_revision: TheoryRevisionRef,
@@ -595,7 +620,7 @@ pub(crate) fn expected_cut_owners(
         crate::world_state::graph::contracts::TraversalOwnerRequirement {
             event_source: None,
             owner_id: CURATION_OWNER_ID.to_string(),
-            scope: rule.rule.scope.clone(),
+            scope: rule.rule.publication_scope().clone(),
             required: false,
         },
     ];
@@ -777,7 +802,7 @@ impl CurationResult {
                 publication_ids.dedup();
                 if publication.batch.owner_id != CURATION_OWNER_ID
                     || publication.batch.revision_id != self.result_id
-                    || publication.batch.scope != operation.source_cut.scope
+                    || Some(&publication.batch.scope) != operation.publication_scope()
                     || publication_ids != self.cited_publication_ids
                     || publication
                         .batch

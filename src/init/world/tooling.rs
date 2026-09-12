@@ -117,8 +117,13 @@ pub fn run_world_init(
             "no installed package matches the selected Strategy; supply its package source to install-theory",
         )
     })?;
-    let complete_product =
-        compile_product_initialization(stores, &binding, &routed.receipt, observed_seq)?;
+    let complete_product = compile_product_initialization(
+        stores,
+        &binding,
+        &routed.receipt,
+        observed_seq,
+        request.stages.contains(&WorldInitStage::PrepareActivation),
+    )?;
     let complete = CompleteTheoryInstall { routed };
     WorldInitPipeline::new(
         &mut registry,
@@ -194,6 +199,7 @@ pub(crate) fn compile_product_initialization<'a>(
     binding: &PhysicalBinding,
     package_receipt: &crate::theory::PdsPackageInstallationReceiptV1,
     observed_seq: u64,
+    prepare_activation: bool,
 ) -> Result<CompleteProductInitialization<'a>, ApiError> {
     let resolved_package = crate::theory::PdsPackageResolver::new(
         super::routes::current_product_route_catalog(stores)
@@ -217,18 +223,12 @@ pub(crate) fn compile_product_initialization<'a>(
         observed_seq,
     )
     .map_err(|error| world_init_error(error.to_string()))?;
-    // Genesis consumes each position's exact WAD. Executable preparation remains
-    // unavailable for explicit collections until scoped runtime instances exist.
-    let selected_components = if binding.agent_positions.is_empty() {
-        compilation
-            .position_packages(&declaration.agent_topology[0], &stores.pds_packages)
-            .map_err(|e| world_init_error(e.to_string()))?
-            .into_iter()
-            .flat_map(|p| p.components)
-            .collect::<Vec<_>>()
-    } else {
-        Vec::new()
-    };
+    let positions =
+        crate::runtime::bind_product_positions(stores, binding, &declaration, &compilation)?;
+    let selected_components = positions
+        .iter()
+        .flat_map(|p| p.components.clone())
+        .collect::<Vec<_>>();
     let topology_id = product_topology_id(&declaration.agent_topology)
         .map_err(|error| world_init_error(error.to_string()))?;
     let subject = binding.subject.clone();
@@ -253,6 +253,9 @@ pub(crate) fn compile_product_initialization<'a>(
         &capability_inventory,
         &selected_components,
     )?);
+    if prepare_activation && positions.len() > 1 && !selected_contracts.is_empty() {
+        return Err(world_init_error("multiple Agent positions require scoped executable capability activation; this composition currently supports CPU-only judgment"));
+    }
     let selected_implementations = selected_contracts
         .iter()
         .map(|contract_ref| {
@@ -262,15 +265,15 @@ pub(crate) fn compile_product_initialization<'a>(
         })
         .collect::<Result<BTreeMap<_, _>, _>>()
         .map_err(|error| world_init_error(error.to_string()))?;
-    let capability_bindings = if binding.agent_positions.is_empty() {
-        crate::runtime::owners::preparation::prepare_owner_bindings(
-            stores,
-            binding,
-            &selected_components,
+    let capability_bindings = if prepare_activation {
+        Some(
+            crate::runtime::owners::preparation::prepare_product_owner_bindings(
+                stores, binding, &positions,
+            )
+            .map_err(|error| world_init_error(error.to_string()))?,
         )
-        .map_err(|error| world_init_error(error.to_string()))?
     } else {
-        crate::capability::OwnerBindingView::default()
+        None
     };
     let placement = stores
         .owners
@@ -455,7 +458,7 @@ mod tests {
             storage_root: root.path().into(),
         };
         let product =
-            compile_product_initialization(&stores, &binding, &replay.receipt, 2).unwrap();
+            compile_product_initialization(&stores, &binding, &replay.receipt, 2, true).unwrap();
         assert_eq!(
             product.declaration.agent_topology[0].observation_scope_component_id,
             "security-posture-belief"

@@ -729,21 +729,7 @@ impl AgentPlannerPort for ProductAgentPlannerPort {
         }
         request.traversal_request = rule.rule.traversal_request();
         request.traversal_cut_request.scope = rule.rule.scope.clone();
-        request.traversal_cut_request.owners = vec![
-            meld_world_model::world_state::graph::contracts::TraversalOwnerRequirement {
-                owner_id: rule.rule.source_owner_id.clone(),
-                scope: rule.rule.scope.clone(),
-                required: true,
-                event_source: rule.rule.source_event_route.clone(),
-            },
-            meld_world_model::world_state::graph::contracts::TraversalOwnerRequirement {
-                owner_id: meld_world_model::CURATION_OWNER_ID.into(),
-                scope: rule.rule.scope.clone(),
-                required: false,
-                event_source: None,
-            },
-        ];
-        request.traversal_cut_request.owners.sort();
+        request.traversal_cut_request.owners = rule.cut_owners();
         for source in &mut request.source_positions {
             source.scope_id = request.context.scope_id.clone();
             match source.kind {

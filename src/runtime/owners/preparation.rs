@@ -6,6 +6,27 @@ use crate::config::PhysicalBinding;
 use crate::runtime::storage::OpenProductStores;
 use crate::theory::InstalledTheoryComponentRef;
 
+pub(crate) fn prepare_product_owner_bindings(
+    stores: &OpenProductStores,
+    binding: &PhysicalBinding,
+    positions: &[crate::runtime::BoundProductPosition],
+) -> Result<OwnerBindingView, OwnerDiagnosticV1> {
+    let views = positions
+        .iter()
+        .map(|position| prepare_owner_bindings(stores, &position.physical, &position.components))
+        .collect::<Result<Vec<_>, _>>()?;
+    if binding.agent_positions.is_empty() {
+        return views
+            .into_iter()
+            .next()
+            .ok_or_else(|| failure("product has no bound Agent position"));
+    }
+    stores.owners.compose_position_bindings(
+        OwnerBindingView::new(binding.owner_binding_values()),
+        &views,
+    )
+}
+
 pub fn prepare_owner_bindings(
     stores: &OpenProductStores,
     binding: &PhysicalBinding,

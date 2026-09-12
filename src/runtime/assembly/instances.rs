@@ -33,6 +33,12 @@ pub(super) fn realize(
             ));
         }
         if binding.is_none() {
+            if assignment.agent_positions.len() > 1 && contextual_factory(factory_id) {
+                return Err(invalid(format!(
+                    "participant '{}' requires an explicit Agent position binding",
+                    participant.participant_id
+                )));
+            }
             continue;
         }
         if !matches!(
@@ -75,6 +81,19 @@ pub(super) fn realize(
             .insert(descriptor.runtime_id.clone(), descriptor);
     }
     Ok(())
+}
+
+pub(super) fn contextual_factory(id: &str) -> bool {
+    matches!(
+        id,
+        "world_model.agent_reconciliation"
+            | "world_model.standing_curation"
+            | "world_model.belief_assessment"
+            | "world_model.evidence_ingestion"
+            | "execution.task_admission"
+            | "execution.task_dispatch"
+            | "execution.publication"
+    )
 }
 
 fn invalid(message: impl Into<String>) -> RuntimeAssemblyError {

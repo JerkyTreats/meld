@@ -49,7 +49,7 @@ use meld_world_model::belief::{
     OutcomeMappingSetConfig,
 };
 use meld_world_model::world_state::graph::contracts::{
-    OwnerCurrentnessPolicy, TraversalCutRequest, TraversalOwnerRequirement,
+    OwnerCurrentnessPolicy, TraversalCutRequest,
 };
 use meld_world_model::world_state::graph::runtime::{GraphCatchUpBudget, GraphRuntime};
 use meld_world_model::PerspectiveKey;
@@ -493,17 +493,19 @@ pub struct StewardshipComposition {
     pub binding: PhysicalBinding,
 }
 
+#[cfg(test)]
 fn hydrate_stewardship_theory(
     stores: &OpenProductStores,
     binding: &PhysicalBinding,
     diagnostics: &mut Vec<AssemblyDiagnostic>,
 ) -> HydratedStewardshipTheory {
-    hydrate_prepared_stewardship_theory(stores, binding, None, diagnostics)
+    hydrate_prepared_stewardship_theory(stores, binding, binding, None, diagnostics)
 }
 
 fn hydrate_prepared_stewardship_theory(
     stores: &OpenProductStores,
     binding: &PhysicalBinding,
+    composition_binding: &PhysicalBinding,
     historical: Option<crate::theory::PreparedActivationClosureV1>,
     diagnostics: &mut Vec<AssemblyDiagnostic>,
 ) -> HydratedStewardshipTheory {
@@ -523,6 +525,7 @@ fn hydrate_prepared_stewardship_theory(
             stores,
             &binding.package,
             &subject,
+            &binding.agent_id,
             closure,
         ),
         None => ResolvedStewardshipTheory::resolve_prepared_product(
@@ -530,6 +533,7 @@ fn hydrate_prepared_stewardship_theory(
             &binding.package,
             &subject,
             &binding.assignment_scope_id(),
+            &binding.agent_id,
         ),
     };
     let resolved = match resolution {
@@ -578,17 +582,21 @@ fn hydrate_prepared_stewardship_theory(
         .prepared_closure
         .as_ref()
         .expect("prepared-product resolution must retain its closure");
-    let capability_runtime =
-        match activate_exact_capabilities(stores, binding, &contracts, prepared_closure) {
-            Ok(runtime) => runtime,
-            Err(error) => {
-                diagnostics.push(AssemblyDiagnostic {
-                    code: "theory_image_inconsistent".to_string(),
-                    message: error.to_string(),
-                });
-                return theory;
-            }
-        };
+    let capability_runtime = match activate_exact_capabilities(
+        stores,
+        composition_binding,
+        &contracts,
+        prepared_closure,
+    ) {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            diagnostics.push(AssemblyDiagnostic {
+                code: "theory_image_inconsistent".to_string(),
+                message: error.to_string(),
+            });
+            return theory;
+        }
+    };
     let mut strategy = match meld_world_model::AgentStrategyRuntimeConfig::activate_installed(
         resolved.strategy_theory.package.clone(),
         subject,
@@ -687,30 +695,12 @@ fn activate_exact_capabilities(
         .ok_or_else(|| {
             crate::error::ApiError::ConfigError("prepared declaration missing".into())
         })?;
-    let assigned = closure
-        .assignment
-        .agent_positions
-        .iter()
-        .find(|p| p.agent_id == binding.agent_id)
-        .ok_or_else(|| {
-            crate::error::ApiError::ConfigError("prepared Agent position missing".into())
-        })?;
-    let position = declaration
-        .agent_topology
-        .iter()
-        .find(|p| p.position_id == assigned.position_id)
-        .ok_or_else(|| {
-            crate::error::ApiError::ConfigError("declared Agent position missing".into())
-        })?;
-    let components = compilation
-        .position_packages(position, &stores.pds_packages)
-        .map_err(|e| crate::error::ApiError::ConfigError(e.to_string()))?
-        .into_iter()
-        .flat_map(|p| p.components)
-        .collect::<Vec<_>>();
-    let owner_bindings =
-        crate::runtime::owners::preparation::prepare_owner_bindings(stores, binding, &components)
-            .map_err(|error| crate::error::ApiError::ConfigError(error.to_string()))?;
+    let positions =
+        crate::runtime::bind_product_positions(stores, binding, &declaration, &compilation)?;
+    let owner_bindings = crate::runtime::owners::preparation::prepare_product_owner_bindings(
+        stores, binding, &positions,
+    )
+    .map_err(|error| crate::error::ApiError::ConfigError(error.to_string()))?;
     let prepared = inventory
         .prepare(
             ExactCapabilityActivationRequest {
@@ -728,7 +718,11 @@ fn activate_exact_capabilities(
             "current physical bindings differ from the prepared capability closure".to_string(),
         ));
     }
+    let mut catalog = CapabilityCatalog::new();
     for contract in contracts {
+        catalog
+            .register(contract.clone())
+            .map_err(|error| crate::error::ApiError::ConfigError(error.to_string()))?;
         if prepared
             .invokers
             .get(&contract.capability_type_id, contract.capability_version)
@@ -758,7 +752,7 @@ fn activate_exact_capabilities(
                 &closure.participant_plan,
             )
             .map_err(|error| crate::error::ApiError::ConfigError(error.to_string()))?,
-        catalog: prepared.contracts,
+        catalog,
         registry: prepared.invokers,
     })
 }
@@ -776,6 +770,51 @@ struct ComposedStewardship {
 }
 
 impl ComposedStewardship {
+    fn prepare(
+        stores: &OpenProductStores,
+        position: &PhysicalBinding,
+        composition: &PhysicalBinding,
+        prepared: &crate::theory::PreparedActivationClosureV1,
+        lifecycle: Option<ActivationLifecycleStore>,
+        events: &EventAuthority,
+        diagnostics: &mut Vec<AssemblyDiagnostic>,
+    ) -> Result<Self, RuntimeAssemblyError> {
+        let theory = hydrate_prepared_stewardship_theory(
+            stores,
+            position,
+            composition,
+            Some(prepared.clone()),
+            diagnostics,
+        );
+        let bindings = StewardshipActorBindings::derive(position)?;
+        Ok(Self {
+            lifecycle,
+            dispatch_slot: DispatchRouteSlot::default(),
+            network: None,
+            cursor_registry: events.consumer_registry_capability(),
+            worker_id: format!("runtime-worker::{}", events.ledger_identity()),
+            theory,
+            dispatch_route_seed: dispatch_route_seed(position, &bindings),
+            bindings,
+        })
+    }
+
+    fn open_network(&mut self, stores: &OpenProductStores) -> Result<(), RuntimeAssemblyError> {
+        self.network = stores
+            .task_networks
+            .opened()
+            .map(|factory| {
+                factory
+                    .open_network(&self.bindings.network_id)
+                    .map(|network| Arc::new(Mutex::new(network)))
+                    .map_err(|error| {
+                        RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
+                    })
+            })
+            .transpose()?;
+        Ok(())
+    }
+
     fn admission_observer(
         &self,
         store: Arc<AgentStore>,
@@ -1467,61 +1506,55 @@ impl ProductRuntimeAssembly {
         };
 
         let mut diagnostics = Vec::new();
-        let composed_stewardship = match stewardship {
-            Some(composition) => {
-                let theory = hydrate_stewardship_theory(
-                    stores.as_ref(),
-                    &composition.binding,
-                    &mut diagnostics,
-                );
-                let bindings = StewardshipActorBindings::derive(&composition.binding)?;
-                let network = match stores.task_networks.opened() {
-                    Some(factory) => Some(Arc::new(Mutex::new(
-                        factory
-                            .open_network(&bindings.network_id)
-                            .map_err(|error| {
-                                RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
-                            })?,
-                    ))),
-                    None => None,
-                };
-                let lifecycle = theory
-                    .resolved
-                    .as_ref()
-                    .and_then(|resolved| resolved.prepared_closure.as_ref())
-                    .map(|_| {
-                        let db = stores.theory_db.opened().ok_or_else(|| {
-                            RuntimeAssemblyError::RuntimeHandleConstruction(
-                                "prepared activation requires the theory store".into(),
-                            )
-                        })?;
-                        ActivationLifecycleStore::new(db.clone()).map_err(|error| {
-                            RuntimeAssemblyError::RuntimeHandleConstruction(error.to_string())
-                        })
-                    })
-                    .transpose()?;
-                Some(ComposedStewardship {
-                    lifecycle,
-                    dispatch_slot: DispatchRouteSlot::default(),
-                    network,
-                    cursor_registry: event_authority.consumer_registry_capability(),
-                    // Worker identity derives from the durable ledger
-                    // identity, never process-random state, so interrupted
-                    // claims are resumable across supervisor restarts.
-                    worker_id: format!("runtime-worker::{}", event_authority.ledger_identity()),
-                    theory,
-                    dispatch_route_seed: dispatch_route_seed(&composition.binding, &bindings),
-                    bindings,
-                })
-            }
-            None => None,
-        };
-
-        if let Some(prepared) = composed_stewardship
+        let prepared_positions = stewardship
             .as_ref()
-            .and_then(|composed| composed.theory.resolved.as_ref())
-            .and_then(|resolved| resolved.prepared_closure.as_ref())
-        {
+            .map(|composition| {
+                crate::runtime::prepared_product_positions(&stores, &composition.binding)
+            })
+            .transpose()
+            .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?
+            .flatten();
+        let prepared_activation = prepared_positions
+            .as_ref()
+            .map(|(prepared, _)| prepared.clone());
+        let lifecycle_store = prepared_activation
+            .as_ref()
+            .map(|_| {
+                let db = stores.theory_db.opened().ok_or_else(|| {
+                    RuntimeAssemblyError::Config(
+                        "prepared activation requires the theory store".into(),
+                    )
+                })?;
+                ActivationLifecycleStore::new(db.clone())
+                    .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))
+            })
+            .transpose()?;
+        let mut composed_stewardships = BTreeMap::new();
+        if let Some((prepared, positions)) = prepared_positions {
+            let composition = stewardship
+                .as_ref()
+                .expect("prepared positions require a physical binding");
+            for position in positions {
+                let mut context = ComposedStewardship::prepare(
+                    &stores,
+                    &position.physical,
+                    &composition.binding,
+                    &prepared,
+                    lifecycle_store.clone(),
+                    &event_authority,
+                    &mut diagnostics,
+                )?;
+                context.open_network(&stores)?;
+                composed_stewardships.insert(position.position_id, context);
+            }
+        } else if has_stewardship {
+            diagnostics.push(AssemblyDiagnostic {
+                code: "theory_image_not_installed".into(),
+                message: "prepared product head is absent; native genesis remains inspectable"
+                    .into(),
+            });
+        }
+        if let Some(prepared) = &prepared_activation {
             registry.realize_prepared(&stores, prepared)?;
         }
         let handle_factories = RuntimeHandleFactoryRegistry::from_registry(
@@ -1529,13 +1562,9 @@ impl ProductRuntimeAssembly {
             &ports,
             &stores,
             graph_runtime.as_ref(),
-            composed_stewardship.as_ref(),
+            &composed_stewardships,
             &mut diagnostics,
         )?;
-        let prepared_activation = composed_stewardship
-            .as_ref()
-            .and_then(|composed| composed.theory.resolved.as_ref())
-            .and_then(|resolved| resolved.prepared_closure.clone());
         let registration_set = match (
             &explicit_registration_set,
             &prepared_activation,
@@ -1580,18 +1609,16 @@ impl ProductRuntimeAssembly {
             (None, None) => fallback_desired_runtime_state,
             (None, Some(_)) => unreachable!("prepared activation always projects registrations"),
         };
-        let lifecycle_store = composed_stewardship
-            .as_ref()
-            .and_then(|composed| composed.lifecycle.clone());
-        let dispatch_route_slot = composed_stewardship
-            .as_ref()
-            .map(|composed| composed.dispatch_slot.clone());
-        let dispatch_route_seed = composed_stewardship
-            .as_ref()
-            .map(|composed| composed.dispatch_route_seed.clone());
-        let capability_runtime = composed_stewardship
-            .as_ref()
-            .and_then(|composed| composed.theory.capability_runtime.clone());
+        let sole_context = if composed_stewardships.len() == 1 {
+            composed_stewardships.values().next()
+        } else {
+            None
+        };
+        let dispatch_route_slot = sole_context.map(|composed| composed.dispatch_slot.clone());
+        let dispatch_route_seed = sole_context.map(|composed| composed.dispatch_route_seed.clone());
+        let capability_runtime = composed_stewardships
+            .values()
+            .find_map(|composed| composed.theory.capability_runtime.clone());
 
         Ok(Self {
             product_root,
@@ -1868,35 +1895,53 @@ impl RetirementRuntimeRecovery for ProductRuntimeAssembly {
             crate::runtime::owners::catalog::OwnerCatalog::open(&binding, &self.event_authority)
                 .map_err(|error| invalid(error.to_string()))?;
         let mut diagnostics = Vec::new();
-        let theory = hydrate_prepared_stewardship_theory(
+        let declaration = historical_stores
+            .pds_products
+            .declaration(&prepared.product_revision_id)
+            .map_err(|e| invalid(e.to_string()))?
+            .ok_or_else(|| invalid("historical product declaration is absent".into()))?;
+        let compilation = historical_stores
+            .pds_products
+            .compilation(&prepared.product_compilation_receipt_id)
+            .map_err(|e| invalid(e.to_string()))?
+            .ok_or_else(|| invalid("historical product compilation is absent".into()))?;
+        let positions = crate::runtime::bind_product_positions(
             &historical_stores,
             &binding,
-            Some(prepared.clone()),
-            &mut diagnostics,
-        );
-        if theory.resolved.is_none() {
-            return Err(invalid(format!(
-                "historical owner preparation is unavailable: {diagnostics:?}"
-            )));
+            &declaration,
+            &compilation,
+        )
+        .map_err(|e| invalid(e.to_string()))?;
+        let mut contexts = BTreeMap::new();
+        for position in positions {
+            let mut composed = ComposedStewardship::prepare(
+                &historical_stores,
+                &position.physical,
+                &binding,
+                prepared,
+                self.lifecycle_store.clone(),
+                &self.event_authority,
+                &mut diagnostics,
+            )?;
+            if composed.theory.resolved.is_none() {
+                return Err(invalid(format!(
+                    "historical owner preparation is unavailable: {diagnostics:?}"
+                )));
+            }
+            if binding.agent_positions.is_empty() {
+                composed.network = self
+                    .handle_factories
+                    .get("execution.task_dispatch")
+                    .and_then(|factory| match &factory.semantic {
+                        RuntimeSemanticHandleFactory::Dispatch(dispatch) => {
+                            Some(dispatch.network.clone())
+                        }
+                        _ => None,
+                    });
+                composed.dispatch_slot = self.dispatch_route_slot.clone().unwrap_or_default();
+            }
+            contexts.insert(position.position_id, composed);
         }
-        let bindings = StewardshipActorBindings::derive(&binding)?;
-        let current_network = self
-            .handle_factories
-            .get("execution.task_dispatch")
-            .and_then(|factory| match &factory.semantic {
-                RuntimeSemanticHandleFactory::Dispatch(dispatch) => Some(dispatch.network.clone()),
-                _ => None,
-            });
-        let composed = ComposedStewardship {
-            lifecycle: self.lifecycle_store.clone(),
-            dispatch_slot: self.dispatch_route_slot.clone().unwrap_or_default(),
-            network: current_network,
-            cursor_registry: self.event_authority.consumer_registry_capability(),
-            worker_id: format!("runtime-worker::{}", self.event_authority.ledger_identity()),
-            dispatch_route_seed: dispatch_route_seed(&binding, &bindings),
-            bindings,
-            theory,
-        };
         let mut registry = self.registry.clone();
         registry.realize_prepared(&historical_stores, prepared)?;
         let factories = RuntimeHandleFactoryRegistry::from_registry(
@@ -1904,7 +1949,7 @@ impl RetirementRuntimeRecovery for ProductRuntimeAssembly {
             &self.ports,
             &historical_stores,
             self.graph_runtime.as_ref(),
-            Some(&composed),
+            &contexts,
             &mut diagnostics,
         )?;
         prepared
@@ -2075,12 +2120,21 @@ impl RuntimeHandleFactoryRegistry {
         ports: &ProductRuntimePorts,
         stores: &OpenProductStores,
         graph_runtime: Option<&Arc<GraphRuntime>>,
-        stewardship: Option<&ComposedStewardship>,
+        stewardships: &BTreeMap<String, ComposedStewardship>,
         diagnostics: &mut Vec<AssemblyDiagnostic>,
     ) -> Result<Self, RuntimeAssemblyError> {
-        let factories = registry
+        let factories: BTreeMap<String, RuntimeHandleFactory> = registry
             .descriptors()
             .map(|descriptor| {
+                let stewardship = match &descriptor.agent_position_id {
+                    Some(position) => stewardships.get(position),
+                    None if stewardships.len() == 1
+                        || !instances::contextual_factory(&descriptor.factory_id) =>
+                    {
+                        stewardships.values().next()
+                    }
+                    None => None,
+                };
                 Ok((
                     descriptor.runtime_id.clone(),
                     RuntimeHandleFactory {
@@ -2097,6 +2151,50 @@ impl RuntimeHandleFactoryRegistry {
                 ))
             })
             .collect::<Result<_, RuntimeAssemblyError>>()?;
+        let selected_plan = stewardships.values().find_map(|context| {
+            context
+                .theory
+                .resolved
+                .as_ref()
+                .and_then(|theory| theory.prepared_closure.as_ref())
+                .map(|prepared| &prepared.participant_plan)
+        });
+        let mut belief_scopes = BTreeSet::new();
+        let mut evidence_scopes = BTreeSet::new();
+        if let Some(plan) = selected_plan {
+            for participant in &plan.participants {
+                let Some(factory) = factories.get(&participant.participant_id) else {
+                    continue;
+                };
+                match &factory.semantic {
+                    RuntimeSemanticHandleFactory::BeliefAssessment(assessment) => {
+                        for family in assessment.family_revisions.as_deref().unwrap_or_default() {
+                            let key = meld_world_model::belief::configured_belief_key(
+                                family,
+                                &assessment.subject_binding.subject,
+                                &assessment.perspective,
+                                &assessment.branch_scope,
+                            );
+                            let key = serde_json::to_string(&key)
+                                .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?;
+                            if !belief_scopes.insert(key) {
+                                return Err(RuntimeAssemblyError::Config("multiple participants would assess the same native Belief scope".into()));
+                            }
+                        }
+                    }
+                    RuntimeSemanticHandleFactory::EvidenceIngestion(_) => {
+                        if let RuntimeSemanticHandle::EvidenceIngestion(ingestion) =
+                            factory.semantic.build_handle()
+                        {
+                            if !evidence_scopes.insert(ingestion.actor.consumer_id()) {
+                                return Err(RuntimeAssemblyError::Config("multiple participants would ingest the same native evidence scope".into()));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
         Ok(Self { factories })
     }
 
@@ -2941,25 +3039,7 @@ impl RuntimeSemanticHandleFactory {
                             context: context.clone(),
                             policy: planner_policy,
                             traversal_cut_request: TraversalCutRequest {
-                                owners: {
-                                    let mut owners = vec![
-                                        TraversalOwnerRequirement {
-                                            event_source: rule.rule.source_event_route.clone(),
-                                            owner_id: rule.rule.source_owner_id.clone(),
-                                            scope: rule.rule.scope.clone(),
-                                            required: true,
-                                        },
-                                        TraversalOwnerRequirement {
-                                            event_source: None,
-                                            owner_id: meld_world_model::CURATION_OWNER_ID
-                                                .to_string(),
-                                            scope: rule.rule.scope.clone(),
-                                            required: false,
-                                        },
-                                    ];
-                                    owners.sort();
-                                    owners
-                                },
+                                owners: rule.cut_owners(),
                                 scope: rule.rule.scope.clone(),
                                 currentness: OwnerCurrentnessPolicy::LatestComplete,
                                 event_position: meld_events::LedgerCursor {
@@ -5819,6 +5899,7 @@ mod tests {
             &harness.binding.package,
             &subject,
             &harness.binding.assignment_scope_id(),
+            &harness.binding.agent_id,
         )
         .unwrap();
         let catalog_bytes = serde_json::to_vec(&resolved.receipt.executable_contracts).unwrap();
@@ -7321,6 +7402,7 @@ mod tests {
                 &self.binding,
                 &package_receipt,
                 5,
+                true,
             )
             .unwrap();
             let assignment_id = product.assignment.assignment_id.clone();
@@ -7385,6 +7467,7 @@ mod tests {
             &harness.binding.package,
             &harness.binding.subject,
             &harness.binding.assignment_scope_id(),
+            &harness.binding.agent_id,
         )
         .unwrap();
         let contracts: Vec<_> = resolved
@@ -9880,23 +9963,26 @@ mod tests {
         ) -> TraversalResult {
             let query =
                 meld_world_model::TraversalQuery::new(assembly.stores().traversal_store.as_ref());
+            let genesis = assembly
+                .stores()
+                .agent_store
+                .genesis_intent_for_agent(STEWARD_AGENT_ID)
+                .unwrap()
+                .unwrap();
+            let reference = genesis
+                .installed_owner_revisions
+                .iter()
+                .find(|r| r.registry == meld_world_model::curation::CURATION_RULE_REGISTRY_ID)
+                .unwrap();
+            let rule = assembly
+                .stores()
+                .curation_store
+                .resolve_rule(reference)
+                .unwrap();
             let cut = query
                 .cut(&TraversalCutRequest {
-                    owners: vec![
-                        TraversalOwnerRequirement {
-                            event_source: None,
-                            owner_id: "docs".into(),
-                            scope: binding.scope.clone(),
-                            required: true,
-                        },
-                        TraversalOwnerRequirement {
-                            event_source: None,
-                            owner_id: "curation".into(),
-                            scope: binding.scope.clone(),
-                            required: false,
-                        },
-                    ],
-                    scope: binding.scope.clone(),
+                    owners: rule.cut_owners(),
+                    scope: rule.rule.scope.clone(),
                     currentness: OwnerCurrentnessPolicy::LatestComplete,
                     event_position: assembly.graph_runtime().durable_event_cursor().unwrap(),
                 })
@@ -10882,6 +10968,7 @@ mod tests {
             &harness.binding,
             &package_receipt,
             5,
+            true,
         )
         .unwrap();
         let mut registry = stores.belief_family_registry.as_ref().clone();
@@ -11953,6 +12040,12 @@ mod tests {
     #[test]
     fn late_bound_dispatch_routes_resolve_the_dispatch_actor() {
         let harness = StewardshipHarness::new();
+        {
+            let assembly = harness.assembly();
+            assert!(assembly.dispatch_route_seed().is_none());
+            assert!(!assembly.bind_dispatch_routes(stub_routes()));
+            harness.run_world_genesis(&assembly);
+        }
         let assembly = harness.assembly();
 
         // Without composed routes the dispatch factory truthfully carries

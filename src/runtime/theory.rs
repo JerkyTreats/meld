@@ -233,6 +233,7 @@ impl ResolvedStewardshipTheory {
         selection: &SelectedStewardshipPackage,
         subject: &DomainObjectRef,
         scope_id: &str,
+        agent_id: &str,
     ) -> Result<Self, TheoryResolutionError> {
         let head = stores
             .pds_products
@@ -249,7 +250,7 @@ impl ResolvedStewardshipTheory {
                 "prepared product head differs from its assignment".into(),
             ));
         }
-        Self::resolve_prepared_closure(stores, selection, subject, closure)
+        Self::resolve_prepared_closure(stores, selection, subject, agent_id, closure)
     }
 
     /// Reconstruct exact historical owner bindings for retirement, without selecting a live head.
@@ -257,6 +258,7 @@ impl ResolvedStewardshipTheory {
         stores: &OpenProductStores,
         selection: &SelectedStewardshipPackage,
         subject: &DomainObjectRef,
+        agent_id: &str,
         closure: PreparedActivationClosureV1,
     ) -> Result<Self, TheoryResolutionError> {
         closure
@@ -326,11 +328,17 @@ impl ResolvedStewardshipTheory {
                 "prepared product compilation differs from its exact package receipts".to_string(),
             ));
         }
-        let [position] = declaration.agent_topology.as_slice() else {
-            return Err(TheoryResolutionError::Inconsistent(
-                "runtime binding requires one selected Agent position".into(),
-            ));
-        };
+        let assigned = closure
+            .assignment
+            .agent_positions
+            .iter()
+            .find(|p| p.agent_id == agent_id)
+            .ok_or_else(|| missing("assigned Agent position"))?;
+        let position = declaration
+            .agent_topology
+            .iter()
+            .find(|p| p.position_id == assigned.position_id)
+            .ok_or_else(|| missing("declared Agent position"))?;
         let selected_packages = compilation
             .position_packages(position, &stores.pds_packages)
             .map_err(owner_error)?;
@@ -639,9 +647,9 @@ impl ResolvedStewardshipTheory {
             agent_id: agent.agent_id.clone(),
             subject: agent.subject.clone(),
             scope: meld_world_model::world_state::graph::contracts::OwnerPublicationScope {
-                scope_id: closure
-                    .assignment
-                    .scope_id(&self.receipt.selection.expression),
+                scope_id: declaration
+                    .observation_scope_id(&closure.assignment, &assigned.position_id)
+                    .map_err(owner_error)?,
                 branch_id: Some(agent.branch_scope.branch_id.clone()),
                 perspective_id: Some(agent.perspective_key.perspective_id.clone()),
                 valid_at: None,

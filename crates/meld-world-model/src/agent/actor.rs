@@ -5906,6 +5906,7 @@ mod tests {
 
     fn rule() -> StandingCurationRule {
         StandingCurationRule {
+            publication_scope: None,
             selection_posture: Default::default(),
             coverage: None,
             source_event_route: None,

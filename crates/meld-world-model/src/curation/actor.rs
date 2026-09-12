@@ -760,7 +760,7 @@ impl StandingCurationActor {
             work_input_basis_id: None,
             owner_id: CURATION_OWNER_ID.to_string(),
             revision_id: result_id,
-            scope: installed_rule.rule.scope.clone(),
+            scope: installed_rule.rule.publication_scope().clone(),
             objects: vec![OwnerObjectPublication {
                 publication_id: object_id.clone(),
                 object_ref: expected.clone(),
@@ -785,7 +785,7 @@ impl StandingCurationActor {
                     "curation-completeness-v1",
                     &(&operation.operation_id, &object_id, &occurrence_id),
                 )?,
-                scope: installed_rule.rule.scope.clone(),
+                scope: installed_rule.rule.publication_scope().clone(),
                 included_ids: vec![object_id.clone(), occurrence_id.clone()],
                 exclusions: Vec::new(),
                 failures: Vec::new(),

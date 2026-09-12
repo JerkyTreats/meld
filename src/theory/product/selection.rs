@@ -28,6 +28,55 @@ pub fn position_packages(
 }
 
 impl ProductCompilationReceiptV1 {
+    /// Lower one position's exact native components to the existing runtime selection.
+    pub(crate) fn position_selection(
+        &self,
+        position: &ProductAgentPositionV1,
+        declaration: &ProductDeclarationV1,
+        store: &PdsPackageStore,
+    ) -> Result<crate::config::SelectedStewardshipPackage, TheoryRouterError> {
+        let components = self
+            .position_packages(position, store)?
+            .into_iter()
+            .flat_map(|p| p.components)
+            .collect::<Vec<_>>();
+        let one = |owner: &str, kind: &str, component_id: Option<&str>| {
+            let found = components
+                .iter()
+                .filter(|c| {
+                    c.route.owner_domain == owner
+                        && c.route.component_kind == kind
+                        && component_id.is_none_or(|id| c.component_id == id)
+                })
+                .collect::<Vec<_>>();
+            match found.as_slice() {
+                [component] => Ok(component.owner_revision.id.clone()),
+                _ => Err(error(
+                    "position_theory_ambiguous",
+                    format!(
+                        "position '{}' requires one exact {owner}/{kind}",
+                        position.position_id
+                    ),
+                )),
+            }
+        };
+        Ok(crate::config::SelectedStewardshipPackage {
+            expression: declaration.product_id.clone(),
+            principal_id: declaration.principal_id.clone(),
+            belief_family_id: one(
+                "world-model",
+                "belief-family",
+                Some(&position.observation_scope_component_id),
+            )?,
+            evidence_mapping_id: one("world-model", "outcome-mapping", None)?,
+            curation_rule_id: one("world-model", "agent-curation-rule", None)?,
+            maintained_condition_id: one("world-model", "agent-maintained-condition", None)?,
+            strategy_theory_id: one("world-model", "strategy-theory", None)?,
+            authority_policy_id: one("execution", "authority-policy", None)?,
+            claim_policy_id: String::new(),
+        })
+    }
+
     /// Resolve from retained receipts, never the currently installed package heads.
     pub fn position_packages(
         &self,

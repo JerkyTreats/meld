@@ -393,7 +393,7 @@ impl StrategyEpistemicOperation {
             .iter()
             .filter(|receipt| {
                 receipt.owner_id != crate::curation::CURATION_OWNER_ID
-                    || receipt.scope != self.operation.source_cut.scope
+                    || Some(&receipt.scope) != self.operation.publication_scope()
             })
             .map(|receipt| receipt.semantic_basis())
             .collect()

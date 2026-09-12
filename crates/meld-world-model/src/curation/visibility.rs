@@ -132,7 +132,7 @@ impl CurationQuery<'_> {
                 // Unchanged work cites existing state instead of publishing a second revision.
                 let Some(selected) = operation.source_cut.receipts.iter().find(|receipt| {
                     receipt.owner_id == CURATION_OWNER_ID
-                        && receipt.scope == operation.source_cut.scope
+                        && Some(&receipt.scope) == operation.publication_scope()
                 }) else {
                     return Ok(None);
                 };

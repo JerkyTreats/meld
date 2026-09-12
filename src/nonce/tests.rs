@@ -982,6 +982,7 @@ fn complete_event_source_proves_absence_then_realization_without_fabricated_even
     let rule = store
         .install_rule(
             StandingCurationRule {
+                publication_scope: None,
                 selection_posture: Default::default(),
                 coverage: None,
                 source_event_route: Some(source_ref.clone()),

@@ -170,6 +170,22 @@ impl CurationRuleTemplate {
             agent_id: binding.agent_id.clone(),
             source_owner_id: self.source_owner_id.clone(),
             scope: scope.clone(),
+            publication_scope: source
+                .map(|(source, _)| {
+                    let mut output = binding.scope.clone();
+                    output.scope_id = stable_identity(
+                        "curation-output-scope-v1",
+                        &(
+                            &binding.agent_id,
+                            &self.rule_id,
+                            &binding.subject,
+                            &binding.scope,
+                            &source.scope,
+                        ),
+                    )?;
+                    Ok::<_, StorageError>(output)
+                })
+                .transpose()?,
             roots: roots.clone(),
             traversal_direction: self.traversal_direction,
             bounds: self.bounds.clone(),

@@ -27,6 +27,88 @@ struct MockTraversal {
     traversals: AtomicUsize,
 }
 
+#[test]
+fn shared_source_retains_independent_curation_publication_boundaries() {
+    let template = CurationRuleTemplate {
+        selection_posture: Default::default(),
+        rule_id: "source-current".into(),
+        source_owner_id: "workspace_fs".into(),
+        traversal_direction: TraversalDirection::Incoming,
+        bounds: rule().bounds,
+        expected_object_kind: "assessment".into(),
+        expected_object_key: "current".into(),
+        relation_type: "expects".into(),
+        output_policy_revision: "v1".into(),
+        realization: None,
+        coverage: None,
+    };
+    let mut binding = CurationRuleBinding {
+        agent_id: "first".into(),
+        subject: authority().subject,
+        scope: scope(),
+    };
+    let source = CurationSourceBinding {
+        event_source: None,
+        scope: scope(),
+        roots: vec![authority().subject],
+    };
+    let judgment = CurationJudgmentScope {
+        subject: authority().subject,
+        perspective: authority().perspective,
+        branch_scope: authority().branch_scope,
+    };
+    let first = template
+        .ground_for_source(&binding, &source, &judgment)
+        .unwrap();
+    binding.agent_id = "second".into();
+    let second = template
+        .ground_for_source(&binding, &source, &judgment)
+        .unwrap();
+    assert_eq!(first.scope, second.scope);
+    assert_ne!(first.publication_scope(), second.publication_scope());
+    let mut revised = template.clone();
+    revised.output_policy_revision = "v2".into();
+    let successor = revised
+        .ground_for_source(&binding, &source, &judgment)
+        .unwrap();
+    assert_eq!(second.publication_scope(), successor.publication_scope());
+    let mut independent_source = source.clone();
+    independent_source.scope.scope_id = "another-request-source".into();
+    let independent = template
+        .ground_for_source(&binding, &independent_source, &judgment)
+        .unwrap();
+    assert_ne!(second.publication_scope(), independent.publication_scope());
+    let legacy = template.ground(&binding).unwrap();
+    assert_eq!(legacy.publication_scope(), &binding.scope);
+    let store = CurationStore::new(sled::Config::new().temporary(true).open().unwrap()).unwrap();
+    let installed = store.install_template(template, 1).unwrap();
+    let mut retained = second;
+    retained.publication_scope = None;
+    let retained = store.install_rule(retained, 1).unwrap();
+    assert_eq!(
+        store
+            .resolve_source_bound_rule(
+                &installed.revision_ref(),
+                &binding,
+                &source,
+                &judgment,
+                &retained.revision_ref()
+            )
+            .unwrap(),
+        retained,
+    );
+    binding.agent_id = "foreign".into();
+    assert!(store
+        .resolve_source_bound_rule(
+            &installed.revision_ref(),
+            &binding,
+            &source,
+            &judgment,
+            &retained.revision_ref()
+        )
+        .is_err());
+}
+
 impl CurationTraversalPort for MockTraversal {
     fn cut(&self, _request: &TraversalCutRequest) -> Result<TraversalCut, StorageError> {
         Ok(self.cut.lock().unwrap().clone())
@@ -882,6 +964,7 @@ fn owner_neutral_rule_authors_dissimilar_installed_vocabulary() {
     let store = Arc::new(CurationStore::new(db).unwrap());
     let subject = DomainObjectRef::new("inventory", "asset", "asset-a").unwrap();
     let neutral_rule = StandingCurationRule {
+        publication_scope: None,
         selection_posture: Default::default(),
         coverage: None,
         source_event_route: None,
@@ -1610,6 +1693,7 @@ impl Fixture {
 
 fn rule() -> StandingCurationRule {
     StandingCurationRule {
+        publication_scope: None,
         selection_posture: Default::default(),
         coverage: None,
         source_event_route: None,
