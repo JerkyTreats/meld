@@ -1,6 +1,6 @@
 # Codebase semantics experiment
 
-Status: active, exploratory. Current slice: native semantic admission and currentness.
+Status: active, exploratory. Current slice: automatic selected-source sensing.
 
 First slice result: bounded representation feasibility accepted. Thirteen source cases and public transport/lifecycle checks pass all 66 assertions with zero model calls. Existing `meld-lang` is sufficient for this selected syntax relationship. The next slice has now exercised native admission and currentness. Sensing and multi-agent consumption remain open.
 
@@ -128,3 +128,15 @@ A stronger restart-during-uncertainty control exposed a separate concurrency bug
 A failed intermediate harness assertion treated historical `Satisfied` judgments as current. Public reconciliation and actor reports disproved that interpretation: the addressed request remains incomplete and the planner refuses `IncompleteTraversal`. The probe now tests request completion or a native refusal alongside the current Graph cut. Retaining historical Belief is not itself a currentness failure. Future consumers must preserve that cut requirement; raw belief subscriptions alone have not been qualified.
 
 The current [active slice](../../../../../meld-code-semantics/ACTIVE_SLICE.md) records final candidate evidence and reviews. The final admission journey passes 62 checks; the earlier representation journey passes all 66 checks with the final binaries. The narrow native admission experiment is the checkpoint, not a completed sensory service or cross-Agent README product. No language extension, second Graph writer, planner or domain-specific runtime component was introduced.
+
+## Automatic sensing activation
+
+Native admission is accepted and pushed at Meld `a62e3776` and external domain `f3a2600`. The user explicitly authorized continued delivery and checkpoint pushes. The next observable gap is source changes entering Events without an explicit observation command.
+
+The [active slice](../../../../../meld-code-semantics/ACTIVE_SLICE.md) uses the existing native observation participant to sample one configured Rust file, author contribution Events and reuse admission. This keeps domain policy external and native Graph authoritative. The separate legacy `meld watch` path retains its callers and Merkle behavior. Repository-wide Merkle sensing and downstream README materiality remain later outcomes. No new scheduler, service or language variant is planned.
+
+## Automatic sensing checkpoint
+
+The opt-in external source standard now causes native observation ticks to capture changes and submit durable contribution Events. Admission, Graph, Curation and addressed Agent judgment use the existing path. The [sensing evidence](../../../../../meld-code-semantics/evidence/sensing-v1/report.json) passes 88 checks, including initial absence and creation, formatting identity, changed operands, malformed source, unreadable paths, outside symlinks, missing parent, confirmed deletion, restoration, unchanged-event quietness and changes while stopped. Explicit admission retains 62 checks and representation retains 66.
+
+No Meld runtime source edit was required. The owner retains one pending envelope in its existing atomic state until replay consumes it. Sampling is one selected file per native tick, with no OS watcher or repository-wide Merkle claim. Native judgment still establishes scope usability. The next gap is a downstream product consuming current code relationships to choose and verify a document update.
