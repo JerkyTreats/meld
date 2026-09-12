@@ -26,6 +26,10 @@ A desired condition may be discharged by epistemic authorship, external executio
 
 Strategy begins from a ground Goal and one immutable planner cut. It traverses relation-rich context to identify relevant entities, evidence, claims, mechanisms, constraints, and available Capabilities. It decomposes the mismatch until every leaf is either already satisfied, a complete Task, a bounded Epistemic Operation, or an explicitly unresolved condition.
 
+Domain theory supplies primitive operations and conditional methods for refining abstract work. Strategy selects applicable alternatives and recursively refines compound work until its products are closed. Method knowledge describes available means; it does not make one externally prescribed procedure the universal Plan for every admitted state.
+
+Construction accounts for the hypothetical effects that establish later prerequisites. Predicted effects remain inside the construction proof and never become observed Facts or satisfied Beliefs merely because a Plan contains them. Decomposition lineage connects each selected product to its abstract purpose, applicable method and supporting premises.
+
 A Plan is eligible for Agent judgment only when each selected product has exact inputs, bindings, authority requirements, dependencies, and expected outcomes. Unresolved conditions may remain only when the Plan explicitly represents how later knowledge can resolve them.
 
 ## Reconstruction

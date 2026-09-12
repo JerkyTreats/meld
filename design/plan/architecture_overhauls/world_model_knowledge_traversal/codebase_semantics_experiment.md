@@ -1,6 +1,6 @@
 # Codebase semantics experiment
 
-Status: active delivery, exploratory. Current slice: Agent WAD selection through native initialization.
+Status: superseded as next-work direction by the [native Strategy planning experiment](strategy_planning_experiment.md). This ledger retains the sensing, independent-Agent and shared README evidence. The latest repair slice failed its source-freshness gate; that failure remains open in the successor experiment. Earlier active-slice statements below describe historical checkpoints.
 
 First slice result: bounded representation feasibility accepted. Thirteen source cases and public transport/lifecycle checks pass all 66 assertions with zero model calls. Existing `meld-lang` is sufficient for this selected syntax relationship. The next slice has now exercised native admission and currentness. Sensing and multi-agent consumption remain open.
 
