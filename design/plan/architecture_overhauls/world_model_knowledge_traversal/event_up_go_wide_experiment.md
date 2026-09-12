@@ -83,3 +83,7 @@ The foundation is exploratory. Closure of the previous experiment does not promo
 The [faithful representation closeout](../../../../../meld-code-semantics/evidence/faithful-representation-v1/CLOSEOUT.md) records exact reconstruction of all 31 observations and 12,184 nodes, language queries, changed-source reconciliation and retained-state restart proof. It also records the roughly 32 MB full-publication cost and an unresolved generic owner-crash recovery gap. Only the two measured Event and Graph command deadlines changed in Meld core; conversion remains external.
 
 The next unimplemented boundary is semantic elevation from faithful observed structure into supported, useful relationships, before claims curation. This ledger does not prescribe which relationships deserve elevation.
+
+## Remaining experiment authorized
+
+The user authorizes completion of the experiment as designed, deferring broader mathematical implications. The active [repository relationships and README claims slice](semantic_claims_active_slice.md) carries the remaining bounded path through native semantic queries, automatically derived claim obligations and existing Strategy-driven README maintenance. Earlier fidelity qualification remains intact.
