@@ -1,6 +1,6 @@
 # Codebase semantics experiment
 
-Status: active, exploratory. Current slice: automatic selected-source sensing.
+Status: stopped at the architecture circuit breaker, exploratory. Current slice: shared semantics consumer boundary assessment.
 
 First slice result: bounded representation feasibility accepted. Thirteen source cases and public transport/lifecycle checks pass all 66 assertions with zero model calls. Existing `meld-lang` is sufficient for this selected syntax relationship. The next slice has now exercised native admission and currentness. Sensing and multi-agent consumption remain open.
 
@@ -140,3 +140,46 @@ The [active slice](../../../../../meld-code-semantics/ACTIVE_SLICE.md) uses the 
 The opt-in external source standard now causes native observation ticks to capture changes and submit durable contribution Events. Admission, Graph, Curation and addressed Agent judgment use the existing path. The [sensing evidence](../../../../../meld-code-semantics/evidence/sensing-v1/report.json) passes 88 checks, including initial absence and creation, formatting identity, changed operands, malformed source, unreadable paths, outside symlinks, missing parent, confirmed deletion, restoration, unchanged-event quietness and changes while stopped. Explicit admission retains 62 checks and representation retains 66.
 
 No Meld runtime source edit was required. The owner retains one pending envelope in its existing atomic state until replay consumes it. Sampling is one selected file per native tick, with no OS watcher or repository-wide Merkle claim. Native judgment still establishes scope usability. The next gap is a downstream product consuming current code relationships to choose and verify a document update.
+
+## Shared semantics consumer circuit breaker
+
+Automatic sensing is committed and pushed at domain `bdb3a1d` and Meld ledger `945870db`. The next intended product behavior is two independently governed Agents: code-semantics maintains source knowledge, and README uses current relationships to decide and verify document changes. That experiment cannot currently be entered through the public product path.
+
+The [harness boundary report](../../../../../meld-code-semantics/evidence/multi-agent-boundary/report.json) changes only the accepted package's Agent topology and its exact component digest. A second Agent position using the same supported theory is enough for `meld world init` to fail: the physical binding supplies one Agent. This is a confirmed public-command failure, with no model calls. The report does not pretend that two-Agent execution occurred.
+
+Three implementation facts explain why this needs architectural reassessment rather than removing that guard. [Physical binding](../../../../src/config/stewardship/binding.rs) stores one Agent and one selected theory package. [World initialization](../../../../src/init/world/tooling.rs) binds one position; [genesis](../../../../src/init/world/pipeline.rs) resolves one maintained-condition revision before iterating positions. [Runtime assembly](../../../../src/runtime/assembly.rs) constructs standing Curation and Agent reconciliation from one composed binding's Agent. Product topology and assignment records can describe collections, but this execution path does not yet realize independent per-Agent contracts.
+
+The external [owner callback contract](../../../../src/runtime/owners/contracts.rs) also lacks a native Graph read. That is likely a bounded public API extension by itself. It does not resolve Agent composition. Reading publication Events in README and choosing the current revision there would introduce a second currentness authority, violating this experiment's boundary.
+
+### Bounded domain assessment
+
+The domain universe remains the root source domains and workspace crates recorded earlier. The concern is independent Agent composition and current semantic consumption. No type-system, model, source-extraction or language expansion is involved.
+
+| Domain or domain set | Needed relationship | Current ground and consequence |
+| --- | --- | --- |
+| Config and assignment | own physical Agent bindings | One Agent in `PhysicalBinding`; assignment records already support position collections |
+| Theory and initialization | own position-to-contract preparation and genesis | Topology collections exist; public binding and maintained-condition selection remain singular |
+| Runtime | own native scheduling and realization | External owners can participate, but native Agent/Curation factories select one composed Agent |
+| World-model Agent, Curation and Belief | consume each Agent's selected theory and current evidence | Existing native authorities retained; independent prepared contexts require assessment |
+| World-state Graph and branches query | publish and read current cuts | Native cut exists and is publicly inspectable; retain currentness authority |
+| Events | publish and consume durable observations | Existing transport is sufficient; retain unchanged |
+| External code-semantics | publish current source knowledge | Automatic sensing accepted; no producer change required by cardinality failure |
+| External README | consume code relationships and own materiality and prose | Existing capture reads source files; semantic consumer is not implemented |
+| Eval and harness | observe composed public behavior | Existing generic capture records the boundary failure; domain probe owns the scenario |
+| CLI, API and serve | adapter | Existing product and read commands remain adapters to native authorities |
+| Execution, capability and task | consume selected repair plans | Retain native effect authority; future per-Agent routing must be checked before implementation |
+| Workspace, tree, ignore and Merkle traversal | none for composition | Selected-source sensing already proved; repository-wide sensing remains separate |
+| Provider, context and prompt context | none for cardinality | No model reasoning occurs in this boundary probe |
+| Store, heads, session, nonce and concurrency | none selected for change | Persistence and isolation are retained dependencies; no second store or scheduler proposed |
+| Code change, metadata, telemetry, logging, workflow, views, types and error | none selected for change | No direct ownership of the observed initialization rejection |
+| `meld-lang` | none | Existing syntax propositions remain sufficient for this selected experiment |
+
+Affected behavioral owners are assignment/config, product preparation/genesis, runtime composition and the future external README consumer. Graph, Events, language and Execution remain canonical dependencies. Likely write scope cannot be frozen honestly until per-Agent binding and theory selection are reconciled. The one-level decomposition is binding, contract resolution, genesis, actor realization and current-cut access; no implementation is authorized by this assessment alone.
+
+### Circuit-breaker disposition
+
+The user's standing circuit breaker applies because achieving independent domain Agents now crosses physical assignment, Agent genesis, native actor realization and theory ownership. Consumer delivery stops before changing those responsibilities. This is not evidence that shared semantic knowledge is useless or that the existing flywheel fails. It is evidence that the intended multi-Agent runtime path has not been delivered.
+
+The recommended reassessment is a minimal native two-Agent composition with explicit position bindings and per-Agent theory, sharing existing Graph and Event authorities. Prove both Agents' independent current-cut judgments through the harness before adding README repair or model calls. A native read callback can then expose current semantic data to external domain logic. Do not combine the domains into one owner or add an external coordinator to manufacture the missing behavior.
+
+Accepted sensing, admission and representation results remain valid. The [active record](../../../../../meld-code-semantics/ACTIVE_SLICE.md) is assessment-only and blocked. This diagnostic checkpoint may be committed and pushed under the user's explicit instruction. No release or broader runtime redesign is authorized by the checkpoint.
