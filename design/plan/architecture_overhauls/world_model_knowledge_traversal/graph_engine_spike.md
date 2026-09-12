@@ -1,6 +1,6 @@
 # Graph engine fit and maintenance spike
 
-Slice `graph-engine-fit-v1`. Lifecycle: implementing. Readiness: build-ready. The user's subsequent “Proceed” authorizes the bounded prototype comparison, local dependencies and isolated state needed by its arms, harness measurement, and checkpoint commits and pushes. Production replacement remains unselected. This record defines the evidence exercise, not a selected database architecture.
+Slice `graph-engine-fit-v1`. Lifecycle: closed. Readiness: evidence supports architecture assessment; native crash recovery and production adoption remain unqualified. The user's subsequent “Proceed” authorizes the bounded prototype comparison, local dependencies and isolated state needed by its arms, harness measurement, and checkpoint commits and pushes. Production replacement remains unselected. This record defines the evidence exercise, not a selected database architecture.
 
 ## Reason and decision
 
@@ -103,7 +103,7 @@ The next assessment must consider the Graph as a whole: publication granularity 
 
 That assessment produces an evidence-backed architecture for performance by default, including operating budgets, tradeoffs, canonical ownership, storage choice, migration and retirement scope, and harness proof. It updates `design/cognitive_architecture` only once the intended design is accepted. This temporal spike record does not preempt evergreen design or authorize implementation of the successor.
 
-Design review: the native path, semantic gates and maintenance comparison are specified; independent prototypes have no production cutover authority. The initial design was accepted and pushed as `5d137f65`. Execution is now authorized. Runtime implementation judgments and measured results remain pending. The unresolved engine choice and architecture are intended outputs.
+Design review: the native path, semantic gates and maintenance comparison are specified; independent prototypes have no production cutover authority. The initial design was accepted and pushed as `5d137f65`. Execution is now authorized. The bounded comparison is complete. Six final journeys pass native semantic checks and verified cross-run input accounting; indexed Sled removes the measured history penalty without a new database subsystem. SQLite preserves the exercised contracts but has not demonstrated a maintenance advantage in this adapter. All crash probes are blocked before recovery readiness by the predecessor runtime lease. The production successor remains a proposal.
 
 Commit effect: If applied, this commit records a bounded comparison that exposes both bespoke maintenance cost and external engine semantic mismatch before selecting Meld's Graph architecture. Working branches isolate the evidence ledger, indexed prototype and SQLite prototype. No production cutover is authorized by completion of the spike.
 
@@ -114,3 +114,12 @@ SQLite through rusqlite 0.40.2 is selected for the external prototype. SQLite pr
 Redb 4.2.0 is a plausible embedded alternative with transactions and MVCC, but its key-value interface leaves graph indexing and query work with Meld. It is not selected because this arm should test a greater delegation of indexing work than another KV engine. Its recent releases, pure Rust implementation and MIT/Apache-2.0 licensing remain useful comparison facts. [Redb](https://docs.rs/crate/redb/4.2.0).
 
 Oxigraph 0.5.11 is the graph-native shortlist candidate. It offers an embedded Rust RDF/SPARQL store backed by RocksDB under MIT/Apache-2.0 licensing. Mapping occurrence identities, qualifications and historical owner cuts would require explicit RDF records and named-graph conventions. This is possible, not disproved, but introduces a second query representation without an observed need for SPARQL. It is not selected for this bounded prototype; this decision does not establish that graph-specific engines cannot fit Meld. [Oxigraph](https://docs.rs/crate/oxigraph/0.5.11), [architecture](https://github.com/oxigraph/oxigraph/wiki/Architecture).
+
+
+## Execution closeout
+
+The [evidence closeout](../../../../../meld-eval/evidence/graph-engine-fit-v1/CLOSEOUT.md) retains six final release journeys, three diagnostic trace journeys, six failed crash-recovery probes, calibration failures, exact artifact identities and dependency locks. All normal final journeys pass 46 checks. Seven Graph tests pass in each arm and 28 Eval tests pass. Distinct occurrence identity, incomplete supersession and retained cuts after clean restart are preserved. Immediate crash replay remains unqualified because a prior owner lease prevents native restart in every arm, including baseline.
+
+The [whole-Graph assessment](graph_architecture_assessment.md) recommends a maintained versioned read projection on existing Sled, with explicit work placement for admission, cuts, traversal, wake checks, planner inputs, payload reuse, retention and recovery. The recommendation does not select a production cutover. The failure gate is native recovery, not a demonstrated inability to represent Meld semantics without inventing a database.
+
+Prototype checkpoints are Meld `cff89b22` on `spike/graph-engine-fit`, indexed Sled `b6ae182d` on `spike/graph-indexed`, and SQLite `8097bb9d` on `spike/graph-sqlite`. All three have been pushed. Eval `9b5d128` on `spike/graph-engine-fit` retains the harness, final comparison and failed recovery evidence. The shared public command changes expose retained cuts and permit bounded full-publication Event append. The experimental failpoints stay isolated on spike branches. The production baseline branch and the two domain packages are unchanged.

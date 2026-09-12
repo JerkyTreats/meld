@@ -1,6 +1,6 @@
 # Go wide from repository Events to shared meaning
 
-Date: 2026-09-12. Lifecycle: bounded experiment qualified; successor Graph spike designed. Branch: `feat/event-up-go-wide` in Meld, Meld Codebase Semantics, Meld README and Meld Eval. This ledger owns the exercise. Repository Events, faithful representation and bounded repository-derived README claims are qualified as recorded below. Cost attribution is complete. The current selected design is the [Graph engine fit and maintenance spike](graph_engine_spike.md); prototype execution and production architecture selection remain subsequent boundaries. Checkpoint commits and pushes are authorized.
+Date: 2026-09-12. Lifecycle: bounded experiment qualified; successor Graph spike completed with a native recovery gap. Branch: `feat/event-up-go-wide` in Meld, Meld Codebase Semantics, Meld README and Meld Eval. This ledger owns the exercise. Repository Events, faithful representation and bounded repository-derived README claims are qualified as recorded below. Cost attribution is complete. The [Graph engine fit and maintenance spike](graph_engine_spike.md) now has retained comparative evidence and a [proposed whole-Graph architecture](graph_architecture_assessment.md). Production adoption remains unselected and native crash recovery is unqualified. Checkpoint commits and pushes are authorized.
 
 ## Reason and outcome
 
@@ -99,3 +99,6 @@ Qualification applies to selected declaration tables. Existing narrative, genera
 The [OTel slice](otel_active_slice.md) is closed with native runtime coverage and an unchanged target README. Repeated publication decoding and validation dominate the measured passes. This establishes an access-pattern defect, not a requirement to build or adopt a database engine.
 
 The user now asks for the [bounded Graph spike](graph_engine_spike.md), explicitly balancing bespoke maintenance against external semantic mismatch. Its output informs a whole-Graph assessment of performance by default, including representation, ingestion, query, revision retention, Agent reads, wake checks and recovery. No engine or production replacement is selected. The four implementation checkpoints were already committed, pushed and clean before this formulation; this design is the next durable checkpoint.
+
+
+The Graph spike is now complete as an evidence exercise. Both indexed arms preserve the exercised native graph meaning and remove history-driven reconstruction. Existing Sled with a maintained projection is the recommended next candidate. Immediate native restart fails in all arms because the predecessor owner lease remains valid; this blocks crash qualification and must be resolved before production adoption. See the [spike closeout](graph_engine_spike.md#execution-closeout) and [architecture proposal](graph_architecture_assessment.md). The canonical cognitive architecture has not been changed by this recommendation.
