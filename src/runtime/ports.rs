@@ -985,6 +985,7 @@ impl ProductAdmissionGenerationObserver {
         }
     }
 
+    #[tracing::instrument(target = "meld::trace", name = "runtime.observe_epoch", skip_all)]
     fn observe_epoch(
         &self,
         agent_id: &str,

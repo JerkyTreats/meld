@@ -203,6 +203,34 @@ pub enum OwnerCommandV1 {
     Flush,
 }
 
+impl OwnerCommandV1 {
+    pub fn operation_name(&self) -> &'static str {
+        match self {
+            Self::Describe => "describe",
+            Self::CloseRevisionStore => "close_revision_store",
+            Self::OpenRevisionStore { .. } => "open_revision_store",
+            Self::ValidateTheory { .. } => "validate_theory",
+            Self::InstallTheory { .. } => "install_theory",
+            Self::VerifyTheory { .. } => "verify_theory",
+            Self::ValidateLinks { .. } => "validate_links",
+            Self::PrepareBindings { .. } => "prepare_bindings",
+            Self::PrepareRuntime { .. } => "prepare_runtime",
+            Self::ResolveCurationSource { .. } => "resolve_curation_source",
+            Self::RecoverInvocation { .. } => "recover_invocation",
+            Self::Invoke { .. } => "invoke",
+            Self::Observe { .. } => "observe",
+            Self::Readiness { .. } => "readiness",
+            Self::Wait { .. } => "wait",
+            Self::SafePoint { .. } => "safe_point",
+            Self::Stop { .. } => "stop",
+            Self::Release { .. } => "release",
+            Self::Snapshot => "snapshot",
+            Self::ResolvesWake { .. } => "resolves_wake",
+            Self::Flush => "flush",
+        }
+    }
+}
+
 /// Callback permission is bound by the parent to the outstanding native command.
 /// The child cannot supply or replace that permission with this wire value.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -241,6 +269,22 @@ pub enum OwnerCallbackV1 {
     },
 }
 
+impl OwnerCallbackV1 {
+    pub fn operation_name(&self) -> &'static str {
+        match self {
+            Self::GraphRead { .. } => "graph_read",
+            Self::Append { .. } => "append",
+            Self::AppendBatch { .. } => "append_batch",
+            Self::BestEffortAppend { .. } => "best_effort_append",
+            Self::CommittedRecord { .. } => "committed_record",
+            Self::NewestPage { .. } => "newest_page",
+            Self::Barrier { .. } => "barrier",
+            Self::Replay { .. } => "replay",
+            Self::Provider { .. } => "provider",
+        }
+    }
+}
+
 /// Native currentness and traversal returned together from one frozen cut.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OwnerGraphReadV1 {
@@ -274,6 +318,8 @@ pub enum HostMessageV1 {
         protocol_version: u32,
         request_id: u64,
         command: Box<OwnerCommandV1>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trace_context: Option<std::collections::HashMap<String, String>>,
     },
     CallbackReturn {
         request_id: u64,
@@ -293,6 +339,8 @@ pub enum OwnerMessageV1 {
         request_id: u64,
         callback_id: u64,
         callback: Box<OwnerCallbackV1>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trace_context: Option<std::collections::HashMap<String, String>>,
     },
 }
 

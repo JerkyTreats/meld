@@ -89,6 +89,7 @@ impl StandingCurationActor {
     }
 
     /// Resolve only this Curation resource's live input and durable operations.
+    #[tracing::instrument(target = "meld::trace", skip_all)]
     pub fn resolves_wake(&self, wake: &StructuralWakeAddress) -> Result<bool, String> {
         if let super::CurationRuleSource::Producer(port) = &self.rule {
             if port.resolves_wake(wake)? {
@@ -315,6 +316,7 @@ impl StandingCurationActor {
     }
 
     /// Run at most one standing operation from the current durable Event tip.
+    #[tracing::instrument(target = "meld::trace", skip_all)]
     pub fn bounded_step(&self, max_items: usize) -> CurationStepReport {
         let _guard = self.work_lock.lock();
         let mut report = self.bounded_step_inner(max_items);
@@ -633,6 +635,7 @@ impl StandingCurationActor {
         report
     }
 
+    #[tracing::instrument(target = "meld::trace", skip_all)]
     fn execute(
         &self,
         operation: &CurationOperation,

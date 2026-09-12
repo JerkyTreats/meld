@@ -627,6 +627,7 @@ impl<'a> RuntimeSupervisor<'a> {
         })
     }
 
+    #[tracing::instrument(target = "meld::trace", name = "runtime.liveness_projection", skip_all)]
     fn activation_liveness_projection(
         &self,
     ) -> Result<Option<AssignmentLifecycleProjectionV1>, SupervisorRuntimeError> {
@@ -682,6 +683,9 @@ impl<'a> RuntimeSupervisor<'a> {
                     let Some(incarnation) = generation.incarnations.get(participant_id) else {
                         continue;
                     };
+                    let probe_span = tracing::info_span!(target: "meld::trace", "runtime.wake_probe",
+                        participant = participant_id.as_str());
+                    let _probe_entered = probe_span.enter();
                     if runtime.actor.resolves_lifecycle_wake(
                         generation_id,
                         &incarnation.incarnation_id,
@@ -830,6 +834,7 @@ impl<'a> RuntimeSupervisor<'a> {
             .unwrap()
     }
 
+    #[tracing::instrument(target = "meld::trace", name = "runtime.supervisor_tick", skip_all)]
     pub fn tick(&mut self, now_ms: u64) -> Result<SupervisorTickReport, SupervisorRuntimeError> {
         if let (Some(store), Some(prepared), Some(generation_id)) = (
             self.lifecycle_store,
@@ -891,6 +896,10 @@ impl<'a> RuntimeSupervisor<'a> {
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64;
+            let actor_span = tracing::info_span!(target: "meld::trace", "runtime.actor",
+                participant = owner.runtime_id.as_str(), pass_at_ms = now_ms,
+                outcome = tracing::field::Empty, attempted = tracing::field::Empty, committed = tracing::field::Empty);
+            let _actor_entered = actor_span.enter();
             let step_started = Instant::now();
             // Exactly one bounded invocation per active actor per pass.
             let mut report = runtime
@@ -907,6 +916,17 @@ impl<'a> RuntimeSupervisor<'a> {
                     )
                 });
             let bounded_step_us = step_started.elapsed().as_micros() as u64;
+            actor_span.record("attempted", report.items_attempted as u64);
+            actor_span.record("committed", report.items_committed as u64);
+            actor_span.record(
+                "outcome",
+                format!("{:?}", RuntimeActionOutcome::from_worker_tick(&report)),
+            );
+            drop(_actor_entered);
+            drop(actor_span);
+            let receipt_span = tracing::info_span!(target: "meld::trace", "runtime.idle_receipt",
+                participant = owner.runtime_id.as_str());
+            let _receipt_entered = receipt_span.enter();
             let receipt_started = Instant::now();
             let native_wait = if !report.made_progress()
                 && report.retryable_errors.is_empty()
@@ -922,6 +942,8 @@ impl<'a> RuntimeSupervisor<'a> {
                 None
             };
             let idle_receipt_us = receipt_started.elapsed().as_micros() as u64;
+            drop(_receipt_entered);
+            drop(receipt_span);
             let health_status = health_status_from_tick_report(&report);
             self.record_tick_liveness(owner.runtime_id.as_str(), &report, native_wait)?;
 

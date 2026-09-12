@@ -362,11 +362,14 @@ impl TraversalStore {
     }
 
     /// Read owner publications visible through one durable Graph position.
+    #[tracing::instrument(target = "meld::trace", name = "graph.read_publications", skip_all,
+        fields(through_seq, publications = tracing::field::Empty, bytes = tracing::field::Empty))]
     pub fn owner_publications_through_seq(
         &self,
         through_seq: u64,
     ) -> Result<Vec<ProjectedOwnerPublication>, StorageError> {
         let mut publications = Vec::new();
+        let mut bytes_read = 0u64;
         for item in self.owner_publications.iter() {
             let (key, value) = item.map_err(to_storage_io)?;
             let key = std::str::from_utf8(key.as_ref()).map_err(|error| {
@@ -383,9 +386,12 @@ impl TraversalStore {
             if seq > through_seq {
                 break;
             }
-            let publication: ProjectedOwnerPublication =
-                serde_json::from_slice(&value).map_err(to_storage_data)?;
-            publication.operation.validate()?;
+            bytes_read += value.len() as u64;
+            let publication: ProjectedOwnerPublication = tracing::info_span!(target: "meld::trace",
+                "graph.decode_publication", bytes = value.len() as u64, event_seq = seq)
+            .in_scope(|| serde_json::from_slice(&value).map_err(to_storage_data))?;
+            tracing::info_span!(target: "meld::trace", "graph.validate_publication", event_seq = seq)
+                .in_scope(|| publication.operation.validate())?;
             if publication.source_event.seq != seq {
                 return Err(StorageError::InvalidPath(
                     "owner publication key and source event disagree".to_string(),
@@ -397,6 +403,8 @@ impl TraversalStore {
             (left.source_event.seq, &left.operation.operation_id)
                 .cmp(&(right.source_event.seq, &right.operation.operation_id))
         });
+        tracing::Span::current().record("publications", publications.len() as u64);
+        tracing::Span::current().record("bytes", bytes_read);
         Ok(publications)
     }
 

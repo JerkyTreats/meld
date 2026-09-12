@@ -26,6 +26,7 @@ impl<'a> TraversalQuery<'a> {
 
     /// Select the newest revision at the requested Event position for each owner scope.
     /// A newer incomplete publication prevents using earlier evidence as current.
+    #[tracing::instrument(target = "meld::trace", name = "graph.cut", skip_all)]
     pub fn cut(&self, request: &TraversalCutRequest) -> Result<TraversalCut, StorageError> {
         request.validate()?;
         let request = request.normalized();
@@ -166,6 +167,7 @@ impl<'a> TraversalQuery<'a> {
     }
 
     /// Execute a deterministic resource-bounded traversal against one cut.
+    #[tracing::instrument(target = "meld::trace", name = "graph.traverse", skip_all)]
     pub fn traverse(
         &self,
         cut: &TraversalCut,

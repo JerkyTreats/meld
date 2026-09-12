@@ -850,6 +850,9 @@ fn run_tick_loop(
 
         let now_ms = current_time_ms_for_supervisor()?;
         *last_supervisor_time_ms = (*last_supervisor_time_ms).max(now_ms);
+        let pass_span = tracing::info_span!(target: "meld::trace", "runtime.pass",
+            instance_id = supervisor.instance_id(), pass_at_ms = now_ms);
+        let _pass_entered = pass_span.enter();
         let boundary = Instant::now();
         let tick_report = supervisor.tick(now_ms)?;
         let supervisor_tick_us = boundary.elapsed().as_micros() as u64;
@@ -859,20 +862,25 @@ fn run_tick_loop(
         // lifecycle projection; a failed read skips both observations
         // rather than failing the loop.
         let boundary = Instant::now();
-        let status_snapshot = match supervisor.status_snapshot(now_ms) {
-            Ok(snapshot) => Some(snapshot),
-            Err(error) => {
-                tracing::debug!(error = %error, "status snapshot unavailable this tick");
-                None
-            }
-        };
+        let status_snapshot =
+            match tracing::info_span!(target: "meld::trace", "runtime.status_projection")
+                .in_scope(|| supervisor.status_snapshot(now_ms))
+            {
+                Ok(snapshot) => Some(snapshot),
+                Err(error) => {
+                    tracing::debug!(error = %error, "status snapshot unavailable this tick");
+                    None
+                }
+            };
 
         let status_snapshot_us = boundary.elapsed().as_micros() as u64;
         let boundary = Instant::now();
 
         // Promote threshold crossings after the tick; a failed health read
         // skips the observation rather than failing the loop.
-        match event_port.health() {
+        match tracing::info_span!(target: "meld::trace", "runtime.health_read")
+            .in_scope(|| event_port.health())
+        {
             Ok(health) => {
                 let restart_counts: Vec<(String, u64)> = status_snapshot
                     .as_ref()
@@ -924,6 +932,8 @@ fn run_tick_loop(
         if sleep_ms == 0 {
             break;
         }
+        drop(_pass_entered);
+        drop(pass_span);
         sleep_until_next_tick(cancelled, started, duration_ms, sleep_ms, event_port);
     }
     Ok(())

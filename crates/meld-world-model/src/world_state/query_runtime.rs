@@ -29,11 +29,13 @@ impl WorldModelQueries {
     }
 
     /// Select owner revisions after catching up to the canonical Event authority.
+    #[tracing::instrument(target = "meld::trace", skip_all)]
     pub fn cut(&self, request: &TraversalCutRequest) -> Result<TraversalCut, StorageError> {
         self.with_traversal_query(|query| query.cut(request))
     }
 
     /// Traverse only publications admitted by the supplied owner revision cut.
+    #[tracing::instrument(target = "meld::trace", skip_all)]
     pub fn traverse(
         &self,
         cut: &TraversalCut,
@@ -42,6 +44,7 @@ impl WorldModelQueries {
         self.with_traversal_query(|query| query.traverse(cut, request))
     }
 
+    #[tracing::instrument(target = "meld::trace", skip_all)]
     fn with_traversal_query<T>(
         &self,
         f: impl FnOnce(TraversalQuery<'_>) -> Result<T, StorageError>,

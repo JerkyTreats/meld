@@ -9,6 +9,7 @@ pub mod facade;
 pub mod sessions;
 pub mod sinks;
 pub mod summary;
+pub mod traces;
 
 pub use crate::session::{PrunePolicy, SessionStatus};
 pub use contracts::{DomainObjectRef, EventRelation};

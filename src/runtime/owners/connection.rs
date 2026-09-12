@@ -81,6 +81,14 @@ impl OwnerConnection {
         let child = Command::new(&retained)
             .process_group(0)
             .env_clear()
+            .envs(
+                [
+                    crate::telemetry::traces::ENDPOINT_ENV,
+                    crate::telemetry::traces::RUN_ENV,
+                ]
+                .into_iter()
+                .filter_map(|key| std::env::var(key).ok().map(|value| (key, value))),
+            )
             .env(
                 "MELD_OWNER_MAX_MESSAGE_BYTES",
                 limits.max_message_bytes.to_string(),
@@ -138,6 +146,9 @@ impl OwnerConnection {
         command: OwnerCommandV1,
         callbacks: &dyn OwnerCallbackPort,
     ) -> Result<OwnerResult, OwnerDiagnosticV1> {
+        let span = tracing::info_span!(target: "meld::trace", "owner.request",
+            otel.kind = "client", operation = command.operation_name(), owner_pid = self.child.id());
+        let _entered = span.enter();
         let request_id = self.next_request_id;
         self.next_request_id = request_id.checked_add(1).ok_or_else(|| {
             OwnerDiagnosticV1::new(
@@ -157,6 +168,7 @@ impl OwnerConnection {
                 protocol_version: OWNER_PROTOCOL_VERSION,
                 request_id,
                 command: Box::new(command),
+                trace_context: crate::telemetry::traces::context(),
             },
             self.limits.max_message_bytes,
         )?;
@@ -181,6 +193,7 @@ impl OwnerConnection {
                     request_id: returned,
                     callback_id,
                     callback,
+                    trace_context,
                 } if returned == request_id && callback_id == expected_callback_id => {
                     expected_callback_id =
                         expected_callback_id.checked_add(1).ok_or_else(|| {
@@ -189,7 +202,10 @@ impl OwnerConnection {
                                 "callback identity exhausted",
                             )
                         })?;
-                    let result = callbacks.call(*callback);
+                    let span = tracing::info_span!(target: "meld::trace", "owner.callback.host",
+                        otel.kind = "server", operation = callback.operation_name(), callback_id);
+                    crate::telemetry::traces::parent(&span, trace_context.as_ref());
+                    let result = span.in_scope(|| callbacks.call(*callback));
                     self.set_deadline(deadline)?;
                     write_message(
                         self.stream.get_mut(),

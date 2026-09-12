@@ -12,6 +12,35 @@ use super::super::events::{CallbackEventAuthorityClient, OwnerEventCallbacks};
 use super::super::*;
 use crate::runtime::lifecycle::ParticipantLifecycleContextV1;
 
+#[test]
+fn diagnostic_context_preserves_untraced_owner_wire_shape() {
+    let command = HostMessageV1::Command {
+        protocol_version: OWNER_PROTOCOL_VERSION,
+        request_id: 1,
+        command: Box::new(OwnerCommandV1::Flush),
+        trace_context: None,
+    };
+    let mut wire = serde_json::to_value(command).unwrap();
+    assert!(wire.get("trace_context").is_none());
+    let decoded: HostMessageV1 = serde_json::from_value(wire.clone()).unwrap();
+    assert!(matches!(
+        decoded,
+        HostMessageV1::Command {
+            trace_context: None,
+            ..
+        }
+    ));
+    wire["trace_context"] = serde_json::json!({"traceparent": "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"});
+    let decoded: HostMessageV1 = serde_json::from_value(wire).unwrap();
+    assert!(matches!(
+        decoded,
+        HostMessageV1::Command {
+            trace_context: Some(_),
+            ..
+        }
+    ));
+}
+
 struct ObservingOwner {
     ledger: LedgerIdentity,
     events: Option<EventAppendCapability>,
@@ -144,6 +173,7 @@ fn retained_owner_capabilities_follow_each_native_command_grant() {
             &mut parent,
             &HostMessageV1::Command {
                 protocol_version: OWNER_PROTOCOL_VERSION,
+                trace_context: None,
                 request_id,
                 command: Box::new(command),
             },
@@ -159,6 +189,7 @@ fn retained_owner_capabilities_follow_each_native_command_grant() {
                     request_id: returned,
                     callback_id,
                     callback,
+                    ..
                 } => {
                     assert_eq!(returned, request_id);
                     server::write_message(

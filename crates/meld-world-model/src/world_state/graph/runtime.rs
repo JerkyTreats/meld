@@ -323,6 +323,7 @@ impl GraphRuntime {
         Ok(combined)
     }
 
+    #[tracing::instrument(target = "meld::trace", skip_all)]
     fn catch_up_with_limit(&self, max_items: usize) -> Result<GraphCatchUpReport, StorageError> {
         let _guard = self.catch_up_lock.lock();
         let mut combined = self.catch_up_page(max_items, true)?;
@@ -349,6 +350,7 @@ impl GraphRuntime {
         Ok(combined)
     }
 
+    #[tracing::instrument(target = "meld::trace", skip_all)]
     fn catch_up_page(
         &self,
         max_items: usize,

@@ -281,6 +281,7 @@ impl AgentReconciliationActor {
         })
     }
 
+    #[tracing::instrument(target = "meld::trace", skip_all)]
     fn prepare_epoch(
         &self,
         authority: &CurationAuthority,
@@ -370,6 +371,7 @@ impl AgentReconciliationActor {
     }
 
     /// Resolve this Agent's Planner and product waits through its bound native ports.
+    #[tracing::instrument(target = "meld::trace", skip_all)]
     pub fn resolves_wake(&self, wake: &StructuralWakeAddress) -> Result<bool, String> {
         let value = match wake {
             StructuralWakeAddress::OwnerRevision(value)
@@ -681,6 +683,7 @@ impl AgentReconciliationActor {
     }
 
     /// Advance eligible transitions through durable, replay-resumable boundaries.
+    #[tracing::instrument(target = "meld::trace", skip_all)]
     pub fn bounded_step(&self, max_items: usize) -> AgentReconciliationReport {
         let _guard = self.work_lock.lock();
         let input_position = self.store.reconciliation_position();

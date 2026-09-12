@@ -151,6 +151,10 @@ product_root = "/absolute/path/outside/workspace/meld-product"
 
 Meld uses platform configuration, data and state directories, including XDG locations on Linux. `--config` selects an explicit configuration. Logging is enabled by default; `--log-file PATH` selects a destination and `--quiet` disables logging. Targeted edits to workspace files are product effects; stores, leases and runtime logs belong outside that workspace.
 
+Set `MELD_OTEL_ENDPOINT` to a full OTLP/HTTP JSON trace URL, such as `http://127.0.0.1:4318/v1/traces`, to export runtime spans independently of log filtering. `MELD_OTEL_RUN_ID` optionally labels the capture. Tracing is off when the endpoint is absent or empty. The SDK batches exports and attempts a bounded flush on orderly shutdown. Exported spans cover passes, actors, lifecycle wake checks, graph reads and external owner calls, with W3C context crossing owner commands and callbacks. Trace metadata grants no authority and authors no knowledge. There are no durable Event-to-work trace links yet.
+
+Tracing-enabled owner transport requires executables rebuilt against the matching Meld library. Optional context is omitted when tracing is off, preserving the previous JSON shape. Rebuilt owner selections must be prepared through `world init` because activations bind exact implementations. The [Meld Eval OTel probe](../meld-eval/README.md#otel-attribution) captures standard spans alongside native pass accounts and checks coverage without requiring a permanent collector.
+
 A revised package does not silently rewrite an existing Agent's genesis. Follow the product guide for a separate assignment when changing theory. Preserve prior records so historical results remain attributable to the policy that produced them.
 
 ## Existing context tooling

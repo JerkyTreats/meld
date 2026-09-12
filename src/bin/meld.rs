@@ -11,6 +11,16 @@ use std::process;
 use tracing::{error, info};
 
 fn main() {
+    run();
+    meld::telemetry::traces::shutdown();
+}
+
+fn exit(code: i32) -> ! {
+    meld::telemetry::traces::shutdown();
+    process::exit(code);
+}
+
+fn run() {
     let mut arguments: Vec<_> = std::env::args_os().collect();
     if arguments.len() == 1
         || (arguments.len() == 2
@@ -56,7 +66,7 @@ fn main() {
             Ok(output) => println!("{output}"),
             Err(error) => {
                 eprintln!("{}", meld::cli::map_error(&error));
-                process::exit(1);
+                exit(1);
             }
         }
         return;
@@ -69,7 +79,7 @@ fn main() {
             }
             Err(error) => {
                 eprintln!("{}", meld::cli::map_error(&error));
-                process::exit(2);
+                exit(2);
             }
         }
     } else {
@@ -84,7 +94,7 @@ fn main() {
     // Initialize logging early
     if let Err(e) = init_logging(Some(&logging_config)) {
         eprintln!("Failed to initialize logging: {}", e);
-        process::exit(1);
+        exit(1);
     }
 
     info!("Meld CLI starting");
@@ -98,7 +108,7 @@ fn main() {
             Err(e) => {
                 error!("Command failed: {}", e);
                 eprintln!("{}", meld::cli::map_error(&e));
-                process::exit(1);
+                exit(1);
             }
         }
         return;
@@ -113,7 +123,7 @@ fn main() {
             Err(e) => {
                 error!("Command failed: {}", e);
                 eprintln!("{}", meld::cli::map_error(&e));
-                process::exit(1);
+                exit(1);
             }
         }
         return;
@@ -130,7 +140,7 @@ fn main() {
             Err(e) => {
                 error!("Command failed: {}", e);
                 eprintln!("{}", meld::cli::map_error(&e));
-                process::exit(1);
+                exit(1);
             }
         }
         return;
@@ -150,7 +160,7 @@ fn main() {
         Err(e) => {
             error!("Error initializing workspace: {}", e);
             eprintln!("{}", meld::cli::map_error(&e));
-            process::exit(1);
+            exit(1);
         }
     };
 
@@ -163,7 +173,7 @@ fn main() {
         Err(e) => {
             error!("Command failed: {}", e);
             eprintln!("{}", meld::cli::map_error(&e));
-            process::exit(1);
+            exit(1);
         }
     }
 }

@@ -27,12 +27,15 @@ pub fn serve_stdio(owner: &mut dyn PackageOwner) -> Result<(), OwnerDiagnosticV1
                 "parent transport bound is absent or invalid",
             )
         })?;
-    serve_owner(
+    crate::telemetry::traces::init_owner();
+    let result = serve_owner(
         owner,
         std::io::BufReader::new(std::io::stdin()),
         std::io::stdout(),
         limit,
-    )
+    );
+    crate::telemetry::traces::shutdown();
+    result
 }
 
 /// The child has no independent scheduler. Retained native capabilities use this
@@ -60,7 +63,7 @@ pub fn serve_owner(
     });
     let mut last_request_id = 0;
     loop {
-        let (request_id, command) = {
+        let (request_id, command, trace_context) = {
             let mut transport = callbacks.lock()?;
             let Some(message) = read_message(&mut *transport.reader, max_message_bytes)? else {
                 return Ok(());
@@ -69,6 +72,7 @@ pub fn serve_owner(
                 protocol_version: OWNER_PROTOCOL_VERSION,
                 request_id,
                 command,
+                trace_context,
             } = message
             else {
                 return Err(OwnerDiagnosticV1::new(
@@ -84,9 +88,20 @@ pub fn serve_owner(
             }
             last_request_id = request_id;
             transport.request = Some((request_id, 1));
-            (request_id, command)
+            (request_id, command, trace_context)
         };
-        let result = owner.handle(*command, callbacks.clone());
+        let flush = matches!(
+            *command,
+            OwnerCommandV1::Release { .. } | OwnerCommandV1::Flush
+        );
+        let span = tracing::info_span!(target: "meld::trace", "owner.command",
+            otel.kind = "server", operation = command.operation_name(), request_id);
+        crate::telemetry::traces::parent(&span, trace_context.as_ref());
+        let result = span.in_scope(|| owner.handle(*command, callbacks.clone()));
+        drop(span);
+        if flush {
+            crate::telemetry::traces::flush();
+        }
         let mut transport = callbacks.lock()?;
         transport.request = None;
         if transport.failed {
@@ -127,6 +142,9 @@ impl ChildCallbacks {
 
 impl OwnerCallbackPort for ChildCallbacks {
     fn call(&self, callback: OwnerCallbackV1) -> OwnerResult {
+        let span = tracing::info_span!(target: "meld::trace", "owner.callback.child",
+            otel.kind = "client", operation = callback.operation_name());
+        let _entered = span.enter();
         let mut transport = self.lock()?;
         if transport.failed {
             return Err(OwnerDiagnosticV1::new(
@@ -152,6 +170,7 @@ impl OwnerCallbackPort for ChildCallbacks {
                     request_id,
                     callback_id,
                     callback: Box::new(callback),
+                    trace_context: crate::telemetry::traces::context(),
                 },
                 limit,
             )?;
@@ -218,7 +237,8 @@ pub(crate) fn read_message<T: DeserializeOwned>(
             break;
         }
     }
-    serde_json::from_slice(&bytes)
+    tracing::info_span!(target: "meld::trace", "owner.decode", bytes = bytes.len() as u64)
+        .in_scope(|| serde_json::from_slice(&bytes))
         .map(Some)
         .map_err(|error| OwnerDiagnosticV1::new("owner_protocol_invalid", error))
 }
@@ -228,7 +248,8 @@ pub(crate) fn write_message(
     message: &impl Serialize,
     limit: usize,
 ) -> Result<(), OwnerDiagnosticV1> {
-    let mut bytes = serde_json::to_vec(message)
+    let mut bytes = tracing::info_span!(target: "meld::trace", "owner.encode")
+        .in_scope(|| serde_json::to_vec(message))
         .map_err(|error| OwnerDiagnosticV1::new("owner_product_encoding", error))?;
     bytes.push(b'\n');
     if bytes.len() > limit {

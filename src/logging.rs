@@ -9,7 +9,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing_subscriber::fmt::time::ChronoUtc;
 use tracing_subscriber::fmt::writer::MakeWriterExt;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Registry};
+use tracing_subscriber::{
+    fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer, Registry,
+};
 
 /// Resolve the log file path with precedence: CLI, MERKLE_LOG_FILE env, config file, default.
 ///
@@ -147,8 +149,12 @@ pub fn init_logging(config: Option<&LoggingConfig>) -> Result<(), ApiError> {
     let disabled = config.as_ref().map(|c| !c.enabled).unwrap_or(false);
     if disabled {
         Registry::default()
-            .with(EnvFilter::new("off"))
-            .with(fmt::layer().with_writer(std::io::sink))
+            .with(crate::telemetry::traces::layer())
+            .with(
+                fmt::layer()
+                    .with_writer(std::io::sink)
+                    .with_filter(EnvFilter::new("off")),
+            )
             .init();
         return Ok(());
     }
@@ -179,7 +185,7 @@ pub fn init_logging(config: Option<&LoggingConfig>) -> Result<(), ApiError> {
             })
     };
 
-    let base_subscriber = Registry::default().with(filter);
+    let base_subscriber = Registry::default().with(crate::telemetry::traces::layer());
 
     if format == "json" {
         if output.file && output.stderr {
@@ -191,7 +197,8 @@ pub fn init_logging(config: Option<&LoggingConfig>) -> Result<(), ApiError> {
                         .json()
                         .with_target(true)
                         .with_timer(ChronoUtc::rfc_3339())
-                        .with_writer(writer),
+                        .with_writer(writer)
+                        .with_filter(filter),
                 )
                 .init();
         } else if output.file {
@@ -202,7 +209,8 @@ pub fn init_logging(config: Option<&LoggingConfig>) -> Result<(), ApiError> {
                         .json()
                         .with_target(true)
                         .with_timer(ChronoUtc::rfc_3339())
-                        .with_writer(file_writer),
+                        .with_writer(file_writer)
+                        .with_filter(filter),
                 )
                 .init();
         } else if output.stdout && output.stderr {
@@ -213,7 +221,8 @@ pub fn init_logging(config: Option<&LoggingConfig>) -> Result<(), ApiError> {
                         .json()
                         .with_target(true)
                         .with_timer(ChronoUtc::rfc_3339())
-                        .with_writer(writer),
+                        .with_writer(writer)
+                        .with_filter(filter),
                 )
                 .init();
         } else if output.stderr {
@@ -223,7 +232,8 @@ pub fn init_logging(config: Option<&LoggingConfig>) -> Result<(), ApiError> {
                         .json()
                         .with_target(true)
                         .with_timer(ChronoUtc::rfc_3339())
-                        .with_writer(std::io::stderr),
+                        .with_writer(std::io::stderr)
+                        .with_filter(filter),
                 )
                 .init();
         } else {
@@ -233,7 +243,8 @@ pub fn init_logging(config: Option<&LoggingConfig>) -> Result<(), ApiError> {
                         .json()
                         .with_target(true)
                         .with_timer(ChronoUtc::rfc_3339())
-                        .with_writer(std::io::stdout),
+                        .with_writer(std::io::stdout)
+                        .with_filter(filter),
                 )
                 .init();
         }
@@ -246,7 +257,8 @@ pub fn init_logging(config: Option<&LoggingConfig>) -> Result<(), ApiError> {
                     .with_target(true)
                     .with_timer(ChronoUtc::rfc_3339())
                     .with_ansi(false)
-                    .with_writer(writer),
+                    .with_writer(writer)
+                    .with_filter(filter),
             )
             .init();
     } else if output.file {
@@ -257,7 +269,8 @@ pub fn init_logging(config: Option<&LoggingConfig>) -> Result<(), ApiError> {
                     .with_target(true)
                     .with_timer(ChronoUtc::rfc_3339())
                     .with_ansi(false)
-                    .with_writer(file_writer),
+                    .with_writer(file_writer)
+                    .with_filter(filter),
             )
             .init();
     } else if output.stdout && output.stderr {
@@ -268,7 +281,8 @@ pub fn init_logging(config: Option<&LoggingConfig>) -> Result<(), ApiError> {
                     .with_target(true)
                     .with_timer(ChronoUtc::rfc_3339())
                     .with_ansi(use_color)
-                    .with_writer(writer),
+                    .with_writer(writer)
+                    .with_filter(filter),
             )
             .init();
     } else if output.stderr {
@@ -278,7 +292,8 @@ pub fn init_logging(config: Option<&LoggingConfig>) -> Result<(), ApiError> {
                     .with_target(true)
                     .with_timer(ChronoUtc::rfc_3339())
                     .with_ansi(use_color)
-                    .with_writer(std::io::stderr),
+                    .with_writer(std::io::stderr)
+                    .with_filter(filter),
             )
             .init();
     } else {
@@ -288,7 +303,8 @@ pub fn init_logging(config: Option<&LoggingConfig>) -> Result<(), ApiError> {
                     .with_target(true)
                     .with_timer(ChronoUtc::rfc_3339())
                     .with_ansi(use_color)
-                    .with_writer(std::io::stdout),
+                    .with_writer(std::io::stdout)
+                    .with_filter(filter),
             )
             .init();
     }
