@@ -26,8 +26,11 @@ const WORKER_THREADS: usize = 4;
 /// Poll interval for shutdown checks between accepted requests.
 const ACCEPT_TIMEOUT: Duration = Duration::from_millis(100);
 
-/// Largest accepted request body; contract requests are small.
+/// Largest ordinary control request body.
 const MAX_BODY_BYTES: usize = 1 << 20;
+
+/// Event authors may submit intact owner publications through the native authority.
+const MAX_EVENT_APPEND_BYTES: usize = 64 << 20;
 
 /// One live listener over one set of served sources.
 pub struct ServeHandle {
@@ -150,13 +153,19 @@ fn worker_loop(server: &Server, sources: &ServeSources, stop: &AtomicBool) {
             }
         };
         let path = request.url().to_string();
+        let max_body_bytes = match (method, path.as_str()) {
+            ("POST", "/v1/events/durable_append" | "/v1/events/best_effort_append") => {
+                MAX_EVENT_APPEND_BYTES
+            }
+            _ => MAX_BODY_BYTES,
+        };
         let mut body = Vec::new();
         let read = request
             .as_reader()
-            .take(MAX_BODY_BYTES as u64 + 1)
+            .take(max_body_bytes as u64 + 1)
             .read_to_end(&mut body);
         let response = match read {
-            Ok(_) if body.len() > MAX_BODY_BYTES => RouteResponse {
+            Ok(_) if body.len() > max_body_bytes => RouteResponse {
                 status: 413,
                 body: b"{\"error\":\"request body too large\"}".to_vec(),
             },

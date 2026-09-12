@@ -208,6 +208,9 @@ pub enum BranchesCommands {
     },
     /// Query exact owner publications through an immutable bounded cut
     GraphOwnerWalk {
+        /// Traverse an exact previously returned cut instead of selecting current revisions
+        #[arg(long)]
+        cut_file: Option<PathBuf>,
         /// Branch scope to query
         #[arg(long, default_value = "active")]
         scope: String,
