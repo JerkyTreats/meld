@@ -12,7 +12,7 @@ The user accepts this experiment as closed and directs the next exercise to go w
 
 Closure does not claim whole-repository sensing, general syntax/semantic coverage, automatic discovery of README claims, complete prose maintenance or full causal search explanation. The untracked obsolete paragraph remains recorded evidence of the current claim boundary. Full serious README qualification through broad shared semantics is transferred to later work rather than declared complete. The former stale-output circuit breaker remains withdrawn.
 
-The next sequence is whole-repository Tree-sitter Event ingestion, evaluation of the existing language against the resulting repository relationships, then claims curation and reconsideration of the current README PDS. Domain meaning remains external. The old one-Boolean README obligation is retained as regression evidence, not the target architecture for broad ingestion. This closes the experiment's active delivery authority; the newly requested phase receives its own scope and branch.
+The [new event-up go-wide ledger](event_up_go_wide_experiment.md) owns the successor. Its sequence is whole-repository Tree-sitter Event ingestion, evaluation of the existing language against the resulting repository relationships, then claims curation and reconsideration of the current README PDS. Domain meaning remains external. The old one-Boolean README obligation is retained as regression evidence, not the target architecture for broad ingestion. This closes the experiment's active delivery authority; the newly requested phase receives its own scope and branch.
 
 ## Continuous-reconciliation result
 
