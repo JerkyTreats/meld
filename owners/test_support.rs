@@ -41,6 +41,7 @@ pub fn configure(stores: &mut OpenProductStores, root: &std::path::Path, owners:
         .map(|(owner, binary)| selection(owner, binary, &[]))
         .collect();
     let binding = PhysicalBinding {
+        agent_positions: Default::default(),
         bindings,
         workspace_root: Some(root.join("workspace")),
         subject: meld_events::DomainObjectRef::new("workspace_fs", "node", "fixture").unwrap(),

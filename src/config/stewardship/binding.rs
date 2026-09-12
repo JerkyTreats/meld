@@ -50,6 +50,8 @@ pub struct SelectedStewardshipPackage {
 /// remains outside it. Runtime subjects need neither a workspace nor a provider.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PhysicalBinding {
+    /// Explicit position bindings, empty for the historical single-Agent input.
+    pub agent_positions: std::collections::BTreeMap<String, String>,
     /// Exact resource references carried intact into owner preparation.
     pub bindings: std::collections::BTreeMap<String, super::activation::PhysicalBindingRef>,
     /// Optional canonical workspace supplied to the selected owner implementations.
@@ -182,6 +184,7 @@ impl PhysicalBinding {
         };
 
         Ok(Self {
+            agent_positions: selection.agent_positions.clone(),
             bindings: selection.bindings.clone(),
             workspace_root,
             subject: selection.subject.clone(),
@@ -208,8 +211,50 @@ impl PhysicalBinding {
             &self.package.expression,
             &self.package.principal_id,
             &self.subject,
-            [self.agent_id.as_str()],
+            self.agent_ids(),
         )
+    }
+
+    fn agent_ids(&self) -> Vec<&str> {
+        if self.agent_positions.is_empty() {
+            vec![self.agent_id.as_str()]
+        } else {
+            self.agent_positions.values().map(String::as_str).collect()
+        }
+    }
+
+    /// Bind the complete topology before any Agent genesis is written.
+    pub fn assigned_positions(
+        &self,
+        positions: &[crate::theory::ProductAgentPositionV1],
+    ) -> Result<Vec<super::assignment::AssignedAgentPositionV1>, ApiError> {
+        let ids = if self.agent_positions.is_empty() {
+            let [position] = positions else {
+                return Err(ApiError::ConfigError("physical binding must supply one Agent for each declared position; this binding selects a single Agent".into()));
+            };
+            std::collections::BTreeMap::from([(
+                position.position_id.clone(),
+                self.agent_id.clone(),
+            )])
+        } else {
+            self.agent_positions.clone()
+        };
+        if ids.len() != positions.len()
+            || positions.iter().any(|p| !ids.contains_key(&p.position_id))
+        {
+            return Err(ApiError::ConfigError(
+                "Agent position bindings must exactly cover the declared topology".into(),
+            ));
+        }
+        Ok(ids
+            .into_iter()
+            .map(
+                |(position_id, agent_id)| super::assignment::AssignedAgentPositionV1 {
+                    position_id,
+                    agent_id,
+                },
+            )
+            .collect())
     }
 
     /// Exact structural bindings supplied to selected owner implementations.
@@ -218,16 +263,23 @@ impl PhysicalBinding {
     ) -> std::collections::BTreeMap<String, super::activation::PhysicalBindingRef> {
         use super::activation::PhysicalBindingRef;
         let mut bindings = self.bindings.clone();
-        bindings.extend([
-            (
-                "subject".into(),
-                PhysicalBindingRef::ConfigRef(self.subject.object_id.clone()),
-            ),
-            (
+        bindings.insert(
+            "subject".into(),
+            PhysicalBindingRef::ConfigRef(self.subject.object_id.clone()),
+        );
+        if self.agent_positions.is_empty() {
+            bindings.insert(
                 "agent".into(),
                 PhysicalBindingRef::ConfigRef(self.agent_id.clone()),
-            ),
-        ]);
+            );
+        } else {
+            for (position, agent) in &self.agent_positions {
+                bindings.insert(
+                    format!("agent-position::{position}"),
+                    PhysicalBindingRef::ConfigRef(agent.clone()),
+                );
+            }
+        }
         if let Some(root) = &self.workspace_root {
             bindings.insert(
                 "workspace".into(),
@@ -480,6 +532,7 @@ mod tests {
         config.stewardship.declarations.insert(
             "repository".to_string(),
             StewardshipDeclaration {
+                agent_positions: Default::default(),
                 bindings: Default::default(),
                 expression: "repository_health".to_string(),
                 ..legacy.into()

@@ -2392,17 +2392,14 @@ impl RuntimeSemanticHandleFactory {
                         ),
                     );
                 }
-                let rule = match composed
-                    .theory
-                    .resolved
-                    .as_ref()
-                    .ok_or_else(|| {
-                        RuntimeAssemblyError::RuntimeHandleConstruction(format!(
-                            "Curation requires prepared product theory: {diagnostics:?}"
-                        ))
-                    })?
-                    .native_curation_selection(stores, &agent)
-                {
+                let Some(theory) = composed.theory.resolved.as_ref() else {
+                    return unresolved(
+                        diagnostics,
+                        "standing_curation_theory_unresolved",
+                        "Curation requires prepared product theory; native genesis remains inspectable".into(),
+                    );
+                };
+                let rule = match theory.native_curation_selection(stores, &agent) {
                     Ok(Some(rule)) => rule,
                     Ok(None) => {
                         return unresolved(

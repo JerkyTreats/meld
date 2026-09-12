@@ -443,7 +443,10 @@ impl<'a> WorldInitPipeline<'a> {
                     agent_id: assigned.agent_id.clone(),
                     subject: product.assignment.subject.clone(),
                     scope: meld_world_model::world_state::graph::contracts::OwnerPublicationScope {
-                        scope_id: product.assignment.scope_id(&product.declaration.product_id),
+                        scope_id: product
+                            .assignment
+                            .agent_scope_id(&product.declaration.product_id, &assigned.agent_id)
+                            .map_err(|error| WorldInitError::Identity(error.to_string()))?,
                         branch_id: Some(branch_scope.branch_id.clone()),
                         perspective_id: Some(perspective.perspective_id.clone()),
                         valid_at: None,
@@ -563,6 +566,14 @@ impl<'a> WorldInitPipeline<'a> {
                 "complete product inputs are required for activation preparation".to_string(),
             )
         })?;
+        if product
+            .activation
+            .bindings
+            .keys()
+            .any(|key| key.starts_with("agent-position::"))
+        {
+            return Err(WorldInitError::Activation("explicit Agent positions have native genesis but scoped runtime activation is not yet available".into()));
+        }
         verify_current_product(product)?;
         if self.topology_receipt.is_none() {
             let receipts = self

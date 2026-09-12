@@ -127,6 +127,9 @@ pub struct NamedStewardshipDeclaration {
 /// embedding owner-controlled theory bodies.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StewardshipDeclaration {
+    /// Explicit topology positions. An empty map retains the single-Agent input.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub agent_positions: BTreeMap<String, String>,
     /// Named non-secret resource references interpreted by their selected owners.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub bindings: BTreeMap<String, super::activation::PhysicalBindingRef>,
@@ -143,6 +146,7 @@ pub struct StewardshipDeclaration {
     pub subject: meld_events::DomainObjectRef,
 
     /// Durable agent identity that stewards the subject.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub agent_id: String,
 
     /// Principal whose grant bounds this stewardship declaration.
@@ -339,6 +343,7 @@ impl StewardshipDeclaration {
 impl From<DocsFreshnessSelection> for StewardshipDeclaration {
     fn from(selection: DocsFreshnessSelection) -> Self {
         Self {
+            agent_positions: BTreeMap::new(),
             bindings: BTreeMap::new(),
             expression: selection.expression,
             target_root: Some(selection.target_root),
@@ -428,7 +433,9 @@ fn validate_declaration(
                 "binding identity and reference must not be empty".into(),
             );
         }
-        if ["workspace", "subject", "agent", "provider"].contains(&id.as_str()) {
+        if ["workspace", "subject", "agent", "provider"].contains(&id.as_str())
+            || id.starts_with("agent-position::")
+        {
             reject(
                 &format!("bindings.{id}"),
                 "binding is supplied by the canonical declaration field".into(),
@@ -445,8 +452,32 @@ fn validate_declaration(
     {
         reject("provider_id", "must not be empty".into());
     }
+    if declaration.agent_positions.is_empty() {
+        if declaration.agent_id.trim().is_empty() {
+            reject(
+                "agent_id",
+                "must not be empty without explicit positions".into(),
+            );
+        }
+    } else {
+        if !declaration.agent_id.is_empty() {
+            reject(
+                "agent_id",
+                "cannot be combined with explicit Agent positions".into(),
+            );
+        }
+        let mut agents = std::collections::BTreeSet::new();
+        for (position, agent) in &declaration.agent_positions {
+            if position.trim().is_empty() || agent.trim().is_empty() || !agents.insert(agent) {
+                reject(
+                    "agent_positions",
+                    "positions and Agent identities must be non-empty and Agent identities unique"
+                        .into(),
+                );
+            }
+        }
+    }
     for (field, value) in [
-        ("agent_id", &declaration.agent_id),
         ("principal_id", &declaration.principal_id),
         (
             "theory.belief_family_id",

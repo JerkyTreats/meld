@@ -77,6 +77,12 @@ impl StewardshipAssignmentV1 {
             || !agent_positions
                 .windows(2)
                 .all(|pair| pair[0].position_id != pair[1].position_id)
+            || agent_positions
+                .iter()
+                .map(|p| &p.agent_id)
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                != agent_positions.len()
         {
             return Err(ApiError::ConfigError(
                 "PDS assignment identity fields and Agent topology must be complete".to_string(),
@@ -120,6 +126,25 @@ impl StewardshipAssignmentV1 {
                 .iter()
                 .map(|position| position.agent_id.as_str()),
         )
+    }
+
+    /// Durable Agent state is independent of other positions in the composition.
+    pub fn agent_scope_id(&self, product_id: &str, agent_id: &str) -> Result<String, ApiError> {
+        if !self
+            .agent_positions
+            .iter()
+            .any(|position| position.agent_id == agent_id)
+        {
+            return Err(ApiError::ConfigError(
+                "Agent is not bound in this assignment".into(),
+            ));
+        }
+        Ok(assignment_scope_id(
+            product_id,
+            &self.principal_id,
+            &self.subject,
+            [agent_id],
+        ))
     }
 
     pub fn verify_identity(&self) -> Result<(), ApiError> {
@@ -187,5 +212,22 @@ mod tests {
         .unwrap();
         assert_eq!(assignment.assignment_id.len(), 64);
         assignment.verify_identity().unwrap();
+        let producer_scope = assignment.agent_scope_id("product", "agent").unwrap();
+        assert_eq!(producer_scope, assignment.scope_id("product"));
+        let mut expanded = assignment.clone();
+        expanded.agent_positions.push(AssignedAgentPositionV1 {
+            position_id: "consumer".into(),
+            agent_id: "reader".into(),
+        });
+        assert_ne!(expanded.scope_id("product"), assignment.scope_id("product"));
+        assert_eq!(
+            expanded.agent_scope_id("product", "agent").unwrap(),
+            producer_scope
+        );
+        assert_ne!(
+            expanded.agent_scope_id("product", "reader").unwrap(),
+            producer_scope
+        );
+        assert!(expanded.agent_scope_id("product", "unbound").is_err());
     }
 }

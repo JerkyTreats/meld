@@ -171,6 +171,7 @@ fn startup_account_names_graph_lag_and_keeps_uncertain_execution_separate() {
     config.stewardship.declarations.insert(
         "startup".into(),
         crate::config::StewardshipDeclaration {
+            agent_positions: Default::default(),
             bindings: Default::default(),
             expression: package.expression.clone(),
             target_root: None,

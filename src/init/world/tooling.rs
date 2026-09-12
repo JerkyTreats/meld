@@ -17,8 +17,8 @@ use meld_world_model::PerspectiveKey;
 
 use crate::capability::ProductCapabilityInventory;
 use crate::config::{
-    AssignedAgentPositionV1, MerkleConfig, OperationalLimits, PhysicalBinding,
-    RuntimeIsolationRequirements, StewardshipActivationV1, StewardshipAssignmentV1,
+    MerkleConfig, OperationalLimits, PhysicalBinding, RuntimeIsolationRequirements,
+    StewardshipActivationV1, StewardshipAssignmentV1,
 };
 use crate::error::ApiError;
 use crate::init::world::pipeline::{
@@ -209,10 +209,7 @@ pub(crate) fn compile_product_initialization<'a>(
         &stores.pds_products,
     )
     .map_err(|error| world_init_error(error.to_string()))?;
-    let position = match declaration.agent_topology.as_slice() {
-        [position] => position,
-        _ => return Err(world_init_error("physical binding must supply one Agent for each declared position; this binding selects a single Agent")),
-    };
+    let agent_positions = binding.assigned_positions(&declaration.agent_topology)?;
     let compilation = ProductCompilationReceiptV1::compile(
         &declaration,
         vec![package_receipt.clone()],
@@ -220,12 +217,18 @@ pub(crate) fn compile_product_initialization<'a>(
         observed_seq,
     )
     .map_err(|error| world_init_error(error.to_string()))?;
-    let selected_components = compilation
-        .position_packages(position, &stores.pds_packages)
-        .map_err(|e| world_init_error(e.to_string()))?
-        .into_iter()
-        .flat_map(|p| p.components)
-        .collect::<Vec<_>>();
+    // Genesis consumes each position's exact WAD. Executable preparation remains
+    // unavailable for explicit collections until scoped runtime instances exist.
+    let selected_components = if binding.agent_positions.is_empty() {
+        compilation
+            .position_packages(&declaration.agent_topology[0], &stores.pds_packages)
+            .map_err(|e| world_init_error(e.to_string()))?
+            .into_iter()
+            .flat_map(|p| p.components)
+            .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
     let topology_id = product_topology_id(&declaration.agent_topology)
         .map_err(|error| world_init_error(error.to_string()))?;
     let subject = binding.subject.clone();
@@ -239,10 +242,7 @@ pub(crate) fn compile_product_initialization<'a>(
         perspective.index_key(),
         BranchScope::main().branch_id,
         topology_id,
-        vec![AssignedAgentPositionV1 {
-            position_id: position.position_id.clone(),
-            agent_id: binding.agent_id.clone(),
-        }],
+        agent_positions,
         declaration.requested_authority_ref.clone(),
         declaration.principal_grant_ref.clone(),
     )?;
@@ -262,12 +262,16 @@ pub(crate) fn compile_product_initialization<'a>(
         })
         .collect::<Result<BTreeMap<_, _>, _>>()
         .map_err(|error| world_init_error(error.to_string()))?;
-    let capability_bindings = crate::runtime::owners::preparation::prepare_owner_bindings(
-        stores,
-        binding,
-        &selected_components,
-    )
-    .map_err(|error| world_init_error(error.to_string()))?;
+    let capability_bindings = if binding.agent_positions.is_empty() {
+        crate::runtime::owners::preparation::prepare_owner_bindings(
+            stores,
+            binding,
+            &selected_components,
+        )
+        .map_err(|error| world_init_error(error.to_string()))?
+    } else {
+        crate::capability::OwnerBindingView::default()
+    };
     let placement = stores
         .owners
         .placement_for(&selected_implementations, &declaration.participant_plan);
@@ -440,6 +444,7 @@ mod tests {
         assert_eq!(replay.receipt.receipt_id, routed.receipt.receipt_id);
         assert!(!replay.changed);
         let binding = PhysicalBinding {
+            agent_positions: Default::default(),
             bindings: Default::default(),
             workspace_root: Some(workspace.path().into()),
             subject: meld_events::DomainObjectRef::new("workspace_fs", "node", "dependency-graph")
