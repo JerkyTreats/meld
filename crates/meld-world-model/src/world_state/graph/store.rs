@@ -38,6 +38,7 @@ pub struct TraversalStore {
     db: Db,
     owner_publications: Tree,
     runtime_meta: Tree,
+    pub(super) index: super::index::ProjectionIndex,
 }
 
 impl TraversalStore {
@@ -48,14 +49,32 @@ impl TraversalStore {
 
     /// Open all traversal trees against a shared sled database.
     pub fn new(db: Db) -> Result<Self, StorageError> {
-        Ok(Self {
+        Self::with_index(db, super::index::ProjectionIndex::memory()?)
+    }
+
+    /// The composition root supplies an external runtime-state path for the SQLite arm.
+    pub fn new_at(db: Db, path: &std::path::Path) -> Result<Self, StorageError> {
+        Self::with_index(db, super::index::ProjectionIndex::open(path)?)
+    }
+
+    fn with_index(db: Db, index: super::index::ProjectionIndex) -> Result<Self, StorageError> {
+        let store = Self {
+            index,
             resource_id: crate::waiting::resource_identity(&db)?,
             owner_publications: db
                 .open_tree(TREE_OWNER_PUBLICATIONS)
                 .map_err(to_storage_io)?,
             runtime_meta: db.open_tree(TREE_RUNTIME_META).map_err(to_storage_io)?,
             db,
-        })
+        };
+        if !store.index.initialized()? {
+            for publication in store.owner_publications_through_seq(u64::MAX)? {
+                store.index.publish(&publication)?;
+            }
+            store.index.finish_recovery()?;
+            store.flush()?;
+        }
+        Ok(store)
     }
 
     /// Install one immutable owner Event admission contract in the existing Graph metadata.
@@ -318,20 +337,7 @@ impl TraversalStore {
         publication: &ProjectedOwnerPublication,
     ) -> Result<(), StorageError> {
         publication.operation.validate()?;
-        let candidate = &publication.operation;
-        for existing in self.owner_publications_through_seq(u64::MAX)? {
-            let existing = existing.operation;
-            if existing.batch.owner_id == candidate.batch.owner_id
-                && existing.batch.scope == candidate.batch.scope
-                && existing.batch.revision_id == candidate.batch.revision_id
-                && existing.operation_id != candidate.operation_id
-            {
-                return Err(StorageError::InvalidPath(format!(
-                    "owner revision '{}' has divergent publication operations",
-                    candidate.batch.revision_id
-                )));
-            }
-        }
+        self.index.check_revision(publication)?;
         let key = encode_seq_index_key(
             publication.source_event.seq,
             &publication.operation.operation_id,
@@ -342,6 +348,14 @@ impl TraversalStore {
                 serde_json::to_vec(publication).map_err(to_storage_data)?,
             )
             .map_err(to_storage_io)?;
+        spike_crash(publication, "before-index");
+        self.index.publish(publication)?;
+        if std::env::var("MELD_GRAPH_SPIKE_CRASH").ok().as_deref()
+            == Some(format!("{}:after-index", publication.operation.batch.owner_id).as_str())
+        {
+            self.flush()?;
+            spike_crash(publication, "after-index");
+        }
         Ok(())
     }
 
@@ -492,4 +506,13 @@ fn to_storage_io(err: sled::Error) -> StorageError {
 
 fn to_storage_data(err: serde_json::Error) -> StorageError {
     StorageError::IoError(io::Error::new(io::ErrorKind::InvalidData, err.to_string()))
+}
+
+// Spike-only failpoint: external harness selects one owner and persistence boundary.
+fn spike_crash(publication: &ProjectedOwnerPublication, boundary: &str) {
+    if std::env::var("MELD_GRAPH_SPIKE_CRASH").ok().as_deref()
+        == Some(format!("{}:{boundary}", publication.operation.batch.owner_id).as_str())
+    {
+        std::process::exit(86);
+    }
 }

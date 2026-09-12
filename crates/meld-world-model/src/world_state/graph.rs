@@ -8,6 +8,7 @@ pub mod admission;
 pub mod contracts;
 mod cursor;
 pub mod events;
+mod index;
 pub mod ports;
 pub mod query;
 pub mod reducer;

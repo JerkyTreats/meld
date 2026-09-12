@@ -1,15 +1,15 @@
 //! Read-only traversal over owner publications selected by a canonical Event cut.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::error::StorageError;
 use crate::events::{DomainObjectRef, LedgerCursor};
 use crate::world_state::graph::contracts::{
     traversal_cut_identity, traversal_result_identity, BoundedTraversalRequest,
     OwnerCompletenessStatus, OwnerGraphRevisionReceipt, OwnerObjectPublication,
-    OwnerRelationOccurrence, ProjectedOwnerPublication, TraversalCut, TraversalCutIssue,
-    TraversalCutRequest, TraversalCutStatus, TraversalDirection, TraversalFrontierEntry,
-    TraversalFrontierReason, TraversalPath, TraversalResult, TraversalTruncation,
+    OwnerRelationOccurrence, TraversalCut, TraversalCutIssue, TraversalCutRequest,
+    TraversalCutStatus, TraversalDirection, TraversalFrontierEntry, TraversalFrontierReason,
+    TraversalPath, TraversalResult, TraversalTruncation,
 };
 use crate::world_state::graph::store::TraversalStore;
 
@@ -35,7 +35,6 @@ impl<'a> TraversalQuery<'a> {
             .authority_cursor(request.event_position.ledger_id)?;
         let reduced_seq = graph_position.after_seq;
         let visible_seq = reduced_seq.min(request.event_position.after_seq);
-        let publications = self.store.owner_publications_through_seq(visible_seq)?;
         let mut receipts = Vec::new();
         let mut issues = Vec::new();
         if request.event_position.after_seq > reduced_seq {
@@ -66,23 +65,9 @@ impl<'a> TraversalQuery<'a> {
             } else {
                 None
             };
-            let selected = publications
-                .iter()
-                .filter(|publication| {
-                    let batch = &publication.operation.batch;
-                    batch.owner_id == requirement.owner_id
-                        && batch.scope == requirement.scope
-                        && requirement
-                            .event_source
-                            .as_ref()
-                            .is_none_or(|source| publication.source_route.as_ref() == Some(source))
-                })
-                .max_by(|left, right| {
-                    (left.source_event.seq, &left.operation.operation_id)
-                        .cmp(&(right.source_event.seq, &right.operation.operation_id))
-                });
+            let selected = self.store.index.latest(requirement, visible_seq)?;
             if let Some(publication) = selected {
-                let batch = &publication.operation.batch;
+                let batch = &publication;
                 if batch.completeness.status != OwnerCompletenessStatus::Complete {
                     if requirement.required {
                         issues.push(TraversalCutIssue::MissingRequiredOwner {
@@ -176,12 +161,10 @@ impl<'a> TraversalQuery<'a> {
         cut.validate_identity()?;
         request.validate()?;
         let request = request.normalized();
-        let publications = selected_publications(
-            self.store
-                .owner_publications_through_seq(cut.graph_position.after_seq)?,
-            cut,
-        );
-        let graph = PublicationGraph::new(publications);
+        let graph = PublicationGraph {
+            index: &self.store.index,
+            seqs: self.store.index.selected(cut)?,
+        };
         let mut absent_roots = Vec::new();
         let mut selected_objects = BTreeMap::new();
         let mut selected_occurrences = BTreeMap::new();
@@ -192,7 +175,7 @@ impl<'a> TraversalQuery<'a> {
         let mut queue = VecDeque::new();
 
         for root in &request.roots {
-            let root_observed = graph.objects_by_address.contains_key(&root.index_key());
+            let root_observed = !graph.objects(root)?.is_empty();
             if !root_observed {
                 if cut.status == TraversalCutStatus::Complete
                     && cut.receipts.iter().any(|receipt| {
@@ -230,7 +213,7 @@ impl<'a> TraversalQuery<'a> {
                     root,
                     request.bounds.max_objects,
                     &mut selected_objects,
-                )
+                )?
             {
                 truncation.objects = true;
                 frontier.push(frontier_entry(
@@ -244,7 +227,7 @@ impl<'a> TraversalQuery<'a> {
         }
 
         while let Some((current, depth, path)) = queue.pop_front() {
-            let candidates = graph.candidates(&current, &request);
+            let candidates = graph.candidates(&current, &request)?;
             if depth >= request.bounds.max_depth {
                 if !candidates.is_empty() {
                     truncation.depth = true;
@@ -272,10 +255,7 @@ impl<'a> TraversalQuery<'a> {
                 selected_occurrences
                     .entry(occurrence_key)
                     .or_insert_with(|| candidate.occurrence.clone());
-                if !graph
-                    .objects_by_address
-                    .contains_key(&candidate.neighbor.index_key())
-                {
+                if graph.objects(&candidate.neighbor)?.is_empty() {
                     frontier.push(frontier_entry(
                         &candidate.neighbor,
                         depth + 1,
@@ -303,7 +283,7 @@ impl<'a> TraversalQuery<'a> {
                     }
                     continue;
                 }
-                if graph.object_count(&candidate.neighbor) + selected_objects.len()
+                if graph.objects(&candidate.neighbor)?.len() + selected_objects.len()
                     > request.bounds.max_objects
                 {
                     truncation.objects = true;
@@ -330,7 +310,7 @@ impl<'a> TraversalQuery<'a> {
                     &candidate.neighbor,
                     request.bounds.max_objects,
                     &mut selected_objects,
-                );
+                )?;
                 queue.push_back((candidate.neighbor, depth + 1, next_path));
             }
         }
@@ -363,105 +343,59 @@ impl<'a> TraversalQuery<'a> {
     }
 }
 
-fn selected_publications(
-    publications: Vec<ProjectedOwnerPublication>,
-    cut: &TraversalCut,
-) -> Vec<ProjectedOwnerPublication> {
-    let events = cut
-        .receipts
-        .iter()
-        .filter_map(|receipt| receipt.source_event)
-        .collect::<HashSet<_>>();
-    publications
-        .into_iter()
-        .filter(|publication| events.contains(&publication.source_event))
-        .collect()
+struct PublicationGraph<'a> {
+    index: &'a super::index::ProjectionIndex,
+    seqs: Vec<u64>,
 }
-
-struct PublicationGraph {
-    objects_by_address: BTreeMap<String, Vec<OwnerObjectPublication>>,
-    outgoing: BTreeMap<String, Vec<TraversalCandidate>>,
-    incoming: BTreeMap<String, Vec<TraversalCandidate>>,
-}
-
-impl PublicationGraph {
-    fn new(publications: Vec<ProjectedOwnerPublication>) -> Self {
-        let mut graph = Self {
-            objects_by_address: BTreeMap::new(),
-            outgoing: BTreeMap::new(),
-            incoming: BTreeMap::new(),
-        };
-        for publication in publications {
-            for object in publication.operation.batch.objects {
-                graph
-                    .objects_by_address
-                    .entry(object.object_ref.index_key())
-                    .or_default()
-                    .push(object);
-            }
-            for occurrence in publication.operation.batch.relations {
-                graph
-                    .outgoing
-                    .entry(occurrence.src.index_key())
-                    .or_default()
-                    .push(TraversalCandidate {
-                        neighbor: occurrence.dst.clone(),
-                        occurrence: occurrence.clone(),
-                    });
-                graph
-                    .incoming
-                    .entry(occurrence.dst.index_key())
-                    .or_default()
-                    .push(TraversalCandidate {
-                        neighbor: occurrence.src.clone(),
-                        occurrence,
-                    });
-            }
-        }
-        for objects in graph.objects_by_address.values_mut() {
-            objects.sort_by(|left, right| left.publication_id.cmp(&right.publication_id));
-        }
-        for candidates in graph
-            .outgoing
-            .values_mut()
-            .chain(graph.incoming.values_mut())
-        {
-            candidates.sort_by_key(TraversalCandidate::occurrence_key);
-        }
-        graph
+impl PublicationGraph<'_> {
+    fn objects(
+        &self,
+        object: &DomainObjectRef,
+    ) -> Result<Vec<OwnerObjectPublication>, StorageError> {
+        let mut objects = self.index.objects(&self.seqs, object)?;
+        objects.sort_by(|a, b| a.publication_id.cmp(&b.publication_id));
+        Ok(objects)
     }
-
-    fn object_count(&self, object: &DomainObjectRef) -> usize {
-        self.objects_by_address
-            .get(&object.index_key())
-            .map_or(0, Vec::len)
-    }
-
     fn candidates(
         &self,
         object: &DomainObjectRef,
         request: &BoundedTraversalRequest,
-    ) -> Vec<TraversalCandidate> {
-        let key = object.index_key();
+    ) -> Result<Vec<TraversalCandidate>, StorageError> {
         let mut candidates = Vec::new();
         if matches!(
             request.direction,
             TraversalDirection::Outgoing | TraversalDirection::Both
         ) {
-            candidates.extend(self.outgoing.get(&key).cloned().unwrap_or_default());
+            candidates.extend(
+                self.index
+                    .relations(&self.seqs, object, true)?
+                    .into_iter()
+                    .map(|occurrence| TraversalCandidate {
+                        neighbor: occurrence.dst.clone(),
+                        occurrence,
+                    }),
+            );
         }
         if matches!(
             request.direction,
             TraversalDirection::Incoming | TraversalDirection::Both
         ) {
-            candidates.extend(self.incoming.get(&key).cloned().unwrap_or_default());
+            candidates.extend(
+                self.index
+                    .relations(&self.seqs, object, false)?
+                    .into_iter()
+                    .map(|occurrence| TraversalCandidate {
+                        neighbor: occurrence.src.clone(),
+                        occurrence,
+                    }),
+            );
         }
         if let Some(types) = &request.relation_types {
             candidates.retain(|candidate| types.contains(&candidate.occurrence.relation_type));
         }
         candidates.sort_by_key(TraversalCandidate::occurrence_key);
-        candidates.dedup_by(|left, right| left.occurrence_key() == right.occurrence_key());
-        candidates
+        candidates.dedup_by(|a, b| a.occurrence_key() == b.occurrence_key());
+        Ok(candidates)
     }
 }
 
@@ -481,14 +415,15 @@ impl TraversalCandidate {
 }
 
 fn select_objects(
-    graph: &PublicationGraph,
+    graph: &PublicationGraph<'_>,
     object: &DomainObjectRef,
     max_objects: usize,
     selected: &mut BTreeMap<String, OwnerObjectPublication>,
-) -> bool {
-    let Some(publications) = graph.objects_by_address.get(&object.index_key()) else {
-        return false;
-    };
+) -> Result<bool, StorageError> {
+    let publications = graph.objects(object)?;
+    if publications.is_empty() {
+        return Ok(false);
+    }
     let additional = publications
         .iter()
         .filter(|publication| {
@@ -499,7 +434,7 @@ fn select_objects(
         })
         .count();
     if selected.len() + additional > max_objects {
-        return false;
+        return Ok(false);
     }
     for publication in publications {
         selected.insert(
@@ -510,7 +445,7 @@ fn select_objects(
             publication.clone(),
         );
     }
-    true
+    Ok(true)
 }
 
 fn frontier_entry(

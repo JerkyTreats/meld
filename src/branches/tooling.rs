@@ -72,6 +72,7 @@ pub fn handle_cli_command_with_runtime_state(
             render_output(format, &output, format_branch_graph_status_text)
         }
         BranchesCommands::GraphOwnerWalk {
+            cut_file,
             scope,
             branch_ids,
             owner_id,
@@ -95,7 +96,7 @@ pub fn handle_cli_command_with_runtime_state(
                     "graph-owner-walk requires the product Event authority position".to_string(),
                 )
             })?;
-            let output = query_runtime.owner_walk(
+            let output = query_runtime.owner_walk_at(
                 parse_scope(scope, branch_ids)?,
                 workspace_root,
                 event_position,
@@ -118,6 +119,7 @@ pub fn handle_cli_command_with_runtime_state(
                         max_paths: *max_paths,
                     },
                 },
+                read_frozen_cut(cut_file.as_deref())?.as_ref(),
             )?;
             render_output(format, &output, format_federated_owner_walk_text)
         }
@@ -183,4 +185,15 @@ fn relation_types_filter(relation_types: &[String]) -> Option<&[String]> {
     } else {
         Some(relation_types)
     }
+}
+
+fn read_frozen_cut(
+    path: Option<&Path>,
+) -> Result<Option<crate::world_state::graph::contracts::TraversalCut>, ApiError> {
+    path.map(|p| {
+        let raw = std::fs::read(p).map_err(|e| ApiError::ConfigError(e.to_string()))?;
+        serde_json::from_slice(&raw)
+            .map_err(|e| ApiError::ConfigError(format!("invalid frozen cut: {e}")))
+    })
+    .transpose()
 }

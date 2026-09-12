@@ -342,7 +342,13 @@ impl OpenProductStores {
             (
                 ScopedResource::open(
                     "traversal_store",
-                    Arc::new(TraversalStore::new(world_model_db.clone()).map_err(to_world_model)?),
+                    Arc::new(
+                        TraversalStore::new_at(
+                            world_model_db.clone(),
+                            &layout.world_model_db.join("graph-read-index.sqlite"),
+                        )
+                        .map_err(to_world_model)?,
+                    ),
                 ),
                 ScopedResource::open(
                     "curation_store",
