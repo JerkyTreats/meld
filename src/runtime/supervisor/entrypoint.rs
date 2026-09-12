@@ -35,6 +35,27 @@ use super::reports::SupervisorReportStore;
 use super::stepping::BoundedActorHandle;
 use super::store::{SupervisorStore, SupervisorStoreError};
 
+// An idle receipt may race live intake. Preserve the refusal as retryable work
+// and clear any previous wait; only a successful receipt can establish idleness.
+fn receive_idle_receipt(
+    report: &mut WorkerTickReport,
+    receipt: Result<Option<OwnerWaitReceiptV1>, RuntimeAssemblyError>,
+) -> Option<OwnerWaitReceiptV1> {
+    match receipt {
+        Ok(receipt) => receipt,
+        Err(error) => {
+            report
+                .retryable_errors
+                .push(crate::runtime::contracts::WorkerTickIssue {
+                    item_id: None,
+                    code: "lifecycle_wait_unavailable".into(),
+                    message: error.to_string(),
+                });
+            None
+        }
+    }
+}
+
 const DEFAULT_RESTART_ATTEMPT_LIMIT: u64 = 3;
 const DEFAULT_RESTART_BACKOFF_MS: u64 = 0;
 const INITIAL_EVENT_SEQUENCE: u64 = 0;
@@ -866,7 +887,7 @@ impl<'a> RuntimeSupervisor<'a> {
                 continue;
             };
             // Exactly one bounded invocation per active actor per pass.
-            let report = runtime
+            let mut report = runtime
                 .actor
                 .bounded_step(now_ms, &budget)
                 .unwrap_or_else(|error| {
@@ -879,19 +900,20 @@ impl<'a> RuntimeSupervisor<'a> {
                         error.message,
                     )
                 });
-            let health_status = health_status_from_tick_report(&report);
             let native_wait = if !report.made_progress()
                 && report.retryable_errors.is_empty()
                 && report.fatal_errors.is_empty()
                 && !report.budget_exhausted
             {
-                lifecycle_context
+                let receipt = lifecycle_context
                     .as_ref()
                     .map(|context| runtime.actor.lifecycle_wait(context, &report))
-                    .transpose()?
+                    .transpose();
+                receive_idle_receipt(&mut report, receipt)
             } else {
                 None
             };
+            let health_status = health_status_from_tick_report(&report);
             self.record_tick_liveness(owner.runtime_id.as_str(), &report, native_wait)?;
 
             // Persist the full report first; heartbeat and health snapshot
@@ -2415,6 +2437,60 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn unavailable_idle_evidence_is_retryable_and_cannot_project_idleness() {
+        use crate::runtime::contracts::{WorkerCheckpoint, WorkerScope};
+        let mut report = WorkerTickReport {
+            actor_id: "sample.actor".into(),
+            scope: WorkerScope {
+                domain_id: "sample".into(),
+                stream_id: None,
+                work_key: None,
+                agent_id: None,
+                perspective_key: None,
+                branch_id: None,
+                subject_key: None,
+            },
+            input_checkpoint: WorkerCheckpoint {
+                name: "revision".into(),
+                value: 7,
+            },
+            output_checkpoint: WorkerCheckpoint {
+                name: "revision".into(),
+                value: 7,
+            },
+            items_attempted: 0,
+            items_committed: 0,
+            retryable_errors: vec![],
+            fatal_errors: vec![],
+            budget_exhausted: false,
+            waiting_on: vec![],
+        };
+        let receipt = receive_idle_receipt(
+            &mut report,
+            Err(RuntimeAssemblyError::SupervisorHandoff(
+                "Agent inputs changed while authoring lifecycle evidence".into(),
+            )),
+        );
+        assert!(receipt.is_none());
+        assert!(!report.made_progress());
+        assert!(report.fatal_errors.is_empty());
+        assert_eq!(
+            health_status_from_tick_report(&report),
+            RuntimeHealthStatus::Degraded
+        );
+        assert_eq!(
+            last_error_code(&report).as_deref(),
+            Some("lifecycle_wait_unavailable")
+        );
+        let action = RuntimeActionRecord::from_worker_tick("wait-race", "sample.actor", 10, report)
+            .bind_lifecycle("generation".into(), "incarnation".into());
+        assert_eq!(
+            current_owner_activity(Some(&action), "generation", "incarnation"),
+            CurrentOwnerActivity::Failed
+        );
+    }
 
     #[test]
     fn activation_activity_rejects_failure_and_predecessor_reports() {

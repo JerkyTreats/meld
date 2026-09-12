@@ -16,6 +16,33 @@ use crate::world_state::graph::contracts::{
 use crate::world_state::graph::query::TraversalQuery;
 use crate::world_state::graph::store::TraversalStore;
 
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerWalkRead {
+    pub product_root: PathBuf,
+    pub workspace_root: PathBuf,
+    pub owner_id: String,
+    pub owner_scope: OwnerPublicationScope,
+    pub traversal: BoundedTraversalRequest,
+}
+
+/// Uses the same federated read contract with the live active store supplied.
+pub fn read_active_owner(
+    request: &OwnerWalkRead,
+    store: Arc<TraversalStore>,
+    position: crate::events::LedgerCursor,
+) -> Result<FederatedOwnerWalkOutput, ApiError> {
+    let branch = BranchRuntime::new().resolve_active_branch(&request.workspace_root)?;
+    BranchQueryRuntime::with_active_store(&branch.resolved().branch_id, store).owner_walk(
+        BranchQueryScope::Active,
+        Some(&request.workspace_root),
+        position,
+        &request.owner_id,
+        request.owner_scope.clone(),
+        &request.traversal,
+    )
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BranchQueryScope {
     All,

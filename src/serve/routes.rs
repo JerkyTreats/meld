@@ -87,6 +87,35 @@ pub struct StartupAccountReadRequest {
 /// Dispatch one request against the served sources.
 pub fn dispatch(sources: &ServeSources, method: &str, path: &str, body: &[u8]) -> RouteResponse {
     match (method, path) {
+        ("POST", "/v1/branches/owner_walk") => {
+            handle(body, |request: crate::branches::query::OwnerWalkRead| {
+                if request.product_root != sources.product_root {
+                    return Err("Graph read addresses another product root".to_string());
+                }
+                if sources.workspace_root.as_deref() != Some(request.workspace_root.as_path()) {
+                    return Err("Graph read requires the prepared product workspace".to_string());
+                }
+                let store = sources
+                    .traversal
+                    .as_ref()
+                    .ok_or("native Graph unavailable")?;
+                let watermark = sources
+                    .events
+                    .watermark(WatermarkRequest {
+                        ledger_id: sources.ledger_id,
+                    })
+                    .map_err(|e| e.to_string())?;
+                crate::branches::query::read_active_owner(
+                    &request,
+                    store.clone(),
+                    meld_events::LedgerCursor {
+                        ledger_id: watermark.ledger_id,
+                        after_seq: watermark.tip_seq,
+                    },
+                )
+                .map_err(|e| e.to_string())
+            })
+        }
         ("POST", "/v1/events/committed_record") => handle(
             body,
             |request: meld_events::remote::CommittedRecordRequest| {

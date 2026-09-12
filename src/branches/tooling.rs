@@ -14,6 +14,9 @@ use crate::world_state::graph::contracts::{
 };
 use crate::world_state::graph::store::TraversalStore;
 
+mod live;
+pub use live::try_live;
+
 pub fn handle_cli_command(command: &BranchesCommands) -> Result<String, ApiError> {
     handle_cli_command_with_workspace(command, None)
 }
@@ -73,6 +76,9 @@ pub fn handle_cli_command_with_runtime_state(
             branch_ids,
             owner_id,
             owner_scope_id,
+            owner_branch_id,
+            owner_perspective_id,
+            owner_valid_at,
             domain,
             object_kind,
             object_id,
@@ -96,9 +102,9 @@ pub fn handle_cli_command_with_runtime_state(
                 owner_id,
                 OwnerPublicationScope {
                     scope_id: owner_scope_id.clone(),
-                    branch_id: None,
-                    perspective_id: None,
-                    valid_at: None,
+                    branch_id: owner_branch_id.clone(),
+                    perspective_id: owner_perspective_id.clone(),
+                    valid_at: owner_valid_at.clone(),
                 },
                 &BoundedTraversalRequest {
                     roots: vec![object_ref(domain, object_kind, object_id)?],

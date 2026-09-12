@@ -195,6 +195,15 @@ fn try_execute_danger_command(cli: &Cli) -> Option<Result<String, meld::error::A
 }
 
 fn try_execute_live_runtime_command(cli: &Cli) -> Option<Result<String, meld::error::ApiError>> {
+    if let Commands::Branches { command } = &cli.command {
+        let config = RunContext::selected_config(
+            &cli.workspace,
+            cli.config.as_deref(),
+            cli.assignment.as_deref(),
+        )
+        .ok()?;
+        return meld::branches::tooling::try_live(&cli.workspace, &config, command);
+    }
     if let Commands::Event { command } = &cli.command {
         let config = RunContext::selected_config(
             &cli.workspace,

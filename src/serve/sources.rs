@@ -28,6 +28,7 @@ pub struct ServeSources {
     pub(crate) control: Option<crate::runtime::control::RuntimeControl>,
     pub(crate) startup: crate::harness::startup::StartupAccountReader,
     pub(crate) product_root: std::path::PathBuf,
+    pub(crate) workspace_root: Option<std::path::PathBuf>,
     pub(crate) accepts_reconciliation_requests: bool,
     pub(crate) events: LocalEventAuthorityClient,
     pub(crate) ledger_id: LedgerIdentity,
@@ -60,6 +61,15 @@ impl ServeSources {
             control: None,
             startup: crate::harness::startup::StartupAccountReader::over_assembly(assembly),
             product_root: assembly.product_root().to_path_buf(),
+            workspace_root: assembly
+                .prepared_activation()
+                .and_then(|prepared| prepared.activation.bindings.get("workspace"))
+                .and_then(|binding| match binding {
+                    crate::config::PhysicalBindingRef::WorkspaceRef(root) => {
+                        Some(std::path::PathBuf::from(root))
+                    }
+                    _ => None,
+                }),
             accepts_reconciliation_requests: false,
             events: LocalEventAuthorityClient::new(authority.as_ref()),
             ledger_id: authority.ledger_identity(),

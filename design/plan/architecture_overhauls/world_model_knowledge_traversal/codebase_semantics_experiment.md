@@ -1,8 +1,8 @@
 # Codebase semantics experiment
 
-Status: active, exploratory. First slice: Tree-sitter to existing Meld propositions.
+Status: active, exploratory. Current slice: native semantic admission and currentness.
 
-First slice result: bounded representation feasibility accepted. Thirteen source cases and public transport/lifecycle checks pass all 66 assertions with zero model calls. Existing `meld-lang` is sufficient for this selected syntax relationship. Native semantic admission, currentness, sensing and multi-agent consumption remain the next questions.
+First slice result: bounded representation feasibility accepted. Thirteen source cases and public transport/lifecycle checks pass all 66 assertions with zero model calls. Existing `meld-lang` is sufficient for this selected syntax relationship. The next slice has now exercised native admission and currentness. Sensing and multi-agent consumption remain open.
 
 ## Reason for the experiment
 
@@ -32,7 +32,7 @@ Keep the language small, pure and domain-neutral. Try existing terms before prop
 | Unknown knowledge remains unknown | Malformed, unsupported or unavailable source cannot answer a negative factual query | Missing evidence becomes a false statement |
 | Shared semantics can later support independent products | README and another PDS reuse the same admitted observation | Consumers repeat the original analysis or need a bespoke coordinator |
 
-The first four hypotheses are the current slice. The fifth remains backlog until Event-to-owner admission and native belief projection have been exercised.
+The first four hypotheses were the representation slice. The current admission slice tests whether those observations remain safely usable across replacement and uncertainty. The fifth hypothesis remains backlog.
 
 ## Runtime, harness and WAD loop
 
@@ -45,8 +45,13 @@ flowchart LR
     Q --> H[Harness expectations and retained failures]
     H --> A[Improve external domain representation]
     A --> C
-    E -. later native admission .-> B[Graph and Belief]
-    B -. later subscriptions .-> R[README and other Agents]
+    E --> O[External owner validates scope and predecessor]
+    O --> P[Native owner publication Event]
+    P --> G[Native Graph and current cut]
+    G --> B[Curation and Belief]
+    G --> J[Planner requires a complete current cut]
+    B --> J
+    J -. later consumers .-> R[README and other Agents]
 ```
 
 Harness commands accept explicitly built executables, isolate workspace and product state, retain exact inputs and command outputs, and measure results. They never import domain implementation to fabricate a verdict, write Graph state or substitute a harness success for native satisfaction. Model calls are unnecessary for the first deterministic slice. When semantic model work becomes necessary, retain Luna-low as the experimental constraint.
@@ -60,10 +65,14 @@ meld-code-semantics/
 ├── Cargo.toml
 ├── src/
 │   ├── main.rs
+│   ├── owner.rs
+│   ├── owner/                   intake, publication, tick and lifecycle
 │   └── semantics/
 │       ├── capture.rs
 │       ├── extract.rs
 │       └── query.rs
+├── theory/                      native PDS components and selected source standard
+├── tools/build.py               compile package from explicit owner executable
 ├── experiments/                 fixtures and independent expected outcomes
 └── evidence/                    concise reports, not runtime stores
 ```
@@ -102,6 +111,20 @@ If applied, this commit records the purpose, bounded hypotheses, domain boundari
 
 ## First checkpoint reconciliation
 
-The independent domain now supplies compiled `observe` and `query` commands. Eval supplies generic `artifact` capture. The final [slice evidence](../../../../../meld-code-semantics/ACTIVE_SLICE.md) establishes typed relationships, query without source access, semantic identity across formatting, changed-operand discrimination, uncertainty, exact Event retry/readback, restart and native shutdown. It does not install a semantics Agent or promote snapshots into Graph or Belief. The accepted native README product is unchanged.
+The independent domain now supplies compiled `observe` and `query` commands. Eval supplies generic `artifact` capture. The final [slice evidence](../../../../../meld-code-semantics/evidence/representation-v1/CLOSEOUT.md) establishes typed relationships, query without source access, semantic identity across formatting, changed-operand discrimination, uncertainty, exact Event retry/readback, restart and native shutdown. It does not install a semantics Agent or promote snapshots into Graph or Belief. The accepted native README product is unchanged.
 
 Logical review, Style Assurance and bounded Gate Acceptance pass. No new core language variant or runtime source change was necessary. Registry dependencies are fixed by the external crate lockfile, and native and external executable hashes are retained. The next active implementation contract will address owner admission and scope currentness before watcher integration. The broader shared-semantics hypothesis remains exploratory.
+
+## Native admission checkpoint
+
+The external code-semantics owner now admits explicit snapshot contributions through Events. Its source standard, Tree-sitter interpretation, predecessor validation, duplicate handling, deletion confirmation and publication vocabulary remain outside Meld. Native Graph selects current scoped publications, Curation derives evidence, Belief retains judgments and the planner requires a complete current cut before it judges addressed work.
+
+The source path is observed initially, replaced, queried with a changed operand, made unsupported, made malformed, made unreadable, restored, made unavailable and explicitly withdrawn. Stale predecessors, stale snapshots, false deletion and deletion with a missing parent are rejected. Exact Event retries and restart preserve the admitted revision. Live and offline Graph reads agree. No provider calls or executable capabilities are needed.
+
+Three generic runtime gaps required bounded corrections. Prepared receipt resolution incorrectly required a nonempty executable catalog even though native package installation accepted observation-only theory. Empty exact catalogs are now valid; Strategy references still require exact installed contracts. The active `graph-owner-walk` command now forwards to its running store owner and accepts all owner-scope coordinates instead of attempting a second store lock or forcing null branch and perspective fields.
+
+A stronger restart-during-uncertainty control exposed a separate concurrency bug: external Agent intake could change the lifecycle snapshot while it was being authored. The owner correctly refused that snapshot, but the supervisor terminated the entire run. Failed idle receipts now become recorded retryable tick issues, clear old waits and cannot establish idleness. Startup, safe-point and shutdown proof requirements remain strict. The probe also checks runtime failure Events, because a completed drain does not establish a successful runtime run.
+
+A failed intermediate harness assertion treated historical `Satisfied` judgments as current. Public reconciliation and actor reports disproved that interpretation: the addressed request remains incomplete and the planner refuses `IncompleteTraversal`. The probe now tests request completion or a native refusal alongside the current Graph cut. Retaining historical Belief is not itself a currentness failure. Future consumers must preserve that cut requirement; raw belief subscriptions alone have not been qualified.
+
+The current [active slice](../../../../../meld-code-semantics/ACTIVE_SLICE.md) records final candidate evidence and reviews. The final admission journey passes 62 checks; the earlier representation journey passes all 66 checks with the final binaries. The narrow native admission experiment is the checkpoint, not a completed sensory service or cross-Agent README product. No language extension, second Graph writer, planner or domain-specific runtime component was introduced.

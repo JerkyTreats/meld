@@ -106,11 +106,8 @@ impl TheoryInstallationReceipt {
         strategy_theory
             .validate_for_registry("strategy_theory")
             .map_err(invalid)?;
-        if executable_contracts.is_empty() {
-            return Err(TheoryReceiptError::Invalid(
-                "receipt requires executable contract revisions".to_string(),
-            ));
-        }
+        // Observation-only products have an exact empty executable catalog.
+        // Referenced Strategy capabilities are still checked against it below.
         if authority_policy.policy_id.trim().is_empty()
             || authority_policy.content_hash.trim().is_empty()
         {
@@ -1048,6 +1045,22 @@ mod tests {
             10,
         )
         .unwrap();
+        let observation_only = TheoryInstallationReceipt::new(
+            selection(),
+            family_revision.revision_ref(),
+            curation_a.revision_ref(),
+            condition_revision.revision_ref(),
+            mapping_revision.revision_ref(),
+            strategy_revision.revision_ref(),
+            vec![],
+            authority_revision.revision_ref(),
+            Some(policy_revision.clone()),
+            10,
+        )
+        .unwrap();
+        observation_only.verify_identity().unwrap();
+        assert!(observation_only.executable_contracts.is_empty());
+        assert_ne!(observation_only.receipt_id, receipt_a.receipt_id);
         let mut reversed_contracts = receipt_a.executable_contracts.clone();
         reversed_contracts.reverse();
         let reordered = TheoryInstallationReceipt::new(

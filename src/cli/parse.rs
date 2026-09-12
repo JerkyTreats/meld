@@ -165,6 +165,8 @@ pub enum Commands {
 }
 
 #[derive(Subcommand)]
+// Parsed once at command ingress; retain the flat clap option surface.
+#[allow(clippy::large_enum_variant)]
 pub enum BranchesCommands {
     /// Show known branches and migration status
     Status {
@@ -218,6 +220,15 @@ pub enum BranchesCommands {
         /// Exact owner-local scope id
         #[arg(long = "owner-scope-id")]
         owner_scope_id: String,
+        /// Exact branch coordinate of the owner publication scope
+        #[arg(long)]
+        owner_branch_id: Option<String>,
+        /// Exact perspective coordinate of the owner publication scope
+        #[arg(long)]
+        owner_perspective_id: Option<String>,
+        /// Exact temporal coordinate of the owner publication scope
+        #[arg(long)]
+        owner_valid_at: Option<String>,
         /// Domain id for the root object
         #[arg(long)]
         domain: String,
@@ -1276,6 +1287,10 @@ mod tests {
             "graph-owner-walk",
             "--owner-scope-id",
             "/workspace",
+            "--owner-branch-id",
+            "main",
+            "--owner-perspective-id",
+            "default",
             "--domain",
             "workspace_fs",
             "--object-kind",
@@ -1295,6 +1310,8 @@ mod tests {
                         scope,
                         owner_id,
                         owner_scope_id,
+                        owner_branch_id,
+                        owner_perspective_id,
                         max_occurrences,
                         format,
                         ..
@@ -1303,6 +1320,8 @@ mod tests {
                 assert_eq!(scope, "active");
                 assert_eq!(owner_id, "workspace_fs");
                 assert_eq!(owner_scope_id, "/workspace");
+                assert_eq!(owner_branch_id.as_deref(), Some("main"));
+                assert_eq!(owner_perspective_id.as_deref(), Some("default"));
                 assert_eq!(max_occurrences, 9);
                 assert_eq!(format, "json");
             }
