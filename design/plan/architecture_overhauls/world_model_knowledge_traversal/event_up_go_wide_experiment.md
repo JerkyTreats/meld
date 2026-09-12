@@ -1,6 +1,6 @@
 # Go wide from repository Events to shared meaning
 
-Date: 2026-09-12. Lifecycle: open. Repository Event ingestion is implemented and qualified under the [completed active slice](event_up_go_wide_active_slice.md). Branch: `feat/event-up-go-wide` in Meld, Meld Codebase Semantics, Meld README and Meld Eval. This ledger owns the exercise. The user authorized event ingestion and checkpoint commits and pushes. The authorized [faithful native representation slice](faithful_representation_active_slice.md) is now implemented and qualified for retained syntax fidelity. Semantic elevation and claims curation remain subsequent boundaries.
+Date: 2026-09-12. Lifecycle: bounded experiment qualified; successor Graph spike designed. Branch: `feat/event-up-go-wide` in Meld, Meld Codebase Semantics, Meld README and Meld Eval. This ledger owns the exercise. Repository Events, faithful representation and bounded repository-derived README claims are qualified as recorded below. Cost attribution is complete. The current selected design is the [Graph engine fit and maintenance spike](graph_engine_spike.md); prototype execution and production architecture selection remain subsequent boundaries. Checkpoint commits and pushes are authorized.
 
 ## Reason and outcome
 
@@ -93,3 +93,9 @@ The user authorizes completion of the experiment as designed, deferring broader 
 The [repository-derived claims closeout](../../../../../meld-readme/evidence/repository-claims-v1/CLOSEOUT.md) closes the remaining bounded path: repository Events, native declaration relationships, README-owned Contribution Events, CPU correspondence and existing native recursive Strategy. The main journey passes 35 checks with three Luna-low draft calls and zero-call restart. Cross-file ambiguity and restoration complete with unchanged import associations, document bytes and zero model calls; the initial harness array-order mistake is preserved alongside corrected native-product verification.
 
 Qualification applies to selected declaration tables. Existing narrative, general behavioral meaning and producer Agent directive reconciliation remain outside it. The inherited producer `semantic_snapshot` currentness goal does not match repository publication, and runtime latency remains substantial. The [active-slice closeout](semantic_claims_active_slice.md) accounts for both. The experiment remains exploratory; broader implications and successor architecture are deferred under the user's instruction.
+
+## Graph evidence before architecture selection
+
+The [OTel slice](otel_active_slice.md) is closed with native runtime coverage and an unchanged target README. Repeated publication decoding and validation dominate the measured passes. This establishes an access-pattern defect, not a requirement to build or adopt a database engine.
+
+The user now asks for the [bounded Graph spike](graph_engine_spike.md), explicitly balancing bespoke maintenance against external semantic mismatch. Its output informs a whole-Graph assessment of performance by default, including representation, ingestion, query, revision retention, Agent reads, wake checks and recovery. No engine or production replacement is selected. The four implementation checkpoints were already committed, pushed and clean before this formulation; this design is the next durable checkpoint.
