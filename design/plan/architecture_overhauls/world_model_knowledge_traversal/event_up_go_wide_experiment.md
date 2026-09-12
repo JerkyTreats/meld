@@ -1,6 +1,6 @@
 # Go wide from repository Events to shared meaning
 
-Date: 2026-09-12. Lifecycle: open. Repository Event ingestion is implemented and qualified under the [completed active slice](event_up_go_wide_active_slice.md). Branch: `feat/event-up-go-wide` in Meld, Meld Codebase Semantics, Meld README and Meld Eval. This ledger owns the exercise. The user authorized event ingestion and checkpoint commits and pushes. Native language adequacy and claims curation remain subsequent boundaries.
+Date: 2026-09-12. Lifecycle: open. Repository Event ingestion is implemented and qualified under the [completed active slice](event_up_go_wide_active_slice.md). Branch: `feat/event-up-go-wide` in Meld, Meld Codebase Semantics, Meld README and Meld Eval. This ledger owns the exercise. The user authorized event ingestion and checkpoint commits and pushes. The authorized [faithful native representation slice](faithful_representation_active_slice.md) is now implemented and qualified for retained syntax fidelity. Semantic elevation and claims curation remain subsequent boundaries.
 
 ## Reason and outcome
 
@@ -78,6 +78,8 @@ Record difficulties as measured gaps: affected source examples, failed public co
 
 A deeper architectural circuit breaker requires evidence that the canonical Event/native-knowledge/reconciliation path cannot carry the required behavior without a competing semantic authority or a major redesign. Unsupported grammar, missing domain rules or a thin public API gap are ordinary experimental findings. New stores, coordinators, Graph writers or broad core-language changes require explicit reassessment; do not invent them to make a fixture pass.
 
-The foundation is exploratory. Closure of the previous experiment does not promote repository coverage or claim derivation to production maturity. The bounded repository Event slice is qualified. No language-adequacy verdict or README replacement is claimed.
+The foundation is exploratory. Closure of the previous experiment does not promote repository coverage or claim derivation to production maturity. The bounded repository Event and faithful syntax representation slices are qualified. Existing language primitives preserve the retained source products, but broader semantic language adequacy and README replacement are not claimed.
 
-The next boundary is native representation of observed repository relationships, grounded in the captured syntax and its explicit coverage limits.
+The [faithful representation closeout](../../../../../meld-code-semantics/evidence/faithful-representation-v1/CLOSEOUT.md) records exact reconstruction of all 31 observations and 12,184 nodes, language queries, changed-source reconciliation and retained-state restart proof. It also records the roughly 32 MB full-publication cost and an unresolved generic owner-crash recovery gap. Only the two measured Event and Graph command deadlines changed in Meld core; conversion remains external.
+
+The next unimplemented boundary is semantic elevation from faithful observed structure into supported, useful relationships, before claims curation. This ledger does not prescribe which relationships deserve elevation.

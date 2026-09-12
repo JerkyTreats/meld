@@ -65,7 +65,8 @@ pub fn try_live(
             },
         };
         let output: FederatedOwnerWalkOutput = ureq::post(&format!("{url}/v1/branches/owner_walk"))
-            .timeout(std::time::Duration::from_secs(5))
+            // A bounded traversal can still return a large, occurrence-rich product.
+            .timeout(std::time::Duration::from_secs(30))
             .send_json(&request)
             .map_err(|e| {
                 ApiError::ConfigError(match e {

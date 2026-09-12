@@ -27,7 +27,9 @@ fn post<T: DeserializeOwned>(
     request: &impl Serialize,
 ) -> Result<T, ApiError> {
     let response = ureq::post(&format!("{url}{path}"))
-        .timeout(Duration::from_secs(3))
+        // Bounded Event pages may contain complete owner publications. Keep the
+        // deadline long enough to receive and decode those retained products.
+        .timeout(Duration::from_secs(30))
         .send_json(request)
         .map_err(|failure| match failure {
             ureq::Error::Status(code, response) => error(
