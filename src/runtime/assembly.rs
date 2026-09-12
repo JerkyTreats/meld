@@ -770,6 +770,7 @@ struct ComposedStewardship {
 }
 
 impl ComposedStewardship {
+    #[allow(clippy::too_many_arguments)]
     fn prepare(
         stores: &OpenProductStores,
         position: &PhysicalBinding,
@@ -777,6 +778,7 @@ impl ComposedStewardship {
         prepared: &crate::theory::PreparedActivationClosureV1,
         lifecycle: Option<ActivationLifecycleStore>,
         events: &EventAuthority,
+        graph_runtime: Option<&Arc<GraphRuntime>>,
         diagnostics: &mut Vec<AssemblyDiagnostic>,
     ) -> Result<Self, RuntimeAssemblyError> {
         let theory = hydrate_prepared_stewardship_theory(
@@ -787,9 +789,7 @@ impl ComposedStewardship {
             diagnostics,
         );
         let bindings = StewardshipActorBindings::derive(position)?;
-        if let (Some(runtime), Some(graph)) =
-            (&theory.capability_runtime, stores.traversal_store.opened())
-        {
+        if let (Some(runtime), Some(graph)) = (&theory.capability_runtime, graph_runtime) {
             for owner in &runtime.owner_runtimes {
                 owner
                     .bind_graph(graph.clone())
@@ -1551,6 +1551,7 @@ impl ProductRuntimeAssembly {
                     &prepared,
                     lifecycle_store.clone(),
                     &event_authority,
+                    graph_runtime.as_ref(),
                     &mut diagnostics,
                 )?;
                 context.open_network(&stores)?;
@@ -1623,11 +1624,21 @@ impl ProductRuntimeAssembly {
         } else {
             None
         };
-        let dispatch_route_slot = sole_context.map(|composed| composed.dispatch_slot.clone());
-        let dispatch_route_seed = sole_context.map(|composed| composed.dispatch_route_seed.clone());
-        let capability_runtime = composed_stewardships
-            .values()
-            .find_map(|composed| composed.theory.capability_runtime.clone());
+        let dispatch_context = registry
+            .get("execution.task_dispatch")
+            .and_then(|descriptor| descriptor.agent_position_id.as_ref())
+            .and_then(|position| composed_stewardships.get(position))
+            .or(sole_context);
+        let dispatch_route_slot = dispatch_context.map(|composed| composed.dispatch_slot.clone());
+        let dispatch_route_seed =
+            dispatch_context.map(|composed| composed.dispatch_route_seed.clone());
+        let capability_runtime = dispatch_context
+            .and_then(|composed| composed.theory.capability_runtime.clone())
+            .or_else(|| {
+                composed_stewardships
+                    .values()
+                    .find_map(|composed| composed.theory.capability_runtime.clone())
+            });
 
         Ok(Self {
             product_root,
@@ -1930,6 +1941,7 @@ impl RetirementRuntimeRecovery for ProductRuntimeAssembly {
                 prepared,
                 self.lifecycle_store.clone(),
                 &self.event_authority,
+                self.graph_runtime.as_ref(),
                 &mut diagnostics,
             )?;
             if composed.theory.resolved.is_none() {
@@ -1937,7 +1949,16 @@ impl RetirementRuntimeRecovery for ProductRuntimeAssembly {
                     "historical owner preparation is unavailable: {diagnostics:?}"
                 )));
             }
-            if binding.agent_positions.is_empty() {
+            let owns_dispatch =
+                self.registry
+                    .get("execution.task_dispatch")
+                    .is_some_and(|descriptor| {
+                        descriptor
+                            .agent_position_id
+                            .as_ref()
+                            .is_some_and(|id| id == &position.position_id)
+                    });
+            if binding.agent_positions.is_empty() || owns_dispatch {
                 composed.network = self
                     .handle_factories
                     .get("execution.task_dispatch")

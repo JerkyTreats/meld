@@ -41,16 +41,15 @@ pub(super) fn realize(
             }
             continue;
         }
-        if !matches!(
-            factory_id,
-            "world_model.agent_reconciliation"
-                | "world_model.standing_curation"
-                | "world_model.belief_assessment"
-                | "world_model.evidence_ingestion"
-        ) {
+        if !contextual_factory(factory_id) {
             return Err(invalid(format!(
                 "factory '{factory_id}' does not expose scoped native realization"
             )));
+        }
+        if factory_id.starts_with("execution.") && participant.participant_id != factory_id {
+            return Err(invalid(
+                "single-writer execution retains canonical participant IDs",
+            ));
         }
         let position = position
             .ok_or_else(|| invalid("scoped native participant requires an Agent position"))?;
@@ -166,6 +165,25 @@ mod tests {
         assert_eq!(instance.agent_position_id.as_deref(), Some("producer"));
         assert_eq!(instance.required_resources, original.required_resources);
         assert_eq!(registry.get(factory), Some(&original));
+    }
+
+    #[test]
+    fn execution_factories_bind_one_position_without_renaming_native_participants() {
+        for factory in [
+            "execution.task_admission",
+            "execution.task_dispatch",
+            "execution.publication",
+        ] {
+            let mut registry = RuntimeFactoryRegistry::first_proof_registry().unwrap();
+            let (plan, bindings) = selection(&[(factory, factory, "producer")]);
+            realize(&mut registry, &assignment(), &plan, &bindings).unwrap();
+            assert_eq!(
+                registry.get(factory).unwrap().agent_position_id.as_deref(),
+                Some("producer")
+            );
+            let (plan, bindings) = selection(&[("renamed.execution", factory, "producer")]);
+            assert!(realize(&mut registry, &assignment(), &plan, &bindings).is_err());
+        }
     }
 
     #[test]

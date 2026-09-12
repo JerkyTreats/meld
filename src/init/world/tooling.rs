@@ -254,7 +254,43 @@ pub(crate) fn compile_product_initialization<'a>(
         &selected_components,
     )?);
     if prepare_activation && positions.len() > 1 && !selected_contracts.is_empty() {
-        return Err(world_init_error("multiple Agent positions require scoped executable capability activation; this composition currently supports CPU-only judgment"));
+        let writers = positions
+            .iter()
+            .filter(|position| {
+                position.components.iter().any(|component| {
+                    component.route.owner_domain == "execution"
+                        && component.route.component_kind == "capability-contract"
+                })
+            })
+            .collect::<Vec<_>>();
+        let [writer] = writers.as_slice() else {
+            return Err(world_init_error(
+                "composed execution currently requires exactly one effectful Agent position",
+            ));
+        };
+        for factory in [
+            "execution.task_admission",
+            "execution.task_dispatch",
+            "execution.publication",
+        ] {
+            if !declaration
+                .participant_plan
+                .participants
+                .iter()
+                .any(|p| p.participant_id == factory)
+                || !declaration
+                    .participant_bindings
+                    .get(factory)
+                    .is_some_and(|binding| {
+                        binding.factory_id == factory
+                            && binding.agent_position_id == writer.position_id
+                    })
+            {
+                return Err(world_init_error(format!(
+                    "{factory} must be explicitly bound to the effectful Agent position"
+                )));
+            }
+        }
     }
     let selected_implementations = selected_contracts
         .iter()

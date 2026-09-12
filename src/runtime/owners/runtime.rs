@@ -49,13 +49,13 @@ pub struct PreparedOwnerRuntime {
     connection: Mutex<OwnerConnection>,
     grants: OwnerRuntimeGrants,
     provider: Mutex<Option<Arc<dyn ProviderCompletionPort>>>,
-    graph: Mutex<Option<Arc<meld_world_model::world_state::graph::store::TraversalStore>>>,
+    graph: Mutex<Option<Arc<meld_world_model::world_state::graph::runtime::GraphRuntime>>>,
 }
 
 impl PreparedOwnerRuntime {
     pub(crate) fn bind_graph(
         &self,
-        graph: Arc<meld_world_model::world_state::graph::store::TraversalStore>,
+        graph: Arc<meld_world_model::world_state::graph::runtime::GraphRuntime>,
     ) -> Result<(), OwnerDiagnosticV1> {
         *self
             .graph

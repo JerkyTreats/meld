@@ -4,8 +4,10 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use meld_events::events::remote::{EventAuthorityContract, WatermarkRequest};
-use meld_world_model::world_state::graph::{contracts::*, store::TraversalStore};
-use meld_world_model::TraversalQuery;
+use meld_world_model::world_state::{
+    graph::{contracts::*, runtime::GraphRuntime},
+    query_runtime::WorldModelQueries,
+};
 
 use super::{
     encode_owner_result, OwnerCallbackPort, OwnerCallbackV1, OwnerDiagnosticV1, OwnerGraphReadV1,
@@ -14,7 +16,7 @@ use super::{
 
 pub(super) struct OwnerGraphCallbacks {
     pub next: Arc<dyn OwnerCallbackPort>,
-    pub graph: Arc<TraversalStore>,
+    pub graph: Arc<GraphRuntime>,
     pub events: Arc<dyn EventAuthorityContract>,
     pub ledger_id: meld_events::LedgerIdentity,
     pub inputs: BTreeMap<String, TraversalOwnerRequirement>,
@@ -40,7 +42,7 @@ impl OwnerCallbackPort for OwnerGraphCallbacks {
                 ledger_id: self.ledger_id,
             })
             .map_err(failure)?;
-        let query = TraversalQuery::new(&self.graph);
+        let query = WorldModelQueries::new(self.graph.clone());
         let cut = query
             .cut(&TraversalCutRequest {
                 owners: vec![input.clone()],

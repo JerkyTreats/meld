@@ -5,7 +5,9 @@ use meld_events::events::remote::LocalEventAuthorityClient;
 use meld_events::{
     AppendMode, DomainObjectRef, EventAuthority, EventAuthorityOpenOptions, EventEnvelope,
 };
-use meld_world_model::world_state::graph::{contracts::*, store::TraversalStore};
+use meld_world_model::world_state::graph::{
+    contracts::*, runtime::GraphRuntime, store::TraversalStore,
+};
 
 use super::super::{graph::OwnerGraphCallbacks, *};
 
@@ -42,7 +44,18 @@ fn graph_callback_preserves_current_incompleteness_and_cannot_select_unbound_inp
     };
     let callbacks = OwnerGraphCallbacks {
         next: Arc::new(NoOwnerCallbacks),
-        graph: Arc::new(TraversalStore::new(db).unwrap()),
+        graph: Arc::new(
+            GraphRuntime::from_ports(
+                Arc::new(crate::runtime::ports::ProductEventReplayPort::new(
+                    authority.replay_capability(),
+                )),
+                Arc::new(crate::runtime::ports::ProductGraphCursorPort::new(
+                    authority.consumer_registry_capability(),
+                )),
+                Arc::new(TraversalStore::new(db).unwrap()),
+            )
+            .unwrap(),
+        ),
         events: Arc::new(LocalEventAuthorityClient::new(&authority)),
         ledger_id,
         inputs: BTreeMap::from([("selected".into(), input.clone())]),
@@ -69,13 +82,14 @@ fn graph_callback_preserves_current_incompleteness_and_cannot_select_unbound_inp
     .unwrap();
     assert_eq!(read.cut.owners, vec![input]);
     assert_eq!(read.cut.event_position.after_seq, proof.seq());
+    assert_eq!(read.cut.graph_position.after_seq, proof.seq());
     assert_eq!(read.cut.status, TraversalCutStatus::Incomplete);
     assert!(read.cut.receipts.is_empty());
     assert!(read
         .cut
         .issues
         .iter()
-        .any(|issue| matches!(issue, TraversalCutIssue::ProjectionLag { .. })));
+        .any(|issue| matches!(issue, TraversalCutIssue::MissingRequiredOwner { .. })));
     assert_eq!(
         callbacks
             .call(OwnerCallbackV1::GraphRead {
