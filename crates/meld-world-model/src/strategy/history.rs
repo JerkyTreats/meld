@@ -48,6 +48,8 @@ pub(super) struct LegacyPlan {
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct CurrentPlan {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decomposition: Option<StrategyDecomposition>,
     /// Exact installed settlement rule selected during construction; empty for satisfied Plans
     /// and historical records that predate explicit rule identity.
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -99,6 +101,7 @@ pub(super) struct HistoricalPlanIdentity {
 impl From<CurrentPlan> for StrategyPlan {
     fn from(wire: CurrentPlan) -> Self {
         Self {
+            decomposition: wire.decomposition,
             historical_identity: None,
             settlement_rule_id: wire.settlement_rule_id,
             plan_revision_id: wire.plan_revision_id,
@@ -125,6 +128,7 @@ impl From<CurrentPlan> for StrategyPlan {
 impl From<&StrategyPlan> for CurrentPlan {
     fn from(plan: &StrategyPlan) -> Self {
         Self {
+            decomposition: plan.decomposition.clone(),
             settlement_rule_id: plan.settlement_rule_id.clone(),
             plan_revision_id: plan.plan_revision_id.clone(),
             plan_family_id: plan.plan_family_id.clone(),
@@ -188,6 +192,7 @@ impl<'de> serde::Deserialize<'de> for StrategyPlan {
                 }
                 let original = wire.clone();
                 let mut plan = StrategyPlan {
+                    decomposition: None,
                     historical_identity: None,
                     settlement_rule_id: String::new(),
                     plan_revision_id: wire.plan_revision_id,

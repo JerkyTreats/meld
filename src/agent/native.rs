@@ -87,8 +87,19 @@ pub fn read(store: &AgentStore, request: AgentRead) -> Result<Value, String> {
                 .into_iter()
                 .filter(|judgment| judgment.agent_id == id)
                 .collect::<Vec<_>>();
+            let mut authorized_plans = Vec::new();
+            let mut retained = std::collections::BTreeSet::new();
+            for authorization in &authorizations {
+                if retained.insert(&authorization.plan_revision_id) {
+                    let plan = store
+                        .reconciliation_plan(&authorization.plan_revision_id)
+                        .map_err(|error| error.to_string())?
+                        .ok_or("authorized Plan is missing from native history")?;
+                    authorized_plans.push(plan);
+                }
+            }
             Ok(
-                json!({"genesis": genesis, "goals": goals, "condition_judgments": judgments, "plans": plans, "goal_dispositions": dispositions, "authorizations": authorizations}),
+                json!({"genesis": genesis, "goals": goals, "condition_judgments": judgments, "plans": plans, "authorized_plans": authorized_plans, "goal_dispositions": dispositions, "authorizations": authorizations}),
             )
         }
         AgentRead::RequestStatus { agent, key } => {

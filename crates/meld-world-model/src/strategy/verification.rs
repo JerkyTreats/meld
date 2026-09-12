@@ -47,6 +47,7 @@ fn verify_with_history(
             || !candidate.epistemic_operations.is_empty()
             || !candidate.dependencies.is_empty()
             || candidate.evidence_route.is_some()
+            || candidate.decomposition.is_some()
             || candidate.conditions != vec![problem.goal.target.clone()]
             || candidate.settlement_obligation != problem.goal.target
             || candidate.frozen_context_id != problem.planner_cut.context.context_id
@@ -242,25 +243,19 @@ fn verify_with_history(
             .evidence_route
             .as_ref()
             .is_some_and(|route| capability.outcome_contract_id == route.outcome_contract_id);
-        for precondition in &operator.preconditions {
-            match evaluate(
-                &problem.planner_cut.world_model_view.world_state,
-                precondition,
-            ) {
-                EvalResult::Satisfied => {}
-                EvalResult::Unsatisfied { .. } => {
-                    grounds.push(StrategyRejectionGround::UnsatisfiedPrecondition {
-                        operator_id: operator.operator_id.clone(),
-                    })
-                }
-                EvalResult::Indeterminate { .. } => {
-                    grounds.push(StrategyRejectionGround::IndeterminatePrecondition {
-                        operator_id: operator.operator_id.clone(),
-                    })
-                }
-            }
+    }
+    for task in &candidate.tasks {
+        if let Err(ground) = super::refinement::composition_ground(
+            &problem.planner_cut.world_model_view.world_state,
+            &task.composition,
+        ) {
+            grounds.push(ground);
         }
     }
+    if !super::refinement::verifies(problem, candidate, history) {
+        grounds.push(StrategyRejectionGround::InvalidComposition);
+    }
+
     if !confirmation && !evidence_outcome_supported {
         grounds.push(StrategyRejectionGround::InvalidEvidenceRoute);
     }
@@ -339,7 +334,18 @@ fn verify_with_history(
                     }],
                     edges: Vec::new(),
                 };
-                if !meld_lang::substitute(&template, &task.bindings)
+                let bindings = candidate
+                    .decomposition
+                    .as_ref()
+                    .and_then(|proof| {
+                        proof
+                            .primitives
+                            .iter()
+                            .find(|primitive| primitive.step_id == step.step_id)
+                    })
+                    .map(|primitive| &primitive.bindings)
+                    .unwrap_or(&task.bindings);
+                if !meld_lang::substitute(&template, bindings)
                     .is_ok_and(|grounded| grounded.steps[0].kind == step.kind)
                 {
                     grounds.push(StrategyRejectionGround::InvalidComposition);

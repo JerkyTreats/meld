@@ -1,8 +1,16 @@
 # Native Strategy planning for README excellence
 
-Date: 2026-09-12. Lifecycle: active design. Readiness: assessment-only for implementation. Branch destination: `feat/strategy-planning` in Meld, Meld README, Codebase Semantics and Meld Eval.
+Date: 2026-09-12. Lifecycle: stopped at source-freshness circuit breaker after the accepted first implementation slice. The user authorized implementation after the documented branch transition. Active slice: [recursive Strategy construction and bounded README work](strategy_planning_active_slice.md), `strategy-decomposition-1`, accepted for its bounded scope. Branch: `feat/strategy-planning` in Meld, Meld README, Codebase Semantics and Meld Eval. The assessment and transition account below preserve their original checkpoint scope.
 
 This document owns the successor experiment's objective, assertion assessment, scope and delivery direction. It supersedes the next-work instructions of the [codebase semantics experiment](codebase_semantics_experiment.md) for shared README maintenance. Earlier passing results and the failed source-drift gate retain their exact meaning. [Cognitive Architecture](../../../cognitive_architecture/README.md) remains evergreen design truth; this document records current evidence and intended delivery.
+
+## Implementation checkpoint
+
+Native method refinement now recursively expands abstract Goals, applies hypothetical effects to establish later prerequisites, and retains selected hierarchy and local primitive bindings. The README WAD authors three method levels and separate draft/publication capabilities. Public Agent inspection retains authorized Plan revisions after confirmation. No extension to `meld-lang` was needed.
+
+The [closeout and evidence](../../../../../meld-readme/evidence/strategy-decomposition-v1/CLOSEOUT.md) accept ordinary Luna-low shared maintenance, CPU regression, first-use commands and a normally compiled leaf package. The serious shared-semantic root README, comprehensive causal search account and support-aware reconstruction remain open.
+
+The [drift experiment](../../../../../meld-readme/evidence/strategy-decomposition-v1/DRIFT.md) still writes stale output. It now shows the changed-source Event arriving before the write, with semantic admission afterward. The old complete revision does not express that relevant conversion is pending. Producer-owned freshness and pending-conversion semantics need architectural reassessment before the combined experiment continues. Provider latency is a related, separate progress defect.
 
 ## Outcome and reason
 
@@ -37,7 +45,7 @@ This qualified verdict satisfies the user's branch-transition condition as a fou
 
 The inventory resolves authored document identities through the WAD compiler's manifest bindings rather than treating them as checkout paths. No fresh model qualification was run for this assessment. Retained reports remain tied to their original binaries and packages.
 
-## Research and current implementation
+## Research and branch-transition baseline
 
 A Terra research agent inspected Meld's HTN research, historical workflow designs and the local `~/htn` corpus. Root independently traced the current Strategy, Agent and public inspection paths. Historical proposals establish intent, not present runtime behavior.
 
@@ -47,11 +55,11 @@ The local [IPyHOP report](../../../../../htn/reports/IPyHOP/README.md) identifie
 
 The assertion that telling an HTN planner how tasks can decompose invalidates planning is too broad. A domain must declare lawful and useful means. The problem is prescribing the effective whole procedure so the planner has little meaningful choice, or hiding those choices inside one opaque capability. The file name `strategy.json` is not the architectural defect.
 
-Current [Strategy search](../../../../crates/meld-world-model/src/strategy/search.rs) matches settlement rules, selects and instantiates method compositions, matches capability effects, recursively handles conjunctions and alternatives, and closes artifact inputs through available producers. Successor construction preserves completed work. These are useful implemented behaviors.
+At the branch-transition baseline, [Strategy search](../../../../crates/meld-world-model/src/strategy/search.rs) matches settlement rules, selects and instantiates method compositions, matches capability effects, recursively handles conjunctions and alternatives, and closes artifact inputs through available producers. Successor construction preserves completed work. These are useful implemented behaviors.
 
 The inspected method path does not recursively refine abstract task nodes. Complete Task construction requires primitive operators. Preconditions are checked against the starting world-state projection, without general progression of hypothetical effects between actions. A sequence where A establishes P and B requires P therefore exposes a planning gap even when all physical inputs and capabilities exist. This is more than a missing README method library.
 
-The current README package offers one no-precondition repair operator with a receipt effect. The owner then judges, drafts, checks and retries internally. Its native authorization is real; meaningful hierarchical planning remains unproved.
+The branch-transition README package offers one no-precondition repair operator with a receipt effect. The owner then judges, drafts, checks and retries internally. Its native authorization is real; meaningful hierarchical planning remains unproved.
 
 ## Intended ownership and causal flow
 
@@ -157,7 +165,7 @@ Luna-low remains the semantic provider baseline. CPU-representable claims use CP
 
 ## Delivery, authority and checkpoint
 
-Maturity is exploratory for native recursive planning and shared semantic README maintenance. The obligation floor includes durable Event lineage, independent Goal satisfaction, replacement completeness, and the known source-drift failure. No active implementation slice is frozen by this assessment; the next task on the new branch is to freeze the smallest vertical construction and explanation contract from the available domain data.
+Maturity is exploratory for native recursive planning and shared semantic README maintenance. The obligation floor includes durable Event lineage, independent Goal satisfaction, replacement completeness, and the known source-drift failure. The original assessment froze no implementation slice. The linked active slice now owns the first recursive construction and bounded-operation change; this section preserves the program-level obligations.
 
 The backlog is outcome-shaped: native hierarchical construction with a public causal account; separation of README decisions into methods and bounded operations; support-aware successor behavior and sensory progress; then serious README qualification. These may combine where one coherent vertical change is smaller. Ordering follows observed dependencies rather than an exhaustive prescribed workflow.
 

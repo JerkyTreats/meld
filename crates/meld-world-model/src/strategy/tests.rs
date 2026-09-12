@@ -2193,3 +2193,194 @@ fn missing_current_derived_evidence_allows_observation_but_not_executable_work()
         PlanVerification::Valid { .. }
     ));
 }
+
+fn hierarchical_problem() -> StrategyProblem {
+    use meld_lang::{Composition, Method, Step, StepKind};
+    let mut problem = problem();
+    let draft = Proposition::Exists {
+        scope: subject(),
+        artifact_type: Term::ArtifactType("draft_docs".into()),
+    };
+    let receipt = Proposition::Exists {
+        scope: subject(),
+        artifact_type: Term::ArtifactType("freshness_evidence".into()),
+    };
+    problem.capabilities[0]
+        .operator
+        .preconditions
+        .push(draft.clone());
+    let method = |id: &str, trigger: Proposition, steps: Vec<Step>, edges| Method {
+        method_id: id.into(),
+        trigger,
+        preconditions: vec![],
+        composition: Composition { steps, edges },
+        net_effects: vec![],
+        cost: CostEstimate::zero(),
+        preference: 0,
+    };
+    problem.methods = vec![
+        method(
+            "maintain",
+            problem.goal.target.clone(),
+            vec![Step {
+                step_id: "repair".into(),
+                kind: StepKind::Goal(receipt.clone()),
+            }],
+            vec![],
+        ),
+        method(
+            "repair",
+            receipt,
+            vec![
+                Step {
+                    step_id: "candidate".into(),
+                    kind: StepKind::Goal(draft.clone()),
+                },
+                Step {
+                    step_id: "validate".into(),
+                    kind: StepKind::Op(problem.capabilities[0].operator.clone()),
+                },
+            ],
+            vec![meld_lang::Edge {
+                from: "candidate".into(),
+                to: "validate".into(),
+                kind: meld_lang::EdgeKind::Ordering,
+            }],
+        ),
+        method(
+            "draft",
+            draft,
+            vec![Step {
+                step_id: "write".into(),
+                kind: StepKind::Op(problem.capabilities[1].operator.clone()),
+            }],
+            vec![],
+        ),
+    ];
+    problem
+}
+
+#[test]
+fn nested_methods_establish_later_preconditions_without_mutating_the_cut() {
+    let problem = hierarchical_problem();
+    let before = problem.planner_cut.world_model_view.world_state.clone();
+    let result = search(&StrategySearchRequest {
+        problem: problem.clone(),
+        bounds: StrategySearchBounds {
+            max_expansions: 256,
+            max_depth: 8,
+        },
+    });
+    let plan = result.recommendation.expect("nested plan");
+    let proof = plan.decomposition.as_ref().expect("selected hierarchy");
+    assert_eq!(proof.refinements.len(), 3);
+    assert_eq!(proof.primitives.len(), 2);
+    assert_eq!(plan.tasks.len(), 1);
+    assert!(matches!(
+        verify_plan(&problem, &plan),
+        PlanVerification::Valid { .. }
+    ));
+    assert_eq!(problem.planner_cut.world_model_view.world_state, before);
+    let decoded: StrategyPlan =
+        serde_json::from_slice(&serde_json::to_vec(&plan).unwrap()).unwrap();
+    assert_eq!(decoded, plan);
+    assert_eq!(
+        decoded.plan_revision_id,
+        super::search::plan_revision_identity(&decoded)
+    );
+}
+
+#[test]
+fn refinement_rejects_forged_method_lineage_and_missing_causal_order() {
+    let problem = hierarchical_problem();
+    let plan = search(&StrategySearchRequest {
+        problem: problem.clone(),
+        bounds: StrategySearchBounds {
+            max_expansions: 256,
+            max_depth: 8,
+        },
+    })
+    .recommendation
+    .unwrap();
+    let mut forged = plan.clone();
+    if let StrategyRefinement::Method { method_id, .. } =
+        &mut forged.decomposition.as_mut().unwrap().refinements[1]
+    {
+        *method_id = "invented".into();
+    }
+    forged.plan_revision_id = super::search::plan_revision_identity(&forged);
+    assert!(matches!(
+        verify_plan(&problem, &forged),
+        PlanVerification::Invalid { .. }
+    ));
+    let mut unordered = plan;
+    unordered.tasks[0].composition.edges.clear();
+    unordered.plan_revision_id = super::search::plan_revision_identity(&unordered);
+    assert!(matches!(
+        verify_plan(&problem, &unordered),
+        PlanVerification::Invalid { .. }
+    ));
+}
+
+#[test]
+fn method_applicability_changes_with_the_frozen_state() {
+    let mut problem = hierarchical_problem();
+    let token = Proposition::Exists {
+        scope: subject(),
+        artifact_type: Term::ArtifactType("preferred_route".into()),
+    };
+    let mut preferred = problem.methods[2].clone();
+    preferred.method_id = "preferred-draft".into();
+    preferred.preconditions = vec![token.clone()];
+    preferred.composition.steps[0].step_id = "preferred-write".into();
+    problem.methods[2].preconditions = vec![Proposition::Not(Box::new(token.clone()))];
+    problem.planner_cut.world_model_view.world_state = problem
+        .planner_cut
+        .world_model_view
+        .world_state
+        .apply(&[Effect::Assert(Proposition::Not(Box::new(token.clone())))])
+        .unwrap();
+    problem.methods.push(preferred);
+    let request = |problem| StrategySearchRequest {
+        problem,
+        bounds: StrategySearchBounds {
+            max_expansions: 256,
+            max_depth: 8,
+        },
+    };
+    let unavailable = search(&request(problem.clone()));
+    assert!(unavailable.rejections.iter().any(|r| matches!(r, StrategyRejectionGround::IndeterminateMethodPrecondition { method_id } | StrategyRejectionGround::UnsatisfiedMethodPrecondition { method_id } if method_id == "preferred-draft")));
+    problem.planner_cut.world_model_view.world_state = problem
+        .planner_cut
+        .world_model_view
+        .world_state
+        .apply(&[
+            Effect::Retract(Proposition::Not(Box::new(token.clone()))),
+            Effect::Assert(token),
+        ])
+        .unwrap();
+    let plan = search(&request(problem.clone())).recommendation.unwrap();
+    assert!(plan.decomposition.as_ref().unwrap().refinements.iter().any(|r| matches!(r, StrategyRefinement::Method { method_id, .. } if method_id == "preferred-draft")));
+    assert!(matches!(
+        verify_plan(&problem, &plan),
+        PlanVerification::Valid { .. }
+    ));
+}
+
+#[test]
+fn recursive_method_cycles_are_bounded_without_claiming_exhaustion() {
+    let mut problem = hierarchical_problem();
+    let root = problem.methods[0].clone();
+    problem.methods[0].composition.steps[0].kind = meld_lang::StepKind::Goal(root.trigger);
+    let result = search(&StrategySearchRequest {
+        problem,
+        bounds: StrategySearchBounds {
+            max_expansions: 64,
+            max_depth: 3,
+        },
+    });
+    assert_eq!(result.completion, StrategySearchCompletion::Bounded);
+    assert!(result
+        .rejections
+        .contains(&StrategyRejectionGround::BoundsExceeded));
+}

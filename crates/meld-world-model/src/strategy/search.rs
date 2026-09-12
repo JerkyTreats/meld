@@ -40,6 +40,7 @@ fn search_with_completed(
         EvalResult::Satisfied
     ) {
         let mut plan = StrategyPlan {
+            decomposition: None,
             historical_identity: None,
             settlement_rule_id: String::new(),
             plan_revision_id: String::new(),
@@ -388,6 +389,7 @@ fn confirmation_successor(request: &StrategySuccessorRequest) -> Option<Strategy
         return None;
     }
     let mut plan = StrategyPlan {
+        decomposition: None,
         historical_identity: None,
         settlement_rule_id: settlement_rule_identity(rule),
         plan_revision_id: String::new(),
@@ -757,16 +759,16 @@ fn selector_matches(selector: &StrategyProductSelector, product: &StrategyProduc
     }
 }
 
-struct SearchState<'a> {
+pub(super) struct SearchState<'a> {
     request: &'a StrategySearchRequest,
     history: &'a [StrategyCompletedHistoryEntry],
     rejections: Vec<StrategyRejectionGround>,
     expanded: usize,
-    bounded: bool,
+    pub(super) bounded: bool,
 }
 
 impl<'a> SearchState<'a> {
-    fn new(request: &'a StrategySearchRequest) -> Self {
+    pub(super) fn new(request: &'a StrategySearchRequest) -> Self {
         Self {
             request,
             history: &[],
@@ -776,7 +778,7 @@ impl<'a> SearchState<'a> {
         }
     }
 
-    fn expand(&mut self) -> bool {
+    pub(super) fn expand(&mut self) -> bool {
         if self.expanded >= self.request.bounds.max_expansions {
             self.bounded = true;
             self.reject(StrategyRejectionGround::BoundsExceeded);
@@ -786,7 +788,7 @@ impl<'a> SearchState<'a> {
         true
     }
 
-    fn reject(&mut self, ground: StrategyRejectionGround) {
+    pub(super) fn reject(&mut self, ground: StrategyRejectionGround) {
         if !self.rejections.contains(&ground) {
             self.rejections.push(ground);
         }
@@ -842,6 +844,7 @@ fn epistemic_candidate(
         return None;
     }
     let mut plan = StrategyPlan {
+        decomposition: None,
         historical_identity: None,
         settlement_rule_id: settlement_rule_identity(rule),
         plan_revision_id: String::new(),
@@ -884,50 +887,39 @@ fn method_candidates(
     state: &mut SearchState<'_>,
 ) -> Vec<StrategyPlan> {
     let mut methods: Vec<_> = request.problem.methods.iter().collect();
-    methods.sort_by(|left, right| left.method_id.cmp(&right.method_id));
+    methods.sort_by_key(|method| (method.preference, &method.method_id));
     let mut candidates = Vec::new();
     for method in methods {
-        if !state.expand() {
+        let Some(local) = unify(&method.trigger, &request.problem.goal.target) else {
+            continue;
+        };
+        let Some(bindings) = goal_bindings.merge(&local) else {
+            continue;
+        };
+        for mut refined in super::refinement::construct(request, method, &bindings, state) {
+            if !super::refinement::wire_inputs(&request.problem, &mut refined.composition) {
+                state.reject(StrategyRejectionGround::InvalidComposition);
+                continue;
+            }
+            if let Some(mut candidate) = finish_candidate(
+                request,
+                rule,
+                settlement,
+                bindings.clone(),
+                refined.composition,
+                StrategyPlanOrigin::Method {
+                    method_id: method.method_id.clone(),
+                },
+                state,
+            ) {
+                candidate.decomposition = Some(refined.decomposition);
+                candidate.explanation = format!("Method '{}' recursively establishes the settlement obligation through {} primitive steps", method.method_id, candidate.evaluation.step_count);
+                candidate.plan_revision_id = plan_revision_identity(&candidate);
+                candidates.push(candidate);
+            }
+        }
+        if state.bounded {
             break;
-        }
-        let Some(method_bindings) = unify(&method.trigger, &request.problem.goal.target) else {
-            continue;
-        };
-        let Some(bindings) = goal_bindings.merge(&method_bindings) else {
-            continue;
-        };
-        if let Err(ground) = method_preconditions(&request.problem, method, &bindings) {
-            state.reject(ground);
-            continue;
-        }
-        let Ok(composition) = substitute(&method.composition, &bindings) else {
-            state.reject(StrategyRejectionGround::UnboundVariable {
-                variable: "method composition".to_string(),
-            });
-            continue;
-        };
-        if !preconditions_hold(
-            &composition,
-            &request.problem.planner_cut.world_model_view.world_state,
-            state,
-        ) {
-            continue;
-        }
-        if !composition_contributes(&composition, settlement) {
-            continue;
-        }
-        if let Some(candidate) = finish_candidate(
-            request,
-            rule,
-            settlement,
-            bindings,
-            composition,
-            StrategyPlanOrigin::Method {
-                method_id: method.method_id.clone(),
-            },
-            state,
-        ) {
-            candidates.push(candidate);
         }
     }
     candidates
@@ -1331,6 +1323,7 @@ fn finish_bodies(
         };
     let plan_family_id = plan_family_identity(&request.problem);
     let mut candidate = StrategyPlan {
+        decomposition: None,
         historical_identity: None,
         settlement_rule_id: settlement_rule_identity(rule),
         plan_revision_id: String::new(),
@@ -1494,29 +1487,13 @@ fn preconditions_hold(
     world_state: &meld_lang::WorldState,
     state: &mut SearchState<'_>,
 ) -> bool {
-    for step in &composition.steps {
-        let StepKind::Op(operator) = &step.kind else {
-            continue;
-        };
-        for precondition in &operator.preconditions {
-            match evaluate(world_state, precondition) {
-                EvalResult::Satisfied => {}
-                EvalResult::Unsatisfied { .. } => {
-                    state.reject(StrategyRejectionGround::UnsatisfiedPrecondition {
-                        operator_id: operator.operator_id.clone(),
-                    });
-                    return false;
-                }
-                EvalResult::Indeterminate { .. } => {
-                    state.reject(StrategyRejectionGround::IndeterminatePrecondition {
-                        operator_id: operator.operator_id.clone(),
-                    });
-                    return false;
-                }
-            }
+    match super::refinement::composition_ground(world_state, composition) {
+        Ok(()) => true,
+        Err(ground) => {
+            state.reject(ground);
+            false
         }
     }
-    true
 }
 
 fn effect_proposition(effect: &Effect) -> Option<&Proposition> {
@@ -1582,7 +1559,7 @@ pub(crate) fn terminal_outcome_contract<'a>(
         .map(|capability| capability.outcome_contract_id.as_str())
 }
 
-fn independent_components(composition: &Composition) -> Vec<Composition> {
+pub(super) fn independent_components(composition: &Composition) -> Vec<Composition> {
     let mut remaining: BTreeSet<_> = composition
         .steps
         .iter()
@@ -1761,20 +1738,22 @@ pub(crate) fn tasks_contribute(tasks: &[StrategyTask], obligation: &Proposition)
         }
 }
 
-fn candidate_key(candidate: &StrategyPlan) -> (usize, u64, u32, &str) {
+fn candidate_key(candidate: &StrategyPlan) -> (usize, u64, u32, bool, &str) {
     (
         candidate.evaluation.step_count,
         candidate.evaluation.time_ms,
         candidate.evaluation.provider_calls,
+        candidate.decomposition.is_none(),
         &candidate.plan_revision_id,
     )
 }
 
-fn alternative_candidate_key(candidate: &StrategyPlan) -> (u64, u32, usize, &str) {
+fn alternative_candidate_key(candidate: &StrategyPlan) -> (u64, u32, usize, bool, &str) {
     (
         candidate.evaluation.time_ms,
         candidate.evaluation.provider_calls,
         candidate.evaluation.step_count,
+        candidate.decomposition.is_none(),
         &candidate.plan_revision_id,
     )
 }

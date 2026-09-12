@@ -457,6 +457,39 @@ pub struct StrategyCompletedHistoryEntry {
     pub product: Option<StrategyProduct>,
 }
 
+/// Selected method hierarchy and its exact primitive derivation.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StrategyDecomposition {
+    /// Abstract and primitive occurrences in the selected refinement traversal.
+    pub expansion_order: Vec<String>,
+    /// Selected compound refinements in parent-before-child order.
+    pub refinements: Vec<StrategyRefinement>,
+    /// Exact local bindings for each primitive occurrence in the resulting Tasks.
+    pub primitives: Vec<StrategyPrimitiveBinding>,
+}
+
+/// One justified reduction of an abstract occurrence against projected state.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum StrategyRefinement {
+    Satisfied {
+        path: String,
+        target: Proposition,
+    },
+    Method {
+        path: String,
+        target: Proposition,
+        method_id: String,
+        bindings: Bindings,
+    },
+}
+
+/// A primitive occurrence retains its own scope of method variables.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StrategyPrimitiveBinding {
+    pub step_id: String,
+    pub bindings: Bindings,
+}
+
 /// Ground immutable heterogeneous Plan returned for Agent judgment.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StrategyPlan {
@@ -477,6 +510,8 @@ pub struct StrategyPlan {
     pub planner_cut_id: String,
     /// Candidate construction origin.
     pub origin: StrategyPlanOrigin,
+    /// Absent on historical and direct Plans; selected hierarchy on refined Plans.
+    pub decomposition: Option<StrategyDecomposition>,
     /// Ground bindings used during construction.
     pub bindings: Bindings,
     /// Settlement obligation discharged by the root action.

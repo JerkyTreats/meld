@@ -3,6 +3,7 @@
 mod contracts;
 mod registry;
 mod search;
+mod refinement;
 mod verification;
 
 pub use contracts::*;
