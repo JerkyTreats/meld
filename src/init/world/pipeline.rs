@@ -575,6 +575,14 @@ impl<'a> WorldInitPipeline<'a> {
             return Err(WorldInitError::Activation("explicit Agent positions have native genesis but scoped runtime activation is not yet available".into()));
         }
         verify_current_product(product)?;
+        crate::runtime::assembly::RuntimeFactoryRegistry::first_proof_registry()
+            .map_err(|error| WorldInitError::Activation(error.to_string()))?
+            .realize_participants(
+                &product.assignment,
+                &product.declaration.participant_plan,
+                &product.declaration.participant_bindings,
+            )
+            .map_err(|error| WorldInitError::Activation(error.to_string()))?;
         if self.topology_receipt.is_none() {
             let receipts = self
                 .agent_store

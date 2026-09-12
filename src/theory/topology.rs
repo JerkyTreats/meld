@@ -12,6 +12,9 @@ pub const PRODUCT_TOPOLOGY_REGISTRY: &str = "pds_product_topology_v1";
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProductTopologyV1 {
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub participant_bindings:
+        std::collections::BTreeMap<String, super::ProductParticipantBindingV1>,
     pub topology_id: String,
     pub agent_positions: Vec<ProductAgentPositionV1>,
     pub participants: Vec<ActivationParticipantSpec>,
@@ -36,6 +39,11 @@ impl ProductTopologyV1 {
         let plan = ActivationParticipantPlanV1::new(self.participants.clone())?;
         if self.topology_id.trim().is_empty()
             || !super::product::valid_agent_topology(&self.agent_positions, &plan)
+            || !super::product::valid_participant_bindings(
+                &self.participant_bindings,
+                &self.agent_positions,
+                &plan,
+            )
             || self.requested_authority_ref.trim().is_empty()
             || self.compilation_policy_revision.trim().is_empty()
         {
@@ -65,6 +73,7 @@ impl ProductTopologyV1 {
             self.requested_authority_ref.clone(),
             format!("principal-grant::{principal_id}"),
             self.compilation_policy_revision.clone(),
+            self.participant_bindings.clone(),
         )
     }
 }

@@ -64,10 +64,21 @@ pub struct ProductAgentPositionV1 {
     pub participant_ref: String,
 }
 
+/// Exact factory selection for one declared runtime participant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProductParticipantBindingV1 {
+    pub factory_id: String,
+    pub agent_position_id: String,
+}
+
 /// One immutable principal-facing product composition.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProductDeclarationV1 {
+    /// Reusable factory and Agent context for explicitly realized participants.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub participant_bindings: BTreeMap<String, ProductParticipantBindingV1>,
     pub product_revision_id: String,
     pub product_id: String,
     pub principal_id: String,
@@ -81,6 +92,8 @@ pub struct ProductDeclarationV1 {
 
 #[derive(Serialize)]
 struct ProductDeclarationIdentity<'a> {
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    participant_bindings: &'a BTreeMap<String, ProductParticipantBindingV1>,
     product_id: &'a str,
     principal_id: &'a str,
     selected_packages: &'a [ProductPackageSelectionV1],
@@ -135,6 +148,7 @@ impl ProductDeclarationV1 {
         requested_authority_ref: String,
         principal_grant_ref: String,
         compilation_policy_revision: String,
+        participant_bindings: BTreeMap<String, ProductParticipantBindingV1>,
     ) -> Result<Self, TheoryRouterError> {
         participant_plan.verify_identity()?;
         selected_packages.sort();
@@ -164,6 +178,11 @@ impl ProductDeclarationV1 {
                 .windows(2)
                 .all(|pair| pair[0].package_id != pair[1].package_id)
             || !valid_agent_topology(&agent_topology, &participant_plan)
+            || !valid_participant_bindings(
+                &participant_bindings,
+                &agent_topology,
+                &participant_plan,
+            )
         {
             return Err(error(
                 "product_declaration_invalid",
@@ -171,6 +190,7 @@ impl ProductDeclarationV1 {
             ));
         }
         let identity = ProductDeclarationIdentity {
+            participant_bindings: &participant_bindings,
             product_id: &product_id,
             principal_id: &principal_id,
             selected_packages: &selected_packages,
@@ -182,6 +202,7 @@ impl ProductDeclarationV1 {
         };
         let product_revision_id = identity_hash(&identity)?;
         Ok(Self {
+            participant_bindings,
             product_revision_id,
             product_id,
             principal_id,
@@ -204,6 +225,7 @@ impl ProductDeclarationV1 {
             self.requested_authority_ref.clone(),
             self.principal_grant_ref.clone(),
             self.compilation_policy_revision.clone(),
+            self.participant_bindings.clone(),
         )?;
         if rebuilt != *self {
             return Err(error(
@@ -213,6 +235,24 @@ impl ProductDeclarationV1 {
         }
         Ok(())
     }
+}
+
+pub(super) fn valid_participant_bindings(
+    bindings: &BTreeMap<String, ProductParticipantBindingV1>,
+    positions: &[ProductAgentPositionV1],
+    plan: &ActivationParticipantPlanV1,
+) -> bool {
+    bindings.iter().all(|(id, binding)| {
+        !binding.factory_id.trim().is_empty()
+            && plan.participants.iter().any(|p| &p.participant_id == id)
+            && positions
+                .iter()
+                .any(|p| p.position_id == binding.agent_position_id)
+            && positions
+                .iter()
+                .filter(|p| &p.participant_ref == id)
+                .all(|p| p.position_id == binding.agent_position_id)
+    })
 }
 
 pub fn product_topology_id(
@@ -1265,6 +1305,7 @@ mod tests {
             format!("authority-{product_id}"),
             format!("grant-{product_id}"),
             "compilation-policy.v1".to_string(),
+            BTreeMap::new(),
         )
         .unwrap();
         let package_store =
@@ -1327,6 +1368,7 @@ mod tests {
                 base.requested_authority_ref.clone(),
                 base.principal_grant_ref.clone(),
                 base.compilation_policy_revision.clone(),
+                BTreeMap::new(),
             )
             .unwrap()
         };
@@ -1428,6 +1470,7 @@ mod tests {
             declaration.requested_authority_ref,
             declaration.principal_grant_ref,
             declaration.compilation_policy_revision,
+            declaration.participant_bindings,
         )
         .unwrap();
         let compiled =

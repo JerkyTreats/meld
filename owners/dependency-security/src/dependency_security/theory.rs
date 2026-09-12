@@ -256,6 +256,7 @@ mod tests {
                 package_content_hash: receipt.package_content_hash.clone(),
             }],
             vec![ProductAgentPositionV1 {
+                package_id: None,
                 position_id: "security-steward".to_string(),
                 directive: "maintain dependency security".to_string(),
                 required_owner_routes: receipt
@@ -275,6 +276,7 @@ mod tests {
             "security-read-only".to_string(),
             "principal-grant::workspace-owner".to_string(),
             "pds-product-compilation.v1".to_string(),
+            Default::default(),
         )
         .unwrap();
         let compilation = ProductCompilationReceiptV1::compile(

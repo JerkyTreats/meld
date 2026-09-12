@@ -11,6 +11,8 @@
 //! manufactured state; a later process start after explicit initialization
 //! resolves them.
 
+mod instances;
+
 #[cfg(test)]
 pub(crate) mod docs_fixture;
 
@@ -194,6 +196,10 @@ pub struct DesiredRuntimeState {
 /// Passive runtime factory metadata.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeFactoryDescriptor {
+    /// Reusable implementation selected for this realization.
+    pub factory_id: String,
+    /// Explicit Agent context, independent of the runtime instance name.
+    pub agent_position_id: Option<String>,
     /// Stable runtime id.
     pub runtime_id: String,
     /// Passive resources required by the future runtime handle.
@@ -875,6 +881,7 @@ impl DurableStepSequence {
 
 #[derive(Clone)]
 struct BeliefAssessmentFactory {
+    runtime_id: String,
     belief_store: Arc<BeliefStore>,
     registry: Arc<BeliefFamilyRegistryStore>,
     family_id: String,
@@ -886,6 +893,7 @@ struct BeliefAssessmentFactory {
 
 #[derive(Clone)]
 struct EvidenceIngestionFactory {
+    runtime_id: String,
     belief_store: Arc<BeliefStore>,
     registry: Arc<BeliefFamilyRegistryStore>,
     family_id: String,
@@ -1509,6 +1517,13 @@ impl ProductRuntimeAssembly {
             None => None,
         };
 
+        if let Some(prepared) = composed_stewardship
+            .as_ref()
+            .and_then(|composed| composed.theory.resolved.as_ref())
+            .and_then(|resolved| resolved.prepared_closure.as_ref())
+        {
+            registry.realize_prepared(&stores, prepared)?;
+        }
         let handle_factories = RuntimeHandleFactoryRegistry::from_registry(
             &registry,
             &ports,
@@ -1882,8 +1897,10 @@ impl RetirementRuntimeRecovery for ProductRuntimeAssembly {
             bindings,
             theory,
         };
+        let mut registry = self.registry.clone();
+        registry.realize_prepared(&historical_stores, prepared)?;
         let factories = RuntimeHandleFactoryRegistry::from_registry(
-            &self.registry,
+            &registry,
             &self.ports,
             &historical_stores,
             self.graph_runtime.as_ref(),
@@ -1920,6 +1937,8 @@ impl RuntimeFactoryDescriptor {
         let runtime_id = runtime_id.into();
         validate_runtime_id(&runtime_id)?;
         Ok(Self {
+            factory_id: runtime_id.clone(),
+            agent_position_id: None,
             runtime_id,
             required_resources,
         })
@@ -1927,6 +1946,34 @@ impl RuntimeFactoryDescriptor {
 }
 
 impl RuntimeFactoryRegistry {
+    /// Resolve instance identities through the existing native factory catalog.
+    pub(crate) fn realize_participants(
+        &mut self,
+        assignment: &crate::config::StewardshipAssignmentV1,
+        plan: &crate::theory::ActivationParticipantPlanV1,
+        bindings: &BTreeMap<String, crate::theory::ProductParticipantBindingV1>,
+    ) -> Result<(), RuntimeAssemblyError> {
+        instances::realize(self, assignment, plan, bindings)
+    }
+
+    fn realize_prepared(
+        &mut self,
+        stores: &OpenProductStores,
+        prepared: &crate::theory::PreparedActivationClosureV1,
+    ) -> Result<(), RuntimeAssemblyError> {
+        let declaration = stores
+            .pds_products
+            .declaration(&prepared.product_revision_id)
+            .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?
+            .ok_or_else(|| {
+                RuntimeAssemblyError::Config("prepared product declaration is absent".into())
+            })?;
+        self.realize_participants(
+            &prepared.assignment,
+            &prepared.participant_plan,
+            &declaration.participant_bindings,
+        )
+    }
     /// Build a registry from descriptors, rejecting duplicates and invalid ids.
     pub fn from_descriptors(
         descriptors: impl IntoIterator<Item = RuntimeFactoryDescriptor>,
@@ -2335,13 +2382,31 @@ impl RuntimeSemanticHandleFactory {
             });
             Ok(RuntimeSemanticHandleFactory::None)
         }
+        if let Some(position_id) = &descriptor.agent_position_id {
+            let matches = stewardship.is_some_and(|composed| {
+                composed
+                    .theory
+                    .resolved
+                    .as_ref()
+                    .and_then(|theory| theory.prepared_closure.as_ref())
+                    .is_some_and(|prepared| {
+                        prepared.assignment.agent_positions.iter().any(|position| {
+                            &position.position_id == position_id
+                                && position.agent_id == composed.bindings.agent_id
+                        })
+                    })
+            });
+            if !matches {
+                return unresolved(diagnostics, "native_instance_context_unresolved", format!("participant '{runtime_id}' requires the exact Agent context for position '{position_id}'"));
+            }
+        }
         if let Some(owner) = stewardship
             .and_then(|composed| composed.theory.capability_runtime.as_ref())
             .and_then(|runtime| runtime.owner_observations.get(runtime_id))
         {
             return Ok(Self::OwnerObservation(owner.clone()));
         }
-        match runtime_id {
+        match descriptor.factory_id.as_str() {
             "world_model.graph_replay" => match graph_runtime {
                 Some(graph_runtime) => Ok(Self::GraphReplay {
                     graph_runtime: Arc::clone(graph_runtime),
@@ -2489,6 +2554,7 @@ impl RuntimeSemanticHandleFactory {
                     return Ok(Self::None);
                 }
                 Ok(Self::BeliefAssessment(Box::new(BeliefAssessmentFactory {
+                    runtime_id: runtime_id.to_string(),
                     belief_store: Arc::clone(belief),
                     registry: Arc::clone(registry),
                     family_id,
@@ -2556,6 +2622,7 @@ impl RuntimeSemanticHandleFactory {
                 }
                 Ok(Self::EvidenceIngestion(Box::new(
                     EvidenceIngestionFactory {
+                        runtime_id: runtime_id.to_string(),
                         belief_store: Arc::clone(belief),
                         registry: Arc::clone(registry),
                         family_id,
@@ -3152,7 +3219,7 @@ impl RuntimeSemanticHandleFactory {
                 RuntimeSemanticHandle::BeliefAssessment(Box::new(BeliefAssessmentHandle {
                     actor: {
                         let actor = BeliefAssessmentActor::new(
-                            "world_model.belief_assessment",
+                            factory.runtime_id.clone(),
                             Arc::clone(&factory.belief_store),
                             Arc::clone(&factory.registry)
                                 as Arc<dyn BeliefFamilyRegistry + Send + Sync>,
@@ -3169,7 +3236,7 @@ impl RuntimeSemanticHandleFactory {
                     subject_key: factory.subject_binding.subject.index_key(),
                     sequence: DurableStepSequence::new(
                         Arc::clone(&factory.belief_store),
-                        "world_model.belief_assessment",
+                        &factory.runtime_id,
                     ),
                 }))
             }
@@ -3177,7 +3244,7 @@ impl RuntimeSemanticHandleFactory {
                 RuntimeSemanticHandle::EvidenceIngestion(Box::new(EvidenceIngestionHandle {
                     actor: {
                         let actor = EvidenceIngestionActor::new(
-                            "world_model.evidence_ingestion",
+                            factory.runtime_id.clone(),
                             Arc::clone(&factory.belief_store),
                             Arc::clone(&factory.registry)
                                 as Arc<dyn BeliefFamilyRegistry + Send + Sync>,
@@ -3663,7 +3730,7 @@ impl BeliefAssessmentHandle {
             Ok(sequence) => sequence,
             Err(error) => {
                 return WorkerTickReport::fatal(
-                    "world_model.belief_assessment",
+                    self.actor.actor_id(),
                     "world_model",
                     Some("belief_assessment"),
                     "belief_assessment_sequence",
