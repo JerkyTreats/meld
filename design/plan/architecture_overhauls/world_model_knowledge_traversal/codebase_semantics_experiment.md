@@ -183,3 +183,9 @@ The user's standing circuit breaker applies because achieving independent domain
 The recommended reassessment is a minimal native two-Agent composition with explicit position bindings and per-Agent theory, sharing existing Graph and Event authorities. Prove both Agents' independent current-cut judgments through the harness before adding README repair or model calls. A native read callback can then expose current semantic data to external domain logic. Do not combine the domains into one owner or add an external coordinator to manufacture the missing behavior.
 
 Accepted sensing, admission and representation results remain valid. The [active record](../../../../../meld-code-semantics/ACTIVE_SLICE.md) is assessment-only and blocked. This diagnostic checkpoint may be committed and pushed under the user's explicit instruction. No release or broader runtime redesign is authorized by the checkpoint.
+
+## One-to-many design reassessment
+
+The user accepted the one-Agent proof as the initial baseline and requested a dependency matrix for one-to-many delivery. The [dependency design](multi_agent_dependency_matrix.md) separates package composition, per-position theory and bindings, Agent genesis, scoped runtime instances, owner grants, native current-cut consumption and README effects. It recommends one product runtime with two independently authored PDSs as the first proof, preserving shared Event and Graph authorities.
+
+This is design work across the circuit breaker, not resumed runtime implementation. The matrix names three observable checkpoints: independent CPU Agents, shared semantic consumption, then Luna-low README maintenance. Exact migration and retirement scope must be frozen before the first implementation slice.
