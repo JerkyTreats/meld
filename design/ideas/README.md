@@ -13,3 +13,4 @@ When an idea matures, restate the accepted portion in the appropriate authoritat
 ## Current Ideas
 
 - [Activation-Bounded Lateral Lowering](activation_bounded_lateral_lowering.md)
+- [Compiled Instrumentation and Runtime Graph](compiled_instrumentation_and_runtime_graph.md)
