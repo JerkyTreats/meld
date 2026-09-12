@@ -256,6 +256,7 @@ mod tests {
                 package_content_hash: receipt.package_content_hash.clone(),
             }],
             vec![ProductAgentPositionV1 {
+                observation_inputs: Default::default(),
                 observation_source_position_id: None,
                 package_id: None,
                 position_id: "security-steward".to_string(),

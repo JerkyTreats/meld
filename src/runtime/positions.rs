@@ -55,6 +55,10 @@ pub(crate) struct BoundProductPosition {
     pub position_id: String,
     pub physical: PhysicalBinding,
     pub components: Vec<InstalledTheoryComponentRef>,
+    pub inputs: std::collections::BTreeMap<
+        String,
+        meld_world_model::world_state::graph::contracts::TraversalOwnerRequirement,
+    >,
 }
 
 pub(crate) fn bind_product_positions(
@@ -63,7 +67,7 @@ pub(crate) fn bind_product_positions(
     declaration: &ProductDeclarationV1,
     compilation: &ProductCompilationReceiptV1,
 ) -> Result<Vec<BoundProductPosition>, ApiError> {
-    binding
+    let mut bound: Vec<BoundProductPosition> = binding
         .assigned_positions(&declaration.agent_topology)?
         .into_iter()
         .map(|assigned| {
@@ -91,7 +95,44 @@ pub(crate) fn bind_product_positions(
                 position_id: assigned.position_id,
                 physical: binding.for_agent(&assigned.agent_id, selection),
                 components,
+                inputs: Default::default(),
             })
         })
-        .collect()
+        .collect::<Result<_, ApiError>>()?;
+    let scopes = bound
+        .iter()
+        .map(|position| {
+            (
+                position.position_id.clone(),
+                position.physical.assignment_scope_id(),
+            )
+        })
+        .collect::<std::collections::BTreeMap<_, _>>();
+    for position in &mut bound {
+        let declaration = declaration
+            .agent_topology
+            .iter()
+            .find(|p| p.position_id == position.position_id)
+            .expect("validated position");
+        for (name, input) in &declaration.observation_inputs {
+            let scope_id = scopes.get(&input.position_id).ok_or_else(|| {
+                ApiError::ConfigError("observation input position is unbound".into())
+            })?;
+            position.inputs.insert(
+                name.clone(),
+                meld_world_model::world_state::graph::contracts::TraversalOwnerRequirement {
+                    owner_id: input.owner_id.clone(),
+                    required: true,
+                    event_source: None,
+                    scope: meld_world_model::world_state::graph::contracts::OwnerPublicationScope {
+                        scope_id: scope_id.clone(),
+                        branch_id: Some("main".into()),
+                        perspective_id: Some("default".into()),
+                        valid_at: None,
+                    },
+                },
+            );
+        }
+    }
+    Ok(bound)
 }

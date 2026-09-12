@@ -226,3 +226,12 @@ The harness exposed a native Curation boundary error: multiple rules sharing sou
 Startup and retirement hydrate the same per-position context. Historical singleton recovery reuses its live task network. Unprepared composition exposes no executable dispatch slot. The [named single-Agent regression](../../../../../meld-code-semantics/evidence/two-agents-v1/named-sensing-regression.json) passes 91 checks; the unqualified journey passes 89 and staged genesis passes 17. Integration verification and composed acceptance are recorded in the [slice closeout](../../../../../meld-code-semantics/evidence/two-agents-v1/CLOSEOUT.md).
 
 This is the independent CPU-Agent checkpoint. The consumer judges whether a supported live source exists; it does not yet maintain README prose or consume code relationships through an external Graph callback. Multiple positions with executable capabilities, and multiple instances of the same external owner, are explicitly refused pending their accepted dependencies. Live membership and retained genesis reassignment remain deferred. Delivery continues toward an external README semantic consumer, then scoped README effects and Luna-low qualification.
+
+
+## README consumption of native code facts
+
+The separate README WAD now reads named source scopes through the native owner callback. Product preparation resolves the producer position; the callback freezes the current Event watermark, native Graph cut and bounded traversal. README selects syntax relations, retains source provenance and verifies an explicit Boolean assertion without opening code files. Its derived observation still enters through Events and its own Agent/Curation path.
+
+The [35-check journey](../../../../../meld-readme/evidence/shared-semantics-v1/report.json) proves formatting equivalence, changed-meaning contradiction, correction, incomplete-source refusal, deletion as unknown, producer/consumer divergence, recovery and restart. No model calls or actor errors were observed. The source producer remains unchanged. The [closeout](../../../../../meld-readme/evidence/shared-semantics-v1/CLOSEOUT.md) records API impact, migration corrections and focused verification.
+
+This completes shared CPU semantic consumption. The next authorized dependency is one scoped README effect path alongside the CPU-only producer, followed by Luna-low drafting and source-change fencing during repair. General prose and transitive derived-source validity remain unqualified. Neither a second Graph authority nor domain policy in Meld is authorized by this checkpoint.

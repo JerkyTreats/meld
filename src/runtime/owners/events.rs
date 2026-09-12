@@ -253,10 +253,12 @@ impl OwnerCallbackPort for OwnerEventCallbacks {
                     self.authority.barrier(request)
                 }))
             }
-            OwnerCallbackV1::Provider { .. } => Err(super::OwnerDiagnosticV1::new(
-                "owner_callback_not_granted",
-                "Event access grants no provider execution",
-            )),
+            OwnerCallbackV1::Provider { .. } | OwnerCallbackV1::GraphRead { .. } => {
+                Err(super::OwnerDiagnosticV1::new(
+                    "owner_callback_not_granted",
+                    "Event access does not bind this callback",
+                ))
+            }
         }
     }
 }

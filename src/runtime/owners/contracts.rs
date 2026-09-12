@@ -95,6 +95,12 @@ pub struct OwnerPreparedBindingsV1 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OwnerObservationPreparationV1 {
+    /// Named upstream scopes resolved by product preparation, not by the child.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub inputs: BTreeMap<
+        String,
+        meld_world_model::world_state::graph::contracts::TraversalOwnerRequirement,
+    >,
     pub subject: meld_events::DomainObjectRef,
     pub scope: meld_world_model::world_state::graph::contracts::OwnerPublicationScope,
     pub session_id: String,
@@ -202,6 +208,11 @@ pub enum OwnerCommandV1 {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum OwnerCallbackV1 {
+    /// Read a bounded traversal at the current Event watermark in a prepared input.
+    GraphRead {
+        input_id: String,
+        traversal: meld_world_model::world_state::graph::contracts::BoundedTraversalRequest,
+    },
     Append {
         request: meld_events::events::remote::DurableAppendRequest,
     },
@@ -228,6 +239,13 @@ pub enum OwnerCallbackV1 {
         messages: Vec<crate::provider::ChatMessage>,
         event_context: Option<ExecutionEventContext>,
     },
+}
+
+/// Native currentness and traversal returned together from one frozen cut.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OwnerGraphReadV1 {
+    pub cut: meld_world_model::world_state::graph::contracts::TraversalCut,
+    pub traversal: meld_world_model::world_state::graph::contracts::TraversalResult,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]

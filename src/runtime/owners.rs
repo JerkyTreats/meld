@@ -10,6 +10,7 @@ pub mod connection;
 pub mod contracts;
 pub mod events;
 pub mod execution;
+mod graph;
 pub mod preparation;
 pub mod provider;
 #[cfg(unix)]

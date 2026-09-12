@@ -537,7 +537,7 @@ pub struct TraversalBounds {
 }
 
 impl TraversalBounds {
-    fn validate(&self) -> Result<(), StorageError> {
+    pub fn validate(&self) -> Result<(), StorageError> {
         if self.max_depth == 0
             || self.max_objects == 0
             || self.max_occurrences == 0

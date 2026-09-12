@@ -13,7 +13,14 @@ pub(crate) fn prepare_product_owner_bindings(
 ) -> Result<OwnerBindingView, OwnerDiagnosticV1> {
     let views = positions
         .iter()
-        .map(|position| prepare_owner_bindings(stores, &position.physical, &position.components))
+        .map(|position| {
+            prepare_owner_bindings(
+                stores,
+                &position.physical,
+                &position.components,
+                &position.inputs,
+            )
+        })
         .collect::<Result<Vec<_>, _>>()?;
     if binding.agent_positions.is_empty() {
         return views
@@ -31,6 +38,10 @@ pub fn prepare_owner_bindings(
     stores: &OpenProductStores,
     binding: &PhysicalBinding,
     components: &[InstalledTheoryComponentRef],
+    inputs: &std::collections::BTreeMap<
+        String,
+        meld_world_model::world_state::graph::contracts::TraversalOwnerRequirement,
+    >,
 ) -> Result<OwnerBindingView, OwnerDiagnosticV1> {
     if stores.owners.is_empty() {
         return Ok(OwnerBindingView::new(binding.owner_binding_values()));
@@ -72,6 +83,7 @@ pub fn prepare_owner_bindings(
         binding,
         components,
         &OwnerObservationPreparationV1 {
+            inputs: inputs.clone(),
             subject: binding.subject.clone(),
             scope: meld_world_model::world_state::graph::contracts::OwnerPublicationScope {
                 scope_id: binding.assignment_scope_id(),

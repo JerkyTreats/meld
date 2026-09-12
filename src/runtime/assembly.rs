@@ -787,6 +787,15 @@ impl ComposedStewardship {
             diagnostics,
         );
         let bindings = StewardshipActorBindings::derive(position)?;
+        if let (Some(runtime), Some(graph)) =
+            (&theory.capability_runtime, stores.traversal_store.opened())
+        {
+            for owner in &runtime.owner_runtimes {
+                owner
+                    .bind_graph(graph.clone())
+                    .map_err(|error| RuntimeAssemblyError::Config(error.to_string()))?;
+            }
+        }
         Ok(Self {
             lifecycle,
             dispatch_slot: DispatchRouteSlot::default(),

@@ -521,6 +521,9 @@ fn prepared_product_activates_routes_and_ignores_loose_owner_heads() {
             &PhysicalBinding::resolve(&ConfigLoader::load_global().unwrap())
                 .unwrap()
                 .assignment_scope_id(),
+            &PhysicalBinding::resolve(&ConfigLoader::load_global().unwrap())
+                .unwrap()
+                .agent_id,
         )
         .unwrap();
         let compilation = product
@@ -673,6 +676,9 @@ fn prepared_product_activates_routes_and_ignores_loose_owner_heads() {
             &PhysicalBinding::resolve(&ConfigLoader::load_global().unwrap())
                 .unwrap()
                 .assignment_scope_id(),
+            &PhysicalBinding::resolve(&ConfigLoader::load_global().unwrap())
+                .unwrap()
+                .agent_id,
         )
         .unwrap();
         assert_eq!(
@@ -900,6 +906,7 @@ authority_policy_id = "startup_nonce_local"
             &binding.package,
             &binding.subject,
             &binding.assignment_scope_id(),
+            &binding.agent_id,
         )
         .unwrap();
         assert_eq!(

@@ -3,6 +3,7 @@ use std::path::Path;
 use super::*;
 
 mod events;
+mod graph;
 mod provider;
 
 fn executable(root: &Path, body: &str) -> OwnerExecutableV1 {

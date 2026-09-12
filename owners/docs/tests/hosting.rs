@@ -128,6 +128,7 @@ fn docs_package_installs_observes_invokes_and_reopens_through_native_ports() {
     .unwrap();
     let policy_hash = policy.content_hash().unwrap();
     let native = OwnerObservationPreparationV1 {
+        inputs: Default::default(),
         subject,
         scope: meld_world_model::world_state::graph::contracts::OwnerPublicationScope {
             scope_id: "docs".into(),

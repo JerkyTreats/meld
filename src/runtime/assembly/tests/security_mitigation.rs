@@ -256,6 +256,7 @@ fn materialize(
         assembly.stores(),
         &harness.binding,
         &compilation.installed_owner_revisions,
+        &Default::default(),
     )
     .unwrap();
     let seed: serde_json::Value =

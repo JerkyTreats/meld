@@ -49,9 +49,21 @@ pub struct PreparedOwnerRuntime {
     connection: Mutex<OwnerConnection>,
     grants: OwnerRuntimeGrants,
     provider: Mutex<Option<Arc<dyn ProviderCompletionPort>>>,
+    graph: Mutex<Option<Arc<meld_world_model::world_state::graph::store::TraversalStore>>>,
 }
 
 impl PreparedOwnerRuntime {
+    pub(crate) fn bind_graph(
+        &self,
+        graph: Arc<meld_world_model::world_state::graph::store::TraversalStore>,
+    ) -> Result<(), OwnerDiagnosticV1> {
+        *self
+            .graph
+            .lock()
+            .map_err(|_| unavailable("Graph binding lock poisoned"))? = Some(graph);
+        Ok(())
+    }
+
     pub fn prepare(
         mut connection: OwnerConnection,
         description: OwnerDescriptionV1,
@@ -92,6 +104,7 @@ impl PreparedOwnerRuntime {
             connection: Mutex::new(connection),
             grants,
             provider: Mutex::new(None),
+            graph: Mutex::new(None),
         }))
     }
 
@@ -129,7 +142,26 @@ impl PreparedOwnerRuntime {
                 )?
             }
         };
-        let events: Arc<dyn OwnerCallbackPort> = Arc::new(events);
+        let mut events: Arc<dyn OwnerCallbackPort> = Arc::new(events);
+        if let Some(graph) = self
+            .graph
+            .lock()
+            .map_err(|_| unavailable("Graph binding lock poisoned"))?
+            .clone()
+        {
+            events = Arc::new(super::graph::OwnerGraphCallbacks {
+                next: events,
+                graph,
+                events: self.grants.events.clone(),
+                ledger_id: ledger,
+                inputs: self
+                    .preparation
+                    .observation
+                    .as_ref()
+                    .map(|o| o.inputs.clone())
+                    .unwrap_or_default(),
+            });
+        }
         let provider = self
             .provider
             .lock()

@@ -53,6 +53,9 @@ pub struct ProductAgentSubscriptionV1 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProductAgentPositionV1 {
+    /// Named upstream observations supplied to the position's external owner.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub observation_inputs: BTreeMap<String, ProductObservationInputV1>,
     /// Position supplying the current observation scope; absent means this position.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub observation_source_position_id: Option<String>,
@@ -65,6 +68,14 @@ pub struct ProductAgentPositionV1 {
     pub observation_scope_component_id: String,
     pub required_subscriptions: Vec<ProductAgentSubscriptionV1>,
     pub participant_ref: String,
+}
+
+/// A composition-selected publisher at one situated Agent position.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProductObservationInputV1 {
+    pub owner_id: String,
+    pub position_id: String,
 }
 
 /// Exact factory selection for one declared runtime participant.
@@ -125,6 +136,13 @@ pub(super) fn valid_agent_topology(
                     .as_ref()
                     .is_none_or(|id| !id.trim().is_empty())
                 && !position.directive.trim().is_empty()
+                && position.observation_inputs.iter().all(|(name, input)| {
+                    !name.trim().is_empty()
+                        && !input.owner_id.trim().is_empty()
+                        && positions
+                            .iter()
+                            .any(|source| source.position_id == input.position_id)
+                })
                 && position
                     .observation_source_position_id
                     .as_ref()
@@ -1320,6 +1338,7 @@ mod tests {
                 package_content_hash: format!("package-hash-{product_id}"),
             }],
             vec![ProductAgentPositionV1 {
+                observation_inputs: Default::default(),
                 observation_source_position_id: None,
                 package_id: None,
                 position_id: "steward".to_string(),

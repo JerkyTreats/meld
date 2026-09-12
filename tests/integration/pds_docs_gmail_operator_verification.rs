@@ -125,6 +125,9 @@ fn routed_docs_pds_generates_gmail_operator_and_reopens_without_work() {
             &PhysicalBinding::resolve(&ConfigLoader::load_global().unwrap())
                 .unwrap()
                 .assignment_scope_id(),
+            &PhysicalBinding::resolve(&ConfigLoader::load_global().unwrap())
+                .unwrap()
+                .agent_id,
         )
         .unwrap();
         assert_eq!(resolved.package_receipt_ids, vec![package_head.receipt_id]);
@@ -167,6 +170,9 @@ fn routed_docs_pds_generates_gmail_operator_and_reopens_without_work() {
             &PhysicalBinding::resolve(&ConfigLoader::load_global().unwrap())
                 .unwrap()
                 .assignment_scope_id(),
+            &PhysicalBinding::resolve(&ConfigLoader::load_global().unwrap())
+                .unwrap()
+                .agent_id,
         )
         .unwrap();
         assert_eq!(
@@ -325,6 +331,9 @@ fn routed_docs_pds_generates_gmail_operator_with_live_provider() {
             &PhysicalBinding::resolve(&ConfigLoader::load_global().unwrap())
                 .unwrap()
                 .assignment_scope_id(),
+            &PhysicalBinding::resolve(&ConfigLoader::load_global().unwrap())
+                .unwrap()
+                .agent_id,
         )
         .unwrap();
         assert_eq!(resolved.package_receipt_ids, vec![package_head.receipt_id]);
