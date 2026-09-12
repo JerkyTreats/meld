@@ -1,8 +1,16 @@
 # Native Strategy planning for README excellence
 
-Date: 2026-09-12. Lifecycle: stopped at source-freshness circuit breaker after the accepted first implementation slice. The user authorized implementation after the documented branch transition. Active slice: [recursive Strategy construction and bounded README work](strategy_planning_active_slice.md), `strategy-decomposition-1`, accepted for its bounded scope. Branch: `feat/strategy-planning` in Meld, Meld README, Codebase Semantics and Meld Eval. The assessment and transition account below preserve their original checkpoint scope.
+Date: 2026-09-12. Lifecycle: active delivery under corrected continuous-reconciliation acceptance. Active slice: [autonomous reconciliation after material source change](strategy_planning_active_slice.md), `strategy-continuous-reconciliation-2`, accepted for autonomous reconciliation of the tracked claim. Branch: `feat/strategy-planning` in all four repositories.
 
-This document owns the successor experiment's objective, assertion assessment, scope and delivery direction. It supersedes the next-work instructions of the [codebase semantics experiment](codebase_semantics_experiment.md) for shared README maintenance. Earlier passing results and the failed source-drift gate retain their exact meaning. [Cognitive Architecture](../../../cognitive_architecture/README.md) remains evergreen design truth; this document records current evidence and intended delivery.
+The user explicitly clarified that executing against an older observed basis is expected. The required behavior is continuous Agent reconciliation after newly admitted material information. The earlier fail-on-stale-output gate was an assistant-authored design-contract error, and its circuit-breaker classification is withdrawn. Historical captures remain unchanged. This correction authorizes measurement of the complete native response before proposing runtime mechanisms. Settling delays and action-cost policy are deferred.
+
+This document owns the successor experiment's objective, assertion assessment, scope and delivery direction. It supersedes the next-work instructions of the [codebase semantics experiment](codebase_semantics_experiment.md) for shared README maintenance. Earlier captures retain their exact observations. The user-corrected acceptance below supersedes the earlier source-drift failure classification. [Cognitive Architecture](../../../cognitive_architecture/README.md) remains evergreen design truth; this document records current evidence and intended delivery.
+
+## Continuous-reconciliation result
+
+The [corrected command journey](../../../../../meld-readme/evidence/continuous-reconciliation-v1/CLOSEOUT.md) passes 26 checks with unchanged runtime and WAD binaries. The native Agent responds to newly admitted source semantics, requests a successor Plan, authorizes the resulting work and independently confirms the corrected tracked assertion. Two draft calls occur; no operator request, restart or harness-authored README drives correction. The prior freshness stop is withdrawn.
+
+The final document also exposes a narrower domain limitation: a paragraph outside the single tracked assertion retains obsolete guard wording. This is evidence for richer README claim coverage and correspondence, not a failure to perform native successor planning. Full root/leaf quality and the complete causal search account remain program goals. Cost-sensitive delay for rapidly changing facts remains deferred.
 
 ## Implementation checkpoint
 
@@ -10,7 +18,7 @@ Native method refinement now recursively expands abstract Goals, applies hypothe
 
 The [closeout and evidence](../../../../../meld-readme/evidence/strategy-decomposition-v1/CLOSEOUT.md) accept ordinary Luna-low shared maintenance, CPU regression, first-use commands and a normally compiled leaf package. The serious shared-semantic root README, comprehensive causal search account and support-aware reconstruction remain open.
 
-The [drift experiment](../../../../../meld-readme/evidence/strategy-decomposition-v1/DRIFT.md) still writes stale output. It now shows the changed-source Event arriving before the write, with semantic admission afterward. The old complete revision does not express that relevant conversion is pending. Producer-owned freshness and pending-conversion semantics need architectural reassessment before the combined experiment continues. Provider latency is a related, separate progress defect.
+The [earlier drift experiment](../../../../../meld-readme/evidence/strategy-decomposition-v1/DRIFT.md) stopped at stale output. It showed changed-source contribution before the write and semantic admission afterward, but never measured subsequent reconciliation. The active slice continues through that interval and asks whether new material evidence autonomously changes the Plan and restores the desired condition. No universal producer freshness gate is selected. Provider latency remains a measured responsiveness limitation.
 
 ## Outcome and reason
 
@@ -41,7 +49,7 @@ This qualified verdict satisfies the user's branch-transition condition as a fou
 | Obligations and assessments | [Event intake](../../../../../meld-readme/owner/src/readme/intake.rs), [assessment](../../../../../meld-readme/owner/src/readme/assessment.rs), [publication](../../../../../meld-readme/owner/src/readme/observation.rs) | Identified obligations, selected fragments, verdicts and citations exist. Several values remain serialized domain payloads rather than native planning predicates and traversable dependencies. |
 | Available means | [Capability](../../../../../meld-readme/owner/src/readme/capability.rs), [Strategy package](../../../../../meld-readme/theory/strategy.json) | Provider calls, candidate edits, verification and atomic write exist. They need bounded contracts and authored causal relationships so Strategy can select and compose them. |
 | Outcomes and recovery | [Initial README qualification](../../../../../meld-readme/QUALIFICATION.md), [shared repair report](../../../../../meld-readme/evidence/semantic-repair-v1/report.json) | Earlier file-source root and leaf evidence and the two-Agent Boolean journey provide baselines. They do not qualify a new planner or broader semantic cache. |
-| Freshness during work | [Source-drift failure](../../../../../meld-readme/evidence/source-drift-v1/ANALYSIS.md) | The physical change exists but synchronous dispatch delays its observation. The stale-write result remains a failed requirement and a required successor scenario. |
+| Freshness during work | [Source-drift failure](../../../../../meld-readme/evidence/source-drift-v1/ANALYSIS.md) | The physical change exists and its eventual semantic revision is admitted. The old probe stopped before testing the required autonomous successor and convergence. |
 
 The inventory resolves authored document identities through the WAD compiler's manifest bindings rather than treating them as checkout paths. No fresh model qualification was run for this assessment. Retained reports remain tied to their original binaries and packages.
 
@@ -109,7 +117,7 @@ The domain landscape is the root source domains and workspace members in `Cargo.
 | World-model Strategy | own decomposition, alternatives, hypothetical effects and verification; partial | Extend canonical search into recursive refinement. Retire replaced entrypoints in the same completed change. |
 | World-model Graph, Evidence, Belief and Curation | publish and consume admitted semantic support; partial | Retain authorities. Extend generic relationships or projections where needed; domain meaning remains external. |
 | `meld-lang` | supply shared planning values; partial | Retain propositions, methods and operators first. Extend for demonstrated gaps; keep search and domain grammar out of the language. |
-| Runtime and concurrency | own participation and dispatch progress; blocked for freshness during provider work | Preserve one runtime. Repair demonstrated starvation without inventing a product coordinator. |
+| Runtime and concurrency | own participation and dispatch progress; responsiveness constrained during provider work | Preserve one runtime. Measure eventual sensory and Agent progress before selecting a concurrency change. |
 | Theory, config and initialization | consume WAD components and realize assignments; partial | Reuse exact package and Agent-position selection. Extend only required method or capability contracts. |
 | Events | publish external authorship and outcomes; complete for current intake | Retain one append and replay authority. External data continues through Events. |
 | Execution, capability and task | consume authorized work and publish outcomes; partial for new decomposition | Reuse the Task Network and grants. Keep Goal and Strategy decisions outside Execution. |
@@ -161,7 +169,7 @@ Compare unchanged supported content, an unsupported or contradicted claim, missi
 
 Completion requires the serious root README and a representative leaf to retain their declared factual and editorial standard under native decomposition. The shared Codebase Semantics path must cover selected code claims or explicitly report their absence. Unknown coverage must not become a positive judgment. Earlier file-source qualification remains regression evidence, not a silent replacement for the semantic-input target.
 
-Luna-low remains the semantic provider baseline. CPU-representable claims use CPU verification. Editorial qualities may retain attributed model judgments; native planning does not imply that joy or entailment has become an exact CPU predicate. Report calls, reuse, failures and quality separately. The earlier long-call stale-write scenario must be resolved and reproved before the combined experiment is accepted.
+Luna-low remains the semantic provider baseline. CPU-representable claims use CPU verification. Editorial qualities may retain attributed model judgments; native planning does not imply that joy or entailment has become an exact CPU predicate. Report calls, reuse, failures and quality separately. The long-call source-change scenario must prove autonomous reassessment and convergence after material evidence is admitted. Stale intermediate output is retained evidence rather than automatic failure. Action-cost conditions and delay for rapidly changing evidence are deferred planning policy.
 
 ## Delivery, authority and checkpoint
 
@@ -173,7 +181,7 @@ The user explicitly authorizes this assessment, input-sufficiency validation, fu
 
 The transition checkpoints all four repositories on `feat/codebase-semantics`, then creates and publishes `feat/strategy-planning` from those exact tips. Baseline code before this documentation checkpoint: Meld `7f3e78f0`, README `e81e49b`, Codebase Semantics `9150f39`, Eval `a6b948e`. No runtime code changes or new model runs are included in the transition.
 
-The prior `shared-semantic-repair-10` remains failed at its source-freshness gate. Its next-work authority is superseded by this reassessed experiment, while its failure remains an acceptance obligation. Do not relabel stale output as acceptable. Do not preserve a competing opaque decision loop after its native replacement is delivered. New independent coordinators, stores, graph writers or broad language redesign trigger reassessment before scope expands.
+The prior `shared-semantic-repair-10` report remains an immutable record of its former gate. The user explicitly superseded that gate: stale intermediate output is expected, and autonomous reconciliation is the required outcome. Its early-stop report establishes no result for that outcome. Do not preserve a competing opaque decision loop after its native replacement is delivered. New independent coordinators, stores, graph writers or broad language redesign trigger reassessment before scope expands.
 
 Checkpoint review: independent Terra assessment and root source review agree on qualified input sufficiency and incomplete native planning. The physical-source inventory has no missing selected inputs. Documentation verification checked nine changed Markdown files and 38 local links, with no missing targets or new prohibited prose parentheses. Diff whitespace checks pass in all four repositories. Existing remote branch tips match local baselines after fetch. This accepts the documentation and branch-transition checkpoint, not an implementation or runtime acceptance gate.
 

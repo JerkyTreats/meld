@@ -1,4 +1,30 @@
-# Recursive Strategy construction and bounded README work
+# Continuous reconciliation after changed material evidence
+
+Slice: `strategy-continuous-reconciliation-2`. Lifecycle: closed. Readiness: accepted for autonomous reconciliation of the tracked claim. Baselines: Meld `b7c6ec5c`, README `53821c4`, Codebase Semantics `1768fab`, Eval `c4f8665` on `feat/strategy-planning`.
+
+The user corrected the previous acceptance condition: acting on an older observed basis is expected in a changing world. The required behavior is autonomous reconciliation after newly admitted material evidence. This explicitly supersedes the inferred requirement to prevent every stale intermediate README and lifts the associated program stop. The earlier timeline remains evidence, but the harness stopped before measuring the intended outcome.
+
+This slice replaces the drift probe's immediate abort with continued observation. It must mutate the watched source during a real draft, retain any stale intermediate result, wait for the changed semantic revision, and observe native reassessment, a changed executable Plan and independent confirmation of the corrected README without an operator repair request, runtime restart or harness-authored result. A subsequent unchanged interval must preserve the document and avoid another provider call. Materiality stays in the WAD. Agent continuously reconciles its Directive to admitted understanding and invokes episodic Strategy search when needed.
+
+| Responsibility | Mode | Boundary and proof |
+| --- | --- | --- |
+| Drift acceptance and capture | replace in external README harness | Retire fail-on-stale-output and observe autonomous material-evidence response through public commands |
+| Program and evergreen design | correct | State continuous reconciliation and retained evidence basis; defer action-cost and settling-delay policy |
+| Runtime and WAD semantics | retain for the first probe | Measure existing native behavior before selecting any runtime correction |
+
+The prior implementation and checkpoint below remain accepted. No producer freshness gate, new scheduler, graph writer or continuous search worker is selected. A circuit breaker requires inability to carry changed material evidence through the native reconciliation loop, rather than an intermediate snapshot becoming outdated. User standing implementation and natural-checkpoint commit/push authority applies. The closeout below records the completed logical, style and acceptance judgments.
+
+If applied, this commit measures autonomous Plan reconstruction and convergence after source change, preserving the intermediate history rather than stopping the experiment at it.
+
+## Continuous-reconciliation closeout
+
+The [public proof](../../../../../meld-readme/evidence/continuous-reconciliation-v1/CLOSEOUT.md) passes all 26 checks on unchanged runtime and owner binaries. Two native executable Plans use different frozen cuts; a successor follows admitted source change; the tracked assertion converges and native Goal satisfaction follows the new supported observation. No operator reconciliation request is submitted. Two draft calls occur, with no further calls in a three-second unchanged observation window.
+
+The prior stale-output circuit breaker was a design-contract defect in the harness acceptance condition. The user correction supersedes it. No runtime mechanism was required to establish this ongoing loop. A separate untracked paragraph remains outdated in the final document, so full prose correctness is expressly unqualified; richer claim coverage is the domain backlog.
+
+Logical review accepts exact changed-revision selection, successor lineage and independent confirmation. Style Assurance passes Python compilation, diff checks and local documentation-link verification. Gate Acceptance accepts the bounded native proof. Historical raw reports are unchanged. The old implementation contracts below remain historical, with their freshness stop superseded by the explicit correction above.
+
+## Previous accepted slice
 
 Slice: `strategy-decomposition-1`. Lifecycle: closed. Readiness: accepted for recursive construction and bounded README work. Baselines: Meld `3f4b89ce`, README `a772f6a`, Codebase Semantics `b00e650`, Eval `50dbc9f` on `feat/strategy-planning`.
 
