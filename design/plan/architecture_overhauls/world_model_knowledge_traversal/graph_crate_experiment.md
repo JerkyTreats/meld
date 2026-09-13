@@ -4,6 +4,8 @@ Slice: `graph-crate-fit-v1`. Lifecycle: closed. Readiness: standalone feasibilit
 
 ## Outcome and limits
 
+Follow-up: the [Cozo implementation assessment](cozo_implementation_assessment.md) reproduces a range-query correctness defect in the pinned release and confirms reader blocking during writes. Native promotion is now on hold pending a supportable dependency version and further contract evidence. This supersedes the promotion judgment below, not the retained screen results.
+
 Determine whether `terminus-store`, `agdb` or Cozo can preserve Meld's publication and revision semantics while taking over meaningful graph machinery. Use the [Graph contracts](graph_use_case_contracts.md), not the [proposed custom layout](graph_candidate_design.md), as the comparison authority. The Sled-first recommendation is held pending this comparison.
 
 This is an exploratory screen of three disposable adapters owned by Meld Eval. Native runtime integration is the next evidence boundary for a credible survivor; this screen cannot itself qualify a runtime replacement. Each adapter uses its engine's graph or relation operations. It must not hide the entire graph in one JSON blob and then run Meld's existing traversal in memory.

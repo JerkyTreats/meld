@@ -4,7 +4,7 @@ Slice `graph-engine-fit-v1`. Lifecycle: closed. Readiness: evidence supports arc
 
 ## Reason and decision
 
-The subsequent [graph-crate screen](graph_crate_experiment.md) exercises native graph and relation mappings beyond the Sled and SQLite index prototypes. Its results advance Cozo to a proposed native parity spike and preserve agdb recovery and Terminus history-scaling failures. No production engine has been selected.
+The subsequent [graph-crate screen](graph_crate_experiment.md) exercises native graph and relation mappings beyond the Sled and SQLite index prototypes. It initially advanced Cozo to a proposed native parity spike and preserved agdb recovery and Terminus history-scaling failures. The later [Cozo assessment](cozo_implementation_assessment.md) puts that promotion on hold after reproducing a released range-query defect. No production engine has been selected.
 
 The user identifies two equal concerns: a bespoke implementation could create endless maintenance, while an external graph system could force Meld's semantics into an unsuitable shape. The spike must expose both costs. Its result is permission to make an informed architecture decision, not an automatic preference for the fastest benchmark or the smallest dependency list.
 
