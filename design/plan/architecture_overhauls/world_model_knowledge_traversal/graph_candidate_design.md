@@ -6,7 +6,7 @@ Status: proposed successor shape, following the [use-case contracts](graph_use_c
 
 Meld should retain each owner's revision as independently queryable membership over shared immutable content and exact evidence bindings. Small indexes should select those revisions and locate objects or occurrences. Full publications should be reconstructible for explanation, rather than the mandatory unit of every read.
 
-Use the existing Sled resource for the first implementation of this shape. That is a recommendation based on the existing integration and measured prototype, not a long-term endorsement of an engine. The important replacement is the Graph representation and access path. A second database holding indexes beside Sled publication bodies adds a consistency boundary without yet removing the source of duplication.
+Engine selection remains open after the [graph-crate feasibility screen](graph_crate_experiment.md). The earlier Sled-first recommendation is held: Cozo now earns a bounded native parity comparison because its tested mapping delegates recursive query work and preserves the exercised semantics. Sled remains the existing integrated reference. The important replacement is the Graph representation and access path. A second database holding indexes beside Sled publication bodies adds a consistency boundary without yet removing the source of duplication.
 
 The recommended shape changes four things together: publication storage, currentness and visibility lookup, query preparation, and the receipt carried by frequent readers. An index-only cutover would leave significant costs in the other three. None of these changes requires Graph to decide domain truth, prescribe Strategy, or accept knowledge outside Events.
 
