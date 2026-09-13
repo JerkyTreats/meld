@@ -4,6 +4,8 @@ Status: proposed successor shape, following the [use-case contracts](graph_use_c
 
 ## Recommendation
 
+Current engine investigation: [agdb](agdb_implementation_assessment.md) is the lead candidate after a small disposable engine correction passes the full bounded publication screen. Released agdb remains unqualified for interrupted transactions, and Cozo promotion remains on hold. Representation recommendations below remain engine-independent.
+
 Meld should retain each owner's revision as independently queryable membership over shared immutable content and exact evidence bindings. Small indexes should select those revisions and locate objects or occurrences. Full publications should be reconstructible for explanation, rather than the mandatory unit of every read.
 
 Engine selection remains open after the [graph-crate feasibility screen](graph_crate_experiment.md) and [Cozo implementation assessment](cozo_implementation_assessment.md). The earlier Sled-first recommendation remains held. Cozo's useful query delegation warrants consideration, but the follow-up reproduces a correctness defect in released 0.7.6 and puts native promotion on hold. Sled remains the existing integrated reference. The important replacement is the Graph representation and access path. A second database holding indexes beside Sled publication bodies adds a consistency boundary without yet removing the source of duplication.
