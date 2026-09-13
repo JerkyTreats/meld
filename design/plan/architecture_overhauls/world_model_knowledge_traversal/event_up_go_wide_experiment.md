@@ -102,3 +102,6 @@ The user now asks for the [bounded Graph spike](graph_engine_spike.md), explicit
 
 
 The Graph spike is now complete as an evidence exercise. Both indexed arms preserve the exercised native graph meaning and remove history-driven reconstruction. Existing Sled with a maintained projection is the recommended next candidate. Immediate native restart fails in all arms because the predecessor owner lease remains valid; this blocks crash qualification and must be resolved before production adoption. See the [spike closeout](graph_engine_spike.md#execution-closeout) and [architecture proposal](graph_architecture_assessment.md). The canonical cognitive architecture has not been changed by this recommendation.
+
+
+Subsequent user direction keeps Graph architecture and optimization ahead of a broad [lifecycle hardening pass](lifecycle_hardening_followup.md). The recorded crash qualification gap is preserved. The next architectural question is whether the current publication, revision and traversal units need local correction or a more substantial internal redesign; the external-engine category has not been ruled out by the bounded adapter comparison.

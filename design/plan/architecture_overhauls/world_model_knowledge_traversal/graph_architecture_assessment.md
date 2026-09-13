@@ -1,14 +1,14 @@
 # Graph architecture after the engine spike
 
-Status: proposed architecture, grounded in the isolated `graph-engine-fit-v1` comparison. The spike authorizes evidence and recommendations; it does not authorize adopting a storage replacement. Evergreen cognitive architecture remains unchanged pending acceptance.
+Status: proposed architecture, grounded in the isolated `graph-engine-fit-v1` comparison. The spike authorizes evidence and recommendations; it does not authorize adopting a storage replacement. Evergreen cognitive architecture remains unchanged pending acceptance. Subsequent user direction prioritizes Graph architecture and optimization, with broader lifecycle hardening recorded separately.
 
 ## The problem and recommendation
 
 Meld currently makes an immutable semantic product expensive again whenever a reader needs it. Graph admission is incremental, but revision selection and traversal reconstruct retained publication history on reads. Adding history therefore taxes unrelated consumers and repeated planner work. The engine spike shows that this is primarily a projection and access-pattern problem.
 
-Prefer a maintained, versioned read projection on the existing Sled engine as the next implementation candidate. Do not write a database. The indexed prototype delegates durability, storage, indexing primitives and atomic batches to an existing engine; Meld owns the application keys and semantic contracts it would own with SQLite too. Keep the SQLite result as a credible alternative with concrete costs, not as a rejected category of technology.
+Assess the Graph representation and query architecture before treating either prototype as the production implementation. A maintained, versioned read projection on existing storage remains the strongest demonstrated local improvement. It is a reference candidate, not proof that the current Graph architecture needs only tuning. Do not write a database. The indexed prototype delegates durability, storage, indexing primitives and atomic batches to an existing engine; Meld owns the application keys and semantic contracts it would own with SQLite too. Keep the SQLite result as a credible alternative with concrete costs, not as a rejected category of technology.
 
-Neither prototype is ready for production adoption. Native crash recovery is blocked by a predecessor runtime lease, and the spike retains full historical publication bodies beside its indexes. The first blocks durability qualification through the product; the second makes storage growth explicit rather than solved.
+Neither prototype is ready for production adoption. Native crash recovery is blocked by a predecessor runtime lease, and the spike retains full historical publication bodies beside its indexes. The first blocks durability qualification through the product, but does not currently block architectural assessment or bounded optimization. The second makes storage growth explicit rather than solved. The broader [lifecycle hardening pass](lifecycle_hardening_followup.md) is recorded and deferred.
 
 The [evidence closeout](../../../../../meld-eval/evidence/graph-engine-fit-v1/CLOSEOUT.md) contains command receipts, executable identities, repeated measurements, trace coverage and calibration failures. It is the authority for exact numbers. The [spike design](graph_engine_spike.md) defines the hypotheses and bounded comparison.
 
@@ -19,6 +19,27 @@ Both indexed arms remove history-driven query reconstruction while preserving th
 This does not establish that Sled is the best general Graph engine, that SQLite cannot outperform this adapter, or that a dedicated graph database cannot represent Meld. The SQLite arm issues per-address queries through the existing traversal algorithm. Batching or moving traversal into SQL would be another design with its own ordering, bounds and provenance obligations. This bounded spike deliberately did not become that implementation project.
 
 The end-to-end journey improves much less than the history-sensitive query. It includes sensory scheduling, owner execution, Event transport, command serialization and harness observation. Removing one amplified read cost does not eliminate those costs. There are no model calls in this exercise and no new qualification of README quality.
+
+## The remaining architectural question
+
+The implemented baseline persists intact owner publications, then reconstructs a temporary graph from retained publications for a query. The spike makes those reads selective by adding durable indexes while retaining the original bodies. This demonstrates that the bottleneck is removable. It does not demonstrate that publication snapshots are the right physical unit for storage, change processing and traversal.
+
+The canonical [Graph design](../../../cognitive_architecture/world_model/graph/README.md) already distinguishes addressable owner products from a universal store or ontology. It supports selective cross-domain publication and owner-controlled hydration. Stable addresses, qualified relation occurrences, provenance and explicit cuts remain useful architectural foundations. None of the spike's results demonstrates that those semantic boundaries should be removed.
+
+The unresolved concern is how those semantics become persistent and queryable data. A single owner revision currently repeats source, hydration and provenance information across records; a new revision can change those bindings even when the underlying declaration is unchanged. Both prototypes repeat payloads across revision rows, and the Sled arm repeats relation payloads across adjacency directions. The head record even includes the full completeness receipt and its membership list. A faster lookup alone does not settle those structural costs.
+
+Examine four connected questions before selecting the implementation shape:
+
+- What is the reusable unit: an object address, an owner assertion, an observation, or a revision's membership in those products? Separate unchanged content from changed evidence and currentness without pretending that renewed provenance is unchanged.
+- Which information must be present during traversal, and which can remain with the owner until explanation or hydration requires it? Material qualifications must remain accessible and exact; compact representation does not permit reducing qualified relationships to bare edges.
+- What does a consumer actually need: exact dependency currentness, selected relations, an explanation path, or enumeration of an entire owner scope? Determine where the current interfaces cause work broader than the consumer's question.
+- How do change and historical retention scale? A small source change should not inherently require copying the entire retained world, and keeping a cut valid must have an explicit relationship to retained revision data.
+
+These are core Graph architecture questions, even if the resulting corrections fit inside existing domain boundaries and public contracts. They concern the units of data, versioning and query work. A different storage engine can implement a better shape, but an adapter that preserves the old shape cannot tell us how much of that architecture the engine could replace.
+
+External graph systems have not been ruled out. SQLite was the only implemented external comparison; graph-native candidates were not exercised. Both arms retained Meld's traversal algorithm. Reconsider engine fit after clarifying the required representation and query operations, rather than interpreting one adapter's latency as a verdict on an entire class of systems.
+
+The next assessment should use the existing command harness and retained publications to account for payload, repeated metadata, revision membership, index references and actual visited data separately. Whole-product file size is not a measurement of Graph payload alone. Keep source meaning fixed while identifying structural amplification; choosing fewer domain facts is a separate domain-theory decision. The intended result is a justified choice between local projection corrections and a broader internal redesign, not an assumption that a rewrite is necessary.
 
 ## A Graph that is performant by default
 
@@ -85,20 +106,20 @@ The private index modules are 207 lines for Sled and 266 for SQLite after format
 
 SQLite's signed integer sequence storage also rejects positions outside its supported integer range rather than silently wrapping. The current native Event position is unsigned. The exercised range is small; full-range representation is an unresolved mapping obligation. Neither arm qualifies large multi-owner workloads, temporal reasoning, branch retention, concurrent readers under heavy writes, graph compaction or arbitrary domain growth.
 
-## Recovery is the immediate qualification gap
+## Recovery remains a separate qualification gap
 
 Every crash probe stops the configured process, then asks the native runtime to start again with the failpoint disabled. At both requested persistence boundaries, all three arms are refused because the previous instance still holds the `code-semantics.observation` lease for approximately 15 minutes. The failure occurs before the new runtime can establish readiness and demonstrate replay convergence.
 
 This is a shared lifecycle flaw in the exercised recovery journey. It does not prove data loss, successful replay or a defect specific to either engine. The probes leave the stores intact and record the failed native command. They do not patch lease records, rewrite Graph cursors or bypass the runtime to manufacture a pass.
 
-The next recovery slice should establish how a dead local owner can be fenced and its work reconciled through existing runtime authority. A restart must not steal work from a still-valid live owner. Durable instance identity, local ownership evidence and the existing lease protocol should determine takeover; do not replace that analysis with a shorter arbitrary timeout. Then rerun both crash boundaries and an exact retained cut through the normal commands. Power-loss durability, index rebuild interruption and migration remain separate tests.
+When the deferred [lifecycle hardening pass](lifecycle_hardening_followup.md) is undertaken, it should establish how a dead local owner can be fenced and its work reconciled through existing runtime authority. A restart must not steal work from a still-valid live owner. Durable instance identity, local ownership evidence and the existing lease protocol should determine takeover; do not replace that analysis with a shorter arbitrary timeout. Then rerun both crash boundaries and an exact retained cut through the normal commands. Power-loss durability, index rebuild interruption and migration remain separate tests.
 
 ## Proposed delivery boundary
 
-First resolve and qualify native crash recovery. Then make one indexed projection the canonical Graph read path, with an explicit schema generation and a bounded migration from retained Events or validated publications. Retire repeated full-history reads from revision selection and traversal in that completed change. Preserve intact publication retrieval for existing consumers until its replacement has parity evidence.
+Prioritize the Graph representation and query assessment, then the justified optimization of current structures. Do not require the broad lifecycle hardening pass first unless its findings would materially change that work or prevent necessary consistency evidence. If a versioned indexed projection is selected, make it the canonical Graph read path with an explicit schema generation and a bounded migration from retained Events or validated publications. Retire repeated full-history reads from revision selection and traversal in that completed change. Preserve intact publication retrieval for existing consumers until its replacement has parity evidence.
 
 Within that delivery, measure currentness and wake checks as consumers of the same projection, remove redundant query-local decodes where evidence warrants it, and account for payload duplication. Do not expand into a general query language or change domain publications merely to make a benchmark smaller. Follow with retention design before claiming unbounded continuous operation.
 
 Acceptance should include native Event admission, byte-exact publication correspondence, cross-run input accounting, incomplete supersession, distinct qualified occurrences, retained cuts during change and after restart, crash replay, explicit expiry behavior when retention is introduced, and history-versus-live-size measurements. Keep the same command-first harness. The engine choice remains revisitable when a demonstrated contract or workload exceeds the small indexed projection.
 
-The architecture circuit breaker was not triggered by an inability to represent Meld's semantics in either candidate. The recovery gate did prevent production qualification. That distinction supports completing this evidence spike while keeping adoption blocked on a concrete runtime gap.
+The architecture circuit breaker was not triggered by an inability to represent Meld's semantics in either candidate. The recovery gate did prevent production qualification. That distinction supports completing the evidence spike and continuing Graph work while keeping crash-recovery qualification explicitly open.
