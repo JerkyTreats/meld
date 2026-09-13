@@ -2,6 +2,8 @@
 
 Status: proposed design invariants for assessing Graph candidates, requested after the engine spike. This document defines required meaning and useful work boundaries. It selects no engine, changes no runtime authority and does not claim production qualification. The [evidence and domain assessment](graph_contract_evidence.md) records the source basis and confidence limits.
 
+The subsequent [candidate design](graph_candidate_design.md) applies this frame to concrete representation alternatives and recommends independent revision membership over shared immutable content and evidence bindings. It includes new public-capture accounting and the implications for compact cut receipts. The recommendation remains separate from native implementation qualification.
+
 ## The shape that must hold
 
 Meld must let an Agent repeatedly ask a small question about retained knowledge without repeatedly reconstructing everything that was ever published. At the same time, that answer must remain tied to the exact owner products, evidence and revisions that justified it. An index improves access; the architecture must also define the units being indexed, retained and reused.

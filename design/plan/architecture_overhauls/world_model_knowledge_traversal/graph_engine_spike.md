@@ -127,6 +127,8 @@ Prototype checkpoints are Meld `cff89b22` on `spike/graph-engine-fit`, indexed S
 
 ## Subsequent priority decision
 
+The [candidate design](graph_candidate_design.md) now recommends the complete representation and query shape, supported by new [public-capture layout accounting](../../../../../meld-eval/evidence/graph-representation-v1/README.md). This refines the index recommendation without claiming that a new storage implementation has been exercised.
+
 The requested deep dive is captured in [Graph use-case contracts and candidate assessment](graph_use_case_contracts.md), with a [source and domain evidence appendix](graph_contract_evidence.md). These documents define the shape candidates must preserve, distinguish intended invariants from current gaps, and map representation, traversal payload, consumer questions and historical scaling to explicit assessment criteria. No new engine comparison or production cutover is implied.
 
 The user prioritizes Graph architecture assessment and optimization of current structures. Record a broad [runtime lifecycle hardening follow-up](lifecycle_hardening_followup.md) rather than making lease recovery the next compulsory slice. The shared recovery failure limits qualification but does not currently alter the performance recommendation. External graph systems remain unexcluded: only one SQLite adapter was implemented, while Meld's existing traversal algorithm and publication shape remained largely intact. The [architecture assessment](graph_architecture_assessment.md#the-remaining-architectural-question) now distinguishes the demonstrated index improvement from the unresolved representation, change-granularity and query-design questions.

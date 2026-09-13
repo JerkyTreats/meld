@@ -4,6 +4,8 @@ Status: proposed architecture, grounded in the isolated `graph-engine-fit-v1` co
 
 ## The problem and recommendation
 
+The subsequent [representation and query recommendation](graph_candidate_design.md) refines this spike-era projection recommendation. Its new lossless publication accounting supports shared content and evidence bindings with independent revision membership, alongside direct visibility lookup, bounded frozen reads and versioned compact receipts. The existing indexed arm remains the reference candidate; adopting it unchanged would not complete that successor shape.
+
 Meld currently makes an immutable semantic product expensive again whenever a reader needs it. Graph admission is incremental, but revision selection and traversal reconstruct retained publication history on reads. Adding history therefore taxes unrelated consumers and repeated planner work. The engine spike shows that this is primarily a projection and access-pattern problem.
 
 Assess the Graph representation and query architecture before treating either prototype as the production implementation. A maintained, versioned read projection on existing storage remains the strongest demonstrated local improvement. It is a reference candidate, not proof that the current Graph architecture needs only tuning. Do not write a database. The indexed prototype delegates durability, storage, indexing primitives and atomic batches to an existing engine; Meld owns the application keys and semantic contracts it would own with SQLite too. Keep the SQLite result as a credible alternative with concrete costs, not as a rejected category of technology.
