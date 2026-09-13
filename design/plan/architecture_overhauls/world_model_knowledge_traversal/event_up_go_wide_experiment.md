@@ -4,6 +4,8 @@ Date: 2026-09-12. Lifecycle: bounded experiment qualified; successor Graph spike
 
 ## Reason and outcome
 
+The subsequent [Graph contract assessment](graph_use_case_contracts.md) now defines candidate-independent use cases, semantic invariants and work boundaries. Its [evidence appendix](graph_contract_evidence.md) accounts for publishers, consumers and the baseline gaps beyond traversal. This is the assessment frame for the next architecture decision; Graph implementation and lifecycle hardening remain separate from this completed experiment.
+
 The [previous experiment](strategy_planning_experiment.md) is closed by explicit user acceptance. It proves a bounded Tree-sitter-to-knowledge path, native recursive Strategy construction and autonomous reconciliation when a tracked semantic assertion changes. It does not prove repository-wide observation, a generally coherent representation of code, automatic generation of README claims or whole-document maintenance.
 
 The next exercise deliberately goes wide and moves upward from Events. Use Gmail Operator as a real repository of manageable size. Establish broad sensory coverage and native ingestion before deciding whether `meld-lang` can express the resulting relationships coherently. Only then reconsider the README PDS around claims curation. The exact-assertion Boolean bridge is a regression fixture, not the abstraction to multiply across the repository.

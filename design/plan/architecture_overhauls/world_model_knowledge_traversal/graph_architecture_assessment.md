@@ -12,6 +12,8 @@ Neither prototype is ready for production adoption. Native crash recovery is blo
 
 The [evidence closeout](../../../../../meld-eval/evidence/graph-engine-fit-v1/CLOSEOUT.md) contains command receipts, executable identities, repeated measurements, trace coverage and calibration failures. It is the authority for exact numbers. The [spike design](graph_engine_spike.md) defines the hypotheses and bounded comparison.
 
+The subsequent [Graph use-case contracts](graph_use_case_contracts.md) define the semantic and scaling invariants for comparing candidate architectures. They integrate the four questions below with actual consumer operations. The accompanying [evidence and domain assessment](graph_contract_evidence.md) identifies additional baseline gaps: ambiguous structured address keys, query-triggered catch-up even for frozen reads, and full-history publication-visibility checks. These findings widen the assessment beyond the isolated traversal benchmark without selecting a replacement.
+
 ## What the evidence means
 
 Both indexed arms remove history-driven query reconstruction while preserving the exercised Event-to-publication meaning. Indexed Sled is the smaller and faster adapter in this workload. SQLite supplies atomic index transactions and declarative secondary indexes, but still carries Meld's cut selection rules, breadth-first traversal, explicit occurrence records and the original Sled publication history. It has not demonstrated a reduction in total system maintenance here.
