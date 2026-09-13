@@ -694,15 +694,17 @@ impl StartupAccountReader {
             );
             if let Some(event) = &event {
                 let expected = nonce.publication().map_err(storage)?;
-                for publication in graph
-                    .owner_publications_through_seq(cursor.after_seq)
-                    .map_err(storage)?
-                {
-                    if publication.operation == expected
-                        && publication.source_event.ledger_id == watermark.ledger_id
-                        && publication.source_event.seq == event.seq
+                if event.seq <= cursor.after_seq {
+                    if let Some(publication) = graph
+                        .owner_publication_for_event(event.seq)
+                        .map_err(storage)?
                     {
-                        visible.push(publication.operation.operation_id);
+                        if publication.operation == expected
+                            && publication.source_event.ledger_id == watermark.ledger_id
+                            && publication.source_event.seq == event.seq
+                        {
+                            visible.push(publication.operation.operation_id);
+                        }
                     }
                 }
             }

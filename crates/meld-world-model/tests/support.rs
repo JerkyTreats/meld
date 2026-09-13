@@ -49,14 +49,17 @@ pub struct GraphRuntimeTestFixture {
 }
 
 impl GraphRuntimeTestFixture {
-    pub fn open(db: sled::Db) -> Result<Self, StorageError> {
+    pub fn open(
+        db: sled::Db,
+        graph_path: impl AsRef<std::path::Path>,
+    ) -> Result<Self, StorageError> {
         let authority = EventAuthority::open(db.clone(), EventAuthorityOpenOptions::default())
             .map_err(|error| StorageError::InvalidPath(error.to_string()))?;
         let ports = Arc::new(TestGraphPorts {
             replay: authority.replay_capability(),
             registry: authority.consumer_registry_capability(),
         });
-        let traversal = TraversalStore::shared(db)?;
+        let traversal = TraversalStore::shared(db, graph_path)?;
         let runtime = Arc::new(GraphRuntime::from_ports(ports.clone(), ports, traversal)?);
         Ok(Self { authority, runtime })
     }
@@ -93,7 +96,8 @@ pub fn project_belief(
 ) -> meld_world_model::WorldModelView {
     use meld_world_model::graph::contracts::*;
     use meld_world_model::planner::*;
-    let fixture = GraphRuntimeTestFixture::open(graph.db().clone()).unwrap();
+    let fixture =
+        GraphRuntimeTestFixture::open(graph.db().clone(), graph.publication_path()).unwrap();
     let runtime = fixture.runtime();
     runtime.catch_up().unwrap();
     let scope = OwnerPublicationScope {

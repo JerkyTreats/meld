@@ -2,6 +2,8 @@
 
 Status: proposed successor shape, following the [use-case contracts](graph_use_case_contracts.md). The user authorized comparing complete designs against those contracts. This document recommends a design and its implementation boundary; it does not record a production cutover. Existing owner publications and domain meaning remain the input contract.
 
+The subsequent [native delivery](agdb_native_delivery.md) selects agdb for publication storage, indexed selection and adjacency, while explicitly deferring compact cut receipts, metadata colocation, high-degree work budgets and retention collection. The proposal below remains the broader target; its engine-selection discussion records the pre-integration assessment.
+
 ## Recommendation
 
 Current engine investigation: [agdb](agdb_implementation_assessment.md) is the lead candidate after a small disposable engine correction passes the full bounded publication screen. Released agdb remains unqualified for interrupted transactions, and Cozo promotion remains on hold. Representation recommendations below remain engine-independent.

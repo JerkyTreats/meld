@@ -1,0 +1,46 @@
+use crate::DbElement;
+use crate::DbError;
+use crate::DbImpl;
+use crate::Query;
+use crate::QueryResult;
+use crate::StorageData;
+
+/// Query to select all aliases in the database.
+///
+/// The result will be number of returned aliases and list
+/// of elements with a single property `String("alias")` holding
+/// the value `String`.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "derive", derive(agdb::DbSerialize))]
+#[cfg_attr(feature = "api", derive(agdb::TypeDef))]
+#[derive(Clone, Debug, PartialEq)]
+pub struct SelectAllAliasesQuery {}
+
+impl Query for SelectAllAliasesQuery {
+    fn process<Store: StorageData>(&self, db: &DbImpl<Store>) -> Result<QueryResult, DbError> {
+        let mut result = QueryResult::default();
+
+        let mut aliases = db.aliases();
+        aliases.sort();
+        result.elements.reserve(aliases.len());
+        result.result = aliases.len() as u64;
+
+        for alias in aliases {
+            result.elements.push(DbElement {
+                id: alias.1,
+                from: db.from_id(alias.1)?,
+                to: db.to_id(alias.1)?,
+                values: vec![("alias", alias.0).into()],
+            });
+        }
+
+        Ok(result)
+    }
+}
+
+impl Query for &SelectAllAliasesQuery {
+    fn process<Store: StorageData>(&self, db: &DbImpl<Store>) -> Result<QueryResult, DbError> {
+        (*self).process(db)
+    }
+}

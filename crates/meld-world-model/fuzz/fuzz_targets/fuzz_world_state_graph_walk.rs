@@ -29,7 +29,7 @@ fuzz_target!(|data: &[u8]| {
     };
     let temp = tempfile::tempdir().expect("tempdir");
     let fixture =
-        GraphRuntimeTestFixture::open(sled::open(temp.path()).expect("sled")).expect("fixture");
+        GraphRuntimeTestFixture::open(sled::open(temp.path()).expect("sled"), temp.path().join("graph.agdb")).expect("fixture");
     let runtime = fixture.runtime();
     let store = runtime.traversal_store();
 

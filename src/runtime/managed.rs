@@ -14,6 +14,8 @@ use crate::error::ApiError;
 use serde::Serialize;
 
 mod accounts;
+#[cfg(target_os = "linux")]
+mod process_exit;
 
 const DEADLINE: Duration = Duration::from_secs(15);
 
@@ -321,6 +323,9 @@ fn stop(
     json: bool,
 ) -> Result<String, ApiError> {
     let current = discover_live(target)?;
+    #[cfg(target_os = "linux")]
+    let exit =
+        process_exit::ExitWitness::capture(current.as_ref().map(|(_, status)| status.process_id))?;
     let instance = if let Some((url, status)) = current {
         if expected.is_some_and(|id| id != status.instance.instance_id) {
             return Err(error(
@@ -365,9 +370,18 @@ fn stop(
             if let Some(shutdown) = store.get_shutdown_state(&key).map_err(error)? {
                 match shutdown.status {
                     RuntimeShutdownStatus::Completed => {
+                        // Releasing the supervisor store can precede destruction
+                        // of product stores. A verified process handle closes
+                        // that gap without reopening or repairing those stores.
+                        #[cfg(target_os = "linux")]
+                        if !exit.ready()? {
+                            drop(store);
+                            std::thread::sleep(Duration::from_millis(50));
+                            continue;
+                        }
                         return render(&shutdown, json, || {
                             format!("Stopped {}\nShutdown: {}", instance.instance_id, key)
-                        })
+                        });
                     }
                     RuntimeShutdownStatus::Failed | RuntimeShutdownStatus::TimedOut => {
                         return Err(error(format!(

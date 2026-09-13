@@ -35,7 +35,7 @@ fn request() -> BoundedTraversalRequest {
 fn load_graph(path: &std::path::Path, revision: &str) -> LedgerCursor {
     let db = sled::open(path).unwrap();
     let fixture = open_authority_progress(db.clone());
-    let graph = fixture.graph_runtime(db);
+    let graph = fixture.graph_runtime(db, path.join("graph.agdb"));
     let hydration = HydrationReference {
         owner_id: "sample".into(),
         product_kind: "sample".into(),

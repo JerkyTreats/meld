@@ -776,9 +776,11 @@ mod tests {
     /// {fact -> event seq 5, anchor -> fact}, with one absent anchor
     /// reference left dangling on the evidence.
     fn chain_world() -> ChainWorld {
+        let graph_directory = tempfile::tempdir().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let db = sled::open(dir.path().join("world")).unwrap();
-        let traversal = TraversalStore::new(db.clone()).unwrap();
+        let traversal =
+            TraversalStore::new(db.clone(), graph_directory.path().join("graph.agdb")).unwrap();
         let belief = BeliefStore::new(db.clone()).unwrap();
         let agent = AgentStore::new(db.clone()).unwrap();
         let legacy_db = db.clone();
@@ -925,6 +927,7 @@ mod tests {
 
     #[test]
     fn owner_publication_thread_follows_its_exact_ledger_and_refuses_foreign_replay() {
+        let graph_directory = tempfile::tempdir().unwrap();
         use crate::runtime::ports::ProductGraphCursorPort;
         use meld_events::{AppendMode, EventAuthority, EventAuthorityOpenOptions};
         use meld_world_model::world_state::graph::runtime::GraphRuntime;
@@ -936,7 +939,11 @@ mod tests {
         .unwrap();
         let replay = Arc::new(ProductEventReplayPort::new(events.replay_capability()));
         let graph = Arc::new(
-            TraversalStore::new(sled::Config::new().temporary(true).open().unwrap()).unwrap(),
+            TraversalStore::new(
+                sled::Config::new().temporary(true).open().unwrap(),
+                graph_directory.path().join("graph.agdb"),
+            )
+            .unwrap(),
         );
         let runtime = GraphRuntime::from_ports(
             replay.clone(),

@@ -638,7 +638,11 @@ mod tests {
             store::TraversalStore,
         };
         let store = Arc::new(
-            TraversalStore::new(sled::open(external.path().join("graph")).unwrap()).unwrap(),
+            TraversalStore::new(
+                sled::open(external.path().join("graph")).unwrap(),
+                external.path().join("graph.agdb"),
+            )
+            .unwrap(),
         );
         let route = super::super::publication::graph_route();
         store.install_owner_event_route(&route).unwrap();

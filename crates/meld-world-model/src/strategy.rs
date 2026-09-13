@@ -1,9 +1,9 @@
 //! Pure Strategy construction over immutable world-model inputs.
 
 mod contracts;
+mod refinement;
 mod registry;
 mod search;
-mod refinement;
 mod verification;
 
 pub use contracts::*;

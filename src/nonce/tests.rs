@@ -72,6 +72,7 @@ fn closed_request_schema_rejects_forged_identity_and_diagnostics() {
 
 #[test]
 fn nonce_owner_event_reaches_graph_only_through_its_exact_installed_route() {
+    let graph_directory = tempfile::tempdir().unwrap();
     use crate::runtime::ports::{ProductEventReplayPort, ProductGraphCursorPort};
     use meld_world_model::world_state::graph::contracts::*;
     use meld_world_model::world_state::graph::runtime::{GraphCatchUpBudget, GraphRuntime};
@@ -83,14 +84,17 @@ fn nonce_owner_event_reaches_graph_only_through_its_exact_installed_route() {
     )
     .unwrap();
     let db = sled::open(temp.path().join("world-model")).unwrap();
-    let store = Arc::new(TraversalStore::new(db.clone()).unwrap());
+    let store = Arc::new(
+        TraversalStore::new(db.clone(), graph_directory.path().join("graph.agdb")).unwrap(),
+    );
     let route = graph_route();
     let reference = store.install_owner_event_route(&route).unwrap();
     assert_eq!(store.install_owner_event_route(&route).unwrap(), reference);
     let mut foreign_contract = route.clone();
     foreign_contract.enumeration_rule_revision = "foreign-revision".into();
     assert!(store.install_owner_event_route(&foreign_contract).is_err());
-    let store = Arc::new(TraversalStore::new(db).unwrap());
+    let store =
+        Arc::new(TraversalStore::new(db, graph_directory.path().join("graph.agdb")).unwrap());
     assert_eq!(
         store.owner_event_route(OWNER_ID, EVENT_TYPE).unwrap(),
         Some(route)
@@ -550,8 +554,13 @@ async fn admitted_nonce_task_reaches_graph_before_outcome_and_recovers_one_durab
     assert_eq!(nonce_events.len(), 1, "{first:?}");
     assert_eq!(hydrate(&nonce_events[0]).unwrap(), nonce);
 
-    let world =
-        Arc::new(TraversalStore::new(sled::open(temp.path().join("world")).unwrap()).unwrap());
+    let world = Arc::new(
+        TraversalStore::new(
+            sled::open(temp.path().join("world")).unwrap(),
+            temp.path().join("graph.agdb"),
+        )
+        .unwrap(),
+    );
     world.install_owner_event_route(&graph_route()).unwrap();
     GraphRuntime::from_ports(
         Arc::new(ProductEventReplayPort::new(authority.replay_capability())),
@@ -649,6 +658,7 @@ fn shipped_nonce_package_installs_exact_owner_contracts_without_starting_work() 
 
 #[test]
 fn curation_assesses_nonce_source_under_a_distinct_exact_agent_judgment_scope() {
+    let graph_directory = tempfile::tempdir().unwrap();
     use crate::runtime::ports::{
         ProductCurationTraversalPort, ProductEventAppendPort, ProductEventReplayPort,
         ProductGraphCursorPort,
@@ -665,7 +675,9 @@ fn curation_assesses_nonce_source_under_a_distinct_exact_agent_judgment_scope() 
     )
     .unwrap();
     let db = sled::open(temp.path().join("world")).unwrap();
-    let graph_store = Arc::new(TraversalStore::new(db.clone()).unwrap());
+    let graph_store = Arc::new(
+        TraversalStore::new(db.clone(), graph_directory.path().join("graph.agdb")).unwrap(),
+    );
     graph_store
         .install_owner_event_route(&graph_route())
         .unwrap();
@@ -880,6 +892,7 @@ fn curation_assesses_nonce_source_under_a_distinct_exact_agent_judgment_scope() 
 
 #[test]
 fn complete_event_source_proves_absence_then_realization_without_fabricated_events() {
+    let graph_directory = tempfile::tempdir().unwrap();
     use crate::runtime::ports::{
         ProductCurationTraversalPort, ProductEventAppendPort, ProductEventReplayPort,
         ProductGraphCursorPort,
@@ -897,7 +910,9 @@ fn complete_event_source_proves_absence_then_realization_without_fabricated_even
     .unwrap();
     let ledger_id = authority.append_capability().ledger_identity();
     let db = sled::open(temp.path().join("world")).unwrap();
-    let graph_store = Arc::new(TraversalStore::new(db.clone()).unwrap());
+    let graph_store = Arc::new(
+        TraversalStore::new(db.clone(), graph_directory.path().join("graph.agdb")).unwrap(),
+    );
     graph_store
         .install_owner_event_route(&graph_route())
         .unwrap();
@@ -1119,7 +1134,7 @@ fn complete_event_source_proves_absence_then_realization_without_fabricated_even
             .absent_roots,
         next_request.roots
     );
-    let reopened = TraversalStore::new(db).unwrap();
+    let reopened = TraversalStore::new(db, graph_directory.path().join("graph.agdb")).unwrap();
     assert!(reopened
         .covers_event_source(ledger_id, OWNER_ID, &source_ref)
         .unwrap());
@@ -1145,6 +1160,7 @@ fn complete_event_source_proves_absence_then_realization_without_fabricated_even
 
 #[test]
 fn late_owner_route_gains_coverage_only_after_bounded_durable_historical_replay() {
+    let graph_directory = tempfile::tempdir().unwrap();
     use crate::runtime::ports::{ProductEventReplayPort, ProductGraphCursorPort};
     use meld_world_model::world_state::graph::contracts::*;
     use meld_world_model::world_state::graph::runtime::{GraphCatchUpBudget, GraphRuntime};
@@ -1156,7 +1172,9 @@ fn late_owner_route_gains_coverage_only_after_bounded_durable_historical_replay(
     )
     .unwrap();
     let db = sled::open(temp.path().join("world")).unwrap();
-    let store = Arc::new(TraversalStore::new(db.clone()).unwrap());
+    let store = Arc::new(
+        TraversalStore::new(db.clone(), graph_directory.path().join("graph.agdb")).unwrap(),
+    );
     let nonce = request("late-route");
     let emitted = emit(&authority.append_capability(), "late-route", &nonce).unwrap();
     authority
@@ -1245,7 +1263,8 @@ fn late_owner_route_gains_coverage_only_after_bounded_durable_historical_replay(
     );
     drop(graph);
     drop(store);
-    let store = Arc::new(TraversalStore::new(db).unwrap());
+    let store =
+        Arc::new(TraversalStore::new(db, graph_directory.path().join("graph.agdb")).unwrap());
     let graph = make_graph(store.clone());
     let second = graph
         .catch_up_bounded(GraphCatchUpBudget { max_items: 1 })

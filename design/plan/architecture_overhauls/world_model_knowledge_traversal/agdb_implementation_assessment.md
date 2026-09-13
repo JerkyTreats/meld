@@ -1,6 +1,8 @@
 # agdb implementation assessment
 
-Status: agdb is the lead candidate for continued graph-engine investigation. Released 0.13.2 still has a reproduced interruption defect. A disposable corrected build passes the bounded screen; no engine change has entered Meld. This follows the [Cozo assessment](cozo_implementation_assessment.md) and the original [graph-crate experiment](graph_crate_experiment.md).
+This is the pre-integration assessment. The subsequent [native delivery](agdb_native_delivery.md) implements the bounded agdb cutover and records current evidence. Statements below about integration not having entered Meld describe the assessment checkpoint.
+
+Status at assessment: agdb is the lead candidate for continued graph-engine investigation. Released 0.13.2 still has a reproduced interruption defect. A disposable corrected build passes the bounded screen; no engine change has entered Meld. This follows the [Cozo assessment](cozo_implementation_assessment.md) and the original [graph-crate experiment](graph_crate_experiment.md).
 
 **The observed agdb failure has a small candidate correction in the engine, so the next investment should preserve the upstream route rather than add recovery machinery to Meld.** Recent maintenance makes that route more credible than it appeared for Cozo. It does not substitute for correctness evidence.
 

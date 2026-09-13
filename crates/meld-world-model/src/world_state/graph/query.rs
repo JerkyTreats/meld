@@ -1,15 +1,15 @@
 //! Read-only traversal over owner publications selected by a canonical Event cut.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::error::StorageError;
 use crate::events::{DomainObjectRef, LedgerCursor};
 use crate::world_state::graph::contracts::{
     traversal_cut_identity, traversal_result_identity, BoundedTraversalRequest,
     OwnerCompletenessStatus, OwnerGraphRevisionReceipt, OwnerObjectPublication,
-    OwnerRelationOccurrence, ProjectedOwnerPublication, TraversalCut, TraversalCutIssue,
-    TraversalCutRequest, TraversalCutStatus, TraversalDirection, TraversalFrontierEntry,
-    TraversalFrontierReason, TraversalPath, TraversalResult, TraversalTruncation,
+    OwnerRelationOccurrence, TraversalCut, TraversalCutIssue, TraversalCutRequest,
+    TraversalCutStatus, TraversalDirection, TraversalFrontierEntry, TraversalFrontierReason,
+    TraversalPath, TraversalResult, TraversalTruncation,
 };
 use crate::world_state::graph::store::TraversalStore;
 
@@ -35,7 +35,6 @@ impl<'a> TraversalQuery<'a> {
             .authority_cursor(request.event_position.ledger_id)?;
         let reduced_seq = graph_position.after_seq;
         let visible_seq = reduced_seq.min(request.event_position.after_seq);
-        let publications = self.store.owner_publications_through_seq(visible_seq)?;
         let mut receipts = Vec::new();
         let mut issues = Vec::new();
         if request.event_position.after_seq > reduced_seq {
@@ -66,23 +65,9 @@ impl<'a> TraversalQuery<'a> {
             } else {
                 None
             };
-            let selected = publications
-                .iter()
-                .filter(|publication| {
-                    let batch = &publication.operation.batch;
-                    batch.owner_id == requirement.owner_id
-                        && batch.scope == requirement.scope
-                        && requirement
-                            .event_source
-                            .as_ref()
-                            .is_none_or(|source| publication.source_route.as_ref() == Some(source))
-                })
-                .max_by(|left, right| {
-                    (left.source_event.seq, &left.operation.operation_id)
-                        .cmp(&(right.source_event.seq, &right.operation.operation_id))
-                });
+            let selected = self.store.publications.select(requirement, visible_seq)?;
             if let Some(publication) = selected {
-                let batch = &publication.operation.batch;
+                let batch = &publication;
                 if batch.completeness.status != OwnerCompletenessStatus::Complete {
                     if requirement.required {
                         issues.push(TraversalCutIssue::MissingRequiredOwner {
@@ -176,12 +161,41 @@ impl<'a> TraversalQuery<'a> {
         cut.validate_identity()?;
         request.validate()?;
         let request = request.normalized();
-        let publications = selected_publications(
-            self.store
-                .owner_publications_through_seq(cut.graph_position.after_seq)?,
+        self.store.authority_cursor(cut.event_position.ledger_id)?;
+        for receipt in &cut.receipts {
+            if let Some(event) = receipt.source_event {
+                let publication = self
+                    .store
+                    .publications
+                    .header_for_event(event.seq)?
+                    .ok_or_else(|| {
+                        StorageError::InvalidPath("cut publication is unavailable".into())
+                    })?;
+                let batch = &publication;
+                if event != publication.source_event
+                    || event.ledger_id != cut.event_position.ledger_id
+                    || event.seq
+                        > cut
+                            .event_position
+                            .after_seq
+                            .min(cut.graph_position.after_seq)
+                    || batch.owner_id != receipt.owner_id
+                    || batch.scope != receipt.scope
+                    || batch.revision_id != receipt.revision_id
+                    || batch.completeness != receipt.completeness
+                    || batch.work_input_basis_id != receipt.work_input_basis_id
+                {
+                    return Err(StorageError::InvalidPath(
+                        "cut receipt disagrees with admitted publication".into(),
+                    ));
+                }
+            }
+        }
+        let graph = PublicationGraph {
+            store: self.store,
             cut,
-        );
-        let graph = PublicationGraph::new(publications);
+            objects: Default::default(),
+        };
         let mut absent_roots = Vec::new();
         let mut selected_objects = BTreeMap::new();
         let mut selected_occurrences = BTreeMap::new();
@@ -192,7 +206,7 @@ impl<'a> TraversalQuery<'a> {
         let mut queue = VecDeque::new();
 
         for root in &request.roots {
-            let root_observed = graph.objects_by_address.contains_key(&root.index_key());
+            let root_observed = !graph.objects(root)?.is_empty();
             if !root_observed {
                 if cut.status == TraversalCutStatus::Complete
                     && cut.receipts.iter().any(|receipt| {
@@ -211,7 +225,10 @@ impl<'a> TraversalQuery<'a> {
                     continue;
                 }
             }
-            if !visited.insert(root.index_key()) {
+            if !visited.insert(
+                serde_json::to_string(root)
+                    .map_err(|e| StorageError::InvalidPath(e.to_string()))?,
+            ) {
                 continue;
             }
             let path = TraversalPath {
@@ -230,7 +247,7 @@ impl<'a> TraversalQuery<'a> {
                     root,
                     request.bounds.max_objects,
                     &mut selected_objects,
-                )
+                )?
             {
                 truncation.objects = true;
                 frontier.push(frontier_entry(
@@ -244,7 +261,7 @@ impl<'a> TraversalQuery<'a> {
         }
 
         while let Some((current, depth, path)) = queue.pop_front() {
-            let candidates = graph.candidates(&current, &request);
+            let candidates = graph.candidates(&current, &request)?;
             if depth >= request.bounds.max_depth {
                 if !candidates.is_empty() {
                     truncation.depth = true;
@@ -272,10 +289,7 @@ impl<'a> TraversalQuery<'a> {
                 selected_occurrences
                     .entry(occurrence_key)
                     .or_insert_with(|| candidate.occurrence.clone());
-                if !graph
-                    .objects_by_address
-                    .contains_key(&candidate.neighbor.index_key())
-                {
+                if graph.objects(&candidate.neighbor)?.is_empty() {
                     frontier.push(frontier_entry(
                         &candidate.neighbor,
                         depth + 1,
@@ -288,7 +302,10 @@ impl<'a> TraversalQuery<'a> {
                 next_path
                     .occurrence_ids
                     .push(candidate.occurrence.occurrence_id.clone());
-                if visited.contains(&candidate.neighbor.index_key()) {
+                if visited.contains(
+                    &serde_json::to_string(&candidate.neighbor)
+                        .map_err(|e| StorageError::InvalidPath(e.to_string()))?,
+                ) {
                     if !paths.contains(&next_path) {
                         if paths.len() >= request.bounds.max_paths {
                             truncation.paths = true;
@@ -303,7 +320,7 @@ impl<'a> TraversalQuery<'a> {
                     }
                     continue;
                 }
-                if graph.object_count(&candidate.neighbor) + selected_objects.len()
+                if graph.objects(&candidate.neighbor)?.len() + selected_objects.len()
                     > request.bounds.max_objects
                 {
                     truncation.objects = true;
@@ -323,14 +340,17 @@ impl<'a> TraversalQuery<'a> {
                     ));
                     continue;
                 }
-                visited.insert(candidate.neighbor.index_key());
+                visited.insert(
+                    serde_json::to_string(&candidate.neighbor)
+                        .map_err(|e| StorageError::InvalidPath(e.to_string()))?,
+                );
                 paths.push(next_path.clone());
                 select_objects(
                     &graph,
                     &candidate.neighbor,
                     request.bounds.max_objects,
                     &mut selected_objects,
-                );
+                )?;
                 queue.push_back((candidate.neighbor, depth + 1, next_path));
             }
         }
@@ -363,105 +383,71 @@ impl<'a> TraversalQuery<'a> {
     }
 }
 
-fn selected_publications(
-    publications: Vec<ProjectedOwnerPublication>,
-    cut: &TraversalCut,
-) -> Vec<ProjectedOwnerPublication> {
-    let events = cut
-        .receipts
-        .iter()
-        .filter_map(|receipt| receipt.source_event)
-        .collect::<HashSet<_>>();
-    publications
-        .into_iter()
-        .filter(|publication| events.contains(&publication.source_event))
-        .collect()
+struct PublicationGraph<'a> {
+    store: &'a TraversalStore,
+    cut: &'a TraversalCut,
+    objects: std::cell::RefCell<BTreeMap<String, Vec<OwnerObjectPublication>>>,
 }
 
-struct PublicationGraph {
-    objects_by_address: BTreeMap<String, Vec<OwnerObjectPublication>>,
-    outgoing: BTreeMap<String, Vec<TraversalCandidate>>,
-    incoming: BTreeMap<String, Vec<TraversalCandidate>>,
-}
-
-impl PublicationGraph {
-    fn new(publications: Vec<ProjectedOwnerPublication>) -> Self {
-        let mut graph = Self {
-            objects_by_address: BTreeMap::new(),
-            outgoing: BTreeMap::new(),
-            incoming: BTreeMap::new(),
-        };
-        for publication in publications {
-            for object in publication.operation.batch.objects {
-                graph
-                    .objects_by_address
-                    .entry(object.object_ref.index_key())
-                    .or_default()
-                    .push(object);
-            }
-            for occurrence in publication.operation.batch.relations {
-                graph
-                    .outgoing
-                    .entry(occurrence.src.index_key())
-                    .or_default()
-                    .push(TraversalCandidate {
-                        neighbor: occurrence.dst.clone(),
-                        occurrence: occurrence.clone(),
-                    });
-                graph
-                    .incoming
-                    .entry(occurrence.dst.index_key())
-                    .or_default()
-                    .push(TraversalCandidate {
-                        neighbor: occurrence.src.clone(),
-                        occurrence,
-                    });
-            }
+impl PublicationGraph<'_> {
+    fn objects(
+        &self,
+        object: &DomainObjectRef,
+    ) -> Result<Vec<OwnerObjectPublication>, StorageError> {
+        let key =
+            serde_json::to_string(object).map_err(|e| StorageError::InvalidPath(e.to_string()))?;
+        if let Some(objects) = self.objects.borrow().get(&key) {
+            return Ok(objects.clone());
         }
-        for objects in graph.objects_by_address.values_mut() {
-            objects.sort_by(|left, right| left.publication_id.cmp(&right.publication_id));
+        let mut objects = Vec::new();
+        for event in self.cut.receipts.iter().filter_map(|r| r.source_event) {
+            objects.extend(self.store.publications.objects(event.seq, object)?);
         }
-        for candidates in graph
-            .outgoing
-            .values_mut()
-            .chain(graph.incoming.values_mut())
-        {
-            candidates.sort_by_key(TraversalCandidate::occurrence_key);
-        }
-        graph
-    }
-
-    fn object_count(&self, object: &DomainObjectRef) -> usize {
-        self.objects_by_address
-            .get(&object.index_key())
-            .map_or(0, Vec::len)
+        objects.sort_by(|left, right| left.publication_id.cmp(&right.publication_id));
+        self.objects.borrow_mut().insert(key, objects.clone());
+        Ok(objects)
     }
 
     fn candidates(
         &self,
         object: &DomainObjectRef,
         request: &BoundedTraversalRequest,
-    ) -> Vec<TraversalCandidate> {
-        let key = object.index_key();
+    ) -> Result<Vec<TraversalCandidate>, StorageError> {
         let mut candidates = Vec::new();
-        if matches!(
-            request.direction,
-            TraversalDirection::Outgoing | TraversalDirection::Both
-        ) {
-            candidates.extend(self.outgoing.get(&key).cloned().unwrap_or_default());
-        }
-        if matches!(
-            request.direction,
-            TraversalDirection::Incoming | TraversalDirection::Both
-        ) {
-            candidates.extend(self.incoming.get(&key).cloned().unwrap_or_default());
-        }
-        if let Some(types) = &request.relation_types {
-            candidates.retain(|candidate| types.contains(&candidate.occurrence.relation_type));
+        for event in self.cut.receipts.iter().filter_map(|r| r.source_event) {
+            for incoming in [false, true] {
+                if incoming && request.direction == TraversalDirection::Outgoing
+                    || !incoming && request.direction == TraversalDirection::Incoming
+                {
+                    continue;
+                }
+                for occurrence in self
+                    .store
+                    .publications
+                    .relations(event.seq, object, incoming)?
+                {
+                    if request
+                        .relation_types
+                        .as_ref()
+                        .is_some_and(|types| !types.contains(&occurrence.relation_type))
+                    {
+                        continue;
+                    }
+                    let neighbor = if incoming {
+                        occurrence.src.clone()
+                    } else {
+                        occurrence.dst.clone()
+                    };
+                    candidates.push(TraversalCandidate {
+                        neighbor,
+                        occurrence,
+                    });
+                }
+            }
         }
         candidates.sort_by_key(TraversalCandidate::occurrence_key);
         candidates.dedup_by(|left, right| left.occurrence_key() == right.occurrence_key());
-        candidates
+        Ok(candidates)
     }
 }
 
@@ -472,10 +458,10 @@ struct TraversalCandidate {
 }
 
 impl TraversalCandidate {
-    fn occurrence_key(&self) -> String {
-        format!(
-            "{}::{}",
-            self.occurrence.hydration.owner_id, self.occurrence.occurrence_id
+    fn occurrence_key(&self) -> (String, String) {
+        (
+            self.occurrence.hydration.owner_id.clone(),
+            self.occurrence.occurrence_id.clone(),
         )
     }
 }
@@ -484,33 +470,34 @@ fn select_objects(
     graph: &PublicationGraph,
     object: &DomainObjectRef,
     max_objects: usize,
-    selected: &mut BTreeMap<String, OwnerObjectPublication>,
-) -> bool {
-    let Some(publications) = graph.objects_by_address.get(&object.index_key()) else {
-        return false;
-    };
+    selected: &mut BTreeMap<(String, String), OwnerObjectPublication>,
+) -> Result<bool, StorageError> {
+    let publications = graph.objects(object)?;
+    if publications.is_empty() {
+        return Ok(false);
+    }
     let additional = publications
         .iter()
         .filter(|publication| {
-            !selected.contains_key(&format!(
-                "{}::{}",
-                publication.hydration.owner_id, publication.publication_id
+            !selected.contains_key(&(
+                publication.hydration.owner_id.clone(),
+                publication.publication_id.clone(),
             ))
         })
         .count();
     if selected.len() + additional > max_objects {
-        return false;
+        return Ok(false);
     }
     for publication in publications {
         selected.insert(
-            format!(
-                "{}::{}",
-                publication.hydration.owner_id, publication.publication_id
+            (
+                publication.hydration.owner_id.clone(),
+                publication.publication_id.clone(),
             ),
             publication.clone(),
         );
     }
-    true
+    Ok(true)
 }
 
 fn frontier_entry(
@@ -543,9 +530,12 @@ mod owner_publication_tests {
 
     #[test]
     fn cut_tracks_lag_preserves_occurrences_and_excludes_typed_structural_facts() {
+        let graph_directory = tempfile::tempdir().unwrap();
         let temp = tempfile::tempdir().unwrap();
         let db = sled::open(temp.path()).unwrap();
-        let fixture = GraphRuntimeTestFixture::open(db.clone()).unwrap();
+        let fixture =
+            GraphRuntimeTestFixture::open(db.clone(), graph_directory.path().join("graph.agdb"))
+                .unwrap();
         let mut batch = operation("docs", "scope-a", "revision-a", true).batch;
         batch.work_input_basis_id = Some("opaque-owner-input".into());
         let operation = OwnerPublicationOperation::reconstruct("owner-rule-v1", batch).unwrap();
@@ -640,7 +630,9 @@ mod owner_publication_tests {
         drop(db);
 
         let reopened_db = sled::open(temp.path()).unwrap();
-        let reopened = GraphRuntimeTestFixture::open(reopened_db).unwrap();
+        let reopened =
+            GraphRuntimeTestFixture::open(reopened_db, graph_directory.path().join("graph.agdb"))
+                .unwrap();
         let store = reopened.runtime().traversal_store();
         let reopened_cut = TraversalQuery::new(store.as_ref())
             .cut(&cut_request)
@@ -656,8 +648,13 @@ mod owner_publication_tests {
 
     #[test]
     fn newer_incomplete_owner_blocks_current_cut_but_preserves_historical_evidence() {
+        let graph_directory = tempfile::tempdir().unwrap();
         let temp = tempfile::tempdir().unwrap();
-        let fixture = GraphRuntimeTestFixture::open(sled::open(temp.path()).unwrap()).unwrap();
+        let fixture = GraphRuntimeTestFixture::open(
+            sled::open(temp.path()).unwrap(),
+            graph_directory.path().join("graph.agdb"),
+        )
+        .unwrap();
         let complete = operation("dependency_security", "repo-a", "revision-1", true);
         let incomplete = operation("dependency_security", "repo-a", "revision-2", false);
         let first = fixture
@@ -726,8 +723,13 @@ mod owner_publication_tests {
 
     #[test]
     fn divergent_operation_for_one_owner_revision_is_rejected_before_cursor_advance() {
+        let graph_directory = tempfile::tempdir().unwrap();
         let temp = tempfile::tempdir().unwrap();
-        let fixture = GraphRuntimeTestFixture::open(sled::open(temp.path()).unwrap()).unwrap();
+        let fixture = GraphRuntimeTestFixture::open(
+            sled::open(temp.path()).unwrap(),
+            graph_directory.path().join("graph.agdb"),
+        )
+        .unwrap();
         let first = operation("docs", "scope-a", "revision-a", true);
         fixture
             .append(owner_publication_envelope("session-a", &first).unwrap())
@@ -748,6 +750,138 @@ mod owner_publication_tests {
             .to_string()
             .contains("divergent publication operations"));
         assert!(runtime.durable_event_cursor().unwrap().after_seq < divergent_seq);
+    }
+
+    #[test]
+    fn retained_sled_publications_migrate_exactly_and_new_writes_do_not_reach_sled() {
+        let root = tempfile::tempdir().unwrap();
+        let db = sled::open(root.path().join("world")).unwrap();
+        let legacy = db.open_tree("traversal_owner_publications").unwrap();
+        let first = super::super::contracts::ProjectedOwnerPublication {
+            source_route: None,
+            operation: operation("docs", "scope-a", "old", true),
+            source_event: crate::events::EventRecordRef {
+                ledger_id: crate::events::LedgerIdentity::new(),
+                seq: u64::MAX - 1,
+            },
+        };
+        legacy
+            .insert(
+                format!(
+                    "{:020}::{}",
+                    first.source_event.seq, first.operation.operation_id
+                ),
+                serde_json::to_vec(&first).unwrap(),
+            )
+            .unwrap();
+        db.flush().unwrap();
+        let path = root.path().join("graph.agdb");
+        let store = TraversalStore::new(db.clone(), &path).unwrap();
+        assert_eq!(
+            store
+                .owner_publication_for_event(first.source_event.seq)
+                .unwrap(),
+            Some(first.clone())
+        );
+        let next = super::super::contracts::ProjectedOwnerPublication {
+            operation: operation("docs", "scope-a", "new", true),
+            source_event: crate::events::EventRecordRef {
+                seq: u64::MAX,
+                ..first.source_event
+            },
+            ..first.clone()
+        };
+        store.put_owner_publication(&next).unwrap();
+        store.put_owner_publication(&next).unwrap();
+        store.flush().unwrap();
+        assert_eq!(legacy.len(), 1);
+        drop(store);
+        let reopened = TraversalStore::new(db, &path).unwrap();
+        assert_eq!(
+            reopened.owner_publications_through_seq(u64::MAX).unwrap(),
+            vec![first.clone(), next.clone()]
+        );
+        let requirement = cut_request(
+            "docs",
+            "scope-a",
+            crate::events::LedgerCursor {
+                ledger_id: first.source_event.ledger_id,
+                after_seq: u64::MAX,
+            },
+        )
+        .owners
+        .remove(0);
+        assert_eq!(
+            reopened
+                .publications
+                .select(&requirement, u64::MAX - 1)
+                .unwrap()
+                .unwrap()
+                .source_event,
+            first.source_event
+        );
+        assert_eq!(
+            reopened
+                .publications
+                .select(&requirement, u64::MAX)
+                .unwrap()
+                .unwrap()
+                .source_event,
+            next.source_event
+        );
+        drop(reopened);
+        drop(legacy);
+        std::fs::remove_file(&path).unwrap();
+        let db = sled::open(root.path().join("world")).unwrap();
+        assert!(TraversalStore::new(db, &path)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("explicit rebuild"));
+    }
+
+    #[test]
+    fn graph_aliases_distinguish_structured_addresses_with_delimiters() {
+        let root = tempfile::tempdir().unwrap();
+        let db = sled::open(root.path().join("world")).unwrap();
+        let store = TraversalStore::new(db, root.path().join("graph.agdb")).unwrap();
+        let mut batch = operation("docs", "scope-a", "r1", true).batch;
+        let mut left = batch.objects[0].object_ref.clone();
+        let mut right = left.clone();
+        left.object_kind = "a::b".into();
+        left.object_id = "c".into();
+        right.object_kind = "a".into();
+        right.object_id = "b::c".into();
+        batch.objects[0].object_ref = left.clone();
+        batch.objects[1].object_ref = right.clone();
+        for relation in &mut batch.relations {
+            relation.src = left.clone();
+            relation.dst = right.clone();
+        }
+        let publication = super::super::contracts::ProjectedOwnerPublication {
+            source_route: None,
+            operation: OwnerPublicationOperation::reconstruct("owner-rule-v1", batch).unwrap(),
+            source_event: crate::events::EventRecordRef {
+                ledger_id: crate::events::LedgerIdentity::new(),
+                seq: 1,
+            },
+        };
+        store.put_owner_publication(&publication).unwrap();
+        assert_eq!(store.publications.objects(1, &left).unwrap().len(), 1);
+        assert_eq!(store.publications.objects(1, &right).unwrap().len(), 1);
+        assert_eq!(
+            store.publications.relations(1, &left, false).unwrap().len(),
+            publication.operation.batch.relations.len()
+        );
+        assert!(store
+            .publications
+            .relations(1, &right, false)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            store.owner_publication_for_event(1).unwrap(),
+            Some(publication)
+        );
     }
 
     fn operation(

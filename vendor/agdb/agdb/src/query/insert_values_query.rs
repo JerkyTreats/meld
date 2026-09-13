@@ -1,0 +1,224 @@
+use crate::Amend;
+use crate::DbElement;
+use crate::DbError;
+use crate::DbErrorType;
+use crate::DbId;
+use crate::DbImpl;
+use crate::DbKeyValue;
+use crate::QueryId;
+use crate::QueryIds;
+use crate::QueryMut;
+use crate::QueryResult;
+use crate::SearchQuery;
+use crate::StorageData;
+use crate::query::query_values::QueryValues;
+use crate::query_builder::search::SearchQueryBuilder;
+
+/// Query to insert or update key-value pairs (properties)
+/// to existing elements in the database. All `ids` must exist
+/// in the database. If `values` is set to `Single` the properties
+/// will be inserted uniformly to all `ids` otherwise there must be
+/// enough `values` for all `ids`.
+///
+/// The result will be number of inserted/updated values and inserted new
+/// elements (nodes).
+///
+/// NOTE: The result is NOT number of affected elements but individual properties.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "derive", derive(agdb::DbSerialize))]
+#[cfg_attr(feature = "api", derive(agdb::TypeDef))]
+#[derive(Clone, Debug, PartialEq)]
+pub struct InsertValuesQuery {
+    /// Ids whose properties should be updated
+    pub ids: QueryIds,
+
+    /// Key value pairs to be inserted to the existing elements.
+    pub values: QueryValues,
+
+    /// Amend operation. `None` (default) overwrites existing values,
+    /// `Add` increments/appends, `Remove` decrements/removes-from.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default, skip_serializing_if = "Amend::is_none")
+    )]
+    pub amend: Amend,
+}
+
+impl QueryMut for InsertValuesQuery {
+    fn process<Store: StorageData>(&self, db: &mut DbImpl<Store>) -> Result<QueryResult, DbError> {
+        let mut result = QueryResult::default();
+
+        match &self.ids {
+            QueryIds::Ids(ids) => match &self.values {
+                QueryValues::Single(values) => {
+                    for id in ids {
+                        insert_values(db, id, values, &self.amend, &mut result)?;
+                    }
+                }
+                QueryValues::Multi(values) => {
+                    if ids.len() != values.len() {
+                        return Err(DbError::query(
+                            DbErrorType::NotEnoughData,
+                            format!("Ids ({}) must match values ({})", ids.len(), values.len()),
+                        ));
+                    }
+
+                    for (id, values) in ids.iter().zip(values) {
+                        insert_values(db, id, values, &self.amend, &mut result)?;
+                    }
+                }
+            },
+            QueryIds::Search(search_query) => {
+                let db_ids = search_query.search(db)?;
+
+                match &self.values {
+                    QueryValues::Single(values) => {
+                        for db_id in db_ids {
+                            insert_values_id(db, db_id, values, &self.amend, &mut result)?;
+                        }
+                    }
+                    QueryValues::Multi(values) => {
+                        if db_ids.len() != values.len() {
+                            return Err(DbError::query(
+                                DbErrorType::NotEnoughData,
+                                format!(
+                                    "Ids ({}) must match values ({})",
+                                    db_ids.len(),
+                                    values.len()
+                                ),
+                            ));
+                        }
+
+                        for (db_id, values) in db_ids.iter().zip(values) {
+                            insert_values_id(db, *db_id, values, &self.amend, &mut result)?;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(result)
+    }
+}
+
+impl QueryMut for &InsertValuesQuery {
+    fn process<Store: StorageData>(&self, db: &mut DbImpl<Store>) -> Result<QueryResult, DbError> {
+        (*self).process(db)
+    }
+}
+
+fn insert_values<Store: StorageData>(
+    db: &mut DbImpl<Store>,
+    id: &QueryId,
+    values: &[DbKeyValue],
+    amend: &Amend,
+    result: &mut QueryResult,
+) -> Result<(), DbError> {
+    match db.db_id(id) {
+        Ok(db_id) => insert_values_id(db, db_id, values, amend, result),
+        Err(e) => match id {
+            QueryId::Id(id) => {
+                if id.0 == 0 {
+                    insert_values_new(db, None, values, amend, result)
+                } else {
+                    Err(e)
+                }
+            }
+            QueryId::Alias(alias) => insert_values_new(db, Some(alias), values, amend, result),
+        },
+    }
+}
+
+fn insert_values_new<Store: StorageData>(
+    db: &mut DbImpl<Store>,
+    alias: Option<&String>,
+    values: &[DbKeyValue],
+    amend: &Amend,
+    result: &mut QueryResult,
+) -> Result<(), DbError> {
+    if matches!(amend, Amend::Remove) {
+        return Err(DbError::query(
+            DbErrorType::NotAllowed,
+            "Cannot amend-remove on a new element.".to_string(),
+        ));
+    }
+
+    let db_id = db.insert_node()?;
+
+    if let Some(alias) = alias {
+        db.insert_new_alias(db_id, alias)?;
+    }
+
+    db.reserve_key_value_capacity(db_id, values.len() as u64)?;
+
+    for key_value in values {
+        db.insert_key_value(db_id, key_value)?;
+    }
+
+    result.result += values.len() as u64;
+    result.elements.push(DbElement {
+        id: db_id,
+        from: db.from_id(db_id)?,
+        to: db.to_id(db_id)?,
+        values: vec![],
+    });
+
+    Ok(())
+}
+
+fn insert_values_id<Store: StorageData>(
+    db: &mut DbImpl<Store>,
+    db_id: DbId,
+    values: &[DbKeyValue],
+    amend: &Amend,
+    result: &mut QueryResult,
+) -> Result<(), DbError> {
+    if !matches!(amend, Amend::Remove) {
+        db.reserve_key_value_capacity(db_id, values.len() as u64)?;
+    }
+
+    match amend {
+        Amend::None => {
+            for key_value in values {
+                db.insert_or_replace_key_value(db_id, key_value)?;
+                result.result += 1;
+            }
+        }
+        _ => {
+            for key_value in values {
+                if db.amend_key_value(db_id, key_value, amend)? {
+                    result.result += 1;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+impl SearchQueryBuilder for InsertValuesQuery {
+    fn search_mut(&mut self) -> &mut SearchQuery {
+        if let QueryIds::Search(search) = &mut self.ids {
+            search
+        } else {
+            panic!("Expected search query");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[should_panic]
+    fn missing_search() {
+        InsertValuesQuery {
+            values: QueryValues::Single(vec![]),
+            ids: QueryIds::Ids(vec![]),
+            amend: Amend::None,
+        }
+        .search_mut();
+    }
+}

@@ -281,8 +281,13 @@ fn weighted_promoted_record(node: DomainObjectRef, seq: u64) -> PromotedEvidence
 
 fn seeded_graph() -> (tempfile::TempDir, Arc<TraversalStore>, DomainObjectRef) {
     let temp_dir = tempfile::tempdir().unwrap();
-    let store =
-        Arc::new(TraversalStore::new(sled::open(temp_dir.path().join("graph")).unwrap()).unwrap());
+    let store = Arc::new(
+        TraversalStore::new(
+            sled::open(temp_dir.path().join("graph")).unwrap(),
+            temp_dir.path().join("graph.agdb"),
+        )
+        .unwrap(),
+    );
     (temp_dir, store, object("workspace_fs", "node", "node-a"))
 }
 

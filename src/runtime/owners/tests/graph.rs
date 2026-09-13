@@ -13,6 +13,7 @@ use super::super::{graph::OwnerGraphCallbacks, *};
 
 #[test]
 fn graph_callback_preserves_current_incompleteness_and_cannot_select_unbound_inputs() {
+    let graph_directory = tempfile::tempdir().unwrap();
     let db = sled::Config::new().temporary(true).open().unwrap();
     let authority = EventAuthority::open(db.clone(), EventAuthorityOpenOptions::default()).unwrap();
     let ledger_id = authority.ledger_identity();
@@ -52,7 +53,9 @@ fn graph_callback_preserves_current_incompleteness_and_cannot_select_unbound_inp
                 Arc::new(crate::runtime::ports::ProductGraphCursorPort::new(
                     authority.consumer_registry_capability(),
                 )),
-                Arc::new(TraversalStore::new(db).unwrap()),
+                Arc::new(
+                    TraversalStore::new(db, graph_directory.path().join("graph.agdb")).unwrap(),
+                ),
             )
             .unwrap(),
         ),

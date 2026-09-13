@@ -1,6 +1,10 @@
 //! Canonical owner-publication storage and projection positions.
 
 use std::io;
+use std::path::Path;
+
+mod publications;
+use publications::PublicationStore;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -31,12 +35,12 @@ struct PersistedGraphCursor {
     after_seq: u64,
 }
 
-/// Sled-backed graph traversal store.
+/// Canonical agdb publications with the existing durable Graph metadata authority.
 #[derive(Clone)]
 pub struct TraversalStore {
     resource_id: String,
     db: Db,
-    owner_publications: Tree,
+    pub(super) publications: PublicationStore,
     runtime_meta: Tree,
 }
 
@@ -46,16 +50,76 @@ impl TraversalStore {
         &self.resource_id
     }
 
-    /// Open all traversal trees against a shared sled database.
-    pub fn new(db: Db) -> Result<Self, StorageError> {
-        Ok(Self {
-            resource_id: crate::waiting::resource_identity(&db)?,
-            owner_publications: db
-                .open_tree(TREE_OWNER_PUBLICATIONS)
-                .map_err(to_storage_io)?,
-            runtime_meta: db.open_tree(TREE_RUNTIME_META).map_err(to_storage_io)?,
+    /// Open Graph publication state at an explicit external product path.
+    pub fn new(db: Db, path: impl AsRef<Path>) -> Result<Self, StorageError> {
+        let runtime_meta = db.open_tree(TREE_RUNTIME_META).map_err(to_storage_io)?;
+        let activated = runtime_meta
+            .contains_key(b"agdb-publications-v1")
+            .map_err(to_storage_io)?;
+        if activated && !path.as_ref().is_file() {
+            return Err(StorageError::InvalidPath(
+                "activated Graph publication file is missing; explicit rebuild is required".into(),
+            ));
+        }
+        let resource_id = crate::waiting::resource_identity(&db)?;
+        let publications = PublicationStore::open(path.as_ref(), &resource_id)?;
+        let store = Self {
+            resource_id,
+            publications,
+            runtime_meta,
             db,
-        })
+        };
+        // Compatibility reader for retained Sled publications. New writes only
+        // reach agdb. The durable marker prevents old bytes being reimported.
+        if !store.publications.migration_complete()? {
+            if activated {
+                return Err(StorageError::InvalidPath(
+                    "activated Graph generation is incomplete".into(),
+                ));
+            }
+            if store
+                .db
+                .tree_names()
+                .iter()
+                .any(|name| name.as_ref() == TREE_OWNER_PUBLICATIONS.as_bytes())
+            {
+                let legacy = store
+                    .db
+                    .open_tree(TREE_OWNER_PUBLICATIONS)
+                    .map_err(to_storage_io)?;
+                for row in &legacy {
+                    let (key, raw) = row.map_err(to_storage_io)?;
+                    let publication: ProjectedOwnerPublication =
+                        serde_json::from_slice(&raw).map_err(to_storage_data)?;
+                    if key.as_ref()
+                        != encode_seq_index_key(
+                            publication.source_event.seq,
+                            &publication.operation.operation_id,
+                        )
+                        .as_bytes()
+                    {
+                        return Err(StorageError::InvalidPath(
+                            "legacy Graph key disagrees with publication".into(),
+                        ));
+                    }
+                    store.publications.put(&publication)?;
+                }
+            }
+            store.publications.complete_migration()?;
+        }
+        if !activated {
+            store
+                .runtime_meta
+                .insert(b"agdb-publications-v1", b"active")
+                .map_err(to_storage_io)?;
+            store.db.flush().map_err(to_storage_io)?;
+        }
+        Ok(store)
+    }
+
+    /// Durable publication file, also used by test and branch assembly.
+    pub fn publication_path(&self) -> &Path {
+        &self.publications.path
     }
 
     /// Install one immutable owner Event admission contract in the existing Graph metadata.
@@ -303,8 +367,8 @@ impl TraversalStore {
     }
 
     /// Open the store behind an `Arc` for runtime assembly.
-    pub fn shared(db: Db) -> Result<Arc<Self>, StorageError> {
-        Ok(Arc::new(Self::new(db)?))
+    pub fn shared(db: Db, path: impl AsRef<Path>) -> Result<Arc<Self>, StorageError> {
+        Ok(Arc::new(Self::new(db, path)?))
     }
 
     /// Return the shared sled database handle.
@@ -313,106 +377,33 @@ impl TraversalStore {
     }
 
     /// Persist one Graph-owned projection of an intact owner operation.
-    pub fn put_owner_publication(
+    pub(super) fn put_owner_publication(
         &self,
         publication: &ProjectedOwnerPublication,
     ) -> Result<(), StorageError> {
-        publication.operation.validate()?;
-        let candidate = &publication.operation;
-        for existing in self.owner_publications_through_seq(u64::MAX)? {
-            let existing = existing.operation;
-            if existing.batch.owner_id == candidate.batch.owner_id
-                && existing.batch.scope == candidate.batch.scope
-                && existing.batch.revision_id == candidate.batch.revision_id
-                && existing.operation_id != candidate.operation_id
-            {
-                return Err(StorageError::InvalidPath(format!(
-                    "owner revision '{}' has divergent publication operations",
-                    candidate.batch.revision_id
-                )));
-            }
-        }
-        spike_crash(publication, "before-index");
-        let key = encode_seq_index_key(
-            publication.source_event.seq,
-            &publication.operation.operation_id,
-        );
-        self.owner_publications
-            .insert(
-                key.as_bytes(),
-                serde_json::to_vec(publication).map_err(to_storage_data)?,
-            )
-            .map_err(to_storage_io)?;
-        if std::env::var("MELD_GRAPH_SPIKE_CRASH").ok().as_deref()
-            == Some(format!("{}:after-index", publication.operation.batch.owner_id).as_str())
-        {
-            self.flush()?;
-            spike_crash(publication, "after-index");
-        }
-        Ok(())
+        self.publications.put(publication)
     }
 
-    /// Read the intact owner publication admitted from one Event record.
+    /// Reconstruct one exact admitted owner publication on explicit request.
     pub fn owner_publication_for_event(
         &self,
         seq: u64,
     ) -> Result<Option<ProjectedOwnerPublication>, StorageError> {
-        let prefix = format!("{seq:0KEY_PAD$}::");
-        self.owner_publications
-            .scan_prefix(prefix.as_bytes())
-            .next()
-            .map(|entry| {
-                let (_, bytes) = entry.map_err(to_storage_io)?;
-                serde_json::from_slice(&bytes).map_err(to_storage_data)
-            })
-            .transpose()
+        self.publications.publication(seq)
     }
 
-    /// Read owner publications visible through one durable Graph position.
-    #[tracing::instrument(target = "meld::trace", name = "graph.read_publications", skip_all,
-        fields(through_seq, publications = tracing::field::Empty, bytes = tracing::field::Empty))]
+    /// Reconstruct retained publications for explanation and export, not query preparation.
+    #[tracing::instrument(
+        target = "meld::trace",
+        name = "graph.read_publications",
+        skip_all,
+        fields(through_seq)
+    )]
     pub fn owner_publications_through_seq(
         &self,
         through_seq: u64,
     ) -> Result<Vec<ProjectedOwnerPublication>, StorageError> {
-        let mut publications = Vec::new();
-        let mut bytes_read = 0u64;
-        for item in self.owner_publications.iter() {
-            let (key, value) = item.map_err(to_storage_io)?;
-            let key = std::str::from_utf8(key.as_ref()).map_err(|error| {
-                StorageError::IoError(io::Error::new(io::ErrorKind::InvalidData, error))
-            })?;
-            let Some((seq, _)) = key.split_once("::") else {
-                return Err(StorageError::InvalidPath(
-                    "invalid owner publication key".to_string(),
-                ));
-            };
-            let seq = seq.parse::<u64>().map_err(|error| {
-                StorageError::IoError(io::Error::new(io::ErrorKind::InvalidData, error))
-            })?;
-            if seq > through_seq {
-                break;
-            }
-            bytes_read += value.len() as u64;
-            let publication: ProjectedOwnerPublication = tracing::info_span!(target: "meld::trace",
-                "graph.decode_publication", bytes = value.len() as u64, event_seq = seq)
-            .in_scope(|| serde_json::from_slice(&value).map_err(to_storage_data))?;
-            tracing::info_span!(target: "meld::trace", "graph.validate_publication", event_seq = seq)
-                .in_scope(|| publication.operation.validate())?;
-            if publication.source_event.seq != seq {
-                return Err(StorageError::InvalidPath(
-                    "owner publication key and source event disagree".to_string(),
-                ));
-            }
-            publications.push(publication);
-        }
-        publications.sort_by(|left, right| {
-            (left.source_event.seq, &left.operation.operation_id)
-                .cmp(&(right.source_event.seq, &right.operation.operation_id))
-        });
-        tracing::Span::current().record("publications", publications.len() as u64);
-        tracing::Span::current().record("bytes", bytes_read);
-        Ok(publications)
+        self.publications.publications(through_seq)
     }
 
     /// Read the durable projection position without inventing an authority identity.
@@ -468,7 +459,8 @@ impl TraversalStore {
     /// identity-less derived-event retry state, and all sequence-derived
     /// projection indexes are rebuilt from authority sequence zero.
     pub(super) fn reset_for_event_authority_migration(&self) -> Result<(), StorageError> {
-        self.owner_publications.clear().map_err(to_storage_io)?;
+        self.publications.clear()?;
+        self.publications.complete_migration()?;
         self.runtime_meta
             .remove(KEY_LAST_REDUCED_SEQ.as_bytes())
             .map_err(to_storage_io)?;
@@ -482,8 +474,9 @@ impl TraversalStore {
         Ok(())
     }
 
-    /// Flush the shared sled database.
+    /// Synchronize publication data before the metadata cursor can advance.
     pub fn flush(&self) -> Result<(), StorageError> {
+        self.publications.flush()?;
         self.db.flush().map_err(to_storage_io)?;
         Ok(())
     }
@@ -499,13 +492,4 @@ fn to_storage_io(err: sled::Error) -> StorageError {
 
 fn to_storage_data(err: serde_json::Error) -> StorageError {
     StorageError::IoError(io::Error::new(io::ErrorKind::InvalidData, err.to_string()))
-}
-
-// Spike-only failpoint: external harness selects one owner and persistence boundary.
-fn spike_crash(publication: &ProjectedOwnerPublication, boundary: &str) {
-    if std::env::var("MELD_GRAPH_SPIKE_CRASH").ok().as_deref()
-        == Some(format!("{}:{boundary}", publication.operation.batch.owner_id).as_str())
-    {
-        std::process::exit(86);
-    }
 }

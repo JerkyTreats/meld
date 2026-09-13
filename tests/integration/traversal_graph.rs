@@ -144,12 +144,16 @@ fn selected_frames(
 
 #[test]
 fn context_source_controls_selection_withdrawal_restore_and_replay() {
+    let graph_directory = tempfile::tempdir().unwrap();
     let temp = tempfile::tempdir().unwrap();
     with_xdg_env(&temp, || {
         let workspace = temp.path().join("workspace");
         std::fs::create_dir_all(&workspace).unwrap();
         let fixture = open_authority_progress(sled::open(temp.path().join("events")).unwrap());
-        let graph = fixture.graph_runtime(sled::open(temp.path().join("graph")).unwrap());
+        let graph = fixture.graph_runtime(
+            sled::open(temp.path().join("graph")).unwrap(),
+            graph_directory.path().join("graph.agdb"),
+        );
         let progress = Arc::new(fixture.progress.clone());
         let api = create_context_api(
             &workspace,
@@ -204,8 +208,10 @@ fn context_source_controls_selection_withdrawal_restore_and_replay() {
         )
         .unwrap();
         assert_eq!(fixture.replay_all().len(), before);
-        let replayed =
-            fixture.graph_runtime(sled::open(temp.path().join("replayed-graph")).unwrap());
+        let replayed = fixture.graph_runtime(
+            sled::open(temp.path().join("replayed-graph")).unwrap(),
+            graph_directory.path().join("replayed.agdb"),
+        );
         assert_eq!(
             selected_frames(&replayed, &restored),
             vec![hex::encode(frame_id)]
@@ -215,6 +221,7 @@ fn context_source_controls_selection_withdrawal_restore_and_replay() {
 
 #[test]
 fn independent_context_sources_do_not_replace_each_other_in_a_shared_cut() {
+    let graph_directory = tempfile::tempdir().unwrap();
     let temp = tempfile::tempdir().unwrap();
     let frames = FrameStorage::new(temp.path().join("frames")).unwrap();
     let frame = Frame::new(
@@ -237,7 +244,10 @@ fn independent_context_sources_do_not_replace_each_other_in_a_shared_cut() {
     let first = head_publication(&first, &frames).unwrap();
     let second = head_publication(&second, &frames).unwrap();
     let fixture = open_authority_progress(sled::open(temp.path().join("events")).unwrap());
-    let graph = fixture.graph_runtime(sled::open(temp.path().join("graph")).unwrap());
+    let graph = fixture.graph_runtime(
+        sled::open(temp.path().join("graph")).unwrap(),
+        graph_directory.path().join("graph.agdb"),
+    );
     for operation in [&first, &second] {
         fixture
             .progress

@@ -17,6 +17,7 @@ members = [
     "owners/docs",
     "owners/dependency-security",
 ]
+exclude = ["vendor/agdb/agdb", "vendor/agdb/agdb_derive"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -110,7 +111,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "ansi"
 directories = "5.0"
 
 [target.'cfg(unix)'.dependencies]
-rustix = { version = "1.1.4", features = ["fs", "process"] }
+rustix = { version = "1.1.4", features = ["fs", "process", "event"] }
 
 [dev-dependencies]
 meld-docs-owner = { path = "owners/docs", features = ["test-support"] }

@@ -98,14 +98,19 @@ impl AuthorityProgressFixture {
         .expect("replay execution projection")
     }
 
-    pub fn graph_runtime(&self, db: sled::Db) -> std::sync::Arc<GraphRuntime> {
+    pub fn graph_runtime(
+        &self,
+        db: sled::Db,
+        graph_path: impl AsRef<std::path::Path>,
+    ) -> std::sync::Arc<GraphRuntime> {
         let replay = Arc::new(ProductEventReplayPort::new(
             self.authority.replay_capability(),
         ));
         let cursor = Arc::new(ProductGraphCursorPort::new(
             self.authority.consumer_registry_capability(),
         ));
-        let traversal = TraversalStore::shared(db).expect("open graph traversal test store");
+        let traversal =
+            TraversalStore::shared(db, graph_path).expect("open graph traversal test store");
         Arc::new(
             GraphRuntime::from_ports(replay, cursor, traversal)
                 .expect("open authority-backed graph runtime"),

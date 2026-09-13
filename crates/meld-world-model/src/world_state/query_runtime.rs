@@ -41,7 +41,9 @@ impl WorldModelQueries {
         cut: &TraversalCut,
         request: &BoundedTraversalRequest,
     ) -> Result<TraversalResult, StorageError> {
-        self.with_traversal_query(|query| query.traverse(cut, request))
+        // Frozen evidence requires its retained revisions, not unrelated new work.
+        let traversal = self.graph_runtime.traversal_store();
+        TraversalQuery::new(traversal.as_ref()).traverse(cut, request)
     }
 
     #[tracing::instrument(target = "meld::trace", skip_all)]

@@ -62,6 +62,7 @@ fn owner_walk(context: &RunContext, scope_id: &str, object_id: &str) -> Value {
     let output = context
         .execute(&Commands::Branches {
             command: BranchesCommands::GraphOwnerWalk {
+                cut_file: None,
                 scope: "active".to_string(),
                 branch_ids: Vec::new(),
                 owner_id: "workspace_fs".to_string(),

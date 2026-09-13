@@ -76,11 +76,14 @@ pub struct GraphRuntimeTestFixture {
 
 impl GraphRuntimeTestFixture {
     /// Open one event authority and graph projection over a shared test database.
-    pub fn open(db: sled::Db) -> Result<Self, StorageError> {
+    pub fn open(
+        db: sled::Db,
+        graph_path: impl AsRef<std::path::Path>,
+    ) -> Result<Self, StorageError> {
         let authority = EventAuthority::open(db.clone(), EventAuthorityOpenOptions::default())
             .map_err(authority_error_to_storage)?;
         let ports = Arc::new(AuthorityGraphTestPorts::new(&authority));
-        let traversal = TraversalStore::shared(db)?;
+        let traversal = TraversalStore::shared(db, graph_path)?;
         let runtime = Arc::new(GraphRuntime::from_ports(ports.clone(), ports, traversal)?);
         Ok(Self { authority, runtime })
     }

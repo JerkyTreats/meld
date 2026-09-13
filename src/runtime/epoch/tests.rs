@@ -52,6 +52,7 @@ impl AgentExecutionPort for NoExecution {
 
 #[test]
 fn native_epoch_specification_drives_curation_and_preserves_distinct_observations() {
+    let graph_directory = tempfile::tempdir().unwrap();
     let db = sled::Config::new().temporary(true).open().unwrap();
     let events = EventAuthority::open(
         sled::Config::new().temporary(true).open().unwrap(),
@@ -60,7 +61,9 @@ fn native_epoch_specification_drives_curation_and_preserves_distinct_observation
     .unwrap();
     let agent_store = Arc::new(AgentStore::new(db.clone()).unwrap());
     let curation = Arc::new(CurationStore::new(db.clone()).unwrap());
-    let traversal = Arc::new(TraversalStore::new(db.clone()).unwrap());
+    let traversal = Arc::new(
+        TraversalStore::new(db.clone(), graph_directory.path().join("graph.agdb")).unwrap(),
+    );
     traversal
         .install_owner_event_route(&crate::nonce::graph_route())
         .unwrap();

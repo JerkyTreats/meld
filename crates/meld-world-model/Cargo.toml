@@ -12,6 +12,7 @@ default = []
 test-support = ["meld-events/test-support"]
 
 [dependencies]
+agdb = { path = "../../vendor/agdb/agdb" }
 tracing = "0.1"
 blake3 = "1.5"
 meld-events = { path = "../meld-events", version = "2.7.0" }

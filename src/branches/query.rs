@@ -218,6 +218,7 @@ impl BranchQueryRuntime {
     }
 
     /// Read an exact cut through the same native traversal authority as current reads.
+    #[allow(clippy::too_many_arguments)]
     pub fn owner_walk_at(
         &self,
         scope: BranchQueryScope,
@@ -375,7 +376,7 @@ impl BranchQueryRuntime {
             )));
         }
         let db = sled::open(&store_path).map_err(to_api_storage_error)?;
-        TraversalStore::shared(db).map_err(ApiError::from)
+        TraversalStore::shared(db, store_path.join("graph.agdb")).map_err(ApiError::from)
     }
 }
 

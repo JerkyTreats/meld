@@ -459,9 +459,13 @@ fn assert_prerequisite_return(fail_traversal: bool, close_epoch: bool) {
                 ),
                 "tampered owner evidence cannot establish a foreign revision"
             );
+            let graph_directory = tempfile::tempdir().unwrap();
             let other_db = sled::Config::new().temporary(true).open().unwrap();
-            let other_graph =
-                meld_world_model::world_state::graph::store::TraversalStore::new(other_db).unwrap();
+            let other_graph = meld_world_model::world_state::graph::store::TraversalStore::new(
+                other_db,
+                graph_directory.path().join("graph.agdb"),
+            )
+            .unwrap();
             assert!(
                 !matches!(
                     query.prerequisite_visibility(

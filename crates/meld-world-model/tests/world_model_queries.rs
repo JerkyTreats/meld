@@ -123,8 +123,12 @@ fn planner_request(position: LedgerCursor) -> PlannerCurrentAssemblyRequest {
 
 #[test]
 fn facade_and_native_planner_share_owner_publication_currentness() {
-    let fixture =
-        GraphRuntimeTestFixture::open(sled::Config::new().temporary(true).open().unwrap()).unwrap();
+    let graph_directory = tempfile::tempdir().unwrap();
+    let fixture = GraphRuntimeTestFixture::open(
+        sled::Config::new().temporary(true).open().unwrap(),
+        graph_directory.path().join("graph.agdb"),
+    )
+    .unwrap();
     let runtime = fixture.runtime();
     let queries = WorldModelQueries::new(runtime.clone());
     let first = fixture
@@ -202,8 +206,12 @@ fn facade_and_native_planner_share_owner_publication_currentness() {
 
 #[test]
 fn raw_foreign_event_hints_cannot_create_owner_knowledge() {
-    let fixture =
-        GraphRuntimeTestFixture::open(sled::Config::new().temporary(true).open().unwrap()).unwrap();
+    let graph_directory = tempfile::tempdir().unwrap();
+    let fixture = GraphRuntimeTestFixture::open(
+        sled::Config::new().temporary(true).open().unwrap(),
+        graph_directory.path().join("graph.agdb"),
+    )
+    .unwrap();
     let record = fixture
         .append(
             EventEnvelope::with_now_domain(

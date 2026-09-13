@@ -33,3 +33,11 @@ Curation emits typed publications through Events. Graph admission validates owne
 ## Planner Path
 
 Planner issues bounded traversal queries, retains occurrence-rich results, and freezes them with belief, causal, regime, Capability, directive, and policy revisions. Strategy consumes only that immutable planner cut.
+
+## Publication Storage And Query Work
+
+Each admitted revision has independent membership over immutable object and relation content and exact evidence bindings. Equal content can share physical storage without equating observations, source revisions or relation occurrences. Graph reconstructs the intact owner publication for explanation. Ordinary selection and traversal do not require reconstruction of retained publication history.
+
+Owner and full-scope selection locate revision headers. Exact Event positions locate admitted publications. Structured addresses locate nodes in selected revisions, and native directed adjacency supplies candidate occurrences. Graph assembles deterministic paths, independent result bounds and explicit frontier under its public contract. Storage keys do not define semantic equivalence.
+
+A frozen cut reads its retained revisions without catching up to unrelated new Events. New currentness selection requires the requested Event frontier. Publication contents become durable before Graph advances its canonical projection cursor. External knowledge still enters through Events, and semantic ownership remains with the publishing domain.

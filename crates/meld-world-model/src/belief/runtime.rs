@@ -15,7 +15,8 @@
 //! let temp = tempfile::tempdir().unwrap();
 //! let db = sled::open(temp.path()).unwrap();
 //! let belief = Arc::new(BeliefStore::new(db.clone()).unwrap());
-//! let graph = Arc::new(TraversalStore::new(db).unwrap());
+//! let directory = tempfile::tempdir().unwrap();
+//! let graph = Arc::new(TraversalStore::new(db, directory.path().join("graph.agdb")).unwrap());
 //! let runtime = BeliefRuntime::from_json_config(belief, json);
 //! # let _ = runtime;
 //! ```

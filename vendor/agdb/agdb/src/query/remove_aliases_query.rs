@@ -1,0 +1,38 @@
+use crate::DbError;
+use crate::DbImpl;
+use crate::QueryMut;
+use crate::QueryResult;
+use crate::StorageData;
+
+/// Query to remove aliases from the database. It
+/// is not an error if an alias to be removed already
+/// does not exist.
+///
+/// The result will be a number signifying how
+/// many aliases have been actually removed.
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "derive", derive(agdb::DbSerialize))]
+#[cfg_attr(feature = "api", derive(agdb::TypeDef))]
+#[derive(Clone, Debug, PartialEq)]
+pub struct RemoveAliasesQuery(pub Vec<String>);
+
+impl QueryMut for RemoveAliasesQuery {
+    fn process<Store: StorageData>(&self, db: &mut DbImpl<Store>) -> Result<QueryResult, DbError> {
+        let mut result = QueryResult::default();
+
+        for alias in &self.0 {
+            if db.remove_alias(alias)? {
+                result.result += 1;
+            }
+        }
+
+        Ok(result)
+    }
+}
+
+impl QueryMut for &RemoveAliasesQuery {
+    fn process<Store: StorageData>(&self, db: &mut DbImpl<Store>) -> Result<QueryResult, DbError> {
+        (*self).process(db)
+    }
+}

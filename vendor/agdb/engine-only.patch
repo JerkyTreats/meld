@@ -1,0 +1,33 @@
+diff --git a/agdb/src/db.rs b/agdb/src/db.rs
+index c0064025..3f959fe3 100644
+--- a/agdb/src/db.rs
++++ b/agdb/src/db.rs
+@@ -415,6 +415,7 @@ impl<Store: StorageData> DbImpl<Store> {
+         &mut self,
+         f: impl FnOnce(&mut TransactionMut<Store>) -> Result<T, E>,
+     ) -> Result<T, E> {
++        let storage_transaction = self.storage.transaction();
+         let mut transaction = TransactionMut::new(&mut *self);
+         let result = f(&mut transaction);
+ 
+@@ -424,6 +425,7 @@ impl<Store: StorageData> DbImpl<Store> {
+             transaction.rollback()?;
+         }
+ 
++        self.storage.commit(storage_transaction)?;
+         result
+     }
+ 
+diff --git a/agdb/src/storage/file_storage.rs b/agdb/src/storage/file_storage.rs
+index 7c15ca13..a287f58b 100644
+--- a/agdb/src/storage/file_storage.rs
++++ b/agdb/src/storage/file_storage.rs
+@@ -54,7 +54,7 @@ impl FileStorage {
+         wal: &mut WriteAheadLog,
+         sync_mode: SyncMode,
+     ) -> Result<(), DbError> {
+-        for record in wal.records()? {
++        for record in wal.records()?.into_iter().rev() {
+             Self::apply_wal_record(file, record)?;
+         }
+ 

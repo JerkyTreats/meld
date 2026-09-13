@@ -55,15 +55,23 @@ impl TraversalQuery<'_> {
         {
             return Ok(None);
         }
+        let receipt = observed.receipts.iter().find(|receipt| {
+            receipt.owner_id == expected.owner_id
+                && receipt.revision_id == expected.revision_id
+                && receipt.scope == expected.scope
+        });
+        let Some(event) = receipt.and_then(|r| r.source_event) else {
+            return Ok(None);
+        };
         let publication = self
             .store
-            .owner_publications_through_seq(cut.event_position.after_seq)?
-            .into_iter()
-            .find(|publication| {
-                publication.operation.event_record_id() == expected.event_record_id
-                    && publication.operation.batch.owner_id == expected.owner_id
-                    && publication.operation.batch.revision_id == expected.revision_id
-                    && publication.operation.batch.scope == expected.scope
+            .publications
+            .header_for_event(event.seq)?
+            .filter(|p| {
+                p.event_record_id == expected.event_record_id
+                    && p.owner_id == expected.owner_id
+                    && p.revision_id == expected.revision_id
+                    && p.scope == expected.scope
             });
         let Some(publication) = publication else {
             return Ok(None);

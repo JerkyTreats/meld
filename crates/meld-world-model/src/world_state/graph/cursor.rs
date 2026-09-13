@@ -310,9 +310,14 @@ mod tests {
 
     #[test]
     fn same_identity_resumes_pending_legacy_projection_reset() {
+        let graph_directory = tempfile::tempdir().unwrap();
         let _guard = FAILPOINT_TEST_LOCK.lock().unwrap();
         let temp = tempfile::tempdir().unwrap();
-        let traversal = TraversalStore::new(sled::open(temp.path()).unwrap()).unwrap();
+        let traversal = TraversalStore::new(
+            sled::open(temp.path()).unwrap(),
+            graph_directory.path().join("graph.agdb"),
+        )
+        .unwrap();
         let ledger_id = LedgerIdentity::new();
         let facts = leave_pending_reset(&traversal, ledger_id);
         let runtime_meta = traversal.db().open_tree(TREE_RUNTIME_META).unwrap();
@@ -345,9 +350,14 @@ mod tests {
 
     #[test]
     fn foreign_identity_rejects_pending_reset_without_clearing_projection() {
+        let graph_directory = tempfile::tempdir().unwrap();
         let _guard = FAILPOINT_TEST_LOCK.lock().unwrap();
         let temp = tempfile::tempdir().unwrap();
-        let traversal = TraversalStore::new(sled::open(temp.path()).unwrap()).unwrap();
+        let traversal = TraversalStore::new(
+            sled::open(temp.path()).unwrap(),
+            graph_directory.path().join("graph.agdb"),
+        )
+        .unwrap();
         let target_ledger_id = LedgerIdentity::new();
         let foreign_ledger_id = LedgerIdentity::new();
         let facts = leave_pending_reset(&traversal, target_ledger_id);

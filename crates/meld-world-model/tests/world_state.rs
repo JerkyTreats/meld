@@ -132,6 +132,7 @@ impl GraphConsumerCursorReporter for FailOnceCursorReporter {
 
 #[test]
 fn graph_runtime_resets_legacy_cursor_and_preserves_migration_evidence() {
+    let graph_directory = tempfile::tempdir().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let authority = EventAuthority::open(
         sled::open(temp_dir.path().join("events")).unwrap(),
@@ -139,8 +140,11 @@ fn graph_runtime_resets_legacy_cursor_and_preserves_migration_evidence() {
     )
     .unwrap();
     let ports = Arc::new(AuthorityGraphPorts::new(&authority));
-    let traversal =
-        TraversalStore::shared(sled::open(temp_dir.path().join("traversal")).unwrap()).unwrap();
+    let traversal = TraversalStore::shared(
+        sled::open(temp_dir.path().join("traversal")).unwrap(),
+        graph_directory.path().join("graph.agdb"),
+    )
+    .unwrap();
     traversal
         .db()
         .open_tree("traversal_runtime_meta")
@@ -185,6 +189,7 @@ fn graph_runtime_resets_legacy_cursor_and_preserves_migration_evidence() {
 
 #[test]
 fn graph_runtime_rejects_mismatched_port_identities_before_replay() {
+    let graph_directory = tempfile::tempdir().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let first = EventAuthority::open(
         sled::open(temp_dir.path().join("first-events")).unwrap(),
@@ -198,8 +203,11 @@ fn graph_runtime_rejects_mismatched_port_identities_before_replay() {
     .unwrap();
     let first_ports = Arc::new(AuthorityGraphPorts::new(&first));
     let second_ports = Arc::new(AuthorityGraphPorts::new(&second));
-    let traversal =
-        TraversalStore::shared(sled::open(temp_dir.path().join("traversal")).unwrap()).unwrap();
+    let traversal = TraversalStore::shared(
+        sled::open(temp_dir.path().join("traversal")).unwrap(),
+        graph_directory.path().join("graph.agdb"),
+    )
+    .unwrap();
 
     let result = GraphRuntime::from_ports(first_ports, second_ports, traversal);
 
@@ -214,6 +222,7 @@ fn graph_runtime_rejects_mismatched_port_identities_before_replay() {
 
 #[test]
 fn graph_runtime_rejects_foreign_page_and_next_cursor_identities() {
+    let graph_directory = tempfile::tempdir().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let authority = EventAuthority::open(
         sled::open(temp_dir.path().join("events")).unwrap(),
@@ -238,6 +247,7 @@ fn graph_runtime_rejects_foreign_page_and_next_cursor_identities() {
         });
         let traversal = TraversalStore::shared(
             sled::open(temp_dir.path().join(format!("traversal-{suffix}"))).unwrap(),
+            graph_directory.path().join(format!("graph-{suffix}.agdb")),
         )
         .unwrap();
         let runtime = GraphRuntime::from_ports(replay, ports.clone(), traversal).unwrap();
@@ -255,6 +265,7 @@ fn graph_runtime_rejects_foreign_page_and_next_cursor_identities() {
 
 #[test]
 fn graph_runtime_from_ports_reports_retention_gap_without_cursor_movement() {
+    let graph_directory = tempfile::tempdir().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let event_db = sled::open(temp_dir.path().join("events")).unwrap();
     let authority =
@@ -271,8 +282,11 @@ fn graph_runtime_from_ports_reports_retention_gap_without_cursor_movement() {
         .unwrap()
         .set_retained_lower_boundary(3)
         .unwrap();
-    let traversal =
-        TraversalStore::shared(sled::open(temp_dir.path().join("traversal")).unwrap()).unwrap();
+    let traversal = TraversalStore::shared(
+        sled::open(temp_dir.path().join("traversal")).unwrap(),
+        graph_directory.path().join("graph.agdb"),
+    )
+    .unwrap();
     let route = meld_world_model::world_state::graph::admission::GraphOwnerEventRoute {
         complete_event_source: true,
         route_id: "retained-owner-route".into(),
@@ -333,6 +347,7 @@ fn graph_runtime_from_ports_reports_retention_gap_without_cursor_movement() {
 
 #[test]
 fn graph_runtime_retries_registry_report_after_local_cursor_is_durable() {
+    let graph_directory = tempfile::tempdir().unwrap();
     let temp_dir = tempfile::tempdir().unwrap();
     let authority = EventAuthority::open(
         sled::open(temp_dir.path().join("events")).unwrap(),
@@ -363,7 +378,11 @@ fn graph_runtime_retries_registry_report_after_local_cursor_is_durable() {
     let runtime = GraphRuntime::from_ports(
         ports.clone(),
         reporter,
-        TraversalStore::shared(sled::open(temp_dir.path().join("traversal")).unwrap()).unwrap(),
+        TraversalStore::shared(
+            sled::open(temp_dir.path().join("traversal")).unwrap(),
+            graph_directory.path().join("graph.agdb"),
+        )
+        .unwrap(),
     )
     .unwrap();
 
@@ -412,6 +431,7 @@ fn graph_runtime_retries_registry_report_after_local_cursor_is_durable() {
 
 #[test]
 fn late_owner_source_replay_refuses_pruned_history_without_claiming_coverage() {
+    let graph_directory = tempfile::tempdir().unwrap();
     use meld_world_model::world_state::graph::admission::GraphOwnerEventRoute;
     use meld_world_model::world_state::graph::runtime::GraphCatchUpBudget;
     let temp = tempfile::tempdir().unwrap();
@@ -428,7 +448,11 @@ fn late_owner_source_replay_refuses_pruned_history_without_claiming_coverage() {
             .unwrap();
     }
     let ports = Arc::new(AuthorityGraphPorts::new(&authority));
-    let store = TraversalStore::shared(sled::open(temp.path().join("world")).unwrap()).unwrap();
+    let store = TraversalStore::shared(
+        sled::open(temp.path().join("world")).unwrap(),
+        graph_directory.path().join("graph.agdb"),
+    )
+    .unwrap();
     let graph = GraphRuntime::from_ports(ports.clone(), ports, store.clone()).unwrap();
     graph
         .catch_up_bounded(GraphCatchUpBudget { max_items: 8 })

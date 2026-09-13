@@ -205,8 +205,13 @@ struct Fixture {
 fn fixture(subject_ids: &[&str]) -> Fixture {
     let graph_dir = tempfile::tempdir().unwrap();
     let belief_dir = tempfile::tempdir().unwrap();
-    let graph =
-        Arc::new(TraversalStore::new(sled::open(graph_dir.path().join("graph")).unwrap()).unwrap());
+    let graph = Arc::new(
+        TraversalStore::new(
+            sled::open(graph_dir.path().join("graph")).unwrap(),
+            graph_dir.path().join("graph.agdb"),
+        )
+        .unwrap(),
+    );
     let belief_db = sled::open(belief_dir.path().join("belief")).unwrap();
     let belief = Arc::new(BeliefStore::new(belief_db.clone()).unwrap());
     let mut registry = BeliefFamilyRegistryStore::new(belief_db).unwrap();
@@ -929,8 +934,13 @@ fn unanchored_family_assesses_unobserved_subject_to_prior_revision() {
 fn prior_only_belief_does_not_fabricate_graph_accessibility() {
     let graph_dir = tempfile::tempdir().unwrap();
     let belief_dir = tempfile::tempdir().unwrap();
-    let graph =
-        Arc::new(TraversalStore::new(sled::open(graph_dir.path().join("graph")).unwrap()).unwrap());
+    let graph = Arc::new(
+        TraversalStore::new(
+            sled::open(graph_dir.path().join("graph")).unwrap(),
+            graph_dir.path().join("graph.agdb"),
+        )
+        .unwrap(),
+    );
     let belief_db = sled::open(belief_dir.path().join("belief")).unwrap();
     let belief = Arc::new(BeliefStore::new(belief_db.clone()).unwrap());
     let mut registry = BeliefFamilyRegistryStore::new(belief_db).unwrap();
