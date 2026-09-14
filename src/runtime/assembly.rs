@@ -5316,6 +5316,17 @@ fn validate_runtime_id(runtime_id: &str) -> Result<(), RuntimeRegistryError> {
     }
     Ok(())
 }
+
+fn supervisor_path(root: &Path, binding: Option<&PhysicalBinding>) -> PathBuf {
+    match binding {
+        Some(binding) => root
+            .join("supervisors")
+            .join(binding.assignment_scope_id())
+            .join("supervisor.sled"),
+        None => root.join("supervisor.sled"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[cfg(unix)]
@@ -12223,15 +12234,5 @@ mod tests {
             report.fatal_errors[0].code,
             "publication_task_network_unresolved"
         );
-    }
-}
-
-fn supervisor_path(root: &Path, binding: Option<&PhysicalBinding>) -> PathBuf {
-    match binding {
-        Some(binding) => root
-            .join("supervisors")
-            .join(binding.assignment_scope_id())
-            .join("supervisor.sled"),
-        None => root.join("supervisor.sled"),
     }
 }

@@ -1,4 +1,7 @@
+use std::fs::OpenOptions;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 use super::*;
 
@@ -26,6 +29,158 @@ fn connect(root: &Path, selected: &OwnerExecutableV1) -> OwnerConnection {
         },
     )
     .unwrap()
+}
+
+#[test]
+fn concurrent_connections_never_observe_a_writable_retained_executable() {
+    let root = tempfile::tempdir().unwrap();
+    let selected = executable(
+        root.path(),
+        r#"for line in sys.stdin:
+ request=json.loads(line)
+ print(json.dumps({'message':'return','request_id':request['request_id'],'result':{'Ok':'ready'}}),flush=True)"#,
+    );
+    let implementation_root = root.path().join("implementations");
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(16));
+    std::thread::scope(|scope| {
+        let handles = (0..16)
+            .map(|_| {
+                let barrier = std::sync::Arc::clone(&barrier);
+                let selected = selected.clone();
+                let implementation_root = implementation_root.clone();
+                scope.spawn(move || {
+                    barrier.wait();
+                    let mut connection = OwnerConnection::start(
+                        &selected,
+                        &implementation_root,
+                        OwnerConnectionLimitsV1 {
+                            request_timeout_ms: 2_000,
+                            max_message_bytes: 65_536,
+                        },
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        connection
+                            .call::<String>(OwnerCommandV1::Describe, &NoOwnerCallbacks)
+                            .unwrap(),
+                        "ready"
+                    );
+                })
+            })
+            .collect::<Vec<_>>();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+    });
+    assert_eq!(
+        std::fs::read(implementation_root.join(&selected.content_hash)).unwrap(),
+        std::fs::read(&selected.path).unwrap()
+    );
+}
+
+#[test]
+fn retained_executable_starts_after_transient_writer_closes() {
+    let root = tempfile::tempdir().unwrap();
+    let selected = executable(
+        root.path(),
+        r#"for line in sys.stdin:
+ request=json.loads(line)
+ print(json.dumps({'message':'return','request_id':request['request_id'],'result':{'Ok':'ready'}}),flush=True)"#,
+    );
+    drop(connect(root.path(), &selected));
+    let retained = root
+        .path()
+        .join("implementations")
+        .join(&selected.content_hash);
+    let writer = OpenOptions::new().write(true).open(retained).unwrap();
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(30));
+        drop(writer);
+    });
+    let mut connection = connect(root.path(), &selected);
+    release.join().unwrap();
+    assert_eq!(
+        connection
+            .call::<String>(OwnerCommandV1::Describe, &NoOwnerCallbacks)
+            .unwrap(),
+        "ready"
+    );
+}
+
+#[test]
+fn retained_executable_writer_exhausts_bounded_spawn_retry() {
+    let root = tempfile::tempdir().unwrap();
+    let selected = executable(root.path(), "pass");
+    drop(connect(root.path(), &selected));
+    let retained = root
+        .path()
+        .join("implementations")
+        .join(&selected.content_hash);
+    let _writer = OpenOptions::new().write(true).open(retained).unwrap();
+    let started = Instant::now();
+    let error = match OwnerConnection::start(
+        &selected,
+        &root.path().join("implementations"),
+        OwnerConnectionLimitsV1 {
+            request_timeout_ms: 40,
+            max_message_bytes: 65_536,
+        },
+    ) {
+        Ok(_) => panic!("writer unexpectedly allowed retained executable startup"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code, "owner_transport_unavailable");
+    assert!(error.message.contains("Text file busy"));
+    assert!(started.elapsed() >= Duration::from_millis(35));
+    assert!(started.elapsed() < Duration::from_millis(500));
+}
+
+#[test]
+fn retained_executable_does_not_retry_other_spawn_errors() {
+    let root = tempfile::tempdir().unwrap();
+    let selected = executable(root.path(), "pass");
+    drop(connect(root.path(), &selected));
+    let retained = root
+        .path()
+        .join("implementations")
+        .join(&selected.content_hash);
+    std::fs::set_permissions(&retained, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let error = match OwnerConnection::start(
+        &selected,
+        &root.path().join("implementations"),
+        OwnerConnectionLimitsV1 {
+            request_timeout_ms: 2_000,
+            max_message_bytes: 65_536,
+        },
+    ) {
+        Ok(_) => panic!("non-executable retained owner unexpectedly started"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code, "owner_transport_unavailable");
+    assert!(error.message.contains("Permission denied"));
+    assert!(!super::connection::retained_exec_spawn_is_retryable(
+        &std::io::Error::from_raw_os_error(rustix::io::Errno::ACCESS.raw_os_error())
+    ));
+}
+
+#[test]
+fn installation_lease_unlocks_while_a_cloned_descriptor_remains_open() {
+    use fs2::FileExt;
+
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("installation.lock");
+    let lease = super::registration::InstallationLease::acquire(&path).unwrap();
+    let inherited = lease.try_clone().unwrap();
+    let competitor = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
+    assert!(competitor.try_lock_exclusive().is_err());
+    drop(lease);
+    competitor.try_lock_exclusive().unwrap();
+    fs2::FileExt::unlock(&competitor).unwrap();
+    drop(inherited);
 }
 
 #[test]

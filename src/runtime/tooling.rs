@@ -1577,6 +1577,148 @@ impl From<RuntimeInstance> for RuntimeCliInstanceStatus {
         }
     }
 }
+/// Format-only routing into existing public native inspection contracts.
+pub fn inspection_request(
+    command: &RuntimeCommands,
+) -> Result<(&'static str, serde_json::Value), ApiError> {
+    use crate::harness::eligibility::{AbsentRecordKind, EligibilityQuestion};
+    use crate::harness::walk::ThreadSubject;
+    match command {
+        RuntimeCommands::Trace {
+            subject,
+            network,
+            task,
+            limit,
+            ..
+        } => {
+            if *limit == 0 || *limit > 1000 {
+                return Err(runtime_message("limit must be between 1 and 1000"));
+            }
+            let subject = if subject == "task" {
+                ThreadSubject::Task {
+                    network_id: network
+                        .clone()
+                        .ok_or_else(|| runtime_message("task trace requires NETWORK TASK"))?,
+                    task_instance_id: task
+                        .clone()
+                        .ok_or_else(|| runtime_message("task trace requires NETWORK TASK"))?,
+                }
+            } else {
+                if network.is_some() || task.is_some() {
+                    return Err(runtime_message(
+                        "only task subjects accept NETWORK TASK arguments",
+                    ));
+                }
+                let (kind, id) = subject
+                    .split_once(':')
+                    .ok_or_else(|| runtime_message("trace expects KIND:ID or task NETWORK TASK"))?;
+                if id.is_empty() {
+                    return Err(runtime_message("trace identity must not be empty"));
+                }
+                match kind {
+                    "event" => ThreadSubject::Event { seq: id.parse().map_err(|_| runtime_message("event sequence must be an integer"))? },
+                    "publication" => ThreadSubject::OwnerPublication { source_seq: id.parse().map_err(|_| runtime_message("publication sequence must be an integer"))? },
+                    "evidence" => ThreadSubject::Evidence { evidence_id: id.into() },
+                    "belief" => ThreadSubject::BeliefRevision { revision_id: id.into() },
+                    "decision" => ThreadSubject::Decision { decision_id: id.into() },
+                    "goal" => ThreadSubject::Goal { goal_id: id.into() },
+                    _ => return Err(runtime_message("unknown trace kind; use event, publication, evidence, belief, decision, goal or task")),
+                }
+            };
+            Ok((
+                "/v1/walks/thread",
+                serde_json::json!({"subject":subject,"max_nodes":limit}),
+            ))
+        }
+        RuntimeCommands::Why { kind, subject, .. } => {
+            let kind = match kind.as_str() {
+                "task-completion" => AbsentRecordKind::TaskCompletion,
+                "task-admission" => AbsentRecordKind::TaskAdmission,
+                "belief-revision" => AbsentRecordKind::BeliefRevision,
+                "evidence" => AbsentRecordKind::Evidence,
+                _ => return Err(runtime_message("unknown absence kind; use task-completion, task-admission, belief-revision or evidence")),
+            };
+            Ok((
+                "/v1/walks/eligibility",
+                serde_json::to_value(EligibilityQuestion {
+                    kind,
+                    subject_key: subject.clone(),
+                })
+                .map_err(|e| runtime_message(e.to_string()))?,
+            ))
+        }
+        _ => Err(runtime_message("not a native inspection command")),
+    }
+}
+
+pub fn format_inspection(
+    value: &serde_json::Value,
+    command: &RuntimeCommands,
+) -> Result<String, ApiError> {
+    let json = match command {
+        RuntimeCommands::Trace { json, .. } | RuntimeCommands::Why { json, .. } => *json,
+        _ => true,
+    };
+    if json {
+        return serde_json::to_string_pretty(value).map_err(|e| runtime_message(e.to_string()));
+    }
+    let mut lines = Vec::new();
+    if let Some(nodes) = value["nodes"].as_array() {
+        for node in nodes {
+            lines.push(format!(
+                "{}: {}",
+                node["subject"],
+                node["summary"].as_str().unwrap_or("unresolved")
+            ));
+        }
+    }
+    if let Some(links) = value["links"].as_array() {
+        for link in links {
+            lines.push(format!(
+                "{}: {}",
+                link["runtime_id"].as_str().unwrap_or("?"),
+                link["declaration"]["condition"].as_str().unwrap_or("?")
+            ));
+        }
+    }
+    for field in ["divergences", "cuts"] {
+        if let Some(items) = value[field].as_array() {
+            for item in items {
+                lines.push(format!("Unresolved: {item}"));
+            }
+        }
+    }
+    if value["bounded"].as_bool() == Some(true) {
+        lines.push("Traversal reached its node bound.".into());
+    }
+    if lines.is_empty() {
+        lines.push("No retained explanation is available at this observation boundary.".into());
+    }
+    Ok(lines.join("\n"))
+}
+
+pub fn try_live_inspection(
+    workspace: &std::path::Path,
+    config: &crate::config::MerkleConfig,
+    command: &RuntimeCommands,
+) -> Option<Result<String, ApiError>> {
+    let target = ProductRuntimeAssembly::describe_for_workspace(workspace, config).ok()?;
+    let (url, _) = match crate::runtime::managed::discover_live(&target) {
+        Ok(Some(live)) => live,
+        Ok(None) => return None,
+        Err(error) => return Some(Err(error)),
+    };
+    Some((|| {
+        let (path, body) = inspection_request(command)?;
+        let value = ureq::post(&format!("{url}{path}"))
+            .timeout(Duration::from_secs(5))
+            .send_json(body)
+            .map_err(|e| runtime_message(e.to_string()))?
+            .into_json::<serde_json::Value>()
+            .map_err(|e| runtime_message(e.to_string()))?;
+        format_inspection(&value, command)
+    })())
+}
 
 #[cfg(test)]
 mod tests {
@@ -1932,147 +2074,4 @@ mod tests {
         assert!(!empty_pass.active_idle);
         assert!(empty_pass.actors.is_empty());
     }
-}
-
-/// Format-only routing into existing public native inspection contracts.
-pub fn inspection_request(
-    command: &RuntimeCommands,
-) -> Result<(&'static str, serde_json::Value), ApiError> {
-    use crate::harness::eligibility::{AbsentRecordKind, EligibilityQuestion};
-    use crate::harness::walk::ThreadSubject;
-    match command {
-        RuntimeCommands::Trace {
-            subject,
-            network,
-            task,
-            limit,
-            ..
-        } => {
-            if *limit == 0 || *limit > 1000 {
-                return Err(runtime_message("limit must be between 1 and 1000"));
-            }
-            let subject = if subject == "task" {
-                ThreadSubject::Task {
-                    network_id: network
-                        .clone()
-                        .ok_or_else(|| runtime_message("task trace requires NETWORK TASK"))?,
-                    task_instance_id: task
-                        .clone()
-                        .ok_or_else(|| runtime_message("task trace requires NETWORK TASK"))?,
-                }
-            } else {
-                if network.is_some() || task.is_some() {
-                    return Err(runtime_message(
-                        "only task subjects accept NETWORK TASK arguments",
-                    ));
-                }
-                let (kind, id) = subject
-                    .split_once(':')
-                    .ok_or_else(|| runtime_message("trace expects KIND:ID or task NETWORK TASK"))?;
-                if id.is_empty() {
-                    return Err(runtime_message("trace identity must not be empty"));
-                }
-                match kind {
-                    "event" => ThreadSubject::Event { seq: id.parse().map_err(|_| runtime_message("event sequence must be an integer"))? },
-                    "publication" => ThreadSubject::OwnerPublication { source_seq: id.parse().map_err(|_| runtime_message("publication sequence must be an integer"))? },
-                    "evidence" => ThreadSubject::Evidence { evidence_id: id.into() },
-                    "belief" => ThreadSubject::BeliefRevision { revision_id: id.into() },
-                    "decision" => ThreadSubject::Decision { decision_id: id.into() },
-                    "goal" => ThreadSubject::Goal { goal_id: id.into() },
-                    _ => return Err(runtime_message("unknown trace kind; use event, publication, evidence, belief, decision, goal or task")),
-                }
-            };
-            Ok((
-                "/v1/walks/thread",
-                serde_json::json!({"subject":subject,"max_nodes":limit}),
-            ))
-        }
-        RuntimeCommands::Why { kind, subject, .. } => {
-            let kind = match kind.as_str() {
-                "task-completion" => AbsentRecordKind::TaskCompletion,
-                "task-admission" => AbsentRecordKind::TaskAdmission,
-                "belief-revision" => AbsentRecordKind::BeliefRevision,
-                "evidence" => AbsentRecordKind::Evidence,
-                _ => return Err(runtime_message("unknown absence kind; use task-completion, task-admission, belief-revision or evidence")),
-            };
-            Ok((
-                "/v1/walks/eligibility",
-                serde_json::to_value(EligibilityQuestion {
-                    kind,
-                    subject_key: subject.clone(),
-                })
-                .map_err(|e| runtime_message(e.to_string()))?,
-            ))
-        }
-        _ => Err(runtime_message("not a native inspection command")),
-    }
-}
-
-pub fn format_inspection(
-    value: &serde_json::Value,
-    command: &RuntimeCommands,
-) -> Result<String, ApiError> {
-    let json = match command {
-        RuntimeCommands::Trace { json, .. } | RuntimeCommands::Why { json, .. } => *json,
-        _ => true,
-    };
-    if json {
-        return serde_json::to_string_pretty(value).map_err(|e| runtime_message(e.to_string()));
-    }
-    let mut lines = Vec::new();
-    if let Some(nodes) = value["nodes"].as_array() {
-        for node in nodes {
-            lines.push(format!(
-                "{}: {}",
-                node["subject"],
-                node["summary"].as_str().unwrap_or("unresolved")
-            ));
-        }
-    }
-    if let Some(links) = value["links"].as_array() {
-        for link in links {
-            lines.push(format!(
-                "{}: {}",
-                link["runtime_id"].as_str().unwrap_or("?"),
-                link["declaration"]["condition"].as_str().unwrap_or("?")
-            ));
-        }
-    }
-    for field in ["divergences", "cuts"] {
-        if let Some(items) = value[field].as_array() {
-            for item in items {
-                lines.push(format!("Unresolved: {item}"));
-            }
-        }
-    }
-    if value["bounded"].as_bool() == Some(true) {
-        lines.push("Traversal reached its node bound.".into());
-    }
-    if lines.is_empty() {
-        lines.push("No retained explanation is available at this observation boundary.".into());
-    }
-    Ok(lines.join("\n"))
-}
-
-pub fn try_live_inspection(
-    workspace: &std::path::Path,
-    config: &crate::config::MerkleConfig,
-    command: &RuntimeCommands,
-) -> Option<Result<String, ApiError>> {
-    let target = ProductRuntimeAssembly::describe_for_workspace(workspace, config).ok()?;
-    let (url, _) = match crate::runtime::managed::discover_live(&target) {
-        Ok(Some(live)) => live,
-        Ok(None) => return None,
-        Err(error) => return Some(Err(error)),
-    };
-    Some((|| {
-        let (path, body) = inspection_request(command)?;
-        let value = ureq::post(&format!("{url}{path}"))
-            .timeout(Duration::from_secs(5))
-            .send_json(body)
-            .map_err(|e| runtime_message(e.to_string()))?
-            .into_json::<serde_json::Value>()
-            .map_err(|e| runtime_message(e.to_string()))?;
-        format_inspection(&value, command)
-    })())
 }

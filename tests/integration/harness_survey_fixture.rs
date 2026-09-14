@@ -7,13 +7,69 @@ use std::path::Path;
 use meld::config::{PhysicalBinding, SelectedStewardshipPackage};
 use meld::harness::boot::{HarnessBootRequest, HarnessRootSelection};
 use meld::runtime::assembly::StewardshipComposition;
+use meld::runtime::contracts::{
+    RuntimeActionRecord, RuntimeStatusPublisher, WaitingOnDeclaration, WorkerCheckpoint,
+    WorkerScope, WorkerTickReport,
+};
 use meld::runtime::registration::{RegistrationKind, RegistrationSet, RuntimeRegistration};
 use meld::runtime::storage::{OpenProductStores, ProductStorageLayout};
+use meld::runtime::supervisor::SupervisorReportStore;
 use meld_world_model::belief::{BeliefFamilyRegistry, BeliefFamilyRegistryStore};
 
 pub const SUBJECT_ID: &str = "docs";
 pub const AGENT_ID: &str = "seed.docs_freshness";
 pub const FAMILY_ID: &str = "docs_freshness";
+
+/// Publish a retained historical wait for report presentation tests.
+///
+/// This fixture exercises the report reader and its projections. It is not
+/// evidence that the current runtime composed or invoked a Belief actor.
+pub fn publish_historical_belief_wait_fixture(
+    supervisor_store: &meld::runtime::supervisor::SupervisorStore,
+    observed_at_ms: u64,
+) {
+    let report = WorkerTickReport {
+        actor_id: "world_model.belief_assessment".to_string(),
+        scope: WorkerScope {
+            domain_id: "world_model".to_string(),
+            stream_id: None,
+            work_key: Some("belief_assessment".to_string()),
+            agent_id: None,
+            perspective_key: None,
+            branch_id: None,
+            subject_key: Some(format!("workspace_fs::node::{SUBJECT_ID}")),
+        },
+        input_checkpoint: WorkerCheckpoint {
+            name: "belief_assessment_checkpoint".to_string(),
+            value: 0,
+        },
+        output_checkpoint: WorkerCheckpoint {
+            name: "belief_assessment_checkpoint".to_string(),
+            value: 0,
+        },
+        items_attempted: 0,
+        items_committed: 0,
+        retryable_errors: Vec::new(),
+        fatal_errors: Vec::new(),
+        budget_exhausted: false,
+        waiting_on: vec![WaitingOnDeclaration {
+            condition: "belief_work_ineligible".to_string(),
+            subject_key: Some(format!("workspace_fs::node::{SUBJECT_ID}")),
+            detail: "required evidence family has no admitted observation".to_string(),
+            wake_refs: Vec::new(),
+        }],
+    };
+    let action = RuntimeActionRecord::from_worker_tick(
+        "survey-belief-wait",
+        "world_model.belief_assessment",
+        observed_at_ms,
+        report,
+    );
+    SupervisorReportStore::open(supervisor_store)
+        .unwrap()
+        .publish_action(&action)
+        .unwrap();
+}
 
 /// The frozen specimen theory body.
 ///

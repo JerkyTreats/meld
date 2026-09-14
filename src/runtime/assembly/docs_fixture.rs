@@ -230,7 +230,7 @@ pub(super) struct JudgeProvider(
 impl crate::provider::ProviderCompletionPort for JudgeProvider {
     async fn complete_provider_request(
         &self,
-        _request: &crate::context::generation::contracts::GenerationOrchestrationRequest,
+        request: &crate::context::generation::contracts::GenerationOrchestrationRequest,
         messages: Vec<crate::provider::ChatMessage>,
         _context: Option<&crate::execution::ExecutionEventContext>,
     ) -> Result<crate::provider::ProviderCompletion, crate::error::ApiError> {
@@ -242,7 +242,8 @@ impl crate::provider::ProviderCompletionPort for JudgeProvider {
         let failure = |e: meld_docs_owner::error::ApiError| {
             crate::error::ApiError::ProviderError(e.to_string())
         };
-        let content = if input.get("source").is_some() {
+        let content = if request.frame_type == "docs-source-claims" && input.get("source").is_some()
+        {
             let source = serde_json::from_value(input["source"].clone()).unwrap();
             let proposed = self
                 .0
@@ -254,7 +255,9 @@ impl crate::provider::ProviderCompletionPort for JudgeProvider {
                 .map_err(failure)?;
             serde_json::json!({"complete": proposed.complete, "no_claims_reason": proposed.no_claims_reason,
                 "claims": proposed.claims.iter().map(|claim| serde_json::json!({"statement":claim.statement,"confidence":claim.confidence,"quotes":claim.quotes})).collect::<Vec<_>>()})
-        } else if input.get("sources").is_some() {
+        } else if request.frame_type == "docs-claim-correspondence"
+            && input.get("sources").is_some()
+        {
             let owned: Vec<(String, ObservedSourceClaim)> = input["sources"]
                 .as_array()
                 .unwrap()
@@ -284,7 +287,20 @@ impl crate::provider::ProviderCompletionPort for JudgeProvider {
                     .map_err(failure)?,
             )
             .unwrap()
-        } else {
+        } else if request.frame_type == "docs-claim-validation"
+            && [
+                "directory",
+                "readme_path",
+                "readme_context",
+                "readme_content_hash",
+                "inventory",
+                "direct_evidence",
+                "descendant_evidence",
+            ]
+            .iter()
+            .all(|key| input.get(*key).is_some_and(serde_json::Value::is_string))
+            && input.get("claims").is_some_and(serde_json::Value::is_array)
+        {
             let directory = DirectoryEvidence {
                 path: input["directory"].as_str().unwrap().into(),
                 direct_files: vec![],
@@ -316,6 +332,11 @@ impl crate::provider::ProviderCompletionPort for JudgeProvider {
                 .await
                 .map_err(failure)?;
             serde_json::json!({"assessments":assessments.iter().map(|a| serde_json::json!({"claim_id":a.claim_id,"verdict":a.verdict,"confidence":a.confidence,"citations":a.citations,"rationale":a.rationale})).collect::<Vec<_>>()})
+        } else {
+            return Err(crate::error::ApiError::ProviderRequestFailed(
+                "JudgeProvider fixture only supplies source claims, correspondence, and assessment completions"
+                    .into(),
+            ));
         };
         Ok(crate::provider::ProviderCompletion {
             preparation: crate::provider::ProviderExecutionDescription {
@@ -375,4 +396,55 @@ pub(crate) fn configure_stores(
             ("dependency-security", "meld-dependency-security-owner"),
         ],
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::JudgeProvider;
+    use crate::context::generation::contracts::GenerationOrchestrationRequest;
+    use crate::error::ApiError;
+    use crate::provider::{
+        ChatMessage, MessageRole, ProviderCompletionPort, ProviderExecutionBinding,
+        ProviderRuntimeOverrides,
+    };
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn judge_provider_rejects_unsupported_drafting_and_revision_requests() {
+        let provider = JudgeProvider(Arc::new(
+            meld_docs_owner::docs::claim_observation::test_support::FixtureJudge::default(),
+        ));
+        let binding =
+            ProviderExecutionBinding::new("fixture", ProviderRuntimeOverrides::default()).unwrap();
+        for frame_type in ["docs-readme", "docs-readme-revision"] {
+            let request = GenerationOrchestrationRequest {
+                request_id: 1,
+                node_id: [0; 32],
+                agent_id: "fixture-agent".into(),
+                provider: binding.clone(),
+                frame_type: frame_type.into(),
+                retry_count: 0,
+                force: true,
+            };
+            let result = provider
+                .complete_provider_request(
+                    &request,
+                    vec![
+                        ChatMessage {
+                            role: MessageRole::System,
+                            content: "fixture".into(),
+                        },
+                        ChatMessage {
+                            role: MessageRole::User,
+                            content: serde_json::json!({"directory":"."}).to_string(),
+                        },
+                    ],
+                    None,
+                )
+                .await;
+            assert!(
+                matches!(result, Err(ApiError::ProviderRequestFailed(message)) if message.contains("only supplies source claims"))
+            );
+        }
+    }
 }

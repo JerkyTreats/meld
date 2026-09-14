@@ -4742,8 +4742,10 @@ mod tests {
         } = fixture;
         drop(store);
         drop(db);
-        let reopened =
-            AgentStore::new(sled::open(_temp.path().join("world_model.sled")).unwrap()).unwrap();
+        let reopened = AgentStore::new(crate::lifecycle::test_support::reopen_sled_after_close(
+            &_temp.path().join("world_model.sled"),
+        ))
+        .unwrap();
         assert_eq!(
             reopened.current_reconciliation_plan(&goal_id).unwrap(),
             Some(successor.clone())
@@ -5679,7 +5681,7 @@ mod tests {
         let mut last = 0;
         for boundary in 0..7 {
             let report = {
-                let db = sled::open(&store_path).unwrap();
+                let db = crate::lifecycle::test_support::reopen_sled_after_close(&store_path);
                 let store = Arc::new(AgentStore::new(db.clone()).unwrap());
                 let curation_store = Arc::new(CurationStore::new(db).unwrap());
                 let actor = AgentReconciliationActor::new(
@@ -5726,7 +5728,7 @@ mod tests {
             last = report.output_position;
         }
 
-        let db = sled::open(&store_path).unwrap();
+        let db = crate::lifecycle::test_support::reopen_sled_after_close(&store_path);
         let store = Arc::new(AgentStore::new(db.clone()).unwrap());
         let curation_store = Arc::new(CurationStore::new(db).unwrap());
         let replay = AgentReconciliationActor::new(

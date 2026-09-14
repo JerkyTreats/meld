@@ -1,4 +1,4 @@
-//! A required family waits for admitted evidence without resurrecting Graph anchors.
+//! Loose historical theory cannot compose a native Belief actor or resurrect Graph anchors.
 
 use std::fs;
 
@@ -10,7 +10,7 @@ use meld::runtime::assembly::StewardshipActorBindings;
 use meld::runtime::contracts::RuntimeActionRecord;
 
 #[test]
-fn unobserved_required_family_does_not_invent_anchor_evidence() {
+fn loose_family_does_not_compose_belief_or_invent_anchor_evidence() {
     let session = tempfile::tempdir().unwrap();
     let workspace_root = session.path().join("workspace");
     let product_root = session.path().join("root");
@@ -31,8 +31,8 @@ fn unobserved_required_family_does_not_invent_anchor_evidence() {
     // world-initialization authority.
     let mut run = HarnessRun::boot(boot_request("stall-specimen", 1_000)).unwrap();
 
-    // Drive the composed runtime with injected time. No stimuli beyond
-    // the installed test fixture: the stall must emerge, not be arranged.
+    // Drive the composed runtime with injected time. Loose family state is
+    // inspectable but cannot replace the prepared-product runtime authority.
     let mut driver = run.driver().unwrap();
     let mut actions: Vec<RuntimeActionRecord> = Vec::new();
     for now_ms in [1_100, 1_200, 1_300] {
@@ -52,7 +52,15 @@ fn unobserved_required_family_does_not_invent_anchor_evidence() {
         .all(|issue| !issue.message.contains("missing graph anchor"))));
     assert!(actions
         .iter()
-        .any(|action| action.actor_id.contains("belief")));
+        .any(|action| action.runtime_id == "world_model.graph_replay"));
+    assert!(actions
+        .iter()
+        .all(|action| action.runtime_id != "world_model.belief_assessment"));
+    assert!(run
+        .assembly()
+        .diagnostics()
+        .iter()
+        .any(|diagnostic| diagnostic.code == "theory_image_not_installed"));
     assert_eq!(
         HarnessManifest::load(run.manifest_path())
             .unwrap()

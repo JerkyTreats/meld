@@ -12,6 +12,8 @@ use serde::de::DeserializeOwned;
 use super::contracts::*;
 use super::server::{read_message, write_message};
 
+const RETAINED_EXEC_RETRY_DELAY: Duration = Duration::from_millis(5);
+
 /// One serial native owner connection. Every callback is handled through the
 /// caller's operation-specific grant; no callback registry is selected by the child.
 pub struct OwnerConnection {
@@ -69,6 +71,11 @@ impl OwnerConnection {
                 .set_permissions(std::fs::Permissions::from_mode(0o700))
                 .map_err(io_error)?;
             staged.as_file().sync_all().map_err(io_error)?;
+            // Close the writable descriptor before the digest path becomes
+            // executable. Concurrent starters may observe the path as soon as
+            // publication succeeds, and Linux refuses to execute a file while
+            // any process still holds it open for writing.
+            let staged = staged.into_temp_path();
             if let Err(error) = staged.persist_noclobber(&retained) {
                 if std::fs::read(&retained).map_err(io_error)? != bytes {
                     return Err(io_error(error));
@@ -76,28 +83,7 @@ impl OwnerConnection {
             }
         }
         let (parent, child_socket) = UnixStream::pair().map_err(io_error)?;
-        let input = Stdio::from(OwnedFd::from(child_socket.try_clone().map_err(io_error)?));
-        let output = Stdio::from(OwnedFd::from(child_socket));
-        let child = Command::new(&retained)
-            .process_group(0)
-            .env_clear()
-            .envs(
-                [
-                    crate::telemetry::traces::ENDPOINT_ENV,
-                    crate::telemetry::traces::RUN_ENV,
-                ]
-                .into_iter()
-                .filter_map(|key| std::env::var(key).ok().map(|value| (key, value))),
-            )
-            .env(
-                "MELD_OWNER_MAX_MESSAGE_BYTES",
-                limits.max_message_bytes.to_string(),
-            )
-            .current_dir(implementation_root)
-            .stdin(input)
-            .stdout(output)
-            .stderr(Stdio::inherit())
-            .spawn()
+        let child = spawn_retained_owner(&retained, implementation_root, &child_socket, &limits)
             .map_err(io_error)?;
         Ok(Self {
             process_group: rustix::process::Pid::from_raw(child.id() as i32),
@@ -275,6 +261,70 @@ impl OwnerConnection {
             .set_write_timeout(Some(remaining))
             .map_err(io_error)
     }
+}
+
+fn spawn_retained_owner(
+    retained: &Path,
+    implementation_root: &Path,
+    child_socket: &UnixStream,
+    limits: &OwnerConnectionLimitsV1,
+) -> std::io::Result<Child> {
+    // A sibling fork can retain a writable CLOEXEC staging descriptor after
+    // its parent closes and publishes that digest-verified image. Retry only
+    // the resulting transient executable-busy refusal.
+    let retry_budget = Duration::from_millis(limits.request_timeout_ms);
+    let started = Instant::now();
+    let deadline = started + retry_budget;
+    let mut attempts = 0_u64;
+    loop {
+        attempts += 1;
+        let input = Stdio::from(OwnedFd::from(child_socket.try_clone()?));
+        let output = Stdio::from(OwnedFd::from(child_socket.try_clone()?));
+        let result = Command::new(retained)
+            .process_group(0)
+            .env_clear()
+            .envs(
+                [
+                    crate::telemetry::traces::ENDPOINT_ENV,
+                    crate::telemetry::traces::RUN_ENV,
+                ]
+                .into_iter()
+                .filter_map(|key| std::env::var(key).ok().map(|value| (key, value))),
+            )
+            .env(
+                "MELD_OWNER_MAX_MESSAGE_BYTES",
+                limits.max_message_bytes.to_string(),
+            )
+            .current_dir(implementation_root)
+            .stdin(input)
+            .stdout(output)
+            .stderr(Stdio::inherit())
+            .spawn();
+        match result {
+            Ok(child) => return Ok(child),
+            Err(error) if retained_exec_spawn_is_retryable(&error) && Instant::now() < deadline => {
+                std::thread::sleep(
+                    RETAINED_EXEC_RETRY_DELAY
+                        .min(deadline.saturating_duration_since(Instant::now())),
+                );
+            }
+            Err(error) => {
+                return Err(std::io::Error::new(
+                    error.kind(),
+                    format!(
+                        "retained owner spawn failed: path={}, attempts={attempts}, elapsed_ms={}, errno={:?}: {error}",
+                        retained.display(),
+                        started.elapsed().as_millis(),
+                        rustix::io::Errno::from_io_error(&error)
+                    ),
+                ));
+            }
+        }
+    }
+}
+
+pub(super) fn retained_exec_spawn_is_retryable(error: &std::io::Error) -> bool {
+    rustix::io::Errno::from_io_error(error) == Some(rustix::io::Errno::TXTBSY)
 }
 
 impl Drop for OwnerConnection {

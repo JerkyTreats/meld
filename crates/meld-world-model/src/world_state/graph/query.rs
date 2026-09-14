@@ -629,7 +629,7 @@ mod owner_publication_tests {
         drop(fixture);
         drop(db);
 
-        let reopened_db = sled::open(temp.path()).unwrap();
+        let reopened_db = crate::lifecycle::test_support::reopen_sled_after_close(temp.path());
         let reopened =
             GraphRuntimeTestFixture::open(reopened_db, graph_directory.path().join("graph.agdb"))
                 .unwrap();
@@ -832,7 +832,8 @@ mod owner_publication_tests {
         drop(reopened);
         drop(legacy);
         std::fs::remove_file(&path).unwrap();
-        let db = sled::open(root.path().join("world")).unwrap();
+        let db =
+            crate::lifecycle::test_support::reopen_sled_after_close(&root.path().join("world"));
         assert!(TraversalStore::new(db, &path)
             .err()
             .unwrap()

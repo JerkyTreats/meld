@@ -366,7 +366,7 @@ mod tests {
         drop(actor);
         drop(store);
         drop(db);
-        let db = sled::open(root.path()).unwrap();
+        let db = crate::lifecycle::test_support::reopen_sled_after_close(root.path());
         let store = Arc::new(BeliefStore::new(db.clone()).unwrap());
         assert_eq!(
             store
@@ -488,7 +488,10 @@ mod tests {
         drop(store);
         drop(registry);
         drop(db);
-        let store = BeliefStore::new(sled::open(root.path()).unwrap()).unwrap();
+        let store = BeliefStore::new(crate::lifecycle::test_support::reopen_sled_after_close(
+            root.path(),
+        ))
+        .unwrap();
         assert_eq!(select(&store).items[0].key, key);
         store.clear_dirty(&key).unwrap();
         let quiet = select(&store);
@@ -537,7 +540,10 @@ mod tests {
         drop(store);
         drop(registry);
 
-        let reopened = BeliefStore::new(sled::open(root.path()).unwrap()).unwrap();
+        let reopened = BeliefStore::new(crate::lifecycle::test_support::reopen_sled_after_close(
+            root.path(),
+        ))
+        .unwrap();
         assert_eq!(
             reopened.subscription_acceptance(&first.request_id).unwrap(),
             Some(first)

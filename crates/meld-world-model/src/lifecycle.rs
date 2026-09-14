@@ -3,6 +3,9 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
+#[cfg(test)]
+pub(crate) mod test_support;
+
 /// Semantic lifecycle account authored from the native owner's bound state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeLifecycleEvidence {

@@ -1,14 +1,15 @@
 //! The served substrate over a live survey session: `/v1` endpoints whose
 //! JSON bodies are the existing contract types verbatim.
 //!
-//! Proves the phase-three serving layer: the event authority contract and
-//! the report store reader served over loopback HTTP, the walks resolving
-//! over the wire, machine-readable errors, and the long-poll watch
-//! answering while the run is live.
+//! Proves the serving layer for live Events and retained historical reports:
+//! the event authority contract, report store reader, wire-level walks,
+//! machine-readable errors, and the long-poll watch.
 
 use std::fs;
 
-use super::harness_survey_fixture::{survey_binding, survey_boot_request, SUBJECT_ID};
+use super::harness_survey_fixture::{
+    publish_historical_belief_wait_fixture, survey_binding, survey_boot_request, SUBJECT_ID,
+};
 use meld::harness::boot::HarnessRun;
 use meld::harness::eligibility::EligibilityChain;
 use meld::harness::walk::CausalThread;
@@ -57,11 +58,13 @@ fn the_substrate_serves_contract_types_over_loopback_for_a_live_session() {
     .unwrap();
 
     let sources = ServeSources::from_assembly(run.assembly()).unwrap();
+    let supervisor_store = run.assembly().supervisor_store().clone();
     let ledger_id = sources.ledger_identity();
     let handle = serve(sources, 0).unwrap();
     let addr = handle.addr();
 
-    // Drive the run while the surface is up: the stall emerges live.
+    // Drive the Graph run while the surface is live, then publish the retained
+    // historical wait used to verify report transport and presentation.
     let mut driver = run.driver().unwrap();
     driver
         .append_stimulus(
@@ -80,6 +83,9 @@ fn the_substrate_serves_contract_types_over_loopback_for_a_live_session() {
     for now_ms in [1_100, 1_200, 1_300] {
         driver.step(now_ms).unwrap();
     }
+    // Preserve the historical report shape for transport and walk coverage.
+    // The separate stall test owns current runtime-composition assertions.
+    publish_historical_belief_wait_fixture(&supervisor_store, 1_300);
 
     let served_ledger_id: meld_events::LedgerIdentity =
         get(addr, "/v1/ledger").into_json().unwrap();
@@ -209,6 +215,7 @@ fn the_substrate_serves_contract_types_over_loopback_for_a_live_session() {
         .map(|(path, body)| post(addr, path, body.clone()).into_string().unwrap())
         .collect();
     handle.shutdown();
+    drop(supervisor_store);
     drop(run);
 
     // Playback: the sealed root boots through the same staged path (no

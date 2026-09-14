@@ -432,7 +432,12 @@ fn queued_confirmation_keeps_its_rule_when_standing_selection_changes_or_waits()
         drop(actor);
         store.flush().unwrap();
         drop(store);
-        let store = Arc::new(CurationStore::new(sled::open(&path).unwrap()).unwrap());
+        let store = Arc::new(
+            CurationStore::new(crate::lifecycle::test_support::reopen_sled_after_close(
+                &path,
+            ))
+            .unwrap(),
+        );
         let actor = StandingCurationActor::new(
             "world_model.standing_curation",
             "session-a",
@@ -869,7 +874,10 @@ fn rule_and_terminal_identity_survive_store_reopen() {
         store.flush().unwrap();
     }
 
-    let reopened = CurationStore::new(sled::open(&path).unwrap()).unwrap();
+    let reopened = CurationStore::new(crate::lifecycle::test_support::reopen_sled_after_close(
+        &path,
+    ))
+    .unwrap();
 
     assert_eq!(reopened.active_rule("agent-a").unwrap().unwrap().rule, rule);
     assert_eq!(
@@ -925,7 +933,12 @@ fn reopened_actor_reuses_the_same_terminal_identity_for_the_same_cut() {
         first_result = result_events(&events).pop().unwrap();
     }
 
-    let reopened_store = Arc::new(CurationStore::new(sled::open(&path).unwrap()).unwrap());
+    let reopened_store = Arc::new(
+        CurationStore::new(crate::lifecycle::test_support::reopen_sled_after_close(
+            &path,
+        ))
+        .unwrap(),
+    );
     let reopened_actor = StandingCurationActor::new(
         "world_model.standing_curation",
         "session-a",
@@ -1143,7 +1156,10 @@ proptest::proptest! {
         let mut receipt_persisted = false;
 
         for action in actions {
-            let store = CurationStore::new(sled::open(&store_path).unwrap()).unwrap();
+            let store = CurationStore::new(
+                crate::lifecycle::test_support::reopen_sled_after_close(&store_path),
+            )
+            .unwrap();
             match action % 6 {
                 0 => {
                     let decoded: CurationOperation = serde_json::from_slice(
@@ -1207,14 +1223,20 @@ proptest::proptest! {
         }
 
         {
-            let store = CurationStore::new(sled::open(&store_path).unwrap()).unwrap();
+            let store = CurationStore::new(
+                crate::lifecycle::test_support::reopen_sled_after_close(&store_path),
+            )
+            .unwrap();
             store.put_operation(&operation).unwrap();
             store.put_acceptance(&acceptance).unwrap();
             store.put_result(&result).unwrap();
             store.put_publication_receipt(&terminal_receipt).unwrap();
             store.flush().unwrap();
         }
-        let reopened = CurationStore::new(sled::open(&store_path).unwrap()).unwrap();
+        let reopened = CurationStore::new(
+            crate::lifecycle::test_support::reopen_sled_after_close(&store_path),
+        )
+        .unwrap();
         proptest::prop_assert_eq!(
             reopened.operation_for_selection(&operation.selection_id).unwrap(),
             Some(operation.clone())
@@ -1373,7 +1395,12 @@ fn assert_planned_curation_recovery(interruption: PlannedInterruption) {
     let semantic_receipt;
     let terminal_receipt;
     {
-        let store = Arc::new(CurationStore::new(sled::open(&store_path).unwrap()).unwrap());
+        let store = Arc::new(
+            CurationStore::new(crate::lifecycle::test_support::reopen_sled_after_close(
+                &store_path,
+            ))
+            .unwrap(),
+        );
         let actor = StandingCurationActor::new(
             "world_model.standing_curation",
             "session-planned-recovery",
@@ -1455,7 +1482,12 @@ fn assert_planned_curation_recovery(interruption: PlannedInterruption) {
         store.flush().unwrap();
     }
 
-    let store = Arc::new(CurationStore::new(sled::open(&store_path).unwrap()).unwrap());
+    let store = Arc::new(
+        CurationStore::new(crate::lifecycle::test_support::reopen_sled_after_close(
+            &store_path,
+        ))
+        .unwrap(),
+    );
     let actor = StandingCurationActor::new(
         "world_model.standing_curation",
         "session-planned-recovery",
@@ -1593,7 +1625,12 @@ fn assert_publication_recovery_after_reopen(successes_before_failure: usize) {
         store.flush().unwrap();
     }
 
-    let reopened_store = Arc::new(CurationStore::new(sled::open(&store_path).unwrap()).unwrap());
+    let reopened_store = Arc::new(
+        CurationStore::new(crate::lifecycle::test_support::reopen_sled_after_close(
+            &store_path,
+        ))
+        .unwrap(),
+    );
     let reopened_actor = StandingCurationActor::new(
         "world_model.standing_curation",
         "session-pending-publication",

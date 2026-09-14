@@ -142,23 +142,45 @@ struct InstallationConnection {
     revision_root: std::path::PathBuf,
 }
 
-impl InstallationConnection {
-    fn call<T: DeserializeOwned>(&self, command: OwnerCommandV1) -> Result<T, OwnerDiagnosticV1> {
+pub(super) struct InstallationLease(std::fs::File);
+
+impl InstallationLease {
+    pub(super) fn acquire(path: &Path) -> Result<Self, OwnerDiagnosticV1> {
         use fs2::FileExt;
-        std::fs::create_dir_all(&self.revision_root).map_err(installation_error)?;
         let lock = std::fs::OpenOptions::new()
             .create(true)
             .truncate(false)
             .read(true)
             .write(true)
-            .open(self.revision_root.join("installation.lock"))
+            .open(path)
             .map_err(installation_error)?;
         lock.try_lock_exclusive()
             .map_err(|error| OwnerDiagnosticV1::new("owner_revision_store_busy", error))?;
+        Ok(Self(lock))
+    }
+
+    #[cfg(test)]
+    pub(super) fn try_clone(&self) -> Result<std::fs::File, std::io::Error> {
+        self.0.try_clone()
+    }
+}
+
+impl Drop for InstallationLease {
+    fn drop(&mut self) {
+        // Explicit release prevents a fork-inherited duplicate descriptor from
+        // extending this completed installation lease.
+        let _ = fs2::FileExt::unlock(&self.0);
+    }
+}
+
+impl InstallationConnection {
+    fn call<T: DeserializeOwned>(&self, command: OwnerCommandV1) -> Result<T, OwnerDiagnosticV1> {
+        std::fs::create_dir_all(&self.revision_root).map_err(installation_error)?;
         let mut connection = self
             .connection
             .lock()
             .map_err(|_| installation_error("owner connection lock poisoned"))?;
+        let _lease = InstallationLease::acquire(&self.revision_root.join("installation.lock"))?;
         if let Err(error) = connection.call::<()>(
             OwnerCommandV1::OpenRevisionStore {
                 state_root: self.revision_root.clone(),
@@ -259,4 +281,70 @@ pub(crate) fn validate_description(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_registration_serializes_calls_while_distinct_lease_remains_busy() {
+        let root = tempfile::tempdir().unwrap();
+        let executable_path = root.path().join("owner.py");
+        let source = br#"#!/usr/bin/python3
+import json,sys,time
+description={'protocol_version':1,'owner_id':'specimen','routes':[],'capabilities':[],'implementations':[],'observation_participant':None}
+for line in sys.stdin:
+ request=json.loads(line)
+ operation=request['command']['operation']
+ if operation=='describe':
+  time.sleep(0.03)
+  result=description
+ else: result=None
+ print(json.dumps({'message':'return','request_id':request['request_id'],'result':{'Ok':result}}),flush=True)
+"#;
+        std::fs::write(&executable_path, source).unwrap();
+        let executable = OwnerExecutableV1 {
+            path: executable_path,
+            content_hash: blake3::hash(source).to_hex().to_string(),
+        };
+        let implementation_root = root.path().join("implementations");
+        let revision_root = root.path().join("revisions");
+        let connection = Arc::new(InstallationConnection {
+            connection: Mutex::new(
+                OwnerConnection::start(
+                    &executable,
+                    &implementation_root,
+                    OwnerConnectionLimitsV1 {
+                        request_timeout_ms: 2_000,
+                        max_message_bytes: 65_536,
+                    },
+                )
+                .unwrap(),
+            ),
+            revision_root: revision_root.clone(),
+        });
+        std::thread::scope(|scope| {
+            let handles = (0..2)
+                .map(|_| {
+                    let connection = Arc::clone(&connection);
+                    scope.spawn(move || {
+                        connection
+                            .call::<OwnerDescriptionV1>(OwnerCommandV1::Describe)
+                            .unwrap()
+                    })
+                })
+                .collect::<Vec<_>>();
+            for handle in handles {
+                assert_eq!(handle.join().unwrap().owner_id, "specimen");
+            }
+        });
+
+        let _separate =
+            InstallationLease::acquire(&revision_root.join("installation.lock")).unwrap();
+        let error = connection
+            .call::<OwnerDescriptionV1>(OwnerCommandV1::Describe)
+            .unwrap_err();
+        assert_eq!(error.code, "owner_revision_store_busy");
+    }
 }

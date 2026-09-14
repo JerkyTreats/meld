@@ -1,6 +1,5 @@
-//! Required evidence waiting presented at all three
-//! customer altitudes from one session record, with every projection
-//! citing shared record identities, and the presentation made by a
+//! A retained historical evidence wait presented at all three customer
+//! altitudes, with every projection citing shared record identities and a
 //! separate process consuming the served surface.
 //!
 //! The consumer is this same test binary re-invoked as a child process —
@@ -11,7 +10,9 @@
 use std::fs;
 use std::process::Command;
 
-use super::harness_survey_fixture::{survey_binding, survey_boot_request, SUBJECT_ID};
+use super::harness_survey_fixture::{
+    publish_historical_belief_wait_fixture, survey_binding, survey_boot_request, SUBJECT_ID,
+};
 use meld::harness::boot::HarnessRun;
 use meld::harness::projections::{ParentProjection, SubagentProjection, UserProjection};
 use meld::serve::listener::serve_with_discovery;
@@ -56,14 +57,15 @@ fn child_consumer() {
 }
 
 #[test]
-fn required_evidence_wait_presents_at_three_altitudes_to_a_separate_process() {
+fn historical_evidence_wait_presents_at_three_altitudes_to_a_separate_process() {
     let session = tempfile::tempdir().unwrap();
     let workspace_root = session.path().join("workspace");
     let product_root = session.path().join("root");
     fs::create_dir_all(&workspace_root).unwrap();
     let binding = survey_binding(workspace_root.canonicalize().unwrap(), product_root.clone());
 
-    // The survey session: one bound boot and three stalled ticks.
+    // The survey session has one bound boot, three Graph ticks, and one
+    // explicitly published historical report fixture.
     let mut run = HarnessRun::boot(survey_boot_request(
         session.path(),
         &binding,
@@ -79,10 +81,14 @@ fn required_evidence_wait_presents_at_three_altitudes_to_a_separate_process() {
         &product_root,
     )
     .unwrap();
+    let supervisor_store = run.assembly().supervisor_store().clone();
     let mut driver = run.driver().unwrap();
     for now_ms in [1_100, 1_200, 1_300] {
         driver.step(now_ms).unwrap();
     }
+    // This test consumes a retained report through three projections. Runtime
+    // composition behavior remains covered by the separate stall specimen.
+    publish_historical_belief_wait_fixture(&supervisor_store, 1_300);
 
     // The separate process: this test binary re-invoked as a consumer of
     // the published URL, with no in-process access to any store.
