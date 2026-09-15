@@ -87,13 +87,25 @@ pub(super) fn verify_with_history(
         .pending_derived_evidence
         .is_some()
     {
-        let pending_returned =
-            super::search::pending_derived_evidence_returned(problem, rule, history);
-        if !candidate.tasks.is_empty() && !pending_returned {
-            grounds.push(StrategyRejectionGround::InvalidComposition);
-        }
-        if rule.construction == super::StrategyConstruction::ObserveUnknown && pending_returned {
-            grounds.push(StrategyRejectionGround::UnchangedCompletedWork);
+        let pending = super::search::pending_derived_evidence_status(problem, rule, history);
+        match (rule.construction, pending) {
+            (
+                super::StrategyConstruction::ObserveUnknown,
+                super::search::PendingDerivedEvidenceStatus::Returned,
+            ) => grounds.push(StrategyRejectionGround::UnchangedCompletedWork),
+            (
+                super::StrategyConstruction::ObserveUnknown,
+                super::search::PendingDerivedEvidenceStatus::Unrelated,
+            ) if candidate.tasks.is_empty() => {
+                grounds.push(StrategyRejectionGround::InvalidComposition)
+            }
+            (_, status)
+                if !candidate.tasks.is_empty()
+                    && status != super::search::PendingDerivedEvidenceStatus::Returned =>
+            {
+                grounds.push(StrategyRejectionGround::InvalidComposition)
+            }
+            _ => {}
         }
     }
     if super::search::ground_proposition(&rule.settlement_obligation, &bindings).as_ref()

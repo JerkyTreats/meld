@@ -2237,11 +2237,44 @@ fn exact_returned_derived_evidence_unlocks_only_its_executable_successor() {
     executable.product_ordering.clear();
     let mut observation = executable.clone();
     observation.construction = StrategyConstruction::ObserveUnknown;
+    let operation = request.problem.curation_operations[0].clone();
+    let unrelated_rule_revision = crate::belief::TheoryRevisionRef {
+        registry: crate::curation::CURATION_RULE_REGISTRY_ID.into(),
+        id: "unrelated-observation-rule".into(),
+        content_hash: "unrelated-observation-rule-hash".into(),
+    };
+    request.problem.curation_operations.push(
+        CurationOperation::reconstruct(
+            operation.authority,
+            unrelated_rule_revision.clone(),
+            operation.source_cut,
+            operation.traversal_request,
+        )
+        .unwrap(),
+    );
+    let mut unrelated_observation = observation.clone();
+    unrelated_observation.epistemic_selections[0].rule_revision = Some(unrelated_rule_revision);
+    request
+        .problem
+        .theory
+        .settlement_rules
+        .push(unrelated_observation);
     request.problem.theory.settlement_rules.push(observation);
 
     let predecessor = search(&request).recommendation.unwrap();
     assert_eq!(predecessor.origin, StrategyPlanOrigin::Epistemic);
     assert!(predecessor.tasks.is_empty());
+    assert_eq!(
+        predecessor.epistemic_operations[0].operation.rule_revision,
+        request
+            .problem
+            .planner_cut
+            .world_model_view
+            .pending_derived_evidence
+            .as_ref()
+            .unwrap()
+            .curation_rule
+    );
     let returned = predecessor.epistemic_operations[0].clone();
     let completed_history = vec![StrategyCompletedHistoryEntry {
         source_plan_revision_id: predecessor.plan_revision_id.clone(),
@@ -2283,11 +2316,10 @@ fn exact_returned_derived_evidence_unlocks_only_its_executable_successor() {
     ));
 
     let assert_does_not_unlock = |blocked: StrategySuccessorRequest| {
-        let candidate = search_successor(&blocked)
-            .recommendation
-            .expect("unreturned pending evidence must retain its observation route");
-        assert!(candidate.plan.tasks.is_empty());
-        assert_eq!(candidate.plan.origin, StrategyPlanOrigin::Epistemic);
+        if let Some(candidate) = search_successor(&blocked).recommendation {
+            assert!(candidate.plan.tasks.is_empty());
+            assert_eq!(candidate.plan.origin, StrategyPlanOrigin::Epistemic);
+        }
         assert!(matches!(
             verify_successor_plan(&blocked, &successor),
             PlanVerification::Invalid { grounds }

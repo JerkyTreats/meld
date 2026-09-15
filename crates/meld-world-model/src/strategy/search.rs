@@ -86,22 +86,27 @@ fn search_with_completed(
     let mut candidates = Vec::new();
     for (rule, bindings) in rules {
         let view = &request.problem.planner_cut.world_model_view;
-        let pending_returned = pending_derived_evidence_returned(&request.problem, rule, history);
+        let pending = pending_derived_evidence_status(&request.problem, rule, history);
         if view.unassessed_belief.is_some()
             && rule.construction != StrategyConstruction::ObserveUnknown
         {
             state.reject(StrategyRejectionGround::InvalidComposition);
             continue;
         }
-        if view.pending_derived_evidence.is_some() {
-            if rule.construction == StrategyConstruction::ObserveUnknown && pending_returned {
+        match (rule.construction, pending) {
+            (StrategyConstruction::ObserveUnknown, PendingDerivedEvidenceStatus::Returned) => {
                 state.reject(StrategyRejectionGround::UnchangedCompletedWork);
                 continue;
             }
-            if rule.construction != StrategyConstruction::ObserveUnknown && !pending_returned {
+            (StrategyConstruction::ObserveUnknown, PendingDerivedEvidenceStatus::Unrelated)
+            | (
+                StrategyConstruction::Executable,
+                PendingDerivedEvidenceStatus::Unrelated | PendingDerivedEvidenceStatus::Awaiting,
+            ) => {
                 state.reject(StrategyRejectionGround::InvalidComposition);
                 continue;
             }
+            _ => {}
         }
         let settlement = match ground_proposition(&rule.settlement_obligation, &bindings) {
             Ok(value) => value,
@@ -294,26 +299,41 @@ pub(super) fn confirmation_is_current(
         })
 }
 
-/// Only the exact returned Curation requirement may discharge derived-evidence gating.
-pub(super) fn pending_derived_evidence_returned(
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PendingDerivedEvidenceStatus {
+    Absent,
+    Unrelated,
+    Awaiting,
+    Returned,
+}
+
+/// Resolve whether this rule carries and has returned the exact pending Curation route.
+pub(super) fn pending_derived_evidence_status(
     problem: &StrategyProblem,
     rule: &StrategySettlementRule,
     history: &[StrategyCompletedHistoryEntry],
-) -> bool {
+) -> PendingDerivedEvidenceStatus {
     let Some(required) = &problem
         .planner_cut
         .world_model_view
         .pending_derived_evidence
     else {
-        return false;
+        return PendingDerivedEvidenceStatus::Absent;
     };
     let Ok((operations, _)) = planned_epistemic_products(problem, rule, &[], history) else {
-        return false;
+        return PendingDerivedEvidenceStatus::Unrelated;
     };
-    operations.iter().any(|operation| {
+    if !operations.iter().any(|operation| {
         operation.return_evidence.is_some()
             && operation.operation.rule_revision == required.curation_rule
-    }) && confirmation_is_current(problem, rule, history)
+    }) {
+        return PendingDerivedEvidenceStatus::Unrelated;
+    }
+    if confirmation_is_current(problem, rule, history) {
+        PendingDerivedEvidenceStatus::Returned
+    } else {
+        PendingDerivedEvidenceStatus::Awaiting
+    }
 }
 
 /// Only comparable owner-authored inputs can justify repeating a completed effect.

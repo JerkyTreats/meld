@@ -57,7 +57,7 @@ impl meld_world_model::AgentExecutionPort for ClosingExecutionIntake {
 }
 
 #[test]
-fn refused_task_intake_returns_without_an_operational_outcome() {
+fn refused_task_intake_restarts_with_a_fresh_task_network_admission() {
     for lose_return in [false, true] {
         let harness = StewardshipHarness::new();
         {
@@ -184,7 +184,7 @@ fn refused_task_intake_returns_without_an_operational_outcome() {
         };
         assert_eq!(
             factory.execution.observe(&authorization).unwrap(),
-            Some(position)
+            Some(position.clone())
         );
         harness.bind_production_routes(&assembly);
         let mut command = SupervisorStartCommand::new("refused-task-recovery", 1_000_000);
@@ -225,6 +225,10 @@ fn refused_task_intake_returns_without_an_operational_outcome() {
         let successor =
             successor.expect("an intake refusal must leave fresh successor Task work eligible");
         assert_ne!(successor.plan_revision_id, authorization.plan_revision_id);
+        assert_ne!(
+            successor.activation_generation,
+            authorization.activation_generation
+        );
         assert_ne!(successor.admission_epoch, authorization.admission_epoch);
         assert_eq!(
             factory
@@ -235,6 +239,45 @@ fn refused_task_intake_returns_without_an_operational_outcome() {
                 .admission_decision,
             meld_world_model::AgentExecutionAdmissionDecision::Admitted
         );
+        let RuntimeSemanticHandleFactory::TaskAdmission(execution) = &assembly
+            .handle_factories()
+            .get("execution.task_admission")
+            .unwrap()
+            .semantic
+        else {
+            unreachable!()
+        };
+        let network = execution.network.lock().unwrap();
+        let admitted = network
+            .state()
+            .admissions
+            .values()
+            .find(|record| record.request.lineage.authorization_id == successor.authorization_id)
+            .expect("fresh successor authorization must reach the real Task Network");
+        assert_eq!(
+            admitted.request.lineage.activation_generation,
+            successor.activation_generation
+        );
+        assert_eq!(
+            admitted.request.lineage.admission_epoch,
+            successor.admission_epoch
+        );
+        let refused = network
+            .state()
+            .admissions
+            .values()
+            .find(|record| {
+                record.request.lineage.authorization_id == authorization.authorization_id
+            })
+            .expect("retired intake refusal must remain immutable after restart");
+        assert_eq!(refused.admission_id, position.admission_id);
+        assert_ne!(refused.admission_id, admitted.admission_id);
+        assert!(network.state().tasks.values().all(|task| {
+            task.lineage
+                .admission
+                .as_ref()
+                .is_none_or(|lineage| lineage.authorization_id != authorization.authorization_id)
+        }));
     }
 }
 
