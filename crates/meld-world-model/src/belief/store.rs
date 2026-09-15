@@ -193,6 +193,8 @@ impl BeliefStore {
     /// opening, before bounded actors can start. The completion marker is
     /// written only after every retained revision has been indexed and the
     /// rebuilt tree has been flushed, so interrupted startup safely retries.
+    /// Remove this compatibility path only when every supported store is
+    /// guaranteed to carry the marker and its complete derived index.
     fn index_existing_evidence_returns(&self) -> Result<(), StorageError> {
         if self
             .runtime_meta
