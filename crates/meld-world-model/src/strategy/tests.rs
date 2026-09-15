@@ -2372,6 +2372,20 @@ fn exact_returned_derived_evidence_unlocks_only_its_executable_successor() {
         completed_history: completed_history.clone(),
         pending_derived_evidence_proof: Some(proof),
     };
+    let mut executable_only = successor_request.search.problem.clone();
+    let mut executable_witness = executable_only.theory.settlement_rules[2].clone();
+    executable_witness.construction = StrategyConstruction::Executable;
+    executable_only.theory.settlement_rules = vec![executable_witness.clone()];
+    assert_eq!(
+        super::search::pending_derived_evidence_status(
+            &executable_only,
+            &executable_witness,
+            &successor_request.completed_history,
+            successor_request.pending_derived_evidence_proof.as_ref(),
+        ),
+        super::search::PendingDerivedEvidenceStatus::Returned,
+        "an executable-only current theory retains its exact accepted evidence return"
+    );
     let successor = search_successor(&successor_request)
         .recommendation
         .expect("exact current evidence return must unlock its executable sibling");

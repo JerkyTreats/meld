@@ -19,9 +19,9 @@ use crate::error::StorageError;
 use crate::planner::{PlannerAssemblyOutcome, PlannerCut, PlannerRefusal};
 use crate::strategy::{
     search, search_successor, verify_plan, verify_successor_plan, PlanMilestoneRequirement,
-    PlanVerification, StrategyCompletedHistoryEntry, StrategyConstruction,
-    StrategyPendingDerivedEvidenceProof, StrategyPlan, StrategyProblem, StrategyProduct,
-    StrategySearchRequest, StrategySuccessorRequest,
+    PlanVerification, StrategyCompletedHistoryEntry, StrategyPendingDerivedEvidenceProof,
+    StrategyPlan, StrategyProblem, StrategyProduct, StrategySearchRequest,
+    StrategySuccessorRequest,
 };
 use crate::waiting::{StructuralWakeAddress, WaitingOnDeclaration};
 
@@ -1920,12 +1920,11 @@ impl GoalReconciliation<'_, '_> {
             _ => return Ok(None),
         };
 
-        for observer in problem.theory.settlement_rules.iter().filter(|rule| {
-            rule.construction == StrategyConstruction::ObserveUnknown
-                && meld_lang::unify(&rule.goal_pattern, &problem.goal.target).is_some()
+        for witness in problem.theory.settlement_rules.iter().filter(|rule| {
+            meld_lang::unify(&rule.goal_pattern, &problem.goal.target).is_some()
                 && crate::strategy::confirmation_is_current(problem, rule, history)
         }) {
-            for operation in crate::strategy::epistemic_products(problem, observer) {
+            for operation in crate::strategy::epistemic_products(problem, witness) {
                 let Some(route) = operation.return_evidence.as_ref() else {
                     continue;
                 };
@@ -4528,6 +4527,14 @@ mod tests {
         };
         assert!(reconciliation
             .pending_derived_evidence_proof(&proof_problem, &proof_history)
+            .unwrap()
+            .is_some());
+        let mut executable_only = proof_problem.clone();
+        let mut executable_witness = executable_only.theory.settlement_rules[1].clone();
+        executable_witness.construction = crate::strategy::StrategyConstruction::Executable;
+        executable_only.theory.settlement_rules = vec![executable_witness];
+        assert!(reconciliation
+            .pending_derived_evidence_proof(&executable_only, &proof_history)
             .unwrap()
             .is_some());
         let mut foreign_family = proof_problem.clone();

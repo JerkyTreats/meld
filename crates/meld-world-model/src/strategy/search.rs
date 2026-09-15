@@ -337,14 +337,14 @@ pub(super) fn pending_derived_evidence_status(
     }) {
         return PendingDerivedEvidenceStatus::Unrelated;
     }
-    if pending_observation_return_is_current(problem, required, history, proof) {
+    if pending_evidence_return_is_current(problem, required, history, proof) {
         PendingDerivedEvidenceStatus::Returned
     } else {
         PendingDerivedEvidenceStatus::Awaiting
     }
 }
 
-fn pending_observation_return_is_current(
+fn pending_evidence_return_is_current(
     problem: &StrategyProblem,
     required: &crate::planner::PlannerDerivedEvidenceRequirement,
     history: &[StrategyCompletedHistoryEntry],
@@ -378,10 +378,9 @@ fn pending_observation_return_is_current(
     if prior.product_id != entry.product_id {
         return false;
     }
-    problem.theory.settlement_rules.iter().any(|observer| {
-        observer.construction == StrategyConstruction::ObserveUnknown
-            && unify(&observer.goal_pattern, &problem.goal.target).is_some()
-            && epistemic_products(problem, observer)
+    problem.theory.settlement_rules.iter().any(|witness| {
+        unify(&witness.goal_pattern, &problem.goal.target).is_some()
+            && epistemic_products(problem, witness)
                 .iter()
                 .any(|operation| {
                     operation.return_evidence.is_some()
@@ -389,7 +388,7 @@ fn pending_observation_return_is_current(
                         && prior.same_request_as(operation)
                         && prior.accepts_return(&entry.accepted_milestone)
                 })
-            && confirmation_is_current(problem, observer, history)
+            && confirmation_is_current(problem, witness, history)
     })
 }
 
