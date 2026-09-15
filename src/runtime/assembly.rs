@@ -5332,6 +5332,7 @@ mod tests {
     #[cfg(unix)]
     mod security_native_mitigation;
     mod security_planning;
+    mod shared_interaction;
     mod startup_account;
     use std::sync::Mutex;
 
