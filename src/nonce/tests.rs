@@ -868,6 +868,14 @@ fn curation_assesses_nonce_source_under_a_distinct_exact_agent_judgment_scope() 
         .unwrap();
     let repeated = actor.bounded_step(1);
     assert!(repeated.fatal_errors.is_empty(), "{repeated:?}");
+    assert!(repeated.retryable_errors.is_empty(), "{repeated:?}");
+    assert_eq!(repeated.results_persisted, 0, "{repeated:?}");
+    assert_eq!(repeated.publications_appended, 0, "{repeated:?}");
+    assert_eq!(repeated.reused_results, 1, "{repeated:?}");
+    assert_eq!(
+        repeated.waiting_on[0].condition,
+        CURATION_SELECTION_UNCHANGED
+    );
     let records = authority
         .replay_capability()
         .replay(ReplayRequest {
@@ -886,7 +894,8 @@ fn curation_assesses_nonce_source_under_a_distinct_exact_agent_judgment_scope() 
         .collect();
     assert_eq!(
         results.last().unwrap().disposition,
-        CurationTerminalDisposition::Unchanged
+        CurationTerminalDisposition::Applied,
+        "the retained semantic result stays Applied without fabricating an Unchanged Event"
     );
 }
 
@@ -1078,9 +1087,18 @@ fn complete_event_source_proves_absence_then_realization_without_fabricated_even
         .unwrap();
     let unchanged = actor.bounded_step(1);
     assert!(unchanged.fatal_errors.is_empty(), "{unchanged:?}");
+    assert!(unchanged.retryable_errors.is_empty(), "{unchanged:?}");
+    assert_eq!(unchanged.results_persisted, 0, "{unchanged:?}");
+    assert_eq!(unchanged.publications_appended, 0, "{unchanged:?}");
+    assert_eq!(unchanged.reused_results, 1, "{unchanged:?}");
+    assert_eq!(
+        unchanged.waiting_on[0].condition,
+        CURATION_SELECTION_UNCHANGED
+    );
     assert_eq!(
         results().last().unwrap().disposition,
-        CurationTerminalDisposition::Unchanged
+        CurationTerminalDisposition::Applied,
+        "the retained absence judgment stays Applied without fabricating an Unchanged Event"
     );
     graph
         .catch_up_bounded(GraphCatchUpBudget { max_items: 32 })

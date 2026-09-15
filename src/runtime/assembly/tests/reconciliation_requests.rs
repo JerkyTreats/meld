@@ -132,6 +132,7 @@ fn named_requests_incept_separate_goals_and_share_native_work() {
     assert!(store
         .reconciliation_request_completed(&second_request)
         .unwrap());
+    let mut returned_historical_revision = false;
     for goal in &goals {
         let plan = store
             .current_reconciliation_plan(&goal.goal.goal_id)
@@ -147,6 +148,28 @@ fn named_requests_incept_separate_goals_and_share_native_work() {
             meld_lang::GoalLifecycle::Satisfied { .. }
         ));
         let milestones = store.milestones_for_goal(&goal.goal.goal_id).unwrap();
+        for milestone in &milestones {
+            let meld_world_model::strategy::PlanMilestoneRequirement::BeliefRevision {
+                revision_id,
+                ..
+            } = &milestone.requirement
+            else {
+                continue;
+            };
+            let revision = assembly
+                .stores()
+                .belief_store
+                .get_revision(revision_id)
+                .unwrap()
+                .unwrap();
+            let current = assembly
+                .stores()
+                .belief_store
+                .current_revision(&revision.belief_key)
+                .unwrap()
+                .unwrap();
+            returned_historical_revision |= current.revision_id != revision.revision_id;
+        }
         assert!(!disposition.accepted_milestone_ids.is_empty());
         assert!(disposition
             .accepted_milestone_ids
@@ -164,6 +187,10 @@ fn named_requests_incept_separate_goals_and_share_native_work() {
                 .contains(authorization));
         }
     }
+    assert!(
+        returned_historical_revision,
+        "one exact request publication should remain provable after a sibling supersedes its Belief revision"
+    );
     let accounts: Vec<_> = {
         let network = execution.network.lock().unwrap();
         network

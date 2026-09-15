@@ -10706,6 +10706,30 @@ mod tests {
         foreign = request.clone();
         foreign.evidence_schema_id = "foreign-schema".into();
         assert!(subscriptions.returned_evidence(&foreign).unwrap().is_none());
+        foreign = request.clone();
+        let mut family = foreign.subscription.source_contract_revision.clone();
+        family.content_hash = "foreign-family-revision".into();
+        foreign.subscription = meld_world_model::agent::AgentSubscriptionRequestV1::new(
+            foreign.subscription.agent_id.clone(),
+            foreign.subscription.source_owner.clone(),
+            family,
+            foreign.subscription.belief_key.clone(),
+            foreign.subscription.initial_cursor_policy.clone(),
+        )
+        .unwrap();
+        assert!(subscriptions.returned_evidence(&foreign).unwrap().is_none());
+        foreign = request.clone();
+        let mut key = foreign.subscription.belief_key.clone();
+        key.subject.object_id = "foreign-subject".into();
+        foreign.subscription = meld_world_model::agent::AgentSubscriptionRequestV1::new(
+            foreign.subscription.agent_id.clone(),
+            foreign.subscription.source_owner.clone(),
+            foreign.subscription.source_contract_revision.clone(),
+            key,
+            foreign.subscription.initial_cursor_policy.clone(),
+        )
+        .unwrap();
+        assert!(subscriptions.returned_evidence(&foreign).unwrap().is_none());
         if lose_callback && !restart_pending {
             loss.store(false, std::sync::atomic::Ordering::SeqCst);
             for pass in 0..15 {

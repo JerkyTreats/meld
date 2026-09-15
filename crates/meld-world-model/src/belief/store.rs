@@ -44,6 +44,35 @@ const TREE_CONFIG_SNAPSHOTS: &str = "belief_config_snapshots";
 const TREE_DIRTY_KEYS: &str = "belief_dirty_keys";
 const TREE_RUNTIME_META: &str = "belief_runtime_meta";
 const TREE_SUBSCRIPTION_ACCEPTANCES: &str = "belief_subscription_acceptances_v1";
+const TREE_EVIDENCE_RETURN_LINEAGE: &str = "belief_evidence_return_lineage_v1";
+const EVIDENCE_RETURN_LINEAGE_MARKER: &[u8] = b"evidence-return-lineage-index-v1";
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct EvidenceReturnLineagePointer {
+    revision_id: String,
+    source_cursor_end: u64,
+}
+
+fn evidence_return_lineage_key(
+    belief_key: &BeliefKey,
+    family: &crate::belief::TheoryRevisionRef,
+    publication_record_id: &str,
+    evidence_schema_id: &str,
+    mapping: &crate::belief::TheoryRevisionRef,
+) -> Result<String, StorageError> {
+    let bytes = serde_json::to_vec(&(
+        belief_key,
+        family,
+        publication_record_id,
+        evidence_schema_id,
+        mapping,
+    ))
+    .map_err(to_storage_data)?;
+    Ok(format!(
+        "evidence-return-lineage-v1::{}",
+        blake3::hash(&bytes).to_hex()
+    ))
+}
 
 fn subscription_prefix(
     kind: &str,
@@ -121,6 +150,7 @@ pub struct BeliefStore {
     dirty_keys: Tree,
     runtime_meta: Tree,
     subscription_acceptances: Tree,
+    evidence_return_lineage: Tree,
 }
 
 impl BeliefStore {
@@ -148,10 +178,62 @@ impl BeliefStore {
             subscription_acceptances: db
                 .open_tree(TREE_SUBSCRIPTION_ACCEPTANCES)
                 .map_err(to_storage_io)?,
+            evidence_return_lineage: db
+                .open_tree(TREE_EVIDENCE_RETURN_LINEAGE)
+                .map_err(to_storage_io)?,
             db,
         };
         store.index_existing_dirty_scopes()?;
+        store.index_existing_evidence_returns()?;
         Ok(store)
+    }
+
+    /// Rebuild the derived publication-lineage lookup for stores created
+    /// before the index existed. This one-time scan runs while the store is
+    /// opening, before bounded actors can start. The completion marker is
+    /// written only after every retained revision has been indexed and the
+    /// rebuilt tree has been flushed, so interrupted startup safely retries.
+    fn index_existing_evidence_returns(&self) -> Result<(), StorageError> {
+        if self
+            .runtime_meta
+            .contains_key(EVIDENCE_RETURN_LINEAGE_MARKER)
+            .map_err(to_storage_io)?
+        {
+            return Ok(());
+        }
+        self.evidence_return_lineage
+            .clear()
+            .map_err(to_storage_io)?;
+        let mut pointers =
+            std::collections::BTreeMap::<String, EvidenceReturnLineagePointer>::new();
+        for entry in self.revisions.iter() {
+            let (_, value) = entry.map_err(to_storage_io)?;
+            let revision: BeliefRevision =
+                serde_json::from_slice(&value).map_err(to_storage_data)?;
+            for (key, pointer) in self.evidence_return_entries(&revision)? {
+                match pointers.get(&key) {
+                    Some(existing) if !earlier_lineage(&pointer, existing) => {}
+                    _ => {
+                        pointers.insert(key, pointer);
+                    }
+                }
+            }
+        }
+        for (key, pointer) in pointers {
+            self.evidence_return_lineage
+                .insert(
+                    key.as_bytes(),
+                    serde_json::to_vec(&pointer).map_err(to_storage_data)?,
+                )
+                .map_err(to_storage_io)?;
+        }
+        self.evidence_return_lineage
+            .flush()
+            .map_err(to_storage_io)?;
+        self.runtime_meta
+            .insert(EVIDENCE_RETURN_LINEAGE_MARKER, b"complete")
+            .map_err(to_storage_io)?;
+        self.flush()
     }
 
     fn index_existing_dirty_scopes(&self) -> Result<(), StorageError> {
@@ -679,25 +761,51 @@ impl BeliefStore {
                 )));
             }
         }
-        self.revisions
-            .insert(
-                revision.revision_id.as_bytes(),
-                serde_json::to_vec(revision).map_err(to_storage_data)?,
-            )
-            .map_err(to_storage_io)?;
+        let revision_bytes = serde_json::to_vec(revision).map_err(to_storage_data)?;
+        let evidence_return_entries = self
+            .evidence_return_entries(revision)?
+            .into_iter()
+            .map(|(key, pointer)| {
+                serde_json::to_vec(&pointer)
+                    .map(|value| (key, value, pointer))
+                    .map_err(to_storage_data)
+            })
+            .collect::<Result<Vec<_>, StorageError>>()?;
         let pending_key = revision
             .theory_revision
             .as_ref()
             .map(|reference| subscription_key("pending", reference, &revision.belief_key))
             .transpose()?;
-        (&self.revision_head, &self.subscription_acceptances)
-            .transaction(|(heads, subscriptions)| {
+        (
+            &self.revisions,
+            &self.revision_head,
+            &self.subscription_acceptances,
+            &self.evidence_return_lineage,
+        )
+            .transaction(|(revisions, heads, subscriptions, evidence_returns)| {
+                revisions.insert(revision.revision_id.as_bytes(), revision_bytes.as_slice())?;
                 heads.insert(
                     revision.belief_key.index_key().as_bytes(),
                     revision.revision_id.as_bytes(),
                 )?;
                 if let Some(key) = &pending_key {
                     subscriptions.remove(key.as_bytes())?;
+                }
+                for (key, value, pointer) in &evidence_return_entries {
+                    let replace = evidence_returns
+                        .get(key.as_bytes())?
+                        .map(|existing| {
+                            serde_json::from_slice::<EvidenceReturnLineagePointer>(&existing)
+                                .map(|existing| earlier_lineage(pointer, &existing))
+                                .map_err(|error| {
+                                    ConflictableTransactionError::Abort(error.to_string())
+                                })
+                        })
+                        .transpose()?
+                        .unwrap_or(true);
+                    if replace {
+                        evidence_returns.insert(key.as_bytes(), value.as_slice())?;
+                    }
                 }
                 Ok(())
             })
@@ -751,6 +859,98 @@ impl BeliefStore {
         }
         out.sort_by_key(|revision| revision.source_cursor_end);
         Ok(out)
+    }
+
+    pub(super) fn indexed_evidence_return_revision(
+        &self,
+        belief_key: &BeliefKey,
+        family: &crate::belief::TheoryRevisionRef,
+        publication_record_id: &str,
+        evidence_schema_id: &str,
+        mappings: &[crate::belief::TheoryRevisionRef],
+    ) -> Result<Option<BeliefRevision>, StorageError> {
+        let mut selected = None::<EvidenceReturnLineagePointer>;
+        for mapping in mappings {
+            let key = evidence_return_lineage_key(
+                belief_key,
+                family,
+                publication_record_id,
+                evidence_schema_id,
+                mapping,
+            )?;
+            let Some(value) = self
+                .evidence_return_lineage
+                .get(key.as_bytes())
+                .map_err(to_storage_io)?
+            else {
+                continue;
+            };
+            let pointer: EvidenceReturnLineagePointer =
+                serde_json::from_slice(&value).map_err(to_storage_data)?;
+            match &selected {
+                Some(existing) if !earlier_lineage(&pointer, existing) => {}
+                _ => selected = Some(pointer),
+            }
+        }
+        let Some(pointer) = selected else {
+            return Ok(None);
+        };
+        self.get_revision(&pointer.revision_id)?.map_or_else(
+            || {
+                Err(StorageError::InvalidPath(
+                    "Belief evidence-return index names an absent revision".into(),
+                ))
+            },
+            |revision| {
+                if revision.source_cursor_end != pointer.source_cursor_end {
+                    return Err(StorageError::InvalidPath(
+                        "Belief evidence-return index differs from its revision".into(),
+                    ));
+                }
+                Ok(Some(revision))
+            },
+        )
+    }
+
+    fn evidence_return_entries(
+        &self,
+        revision: &BeliefRevision,
+    ) -> Result<Vec<(String, EvidenceReturnLineagePointer)>, StorageError> {
+        let Some(family) = revision.theory_revision.as_ref() else {
+            return Ok(Vec::new());
+        };
+        let pointer = EvidenceReturnLineagePointer {
+            revision_id: revision.revision_id.clone(),
+            source_cursor_end: revision.source_cursor_end,
+        };
+        let mut entries = Vec::new();
+        for evidence_id in &revision.supporting_evidence_ids {
+            let Some(evidence) = self.get_evidence(evidence_id)? else {
+                return Err(StorageError::InvalidPath(format!(
+                    "revision supporting evidence '{evidence_id}' is absent"
+                )));
+            };
+            let (Some(publication_record_id), Some(mapping)) = (
+                evidence.publication_record_id.as_deref(),
+                evidence.outcome_mapping_revision.as_ref(),
+            ) else {
+                continue;
+            };
+            if evidence.candidate_key != revision.belief_key {
+                continue;
+            }
+            entries.push((
+                evidence_return_lineage_key(
+                    &revision.belief_key,
+                    family,
+                    publication_record_id,
+                    &evidence.evidence_schema_id,
+                    mapping,
+                )?,
+                pointer.clone(),
+            ));
+        }
+        Ok(entries)
     }
 
     /// Store the current planner-safe view for one key.
@@ -1178,6 +1378,14 @@ impl BeliefStore {
         self.db.flush().map_err(to_storage_io)?;
         Ok(())
     }
+}
+
+fn earlier_lineage(
+    candidate: &EvidenceReturnLineagePointer,
+    existing: &EvidenceReturnLineagePointer,
+) -> bool {
+    (candidate.source_cursor_end, candidate.revision_id.as_str())
+        < (existing.source_cursor_end, existing.revision_id.as_str())
 }
 
 fn decode_optional<T: serde::de::DeserializeOwned>(
