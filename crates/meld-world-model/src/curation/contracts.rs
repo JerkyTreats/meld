@@ -520,6 +520,9 @@ impl CurationOperation {
         Ok(expected)
     }
 
+    // Retain while supported stores may contain operations written under the
+    // former all-receipt selection rule. Remove only after those stores have
+    // been migrated or aged beyond the supported compatibility window.
     fn legacy_selection_id(&self) -> Result<String, StorageError> {
         let source_receipts = self
             .source_cut
