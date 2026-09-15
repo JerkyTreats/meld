@@ -513,15 +513,31 @@ impl CurationStore {
                         .map_err(to_storage_io)?;
                     return Ok(Some(operation));
                 }
+                let canonical = operation.canonicalized_selection()?;
+                if canonical.selection_id == selection_id {
+                    self.operation_by_selection
+                        .insert(selection_id.as_bytes(), operation.operation_id.as_bytes())
+                        .map_err(to_storage_io)?;
+                    return Ok(Some(canonical));
+                }
             }
             return Ok(None);
         };
         let operation_id = std::str::from_utf8(&operation_id).map_err(|error| {
             StorageError::InvalidPath(format!("invalid Curation operation index: {error}"))
         })?;
-        let operation: Option<CurationOperation> = get_optional(&self.operations, operation_id)?;
-        if let Some(operation) = &operation {
+        let mut operation: Option<CurationOperation> =
+            get_optional(&self.operations, operation_id)?;
+        if let Some(operation) = &mut operation {
             operation.validate()?;
+            if operation.selection_id != selection_id {
+                *operation = operation.canonicalized_selection()?;
+                if operation.selection_id != selection_id {
+                    return Err(StorageError::InvalidPath(
+                        "Curation selection index points at another semantic selection".into(),
+                    ));
+                }
+            }
         }
         Ok(operation)
     }

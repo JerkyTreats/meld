@@ -348,6 +348,195 @@ fn applied_result_replays_without_reexecuting_or_republishing() {
 }
 
 #[test]
+fn projected_optional_output_reuses_required_source_selection_without_new_work() {
+    let fixture = Fixture::new(0);
+    let first = fixture.actor.bounded_step(1);
+    assert_eq!(first.results_persisted, 1);
+    assert_eq!(first.publications_appended, 2);
+    let first_result = result_events(&fixture.events).into_iter().next().unwrap();
+    let publication = first_result.semantic_publication.unwrap();
+    let original = fixture.traversal.cut.lock().unwrap().clone();
+    let original_operation = CurationOperation::reconstruct(
+        authority(),
+        fixture.rule.revision_ref(),
+        original.clone(),
+        fixture.rule.rule.traversal_request(),
+    )
+    .unwrap();
+
+    let mut projected = original.clone();
+    projected.event_position.after_seq += 2;
+    projected.graph_position.after_seq += 2;
+    projected.receipts.push(OwnerGraphRevisionReceipt {
+        work_input_basis_id: None,
+        event_coverage: None,
+        owner_id: CURATION_OWNER_ID.to_string(),
+        revision_id: publication.batch.revision_id.clone(),
+        scope: publication.batch.scope.clone(),
+        completeness: publication.batch.completeness.clone(),
+        source_event: Some(meld_events::EventRecordRef {
+            ledger_id: projected.event_position.ledger_id,
+            seq: original.event_position.after_seq + 1,
+        }),
+        projection_position: LedgerCursor {
+            ledger_id: projected.graph_position.ledger_id,
+            after_seq: original.graph_position.after_seq + 1,
+        },
+    });
+    projected.cut_id = traversal_cut_identity(&projected).unwrap();
+    let projected_operation = CurationOperation::reconstruct(
+        authority(),
+        fixture.rule.revision_ref(),
+        projected.clone(),
+        fixture.rule.rule.traversal_request(),
+    )
+    .unwrap();
+    assert_eq!(
+        projected_operation.selection_id,
+        original_operation.selection_id
+    );
+    assert_ne!(
+        projected_operation.operation_id,
+        original_operation.operation_id
+    );
+
+    *fixture.traversal.cut.lock().unwrap() = projected;
+    let replay = fixture.actor.bounded_step(1);
+
+    assert_eq!(replay.reused_results, 1, "{replay:?}");
+    assert_eq!(replay.results_persisted, 0, "{replay:?}");
+    assert_eq!(replay.publications_appended, 0, "{replay:?}");
+    assert_eq!(fixture.traversal.traversals.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.events.envelopes.lock().unwrap().len(), 2);
+}
+
+#[test]
+fn changed_required_source_invalidates_standing_selection() {
+    let fixture = Fixture::new(0);
+    let original = fixture.traversal.cut.lock().unwrap().clone();
+    let original_operation = CurationOperation::reconstruct(
+        authority(),
+        fixture.rule.revision_ref(),
+        original.clone(),
+        fixture.rule.rule.traversal_request(),
+    )
+    .unwrap();
+    let mut changed = original;
+    let source = changed
+        .receipts
+        .iter_mut()
+        .find(|receipt| receipt.owner_id == "workspace_fs")
+        .unwrap();
+    source.revision_id = "workspace-v2".to_string();
+    source.completeness.receipt_id = "workspace-v2-complete".to_string();
+    changed.cut_id = traversal_cut_identity(&changed).unwrap();
+    let changed_operation = CurationOperation::reconstruct(
+        authority(),
+        fixture.rule.revision_ref(),
+        changed,
+        fixture.rule.rule.traversal_request(),
+    )
+    .unwrap();
+
+    assert_ne!(
+        changed_operation.selection_id,
+        original_operation.selection_id
+    );
+}
+
+#[test]
+fn legacy_optional_output_selection_reads_and_reuses_without_accepting_drift() {
+    let fixture = Fixture::new(0);
+    let mut projected = fixture.traversal.cut.lock().unwrap().clone();
+    projected.event_position.after_seq += 2;
+    projected.graph_position.after_seq += 2;
+    let mut own = projected.receipts[0].clone();
+    own.owner_id = CURATION_OWNER_ID.to_string();
+    own.revision_id = "legacy-curation-output".to_string();
+    own.source_event = Some(meld_events::EventRecordRef {
+        ledger_id: projected.event_position.ledger_id,
+        seq: projected.event_position.after_seq - 1,
+    });
+    own.projection_position.after_seq = projected.graph_position.after_seq - 1;
+    projected.receipts.push(own);
+    projected.cut_id = traversal_cut_identity(&projected).unwrap();
+    let canonical = CurationOperation::reconstruct(
+        authority(),
+        fixture.rule.revision_ref(),
+        projected.clone(),
+        fixture.rule.rule.traversal_request(),
+    )
+    .unwrap();
+    let legacy_source_receipts = projected
+        .receipts
+        .iter()
+        .map(|receipt| receipt.semantic_basis())
+        .collect::<Vec<_>>();
+    let legacy_selection_id = stable_identity(
+        "standing-curation-selection-v1",
+        &(
+            &canonical.authority,
+            &canonical.rule_revision,
+            &projected.owners,
+            &legacy_source_receipts,
+            &projected.scope,
+            projected.currentness,
+            &canonical.traversal_request,
+        ),
+    )
+    .unwrap();
+    assert_ne!(legacy_selection_id, canonical.selection_id);
+    let mut legacy = canonical.clone();
+    legacy.selection_id = legacy_selection_id;
+    legacy.validate().unwrap();
+    fixture.store.put_operation(&legacy).unwrap();
+    fixture
+        .store
+        .put_acceptance(&CurationAcceptanceRecord::for_operation(&legacy, &fixture.rule).unwrap())
+        .unwrap();
+    let result = CurationResult::new(
+        &legacy,
+        CurationTerminalDisposition::Abstained,
+        "legacy result",
+        None,
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+        Vec::new(),
+    )
+    .unwrap();
+    fixture.store.put_result(&result).unwrap();
+    fixture
+        .store
+        .put_publication_receipt(&CurationPublicationReceipt {
+            result_id: result.result_id.clone(),
+            kind: CurationPublicationKind::Terminal,
+            event_record_id: result.event_record_id(),
+            event_position: LedgerCursor {
+                ledger_id: projected.event_position.ledger_id,
+                after_seq: projected.event_position.after_seq + 1,
+            },
+        })
+        .unwrap();
+    let mut drifted = legacy.clone();
+    drifted.selection_id = "arbitrary-selection-drift".to_string();
+    assert!(drifted.validate().is_err());
+
+    *fixture.traversal.cut.lock().unwrap() = projected;
+    let replay = fixture.actor.bounded_step(1);
+
+    assert_eq!(replay.reused_results, 1, "{replay:?}");
+    assert_eq!(replay.results_persisted, 0, "{replay:?}");
+    assert_eq!(replay.publications_appended, 0, "{replay:?}");
+    assert_eq!(fixture.traversal.traversals.load(Ordering::SeqCst), 0);
+    assert!(fixture
+        .store
+        .operation_for_selection(&canonical.selection_id)
+        .unwrap()
+        .is_some());
+}
+
+#[test]
 fn planned_curation_reopens_after_acceptance_without_duplicate_execution() {
     assert_planned_curation_recovery(PlannedInterruption::AfterAcceptance);
 }
@@ -1919,7 +2108,7 @@ fn realization_requires_exact_owner_object_qualifications_and_complete_coverage(
                 .provenance_refs
                 .contains(&"nonce-publication-a".into()));
         }
-        // Seeing our own publication must settle without an endless chain of new semantic revisions.
+        // Seeing our own optional publication boundary is not new source work.
         {
             let mut traversal = fixture.traversal.result.lock().unwrap();
             traversal.objects.extend(publication.batch.objects);
@@ -1929,7 +2118,7 @@ fn realization_requires_exact_owner_object_qualifications_and_complete_coverage(
             let mut cut = fixture.traversal.cut.lock().unwrap();
             cut.event_position.after_seq += 1;
             cut.graph_position.after_seq += 1;
-            // A new owner receipt changes selection while retaining the same source predicate.
+            // The optional output receipt retains the same required source predicate.
             let mut own = cut.receipts[0].clone();
             own.owner_id = CURATION_OWNER_ID.into();
             own.revision_id = publication.batch.revision_id;
@@ -1937,10 +2126,12 @@ fn realization_requires_exact_owner_object_qualifications_and_complete_coverage(
             cut.cut_id = traversal_cut_identity(&cut).unwrap();
         }
         let replay = fixture.actor.bounded_step(1);
-        assert_eq!(replay.publications_appended, 1, "{scenario}: {replay:?}");
+        assert_eq!(replay.reused_results, 1, "{scenario}: {replay:?}");
+        assert_eq!(replay.results_persisted, 0, "{scenario}: {replay:?}");
+        assert_eq!(replay.publications_appended, 0, "{scenario}: {replay:?}");
         assert_eq!(
             result_events(&fixture.events).last().unwrap().disposition,
-            CurationTerminalDisposition::Unchanged
+            CurationTerminalDisposition::Applied
         );
     }
 }

@@ -11853,6 +11853,17 @@ mod tests {
             .unwrap();
         graph.tick(WorkBudget { max_items: 32 }).unwrap();
         let watermark = assembly.ports().event_append().watermark().unwrap();
+        let projected_output_replay = curation.tick(WorkBudget { max_items: 1 }).unwrap();
+        assert_eq!(projected_output_replay.items_attempted, 1);
+        assert_eq!(projected_output_replay.items_committed, 0);
+        assert!(projected_output_replay.retryable_errors.is_empty());
+        assert!(projected_output_replay.fatal_errors.is_empty());
+        assert_eq!(projected_output_replay.waiting_on.len(), 1);
+        assert_eq!(
+            assembly.ports().event_append().watermark().unwrap(),
+            watermark,
+            "projecting Curation's optional output must not create successor standing work"
+        );
         let cut = TraversalQuery::new(assembly.stores().traversal_store.as_ref())
             .cut(&TraversalCutRequest {
                 owners: vec![

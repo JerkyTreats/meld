@@ -412,17 +412,35 @@ impl CurationOperation {
         source_cut.validate_identity()?;
         traversal_request.validate_for_curation()?;
         let traversal_request = traversal_request.normalized();
+        // The optional Curation receipt is the publication boundary for this
+        // operation's output, not a new semantic source. Including it here
+        // makes standing work select itself again after Graph projects the
+        // result. Required receipts retain their full owner, scope, and route
+        // match so a real source change always creates a new selection.
+        let source_receipts = source_cut
+            .receipts
+            .iter()
+            .filter(|receipt| {
+                source_cut.owners.iter().any(|owner| {
+                    owner.required
+                        && owner.owner_id == receipt.owner_id
+                        && owner.scope == receipt.scope
+                        && owner.event_source.as_ref()
+                            == receipt
+                                .event_coverage
+                                .as_ref()
+                                .map(|coverage| &coverage.source)
+                })
+            })
+            .map(|receipt| receipt.semantic_basis())
+            .collect::<Vec<_>>();
         let selection_id = stable_identity(
             "standing-curation-selection-v1",
             &(
                 &authority,
                 &rule_revision,
                 &source_cut.owners,
-                &source_cut
-                    .receipts
-                    .iter()
-                    .map(|receipt| receipt.semantic_basis())
-                    .collect::<Vec<_>>(),
+                &source_receipts,
                 &source_cut.scope,
                 source_cut.currentness,
                 &traversal_request,
@@ -484,7 +502,8 @@ impl CurationOperation {
         operation
     }
 
-    pub fn validate(&self) -> Result<(), StorageError> {
+    /// Normalize a readable legacy operation to the required-source selection.
+    pub(crate) fn canonicalized_selection(&self) -> Result<Self, StorageError> {
         let mut expected = Self::reconstruct(
             self.authority.clone(),
             self.rule_revision.clone(),
@@ -494,7 +513,43 @@ impl CurationOperation {
         if let Some(request_id) = &self.request_id {
             expected = expected.for_request(request_id.clone())?;
         }
-        if expected.operation_id != self.operation_id || expected.selection_id != self.selection_id
+        if expected.operation_id != self.operation_id {
+            return invalid("standing Curation operation identity is not canonical");
+        }
+        expected.planned_authorization = self.planned_authorization.clone();
+        Ok(expected)
+    }
+
+    fn legacy_selection_id(&self) -> Result<String, StorageError> {
+        let source_receipts = self
+            .source_cut
+            .receipts
+            .iter()
+            .map(|receipt| receipt.semantic_basis())
+            .collect::<Vec<_>>();
+        let base = stable_identity(
+            "standing-curation-selection-v1",
+            &(
+                &self.authority,
+                &self.rule_revision,
+                &self.source_cut.owners,
+                &source_receipts,
+                &self.source_cut.scope,
+                self.source_cut.currentness,
+                &self.traversal_request.clone().normalized(),
+            ),
+        )?;
+        self.request_id
+            .as_ref()
+            .map_or(Ok(base.clone()), |request_id| {
+                stable_identity("requested-curation-selection-v1", &(&base, request_id))
+            })
+    }
+
+    pub fn validate(&self) -> Result<(), StorageError> {
+        let expected = self.canonicalized_selection()?;
+        if expected.selection_id != self.selection_id
+            && self.legacy_selection_id()? != self.selection_id
         {
             return invalid("standing Curation operation identity is not canonical");
         }
