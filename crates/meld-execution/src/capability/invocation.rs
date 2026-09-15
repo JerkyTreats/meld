@@ -18,13 +18,55 @@ pub struct CapabilityInvocationResult {
     pub emitted_artifacts: Vec<ArtifactRecord>,
 }
 
+/// A bounded capability invocation that has not reached a terminal result.
+///
+/// Pending is an operational disposition only. Domain identity and semantic
+/// state remain in the invocation payload and the owning domain's durable
+/// products.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapabilityInvocationPending {
+    disposition: PendingDisposition,
+    /// Stable, non-sensitive explanation suitable for runtime diagnostics.
+    pub detail: String,
+}
+
+impl CapabilityInvocationPending {
+    /// Builds an explicit pending disposition with no emitted artifacts.
+    pub fn new(detail: impl Into<String>) -> Self {
+        Self {
+            disposition: PendingDisposition::Pending,
+            detail: detail.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PendingDisposition {
+    Pending,
+}
+
+/// Bounded result of one capability invocation attempt.
+///
+/// The untagged completed form preserves the existing owner wire product.
+/// Pending is a distinct artifact-free form and never means failure.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(untagged)]
+pub enum CapabilityInvocationOutcome {
+    /// The invocation completed with its ordinary result product.
+    Completed(CapabilityInvocationResult),
+    /// The invocation remains incomplete after one bounded owner observation.
+    Pending(CapabilityInvocationPending),
+}
+
 /// Domain-owned capability runtime implementation.
 #[async_trait]
 pub trait CapabilityInvoker: Send + Sync {
     /// Error type returned by this invoker.
     type Error;
     /// Execution API boundary supplied to this invoker.
-    type ExecutionApi: ?Sized;
+    type ExecutionApi: ?Sized + Sync;
 
     /// Published contract used by task compilation.
     fn contract(&self) -> CapabilityTypeContract;
@@ -81,14 +123,30 @@ pub trait CapabilityInvoker: Send + Sync {
         payload: &CapabilityInvocationPayload,
         event_context: Option<&ExecutionEventContext>,
     ) -> Result<CapabilityInvocationResult, Self::Error>;
+
+    /// Invokes one bounded owner attempt and distinguishes waiting from failure.
+    ///
+    /// Existing invokers remain completion-only through this default. Owners
+    /// with human-latency or externally completed work override this method.
+    async fn invoke_outcome(
+        &self,
+        api: &Self::ExecutionApi,
+        runtime_init: &CapabilityRuntimeInit,
+        payload: &CapabilityInvocationPayload,
+        event_context: Option<&ExecutionEventContext>,
+    ) -> Result<CapabilityInvocationOutcome, Self::Error> {
+        self.invoke(api, runtime_init, payload, event_context)
+            .await
+            .map(CapabilityInvocationOutcome::Completed)
+    }
 }
 
 /// In-memory runtime registry for published capability invokers.
-pub struct CapabilityExecutorRegistry<E, A: ?Sized> {
+pub struct CapabilityExecutorRegistry<E, A: ?Sized + Sync> {
     invokers: BTreeMap<(String, u32), Arc<dyn CapabilityInvoker<Error = E, ExecutionApi = A>>>,
 }
 
-impl<E, A: ?Sized> Clone for CapabilityExecutorRegistry<E, A> {
+impl<E, A: ?Sized + Sync> Clone for CapabilityExecutorRegistry<E, A> {
     fn clone(&self) -> Self {
         Self {
             invokers: self.invokers.clone(),
@@ -96,7 +154,7 @@ impl<E, A: ?Sized> Clone for CapabilityExecutorRegistry<E, A> {
     }
 }
 
-impl<E, A: ?Sized> Default for CapabilityExecutorRegistry<E, A> {
+impl<E, A: ?Sized + Sync> Default for CapabilityExecutorRegistry<E, A> {
     fn default() -> Self {
         Self {
             invokers: BTreeMap::new(),
@@ -104,7 +162,7 @@ impl<E, A: ?Sized> Default for CapabilityExecutorRegistry<E, A> {
     }
 }
 
-impl<E, A: ?Sized> CapabilityExecutorRegistry<E, A> {
+impl<E, A: ?Sized + Sync> CapabilityExecutorRegistry<E, A> {
     /// Creates an empty capability executor registry.
     pub fn new() -> Self {
         Self::default()
@@ -383,5 +441,34 @@ mod tests {
         let error = invoker.runtime_init(&instance).unwrap_err();
 
         assert!(error.to_string().contains("cannot initialize"));
+    }
+
+    #[test]
+    fn bounded_outcome_preserves_completed_wire_shape_and_types_pending() {
+        let completed = CapabilityInvocationOutcome::Completed(CapabilityInvocationResult {
+            emitted_artifacts: Vec::new(),
+        });
+        assert_eq!(
+            serde_json::to_value(completed).unwrap(),
+            json!({ "emitted_artifacts": [] })
+        );
+
+        let pending = CapabilityInvocationOutcome::Pending(CapabilityInvocationPending::new(
+            "owner operation is incomplete",
+        ));
+        let encoded = serde_json::to_value(&pending).unwrap();
+        assert_eq!(
+            encoded,
+            json!({
+                "disposition": "pending",
+                "detail": "owner operation is incomplete",
+            })
+        );
+        let decoded: CapabilityInvocationOutcome = serde_json::from_value(encoded).unwrap();
+        assert!(matches!(
+            decoded,
+            CapabilityInvocationOutcome::Pending(CapabilityInvocationPending { detail, .. })
+                if detail == "owner operation is incomplete"
+        ));
     }
 }

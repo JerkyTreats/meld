@@ -200,6 +200,34 @@ struct FailingClaimInvoker {
     log: Arc<Mutex<Vec<String>>>,
 }
 
+struct PendingAndCompleteClaimInvoker {
+    log: Arc<Mutex<Vec<String>>>,
+}
+
+#[async_trait]
+impl ClaimedTaskInvoker for PendingAndCompleteClaimInvoker {
+    async fn invoke_claimed_task(
+        &self,
+        _node: &TaskNode,
+        claim: &Claim,
+        _init_payload: &TaskInitializationPayload,
+    ) -> Result<ClaimedInvocationOutcome, DispatchPortError> {
+        self.log
+            .lock()
+            .unwrap()
+            .push(claim.task_instance_id.clone());
+        if claim.task_instance_id.contains("pending") {
+            Ok(ClaimedInvocationOutcome::Pending {
+                detail: "owner operation remains incomplete".to_string(),
+            })
+        } else {
+            Ok(ClaimedInvocationOutcome::Completed(vec![claim_artifact(
+                claim,
+            )]))
+        }
+    }
+}
+
 #[async_trait]
 impl ClaimedTaskInvoker for FailingClaimInvoker {
     async fn invoke_claimed_task(
@@ -408,6 +436,59 @@ fn zero_budget_tick_attempts_nothing_and_reports_pending_work() {
     assert!(report.budget_exhausted);
     assert!(store.state().claims.is_empty());
     assert!(fixture.claim_invocations().is_empty());
+}
+
+#[test]
+fn durable_fairness_rotates_pending_claims_and_fresh_tasks_at_budget_one() {
+    let db = open_db();
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let actor = DispatchRuntimeActor::new(
+        "worker-a",
+        db.clone(),
+        PendingAndCompleteClaimInvoker { log: log.clone() },
+    )
+    .unwrap();
+    let mut store = InMemoryTaskNetworkStore::new("network-docs");
+    for task_id in ["a-pending", "b-fresh", "c-pending", "d-fresh"] {
+        task_network_support::commit_single_task(&mut store, task_id);
+    }
+
+    let first = block_on(actor.tick(&mut store, tick_request(1, 1))).unwrap();
+    assert_eq!(first.items_attempted, 1);
+    assert_eq!(first.retryable_errors[0].code, "claimed_invocation_pending");
+    drop(actor);
+
+    let reopened = DispatchRuntimeActor::new(
+        "worker-a",
+        db,
+        PendingAndCompleteClaimInvoker { log: log.clone() },
+    )
+    .unwrap();
+    for sequence in 2..=4 {
+        let report = block_on(reopened.tick(&mut store, tick_request(sequence, 1))).unwrap();
+        assert_eq!(report.items_attempted, 1, "{report:#?}");
+    }
+
+    assert_eq!(
+        *log.lock().unwrap(),
+        vec!["a-pending", "b-fresh", "c-pending", "d-fresh"]
+    );
+    assert!(matches!(
+        store.state().statuses.get("a-pending"),
+        Some(TaskStatus::Running { .. })
+    ));
+    assert!(matches!(
+        store.state().statuses.get("b-fresh"),
+        Some(TaskStatus::Succeeded { .. })
+    ));
+    assert!(matches!(
+        store.state().statuses.get("c-pending"),
+        Some(TaskStatus::Running { .. })
+    ));
+    assert!(matches!(
+        store.state().statuses.get("d-fresh"),
+        Some(TaskStatus::Succeeded { .. })
+    ));
 }
 
 #[test]

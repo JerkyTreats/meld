@@ -109,6 +109,12 @@ impl DispatchPortError {
 pub enum ClaimedInvocationOutcome {
     /// The invocation completed and emitted these task artifact records.
     Completed(Vec<ArtifactRecord>),
+    /// The invocation remains incomplete after one bounded owner attempt.
+    /// No artifact or Task outcome is recordable for this disposition.
+    Pending {
+        /// Stable, non-sensitive explanation carried into actor diagnostics.
+        detail: String,
+    },
     /// The invocation failed within bounded semantics and is recordable as a
     /// failed task outcome through the command boundary.
     Failed {
@@ -122,9 +128,10 @@ pub enum ClaimedInvocationOutcome {
 /// The actor owns claim identity, artifact persistence order, and outcome
 /// recording. The port owns how one claimed task node executes; it must be
 /// deterministic for one claim so crash replay re-emits byte-identical
-/// artifacts. A port `Err` means the invocation never resolved: the claim
-/// stays fenced and a later tick resumes it. A `Failed` outcome means the
-/// invocation resolved to a bounded, recordable failure.
+/// artifacts. `Pending` means the owner truthfully reported incomplete work.
+/// A port `Err` means the invocation could not determine an owner disposition.
+/// Both retain the fenced claim for a later tick. A `Failed` outcome means
+/// the invocation resolved to a bounded, recordable failure.
 #[async_trait]
 pub trait ClaimedTaskInvoker: Send + Sync {
     /// Observe an existing claim's completed effects without executing new work.
@@ -345,6 +352,20 @@ enum ArtifactPersistFailure {
     Storage(String),
 }
 
+enum DispatchCandidate {
+    Resumable(Box<Claim>),
+    Ready(String),
+}
+
+impl DispatchCandidate {
+    fn task_instance_id(&self) -> &str {
+        match self {
+            Self::Resumable(claim) => &claim.task_instance_id,
+            Self::Ready(task_instance_id) => task_instance_id,
+        }
+    }
+}
+
 /// Bounded execution dispatch actor over injected ports.
 ///
 /// The actor owns claim identity derivation, tick budget accounting, and the
@@ -368,8 +389,8 @@ where
 {
     /// Creates a dispatch actor over a caller-owned execution database.
     ///
-    /// The database holds claim artifact repositories, so a fresh actor opened
-    /// over the same database resumes every durable claim.
+    /// The database holds claim artifact repositories and the dispatch fairness
+    /// cursor, so a fresh actor resumes both effects and peer ordering.
     pub fn new(
         worker_id: impl Into<String>,
         db: sled::Db,
@@ -431,6 +452,7 @@ where
         network.flush().map_err(|error| error.to_string())?;
         let state = network.state();
         self.db.flush().map_err(|error| error.to_string())?;
+        let fairness_cursor = self.durable_cursor(&state.network_id)?;
         let checkpoint_ref = format!("task-network::{}::{}", state.network_id, state.revision);
         Ok(crate::lifecycle::NativeLifecycleEvidence {
             checkpoint_ref: checkpoint_ref.clone(),
@@ -453,7 +475,7 @@ where
             proof_position_ref: checkpoint_ref,
             unresolved_operation_summary_ref: crate::lifecycle::evidence_ref(
                 "dispatch-durable-claims",
-                &state.claims,
+                &(&state.claims, &fairness_cursor),
             )?,
         })
     }
@@ -628,8 +650,8 @@ where
 
     /// Runs one bounded dispatch tick over durable Task Network claims.
     ///
-    /// Interrupted claims resume before new ready tasks are claimed. The tick
-    /// returns only after every resolved item has a task outcome recorded
+    /// Running claims and new ready tasks share one durable fair ordering. The
+    /// tick returns only after every resolved item has a task outcome recorded
     /// through the command boundary.
     pub async fn tick<N: TaskNetworkCommandPort>(
         &self,
@@ -654,9 +676,10 @@ where
         remaining: &mut usize,
         report: &mut DispatchTickReport,
     ) {
-        // Resume before claiming new work so a crash between artifact
-        // persistence and outcome recording replays ahead of fresh claims.
-        // Claim map order is deterministic by claim id.
+        if !self.coalesce_ready_work(network, remaining, report) {
+            return;
+        }
+
         let resumable: Vec<Claim> = {
             let state = network.network_state();
             state
@@ -672,20 +695,6 @@ where
                 .cloned()
                 .collect()
         };
-        for claim in resumable {
-            if *remaining == 0 {
-                report.budget_exhausted = true;
-                return;
-            }
-            *remaining -= 1;
-            report.items_attempted += 1;
-            self.execute_claimed_task(network, &claim, true, report)
-                .await;
-        }
-
-        if !self.coalesce_ready_work(network, remaining, report) {
-            return;
-        }
 
         // One ready-set snapshot per tick: dependents readied by this tick's
         // outcomes wait for a later tick, and a task failed this tick can
@@ -717,41 +726,139 @@ where
                 ))],
             ));
         }
-        for task_instance_id in &ready.task_instance_ids {
+        let mut candidates: Vec<DispatchCandidate> = resumable
+            .into_iter()
+            .map(Box::new)
+            .map(DispatchCandidate::Resumable)
+            .chain(
+                ready
+                    .task_instance_ids
+                    .into_iter()
+                    .map(DispatchCandidate::Ready),
+            )
+            .collect();
+        candidates.sort_by(|left, right| left.task_instance_id().cmp(right.task_instance_id()));
+        if let Err(error) =
+            self.rotate_after_durable_cursor(&network.network_state().network_id, &mut candidates)
+        {
+            report.fatal(None, "dispatch_fairness_cursor_read_failed", error);
+            return;
+        }
+
+        for candidate in candidates {
             if *remaining == 0 {
                 report.budget_exhausted = true;
+                return;
+            }
+            let task_instance_id = candidate.task_instance_id().to_string();
+            if let Err(error) =
+                self.advance_durable_cursor(&network.network_state().network_id, &task_instance_id)
+            {
+                report.fatal(
+                    Some(task_instance_id),
+                    "dispatch_fairness_cursor_write_failed",
+                    error,
+                );
                 return;
             }
             let state = network.network_state();
             let authority_check = state
                 .tasks
-                .get(task_instance_id)
-                .ok_or_else(|| format!("ready task '{task_instance_id}' is absent"))
+                .get(&task_instance_id)
+                .ok_or_else(|| format!("dispatch task '{task_instance_id}' is absent"))
                 .and_then(|node| self.validate_task_authority(state, node));
-            let refuse = authority_check.is_err()
+            let resumed = matches!(&candidate, DispatchCandidate::Resumable(_));
+            let refuse = !resumed
+                && authority_check.is_err()
                 && state
                     .tasks
-                    .get(task_instance_id)
+                    .get(&task_instance_id)
                     .is_some_and(|node| self.admission_is_closed(state, node) == Ok(true));
-            if let Err(error) = authority_check {
-                if !refuse {
-                    report.fatal(
-                        Some(task_instance_id.clone()),
-                        "effective_authority_denied",
-                        error,
-                    );
-                    continue;
+            if !resumed {
+                if let Err(error) = authority_check {
+                    if !refuse {
+                        report.fatal(
+                            Some(task_instance_id.clone()),
+                            "effective_authority_denied",
+                            error,
+                        );
+                        continue;
+                    }
                 }
             }
             *remaining -= 1;
             report.items_attempted += 1;
-            let Some(claim) = self.claim_ready_task(network, task_instance_id, refuse, report)
-            else {
-                continue;
+            match candidate {
+                DispatchCandidate::Resumable(claim) => {
+                    self.execute_claimed_task(network, claim.as_ref(), true, report)
+                        .await;
+                }
+                DispatchCandidate::Ready(task_instance_id) => {
+                    let Some(claim) =
+                        self.claim_ready_task(network, &task_instance_id, refuse, report)
+                    else {
+                        continue;
+                    };
+                    self.execute_claimed_task(network, &claim, false, report)
+                        .await;
+                }
             };
-            self.execute_claimed_task(network, &claim, false, report)
-                .await;
         }
+    }
+
+    fn rotate_after_durable_cursor(
+        &self,
+        network_id: &str,
+        candidates: &mut [DispatchCandidate],
+    ) -> Result<(), String> {
+        if candidates.len() < 2 {
+            return Ok(());
+        }
+        let Some(last) = self.durable_cursor(network_id)? else {
+            return Ok(());
+        };
+        let start = candidates
+            .iter()
+            .position(|candidate| candidate.task_instance_id() > last.as_str())
+            .unwrap_or(0);
+        candidates.rotate_left(start);
+        Ok(())
+    }
+
+    fn advance_durable_cursor(
+        &self,
+        network_id: &str,
+        task_instance_id: &str,
+    ) -> Result<(), String> {
+        self.db
+            .insert(
+                self.fairness_cursor_key(network_id),
+                task_instance_id.as_bytes(),
+            )
+            .map_err(|error| error.to_string())?;
+        self.db.flush().map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    fn fairness_cursor_key(&self, network_id: &str) -> Vec<u8> {
+        let mut key = b"execution.task_dispatch.fairness.v1::".to_vec();
+        key.extend(
+            serde_json::to_vec(&(network_id, &self.worker_id))
+                .expect("dispatch fairness identity contains only strings"),
+        );
+        key
+    }
+
+    fn durable_cursor(&self, network_id: &str) -> Result<Option<String>, String> {
+        self.db
+            .get(self.fairness_cursor_key(network_id))
+            .map_err(|error| error.to_string())?
+            .map(|raw| {
+                std::str::from_utf8(&raw)
+                    .map(str::to_string)
+                    .map_err(|error| error.to_string())
+            })
+            .transpose()
     }
 
     fn coalesce_ready_work<N: TaskNetworkCommandPort>(
@@ -1043,6 +1150,14 @@ where
                         return;
                     }
                 }
+            }
+            Ok(ClaimedInvocationOutcome::Pending { detail }) => {
+                report.retryable(
+                    Some(claim.task_instance_id.clone()),
+                    "claimed_invocation_pending",
+                    detail,
+                );
+                return;
             }
             Ok(ClaimedInvocationOutcome::Failed { error }) => failed_outcome(claim, error),
             Err(error) => {

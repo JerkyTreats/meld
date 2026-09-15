@@ -124,6 +124,21 @@ pub struct OwnerRuntimePreparationV1 {
     pub observation: Option<OwnerObservationPreparationV1>,
 }
 
+/// Owner-selected products for one exact native Agent epoch specification.
+///
+/// Core retains authority for grounding Curation and validating every Task
+/// input against the installed Strategy and capability catalog.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OwnerAgentEpochProductsV1 {
+    pub specification_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect_visibility:
+        Option<meld_world_model::world_state::graph::contracts::OwnerPublicationExpectation>,
+    pub task_inputs: Vec<meld_lang::TaskInput>,
+    pub curation_source: meld_world_model::curation::CurationSourceBinding,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum OwnerCommandV1 {
@@ -159,6 +174,9 @@ pub enum OwnerCommandV1 {
     },
     PrepareRuntime {
         preparation: OwnerRuntimePreparationV1,
+    },
+    PrepareAgentEpoch {
+        specification: Box<meld_world_model::agent::AgentEpochSpecification>,
     },
     ResolveCurationSource {
         template: Box<CurationRuleTemplate>,
@@ -215,6 +233,7 @@ impl OwnerCommandV1 {
             Self::ValidateLinks { .. } => "validate_links",
             Self::PrepareBindings { .. } => "prepare_bindings",
             Self::PrepareRuntime { .. } => "prepare_runtime",
+            Self::PrepareAgentEpoch { .. } => "prepare_agent_epoch",
             Self::ResolveCurationSource { .. } => "resolve_curation_source",
             Self::RecoverInvocation { .. } => "recover_invocation",
             Self::Invoke { .. } => "invoke",
@@ -371,10 +390,12 @@ pub fn encode_capability_result<T: Serialize>(
     match value {
         Ok(value) => encode_owner_result(value),
         Err(error) => {
-            let code = if matches!(error, crate::error::ApiError::TerminalCapabilityFailure(_)) {
-                "terminal_capability_failure"
-            } else {
-                "owner_capability_failed"
+            let code = match &error {
+                crate::error::ApiError::CapabilityPending(_) => "capability_pending",
+                crate::error::ApiError::TerminalCapabilityFailure(_) => {
+                    "terminal_capability_failure"
+                }
+                _ => "owner_capability_failed",
             };
             Err(OwnerDiagnosticV1::new(code, error))
         }

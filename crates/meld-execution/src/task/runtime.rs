@@ -2,7 +2,7 @@
 
 use crate::capability::{
     BoundCapabilityInstance, CapabilityCatalog, CapabilityExecutionContext,
-    CapabilityInvocationPayload, CapabilityInvocationResult,
+    CapabilityInvocationOutcome, CapabilityInvocationPayload, CapabilityInvocationResult,
 };
 use crate::error::ExecutionInvariantError;
 use crate::execution::{EventPublicationPort, ExecutionEventContext};
@@ -47,7 +47,9 @@ pub async fn execute_task_to_completion<A, E, InvokeState, InvokeCapability, Com
 where
     A: EventPublicationPort<Error = E, EventEnvelope = EventEnvelope> + ?Sized,
     E: From<ExecutionInvariantError> + Display,
+    InvokeState: Sync,
     InvokeCapability: Copy
+        + Sync
         + for<'a> Fn(
             &'a A,
             &'a InvokeState,
@@ -56,6 +58,61 @@ where
             Option<&'a ExecutionEventContext>,
         ) -> Pin<
             Box<dyn Future<Output = Result<CapabilityInvocationResult, E>> + Send + 'a>,
+        >,
+    CompileExpansion: Copy
+        + Fn(
+            &A,
+            &CompiledTaskRecord,
+            &TaskExpansionRequest,
+            &CapabilityCatalog,
+        ) -> Result<CompiledTaskDelta, E>,
+{
+    execute_task_with_outcomes(
+        api,
+        executor,
+        catalog,
+        &(invoke_state, invoke_capability),
+        |api, state, instance, payload, event_context| {
+            Box::pin(async move {
+                let (invoke_state, invoke_capability) = state;
+                invoke_capability(api, invoke_state, instance, payload, event_context)
+                    .await
+                    .map(CapabilityInvocationOutcome::Completed)
+            })
+        },
+        compile_expansion,
+        event_context,
+    )
+    .await
+}
+
+/// Execute until a complete Task, failure, or explicit pending disposition.
+///
+/// Pending returns without recording failure or emitting a terminal Task event.
+#[allow(clippy::too_many_arguments)]
+pub async fn execute_task_with_outcomes<A, E, InvokeState, InvokeCapability, CompileExpansion>(
+    api: &A,
+    executor: &mut TaskExecutor,
+    catalog: &CapabilityCatalog,
+    invoke_state: &InvokeState,
+    invoke_capability: InvokeCapability,
+    compile_expansion: CompileExpansion,
+    event_context: Option<&ExecutionEventContext>,
+) -> Result<TaskRunSummary, E>
+where
+    A: EventPublicationPort<Error = E, EventEnvelope = EventEnvelope> + ?Sized,
+    E: From<ExecutionInvariantError> + Display,
+    InvokeState: Sync,
+    InvokeCapability: Copy
+        + Sync
+        + for<'a> Fn(
+            &'a A,
+            &'a InvokeState,
+            &'a BoundCapabilityInstance,
+            &'a CapabilityInvocationPayload,
+            Option<&'a ExecutionEventContext>,
+        ) -> Pin<
+            Box<dyn Future<Output = Result<CapabilityInvocationOutcome, E>> + Send + 'a>,
         >,
     CompileExpansion: Copy
         + Fn(
@@ -126,7 +183,7 @@ where
 
         while let Some((invocation_id, capability_instance_id, outcome)) = futures.next().await {
             match outcome {
-                Ok(result) => {
+                Ok(CapabilityInvocationOutcome::Completed(result)) => {
                     let mut expansion_requests = Vec::new();
                     for artifact in &result.emitted_artifacts {
                         if let Some(request) = parse_task_expansion_request_artifact(artifact)? {
@@ -154,6 +211,11 @@ where
                         executor,
                         &mut emitted_task_event_count,
                     );
+                }
+                Ok(CapabilityInvocationOutcome::Pending(pending)) => {
+                    return Err(E::from(ExecutionInvariantError::CapabilityPending(
+                        pending.detail,
+                    )));
                 }
                 Err(err) => {
                     executor.record_failure(
@@ -347,6 +409,28 @@ mod tests {
         })
     }
 
+    fn invoke_pending<'a>(
+        _api: &'a RecordingApi,
+        _state: &'a (),
+        _instance: &'a BoundCapabilityInstance,
+        _payload: &'a CapabilityInvocationPayload,
+        _event_context: Option<&'a ExecutionEventContext>,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<CapabilityInvocationOutcome, ExecutionInvariantError>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async {
+            Ok(CapabilityInvocationOutcome::Pending(
+                crate::capability::CapabilityInvocationPending::new(
+                    "owner operation remains incomplete",
+                ),
+            ))
+        })
+    }
+
     fn invoke_expansion<'a>(
         _api: &'a RecordingApi,
         _state: &'a (),
@@ -476,6 +560,45 @@ mod tests {
         assert!(event_types(&api)
             .iter()
             .any(|event_type| event_type == "execution.task.failed"));
+    }
+
+    #[test]
+    fn pending_outcome_returns_without_failure_record_or_terminal_event() {
+        let api = RecordingApi::default();
+        let mut executor =
+            TaskExecutor::new(compiled_task(), init_payload(), "repo_docs_writer").unwrap();
+        let context = ExecutionEventContext {
+            effect_authority: None,
+            session_id: "session_1".to_string(),
+        };
+
+        let error = block_on(execute_task_with_outcomes(
+            &api,
+            &mut executor,
+            &CapabilityCatalog::new(),
+            &(),
+            invoke_pending,
+            compile_no_expansion,
+            Some(&context),
+        ))
+        .unwrap_err();
+
+        assert!(matches!(
+            error,
+            ExecutionInvariantError::CapabilityPending(ref detail)
+                if detail == "owner operation remains incomplete"
+        ));
+        assert_eq!(executor.invocation_records().len(), 1);
+        assert!(executor.invocation_records()[0]
+            .emitted_artifacts
+            .is_empty());
+        assert!(executor.invocation_records()[0].failure_summary.is_none());
+        assert!(!event_types(&api).iter().any(|event_type| {
+            matches!(
+                event_type.as_str(),
+                "execution.task.failed" | "execution.task.succeeded"
+            )
+        }));
     }
 
     #[test]

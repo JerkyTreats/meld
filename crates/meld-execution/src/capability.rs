@@ -76,7 +76,10 @@ pub use contracts::{
     EffectKind, EffectSpec, ExecutionClass, ExecutionContract, InputCardinality, InputSlotSpec,
     OutputSlotSpec, ScopeContract, EXACT_INPUT_SHARING_V1,
 };
-pub use invocation::{CapabilityExecutorRegistry, CapabilityInvocationResult, CapabilityInvoker};
+pub use invocation::{
+    CapabilityExecutorRegistry, CapabilityInvocationOutcome, CapabilityInvocationPending,
+    CapabilityInvocationResult, CapabilityInvoker,
+};
 pub use registry::{
     CapabilityContractRegistryStore, CapabilityContractRevision, CapabilityContractRevisionRef,
     CapabilityContractRevisionStoreError,

@@ -1436,15 +1436,19 @@ impl ClaimedTaskInvoker for CompiledTaskClaimInvoker {
             )),
             Err(error) => {
                 let message = error.to_string();
-                // Only an owner-declared terminal failure closes the claim.
-                // Other failures preserve unresolved operational evidence.
-                if matches!(error, crate::error::ApiError::TerminalCapabilityFailure(_)) {
-                    Ok(ClaimedInvocationOutcome::Failed { error: message })
-                } else {
-                    // Any other unresolved invocation keeps the claim
-                    // fenced: a later tick resumes it instead of recording
-                    // a premature terminal outcome.
-                    Err(DispatchPortError::retryable(message))
+                match error {
+                    crate::error::ApiError::CapabilityPending(_) => {
+                        Ok(ClaimedInvocationOutcome::Pending { detail: message })
+                    }
+                    // Only an owner-declared terminal failure closes the claim.
+                    crate::error::ApiError::TerminalCapabilityFailure(_) => {
+                        Ok(ClaimedInvocationOutcome::Failed { error: message })
+                    }
+                    _ => {
+                        // Other unresolved failures keep the claim fenced: a
+                        // later tick retries instead of recording an outcome.
+                        Err(DispatchPortError::retryable(message))
+                    }
                 }
             }
         }

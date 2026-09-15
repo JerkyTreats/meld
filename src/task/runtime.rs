@@ -2,7 +2,7 @@
 
 use crate::capability::{
     BoundCapabilityInstance, CapabilityCatalog, CapabilityExecutorRegistry,
-    CapabilityInvocationPayload, CapabilityInvocationResult,
+    CapabilityInvocationOutcome, CapabilityInvocationPayload,
 };
 use crate::error::ApiError;
 use crate::execution::{ExecutionEventContext, ExecutionRuntimeContext};
@@ -22,7 +22,7 @@ pub async fn execute_task_to_completion<A>(
 where
     A: ExecutionRuntimeContext + 'static,
 {
-    meld_execution::task::execute_task_to_completion(
+    meld_execution::task::execute_task_with_outcomes(
         api,
         executor,
         catalog,
@@ -112,7 +112,7 @@ fn invoke_capability_via_root_registry<'a, A>(
     instance: &'a BoundCapabilityInstance,
     payload: &'a CapabilityInvocationPayload,
     event_context: Option<&'a ExecutionEventContext>,
-) -> BoxFuture<'a, Result<CapabilityInvocationResult, ApiError>>
+) -> BoxFuture<'a, Result<CapabilityInvocationOutcome, ApiError>>
 where
     A: ExecutionRuntimeContext + 'static,
 {
@@ -134,7 +134,7 @@ where
                 ))
             })?;
         invoker
-            .invoke(api, &runtime_init, payload, event_context)
+            .invoke_outcome(api, &runtime_init, payload, event_context)
             .await
     })
 }

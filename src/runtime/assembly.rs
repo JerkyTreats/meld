@@ -3137,13 +3137,41 @@ impl RuntimeSemanticHandleFactory {
                                     Arc::new(port)
                                 }
                                 owner => {
-                                    return unresolved(
-                                        diagnostics,
-                                        "epoch_source_unresolved",
-                                        format!(
-                                        "no epoch preparation adapter for source owner '{owner}'"
-                                    ),
-                                    )
+                                    let Some(runtime) = capability_runtime
+                                        .owner_runtimes
+                                        .iter()
+                                        .find(|runtime| runtime.owner_id() == owner)
+                                        .cloned()
+                                    else {
+                                        return unresolved(
+                                            diagnostics,
+                                            "epoch_source_unresolved",
+                                            format!(
+                                                "no prepared runtime for epoch source owner '{owner}'"
+                                            ),
+                                        );
+                                    };
+                                    let owner_port: Arc<
+                                        dyn crate::runtime::epoch::AgentEpochOwnerPort,
+                                    > = runtime;
+                                    let port =
+                                        crate::runtime::epoch::ProductOwnerEpochPreparation::new(
+                                            owner_port,
+                                            Arc::clone(curation_store),
+                                            Arc::clone(traversal),
+                                            template.revision_ref(),
+                                            &strategy.package,
+                                            capability_runtime.catalog.clone(),
+                                            ports.event_append().watermark_capability(),
+                                        )
+                                        .map_err(
+                                            |error| {
+                                                RuntimeAssemblyError::RuntimeHandleConstruction(
+                                                    error.to_string(),
+                                                )
+                                            },
+                                        )?;
+                                    Arc::new(port)
                                 }
                             };
                         let planner = crate::runtime::ports::ProductEpochAgentPlannerPort::new(

@@ -40,6 +40,8 @@ The Agent admits one named reconciliation request under its current activation a
 
 Epoch preparation resolves that exact owner revision and freezes its values as Task inputs. Maintained-condition evaluation decides whether work is needed. Strategy may construct several native planning operations and one or more complete Tasks from the exact admitted capabilities and frozen inputs. Agent authority admits or rejects each finished product.
 
+An external owner accepts the complete native epoch specification through the prepared owner connection. It returns the exact specification identity, frozen Task inputs, optional effect visibility, and its Curation source binding. Meld grounds the already installed Curation template and validates every input against the selected Strategy operator and capability contract. The owner cannot author a second Curation revision, planner decision, or execution route through this boundary.
+
 The world model does not perform sensory timing or operational waiting.
 
 ### Meld Execution
@@ -111,6 +113,12 @@ The qualified-motion result must identify the request revision, interaction reso
 ## Waiting and Recovery
 
 Human latency must not occupy a supervisor step. The interaction capability begins one idempotent owner operation, records enough owner state to recover it, and returns unresolved while completion is absent.
+
+A bounded capability result distinguishes completed output from pending owner work. Pending emits no artifact and records no Task outcome or failure. Terminal failure remains a separate owner disposition. Transport uncertainty remains unresolved rather than being mislabeled as owner-confirmed pending.
+
+The canonical dispatch actor rotates running claims and newly ready Tasks after the last durably attempted Task identity. This ordering preserves the exact item budget and gives finite eligible peers a turn even when one operation remains pending. A removed or no-longer-eligible Task does not strand the cursor because selection continues at the next stable identity and wraps when needed.
+
+Pending currently relies on deterministic bounded retry during later supervisor ticks. It does not claim event-only quiescence or a selective owner Event wake. Adding a precise wake address is a separate generic refinement and must preserve the same pending, terminal, authority, and fairness distinctions.
 
 A later dispatch recovery attempt may complete only from durable owner evidence. It must not repeat the external effect, infer completion from process memory, or convert absence into failure. An Event watermark may wake maintenance early, while the owner remains responsible for validating the returned evidence.
 

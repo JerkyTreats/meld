@@ -194,9 +194,9 @@ impl ClaimedTaskInvoker for SyntheticClaimInvoker {
                 .count()
         };
         match self.behavior[&node.task_instance_id] {
-            OwnerBehavior::Pending => Err(DispatchPortError::retryable(
-                "synthetic owner evidence pending",
-            )),
+            OwnerBehavior::Pending => Ok(ClaimedInvocationOutcome::Pending {
+                detail: "synthetic owner evidence pending".into(),
+            }),
             OwnerBehavior::Qualified => Ok(ClaimedInvocationOutcome::Completed(vec![artifact(
                 claim, &binding, false,
             )])),
@@ -249,7 +249,7 @@ fn tick(
 }
 
 #[test]
-fn pending_interaction_exposes_budget_one_starvation_and_budget_two_progress() {
+fn pending_interaction_budget_one_rotates_after_a0_starvation_counterexample() {
     let root = tempfile::tempdir().unwrap();
     let db = sled::open(root.path().join("execution")).unwrap();
     let binding = InteractionBinding::for_request("request::pending".into());
@@ -268,35 +268,39 @@ fn pending_interaction_exposes_budget_one_starvation_and_budget_two_progress() {
     ]);
     let observations = Arc::new(Mutex::new(OwnerObservations::default()));
     let first_actor = actor(&db, behavior.clone(), observations.clone());
-    for sequence in 1..=3 {
-        let report = tick(&first_actor, &mut store, sequence, 1);
-        assert_eq!(report.retryable_errors.len(), 1, "{report:?}");
-        assert_eq!(store.state().statuses["z-unrelated"], TaskStatus::Pending);
-    }
+    let pending = tick(&first_actor, &mut store, 1, 1);
+    assert_eq!(pending.retryable_errors.len(), 1, "{pending:?}");
+    assert_eq!(
+        pending.retryable_errors[0].code,
+        "claimed_invocation_pending"
+    );
+    assert_eq!(store.state().statuses["z-unrelated"], TaskStatus::Pending);
     drop(first_actor);
     drop(store);
 
     let mut reopened = SledTaskNetworkStore::open(db.clone(), "pending-network").unwrap();
     let reopened_actor = actor(&db, behavior, observations.clone());
-    let starved = tick(&reopened_actor, &mut reopened, 4, 1);
-    assert_eq!(starved.retryable_errors.len(), 1, "{starved:?}");
-    assert_eq!(
-        reopened.state().statuses["z-unrelated"],
-        TaskStatus::Pending
-    );
-    let progressed = tick(&reopened_actor, &mut reopened, 5, 2);
-    assert_eq!(progressed.retryable_errors.len(), 1, "{progressed:?}");
+    // The accepted A0 commit proved this budget-one peer starved before the
+    // canonical dispatch cursor was added. Reopen must retain the new order.
+    let progressed = tick(&reopened_actor, &mut reopened, 2, 1);
+    assert!(progressed.retryable_errors.is_empty(), "{progressed:?}");
     assert!(matches!(
         reopened.state().statuses["z-unrelated"],
         TaskStatus::Succeeded { .. }
     ));
+    let retried = tick(&reopened_actor, &mut reopened, 3, 1);
+    assert_eq!(retried.retryable_errors.len(), 1, "{retried:?}");
+    assert_eq!(
+        retried.retryable_errors[0].code,
+        "claimed_invocation_pending"
+    );
     let observed = observations.lock().unwrap();
     let interaction: Vec<_> = observed
         .attempts
         .iter()
         .filter(|attempt| attempt.0 == "a-interaction")
         .collect();
-    assert_eq!(interaction.len(), 5);
+    assert_eq!(interaction.len(), 2);
     assert!(interaction.windows(2).all(|pair| pair[0].1 == pair[1].1));
     assert!(interaction.windows(2).all(|pair| pair[0].2 == pair[1].2));
     assert_eq!(observed.admitted_creation_effects.len(), 2);

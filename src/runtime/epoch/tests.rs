@@ -50,6 +50,95 @@ impl AgentExecutionPort for NoExecution {
     }
 }
 
+struct NonceEpochOwner {
+    route: meld_world_model::world_state::graph::admission::OwnerEventSourceRef,
+}
+
+struct StaticEpochOwner {
+    owner_id: String,
+    products: crate::runtime::owners::OwnerAgentEpochProductsV1,
+}
+
+impl AgentEpochOwnerPort for StaticEpochOwner {
+    fn owner_id(&self) -> &str {
+        &self.owner_id
+    }
+
+    fn prepare_agent_epoch(
+        &self,
+        _: &AgentEpochSpecification,
+    ) -> Result<crate::runtime::owners::OwnerAgentEpochProductsV1, String> {
+        Ok(self.products.clone())
+    }
+}
+
+impl AgentEpochOwnerPort for NonceEpochOwner {
+    fn owner_id(&self) -> &str {
+        crate::nonce::OWNER_ID
+    }
+
+    fn prepare_agent_epoch(
+        &self,
+        specification: &AgentEpochSpecification,
+    ) -> Result<crate::runtime::owners::OwnerAgentEpochProductsV1, String> {
+        let authority = &specification.authority;
+        let request = crate::nonce::NonceRequest::new(
+            authority.agent_id.clone(),
+            authority.subject.clone(),
+            specification.effect_correlations(),
+            specification
+                .fence
+                .admission_epoch
+                .clone()
+                .ok_or_else(|| "nonce epoch has no admission identity".to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+        Ok(crate::runtime::owners::OwnerAgentEpochProductsV1 {
+            specification_id: specification.specification_id.clone(),
+            effect_visibility: Some(
+                OwnerPublicationExpectation::from_operation(
+                    &request.publication().map_err(|error| error.to_string())?,
+                )
+                .map_err(|error| error.to_string())?,
+            ),
+            task_inputs: vec![TaskInput {
+                step_id: "emit-requested-nonce".into(),
+                slot_id: crate::nonce::capability::REQUEST.into(),
+                artifact_type_id: crate::nonce::capability::REQUEST.into(),
+                schema_version: 1,
+                content: serde_json::to_value(&request).map_err(|error| error.to_string())?,
+            }],
+            curation_source: CurationSourceBinding {
+                event_source: Some(self.route.clone()),
+                scope: request.publication_scope(),
+                roots: vec![request.object_ref().map_err(|error| error.to_string())?],
+            },
+        })
+    }
+}
+
+#[test]
+fn generic_epoch_rejects_installed_non_exhaustive_source_route() {
+    let graph_directory = tempfile::tempdir().unwrap();
+    let db = sled::Config::new().temporary(true).open().unwrap();
+    let traversal =
+        TraversalStore::new(db, graph_directory.path().join("partial-graph.agdb")).unwrap();
+    let partial = meld_world_model::world_state::graph::admission::GraphOwnerEventRoute {
+        complete_event_source: false,
+        route_id: "partial-interaction-events".into(),
+        owner_id: "interaction".into(),
+        event_type: "interaction.observation.v1".into(),
+        enumeration_rule_revision: "interaction-observation.v1".into(),
+    };
+    traversal.install_owner_event_route(&partial).unwrap();
+
+    let error =
+        validate_complete_source_route(&traversal, "interaction", &partial.source_ref().unwrap())
+            .unwrap_err();
+
+    assert!(error.to_string().contains("complete Event source"));
+}
+
 #[test]
 fn native_epoch_specification_drives_curation_and_preserves_distinct_observations() {
     let graph_directory = tempfile::tempdir().unwrap();
@@ -210,12 +299,21 @@ fn native_epoch_specification_drives_curation_and_preserves_distinct_observation
     strategy.snapshot.settlement_rules[0]
         .evidence_route
         .outcome_contract_id = "nonce.emitted.v1".into();
+    let mut catalog = meld_execution::capability::CapabilityCatalog::new();
+    catalog
+        .register(crate::nonce::capability::contract())
+        .unwrap();
+    let owner: Arc<dyn AgentEpochOwnerPort> = Arc::new(NonceEpochOwner {
+        route: crate::nonce::graph_route().source_ref().unwrap(),
+    });
     let preparation = Arc::new(
-        ProductNonceEpochPreparation::new(
+        ProductOwnerEpochPreparation::new(
+            owner,
             curation.clone(),
             traversal.clone(),
             template.revision_ref(),
             &strategy,
+            catalog,
             events.watermark_capability(),
         )
         .unwrap(),
@@ -268,9 +366,89 @@ fn native_epoch_specification_drives_curation_and_preserves_distinct_observation
     );
     let goal_id = intent.goal_id(&authority.agent_id, &fence.reconciliation_scope());
     let products = agent_store.epoch_products(&goal_id).unwrap().unwrap();
+    let native_products = ProductNonceEpochPreparation::new(
+        curation.clone(),
+        traversal.clone(),
+        template.revision_ref(),
+        &runtime_strategy.package,
+        events.watermark_capability(),
+    )
+    .unwrap()
+    .prepare(&products.specification)
+    .unwrap();
+    assert_eq!(native_products.task_inputs, products.task_inputs);
+    assert_eq!(native_products.curation_rule, products.curation_rule);
     let request: crate::nonce::NonceRequest =
         serde_json::from_value(products.task_inputs[0].content.clone()).unwrap();
     request.validate().unwrap();
+    let owner_products = |specification_id: String, task_inputs: Vec<TaskInput>| {
+        crate::runtime::owners::OwnerAgentEpochProductsV1 {
+            specification_id,
+            effect_visibility: products.effect_visibility.clone(),
+            task_inputs,
+            curation_source: CurationSourceBinding {
+                event_source: Some(crate::nonce::graph_route().source_ref().unwrap()),
+                scope: request.publication_scope(),
+                roots: vec![request.object_ref().unwrap()],
+            },
+        }
+    };
+    let generic_preparation =
+        |owner: Arc<dyn AgentEpochOwnerPort>| -> ProductOwnerEpochPreparation {
+            let mut catalog = meld_execution::capability::CapabilityCatalog::new();
+            catalog
+                .register(crate::nonce::capability::contract())
+                .unwrap();
+            ProductOwnerEpochPreparation::new(
+                owner,
+                curation.clone(),
+                traversal.clone(),
+                template.revision_ref(),
+                &runtime_strategy.package,
+                catalog,
+                events.watermark_capability(),
+            )
+            .unwrap()
+        };
+    let foreign_specification = generic_preparation(Arc::new(StaticEpochOwner {
+        owner_id: crate::nonce::OWNER_ID.into(),
+        products: owner_products("foreign-specification".into(), products.task_inputs.clone()),
+    }))
+    .prepare(&products.specification)
+    .unwrap_err();
+    assert!(foreign_specification
+        .to_string()
+        .contains("another specification"));
+    let mut floating_inputs = products.task_inputs.clone();
+    floating_inputs[0].step_id = "floating-operator".into();
+    let floating = generic_preparation(Arc::new(StaticEpochOwner {
+        owner_id: crate::nonce::OWNER_ID.into(),
+        products: owner_products(
+            products.specification.specification_id.clone(),
+            floating_inputs,
+        ),
+    }))
+    .prepare(&products.specification)
+    .unwrap_err();
+    assert!(floating.to_string().contains("outside installed Strategy"));
+    let foreign_owner = ProductOwnerEpochPreparation::new(
+        Arc::new(StaticEpochOwner {
+            owner_id: "foreign-owner".into(),
+            products: owner_products(
+                products.specification.specification_id.clone(),
+                products.task_inputs.clone(),
+            ),
+        }),
+        curation.clone(),
+        traversal.clone(),
+        template.revision_ref(),
+        &runtime_strategy.package,
+        meld_execution::capability::CapabilityCatalog::new(),
+        events.watermark_capability(),
+    )
+    .err()
+    .unwrap();
+    assert!(foreign_owner.to_string().contains("another owner"));
     assert_eq!(request.subject_ref, subject);
     assert_eq!(
         request.correlation_refs,

@@ -9,6 +9,10 @@ pub enum ExecutionInvariantError {
     #[error("Configuration error: {0}")]
     ConfigError(String),
 
+    /// One bounded capability attempt observed incomplete owner work.
+    #[error("Capability invocation pending: {0}")]
+    CapabilityPending(String),
+
     /// Provider generation or execution orchestration failed.
     #[error("Generation failed: {0}")]
     GenerationFailed(String),

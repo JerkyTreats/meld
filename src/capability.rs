@@ -20,7 +20,10 @@ pub use contracts::{
     OutputSlotSpec, ScopeContract, EXACT_INPUT_SHARING_V1,
 };
 pub use contribution::*;
-pub use meld_execution::capability::{CapabilityInvocationResult, CapabilityInvoker};
+pub use meld_execution::capability::{
+    CapabilityInvocationOutcome, CapabilityInvocationPending, CapabilityInvocationResult,
+    CapabilityInvoker,
+};
 pub use runtime::{
     ArtifactValueRef, CapabilityExecutionContext, CapabilityInvocationPayload,
     CapabilityRuntimeInit, InputValueSource, SuppliedInputValue, SuppliedValueRef, UpstreamLineage,

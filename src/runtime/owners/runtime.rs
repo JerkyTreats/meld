@@ -10,8 +10,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use meld_events::events::remote::EventAuthorityContract;
 use meld_execution::capability::{
-    CapabilityInvocationPayload, CapabilityInvocationResult, CapabilityInvoker,
-    CapabilityRuntimeInit, CapabilityTypeContract,
+    CapabilityInvocationOutcome, CapabilityInvocationPayload, CapabilityInvocationResult,
+    CapabilityInvoker, CapabilityRuntimeInit, CapabilityTypeContract,
 };
 use serde::de::DeserializeOwned;
 
@@ -53,6 +53,24 @@ pub struct PreparedOwnerRuntime {
 }
 
 impl PreparedOwnerRuntime {
+    /// Returns the semantic owner selected for this prepared runtime.
+    pub fn owner_id(&self) -> &str {
+        &self.description.owner_id
+    }
+
+    /// Ask the selected owner to bind one exact native Agent epoch.
+    pub fn prepare_agent_epoch(
+        &self,
+        specification: &meld_world_model::agent::AgentEpochSpecification,
+    ) -> Result<OwnerAgentEpochProductsV1, OwnerDiagnosticV1> {
+        self.call(
+            OwnerCommandV1::PrepareAgentEpoch {
+                specification: Box::new(specification.clone()),
+            },
+            OperationScope::ReadOnly,
+        )
+    }
+
     pub(crate) fn bind_graph(
         &self,
         graph: Arc<meld_world_model::world_state::graph::runtime::GraphRuntime>,
@@ -364,6 +382,39 @@ impl CapabilityInvoker for OwnerInvoker {
                 "external invocation requires its native Execution context",
             ))
         })?;
+        let outcome: CapabilityInvocationOutcome = self
+            .runtime
+            .call(
+                OwnerCommandV1::Invoke {
+                    selection: self.selection.clone(),
+                    runtime_init: runtime_init.clone(),
+                    payload: payload.clone(),
+                    event_context: Some(context.clone()),
+                },
+                OperationScope::Invocation(context, &self.selection),
+            )
+            .map_err(api_error)?;
+        match outcome {
+            CapabilityInvocationOutcome::Completed(result) => Ok(result),
+            CapabilityInvocationOutcome::Pending(pending) => {
+                Err(ApiError::CapabilityPending(pending.detail))
+            }
+        }
+    }
+
+    async fn invoke_outcome(
+        &self,
+        _: &dyn ExecutionRuntimeContext,
+        runtime_init: &CapabilityRuntimeInit,
+        payload: &CapabilityInvocationPayload,
+        event_context: Option<&ExecutionEventContext>,
+    ) -> Result<CapabilityInvocationOutcome, ApiError> {
+        let context = event_context.ok_or_else(|| {
+            api_error(OwnerDiagnosticV1::new(
+                "owner_invocation_not_authorized",
+                "external invocation requires its native Execution context",
+            ))
+        })?;
         self.runtime
             .call(
                 OwnerCommandV1::Invoke {
@@ -532,10 +583,10 @@ fn unavailable(message: &str) -> OwnerDiagnosticV1 {
 }
 fn api_error(error: OwnerDiagnosticV1) -> ApiError {
     let failure = ApiError::GenerationFailed(error.to_string());
-    if error.code == "terminal_capability_failure" {
-        ApiError::TerminalCapabilityFailure(Box::new(failure))
-    } else {
-        failure
+    match error.code.as_str() {
+        "capability_pending" => ApiError::CapabilityPending(error.message),
+        "terminal_capability_failure" => ApiError::TerminalCapabilityFailure(Box::new(failure)),
+        _ => failure,
     }
 }
 fn runtime_error(error: OwnerDiagnosticV1) -> RuntimeAssemblyError {

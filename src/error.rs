@@ -217,6 +217,10 @@ pub enum ApiError {
         new_path: std::path::PathBuf,
     },
 
+    /// One bounded capability attempt observed an incomplete owner operation.
+    #[error("Capability invocation pending: {0}")]
+    CapabilityPending(String),
+
     /// An owner has determined that this invocation cannot complete by retrying.
     #[error("Terminal capability failure: {0}")]
     TerminalCapabilityFailure(#[source] Box<ApiError>),
@@ -356,6 +360,7 @@ impl Clone for ApiError {
                     new_path: new_path.clone(),
                 }
             }
+            ApiError::CapabilityPending(message) => ApiError::CapabilityPending(message.clone()),
             ApiError::TerminalCapabilityFailure(error) => {
                 ApiError::TerminalCapabilityFailure(error.clone())
             }
@@ -421,6 +426,9 @@ impl From<meld_execution::error::ExecutionInvariantError> for ApiError {
         match err {
             meld_execution::error::ExecutionInvariantError::ConfigError(message) => {
                 ApiError::ConfigError(message)
+            }
+            meld_execution::error::ExecutionInvariantError::CapabilityPending(message) => {
+                ApiError::CapabilityPending(message)
             }
             meld_execution::error::ExecutionInvariantError::GenerationFailed(message) => {
                 ApiError::GenerationFailed(message)

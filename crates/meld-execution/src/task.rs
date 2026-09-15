@@ -84,5 +84,5 @@ pub use init::{
 pub use invocation::assemble_invocation_payload;
 pub use progress::{TaskProgressStore, TaskProgressStoreError};
 pub use readiness::compute_ready_capability_instances;
-pub use runtime::{execute_task_to_completion, TaskRunSummary};
+pub use runtime::{execute_task_to_completion, execute_task_with_outcomes, TaskRunSummary};
 pub use step::{package_step_repo_id, DurablePackageExecution, PackageStepInvoker};
