@@ -435,6 +435,7 @@ fn successor_preserves_history_and_non_circular_product_identity() {
         },
         predecessor_plan: Box::new(predecessor.clone()),
         completed_history: completed_history.clone(),
+        pending_derived_evidence_proof: None,
     };
 
     let first = search_successor(&request).recommendation.unwrap();
@@ -491,6 +492,7 @@ fn successor_replay_is_stable_and_keeps_completed_history() {
             owner_position_id: "agent-milestone-docs-v1".into(),
         }],
         predecessor_plan: Box::new(predecessor),
+        pending_derived_evidence_proof: None,
     };
     let encoded = serde_json::to_vec(&request).unwrap();
     let replayed: StrategySuccessorRequest = serde_json::from_slice(&encoded).unwrap();
@@ -513,6 +515,7 @@ fn successor_rejects_a_tampered_predecessor() {
         search: search_request,
         predecessor_plan: Box::new(predecessor),
         completed_history: Vec::new(),
+        pending_derived_evidence_proof: None,
     });
 
     assert_eq!(result.recommendation, None);
@@ -611,6 +614,7 @@ fn prove_confirmation_successor(placement: DependencyFixture, compound: bool) {
             })
             .collect(),
         predecessor_plan: Box::new(predecessor),
+        pending_derived_evidence_proof: None,
     };
     let successor = search_successor(&request).recommendation.unwrap();
     assert_eq!(successor.plan.origin, StrategyPlanOrigin::Confirmation);
@@ -765,6 +769,7 @@ fn unsuccessful_confirmation_stops_unchanged_work_but_allows_source_advance_and_
             })
             .collect(),
         predecessor_plan: Box::new(task_plan),
+        pending_derived_evidence_proof: None,
     };
     let confirmation = search_successor(&request).recommendation.unwrap().plan;
     assert_eq!(confirmation.origin, StrategyPlanOrigin::Confirmation);
@@ -1475,6 +1480,7 @@ fn assert_completed_task_successor(route_from_completed: bool) {
             owner_position_id: "accepted-preparation-outcome".into(),
             product: Some(StrategyProduct::Task(Box::new(completed.clone()))),
         }],
+        pending_derived_evidence_proof: None,
     };
     let mut successor = search_successor(&successor_request).recommendation.unwrap();
     assert_eq!(successor.plan.tasks.len(), 1);
@@ -1884,6 +1890,7 @@ fn observation_construction_prunes_unused_preparation_and_respects_unavailable_a
         search: request.clone(),
         predecessor_plan: Box::new(first),
         completed_history: Vec::new(),
+        pending_derived_evidence_proof: None,
     })
     .recommendation
     .unwrap();
@@ -1978,6 +1985,7 @@ fn confirmation_uses_only_the_required_return_closure() {
             })
             .collect(),
         predecessor_plan: Box::new(plan),
+        pending_derived_evidence_proof: None,
     };
     let confirmation = search_successor(&request).recommendation.unwrap();
     assert_eq!(confirmation.plan.origin, StrategyPlanOrigin::Confirmation);
@@ -2094,6 +2102,7 @@ fn current_negative_confirmation_does_not_repeat_its_own_effect_publication() {
             })
             .collect(),
         predecessor_plan: Box::new(plan),
+        pending_derived_evidence_proof: None,
     };
     let prior_operation = &request.search.problem.curation_operations[0];
     let mut effect_cut = prior_operation.source_cut.clone();
@@ -2215,19 +2224,44 @@ fn exact_returned_derived_evidence_unlocks_only_its_executable_successor() {
         .collect();
     request.problem.planner_cut.world_model_view.world_state =
         meld_lang::WorldState::new(retained).unwrap();
+    let base_operation = request.problem.curation_operations[0].clone();
+    let mut observed_cut = base_operation.source_cut.clone();
+    observed_cut.owners.push(TraversalOwnerRequirement {
+        owner_id: crate::curation::CURATION_OWNER_ID.into(),
+        scope: observed_cut.scope.clone(),
+        required: false,
+        event_source: None,
+    });
+    observed_cut.owners.sort();
+    observed_cut.cut_id = traversal_cut_identity(&observed_cut).unwrap();
+    request.problem.curation_operations[0] = CurationOperation::reconstruct(
+        base_operation.authority,
+        base_operation.rule_revision,
+        observed_cut,
+        base_operation.traversal_request,
+    )
+    .unwrap()
+    .for_request("pending-observation".into())
+    .unwrap();
     let rule_revision = request.problem.curation_operations[0].rule_revision.clone();
+    let belief_family = crate::belief::TheoryRevisionRef {
+        registry: "belief_family".into(),
+        id: "docs".into(),
+        content_hash: "family".into(),
+    };
+    let outcome_mapping = crate::belief::TheoryRevisionRef {
+        registry: "outcome_mapping".into(),
+        id: "curation-result".into(),
+        content_hash: "mapping".into(),
+    };
     request
         .problem
         .planner_cut
         .world_model_view
         .pending_derived_evidence = Some(crate::planner::PlannerDerivedEvidenceRequirement {
         curation_rule: rule_revision.clone(),
-        belief_family: crate::belief::TheoryRevisionRef {
-            registry: "belief_family".into(),
-            id: "docs".into(),
-            content_hash: "family".into(),
-        },
-        outcome_mappings: vec![],
+        belief_family,
+        outcome_mappings: vec![outcome_mapping],
     });
     let executable = &mut request.problem.theory.settlement_rules[0];
     executable.epistemic_selections = vec![StrategyEpistemicSelection {
@@ -2237,6 +2271,12 @@ fn exact_returned_derived_evidence_unlocks_only_its_executable_successor() {
     executable.product_ordering.clear();
     let mut observation = executable.clone();
     observation.construction = StrategyConstruction::ObserveUnknown;
+    observation.evidence_route = ProspectiveEvidenceRoute {
+        route_id: "observe-docs".into(),
+        dimension_id: "docs".into(),
+        outcome_contract_id: "curation-result".into(),
+        evidence_schema_id: "curation-result-v1".into(),
+    };
     let operation = request.problem.curation_operations[0].clone();
     let unrelated_rule_revision = crate::belief::TheoryRevisionRef {
         registry: crate::curation::CURATION_RULE_REGISTRY_ID.into(),
@@ -2283,13 +2323,54 @@ fn exact_returned_derived_evidence_unlocks_only_its_executable_successor() {
             belief_key: "docs-current".into(),
             revision_id: "negative-current".into(),
         },
-        owner_position_id: "belief-return-current".into(),
+        owner_position_id: "negative-current".into(),
         product: Some(StrategyProduct::Epistemic(Box::new(returned))),
     }];
+    let proof = StrategyPendingDerivedEvidenceProof {
+        requirement: request
+            .problem
+            .planner_cut
+            .world_model_view
+            .pending_derived_evidence
+            .clone()
+            .unwrap(),
+        source_plan_revision_id: predecessor.plan_revision_id.clone(),
+        product_id: predecessor.epistemic_operations[0].product_id.clone(),
+        belief_key: "docs-current".into(),
+        belief_revision_id: "negative-current".into(),
+    };
+    let retained_product_id = predecessor.epistemic_operations[0].product_id.clone();
+    let operation = request.problem.curation_operations[0].clone();
+    let mut advanced_cut = operation.source_cut.clone();
+    let mut own_receipt = advanced_cut.receipts[0].clone();
+    own_receipt.owner_id = crate::curation::CURATION_OWNER_ID.into();
+    own_receipt.scope = advanced_cut.scope.clone();
+    own_receipt.completeness.scope = advanced_cut.scope.clone();
+    advanced_cut.receipts.push(own_receipt);
+    advanced_cut.cut_id = traversal_cut_identity(&advanced_cut).unwrap();
+    request.problem.curation_operations[0] = CurationOperation::reconstruct(
+        operation.authority,
+        operation.rule_revision,
+        advanced_cut,
+        operation.traversal_request,
+    )
+    .unwrap()
+    .for_request(operation.request_id.unwrap())
+    .unwrap();
+    assert_ne!(
+        super::search::epistemic_products(
+            &request.problem,
+            &request.problem.theory.settlement_rules[2],
+        )[0]
+        .product_id,
+        retained_product_id,
+        "the current product identity advances with its own publication"
+    );
     let successor_request = StrategySuccessorRequest {
         search: request.clone(),
         predecessor_plan: Box::new(predecessor.clone()),
         completed_history: completed_history.clone(),
+        pending_derived_evidence_proof: Some(proof),
     };
     let successor = search_successor(&successor_request)
         .recommendation
@@ -2300,17 +2381,52 @@ fn exact_returned_derived_evidence_unlocks_only_its_executable_successor() {
         verify_successor_plan(&successor_request, &successor),
         PlanVerification::Valid { .. }
     ));
+    let task = successor.plan.tasks[0].clone();
+    let mut confirmation_request = successor_request.clone();
+    confirmation_request
+        .completed_history
+        .push(StrategyCompletedHistoryEntry {
+            source_plan_revision_id: successor.plan.plan_revision_id.clone(),
+            product_id: task.task_id.clone(),
+            accepted_milestone: task.confirmation_milestone(),
+            owner_position_id: "task-return-current".into(),
+            product: Some(StrategyProduct::Task(Box::new(task))),
+        });
+    *confirmation_request.predecessor_plan = successor.plan.clone();
+    let confirmation = search_successor(&confirmation_request)
+        .recommendation
+        .expect("completed executable work must retain its separate confirmation debt");
+    assert_eq!(confirmation.plan.origin, StrategyPlanOrigin::Confirmation);
+    assert_eq!(confirmation.plan.epistemic_operations.len(), 1);
+    assert_eq!(
+        confirmation.plan.epistemic_operations[0].return_evidence,
+        Some(
+            confirmation_request.search.problem.theory.settlement_rules[0]
+                .evidence_route
+                .clone()
+        )
+    );
+    assert_ne!(
+        confirmation.plan.epistemic_operations[0].return_evidence,
+        confirmation_request.completed_history[0]
+            .product
+            .as_ref()
+            .and_then(|product| match product {
+                StrategyProduct::Epistemic(operation) => operation.return_evidence.clone(),
+                StrategyProduct::Task(_) => None,
+            })
+    );
     let mut repeated_observation = predecessor;
     repeated_observation.predecessor_plan_revision_id =
         Some(successor_request.predecessor_plan.plan_revision_id.clone());
     repeated_observation.plan_revision_id =
         super::search::plan_revision_identity(&repeated_observation);
+    let repeated_observation = StrategySuccessorPlan {
+        plan: repeated_observation,
+        completed_history: completed_history.clone(),
+    };
     assert!(matches!(
-        super::verification::verify_with_history(
-            &request.problem,
-            &repeated_observation,
-            &completed_history,
-        ),
+        verify_successor_plan(&successor_request, &repeated_observation),
         PlanVerification::Invalid { grounds }
             if grounds.contains(&StrategyRejectionGround::UnchangedCompletedWork)
     ));
@@ -2342,6 +2458,54 @@ fn exact_returned_derived_evidence_unlocks_only_its_executable_successor() {
         content_hash: "other-rule-hash".into(),
     };
     assert_does_not_unlock(wrong_pending_rule);
+
+    let mut wrong_family = successor_request.clone();
+    wrong_family
+        .pending_derived_evidence_proof
+        .as_mut()
+        .unwrap()
+        .requirement
+        .belief_family
+        .content_hash = "foreign-family".into();
+    assert_does_not_unlock(wrong_family);
+
+    let mut wrong_mapping = successor_request.clone();
+    wrong_mapping
+        .pending_derived_evidence_proof
+        .as_mut()
+        .unwrap()
+        .requirement
+        .outcome_mappings[0]
+        .content_hash = "foreign-mapping".into();
+    assert_does_not_unlock(wrong_mapping);
+
+    let mut empty_revision = successor_request.clone();
+    empty_revision
+        .pending_derived_evidence_proof
+        .as_mut()
+        .unwrap()
+        .belief_revision_id
+        .clear();
+    assert_does_not_unlock(empty_revision);
+
+    let mut malformed_product = successor_request.clone();
+    let Some(StrategyProduct::Epistemic(prior)) =
+        malformed_product.completed_history[0].product.as_mut()
+    else {
+        unreachable!()
+    };
+    prior.product_id = "foreign-product".into();
+    assert_does_not_unlock(malformed_product);
+
+    let mut observer_route_mismatch = successor_request.clone();
+    observer_route_mismatch
+        .search
+        .problem
+        .theory
+        .settlement_rules[2]
+        .evidence_route
+        .evidence_schema_id = "foreign-observation-schema".into();
+    assert_does_not_unlock(observer_route_mismatch);
 
     let completed_return = |search_request: &StrategySearchRequest| {
         let plan = search(search_request).recommendation.unwrap();

@@ -19,7 +19,9 @@ use crate::error::StorageError;
 use crate::planner::{PlannerAssemblyOutcome, PlannerCut, PlannerRefusal};
 use crate::strategy::{
     search, search_successor, verify_plan, verify_successor_plan, PlanMilestoneRequirement,
-    PlanVerification, StrategyPlan, StrategySearchRequest, StrategySuccessorRequest,
+    PlanVerification, StrategyCompletedHistoryEntry, StrategyConstruction,
+    StrategyPendingDerivedEvidenceProof, StrategyPlan, StrategyProblem, StrategyProduct,
+    StrategySearchRequest, StrategySuccessorRequest,
 };
 use crate::waiting::{StructuralWakeAddress, WaitingOnDeclaration};
 
@@ -1819,10 +1821,13 @@ impl GoalReconciliation<'_, '_> {
                 ));
                 return Ok(None);
             }
+            let pending_derived_evidence_proof =
+                self.pending_derived_evidence_proof(&problem, &history)?;
             let request = StrategySuccessorRequest {
                 search: request,
                 predecessor_plan: Box::new(predecessor.clone()),
-                completed_history: self.store.completed_history_for_goal(&self.goal.goal_id)?,
+                completed_history: history,
+                pending_derived_evidence_proof,
             };
             let result = search_successor(&request);
             let Some(successor) = result.recommendation else {
@@ -1877,6 +1882,133 @@ impl GoalReconciliation<'_, '_> {
         }
         let inserted = self.persist_plan_and_judgment(cut, &plan)?;
         Ok(Some((plan, inserted)))
+    }
+
+    fn pending_derived_evidence_proof(
+        &self,
+        problem: &StrategyProblem,
+        history: &[StrategyCompletedHistoryEntry],
+    ) -> Result<Option<StrategyPendingDerivedEvidenceProof>, StorageError> {
+        let Some(requirement) = problem
+            .planner_cut
+            .world_model_view
+            .pending_derived_evidence
+            .as_ref()
+        else {
+            return Ok(None);
+        };
+        if requirement.outcome_mappings.is_empty() {
+            return Ok(None);
+        }
+        let (subscriptions, requests) = match &self.preparation {
+            crate::agent::AgentPreparation::Epoch { subscriptions, .. } => {
+                let Some(products) = self.store.epoch_products(&self.goal.goal_id)? else {
+                    return Ok(None);
+                };
+                (Arc::clone(subscriptions), products.subscription_requests()?)
+            }
+            crate::agent::AgentPreparation::InstalledRule {
+                subscriptions: Some(subscriptions),
+                ..
+            } => {
+                let Some(genesis) = self.store.genesis_intent_for_agent(&self.goal.agent_id)?
+                else {
+                    return Ok(None);
+                };
+                (Arc::clone(subscriptions), genesis.required_subscriptions)
+            }
+            _ => return Ok(None),
+        };
+
+        for observer in problem.theory.settlement_rules.iter().filter(|rule| {
+            rule.construction == StrategyConstruction::ObserveUnknown
+                && meld_lang::unify(&rule.goal_pattern, &problem.goal.target).is_some()
+                && crate::strategy::confirmation_is_current(problem, rule, history)
+        }) {
+            for operation in crate::strategy::epistemic_products(problem, observer) {
+                let Some(route) = operation.return_evidence.as_ref() else {
+                    continue;
+                };
+                if operation.operation.rule_revision != requirement.curation_rule
+                    || route.dimension_id.trim().is_empty()
+                    || route.evidence_schema_id.trim().is_empty()
+                {
+                    continue;
+                }
+                for entry in history {
+                    if entry.source_plan_revision_id.trim().is_empty()
+                        || entry.product_id.trim().is_empty()
+                        || entry.owner_position_id.trim().is_empty()
+                    {
+                        continue;
+                    }
+                    let PlanMilestoneRequirement::BeliefRevision {
+                        belief_key,
+                        revision_id,
+                    } = &entry.accepted_milestone
+                    else {
+                        continue;
+                    };
+                    if belief_key.trim().is_empty()
+                        || revision_id.trim().is_empty()
+                        || entry.owner_position_id != revision_id.as_str()
+                    {
+                        continue;
+                    }
+                    let Some(StrategyProduct::Epistemic(prior)) = entry.product.as_ref() else {
+                        continue;
+                    };
+                    if prior.product_id != entry.product_id
+                        || !prior.same_request_as(&operation)
+                        || !prior.accepts_return(&entry.accepted_milestone)
+                    {
+                        continue;
+                    }
+                    let Some(result) = self.curation.result(&prior.operation.operation_id)? else {
+                        continue;
+                    };
+                    if result.operation_id != prior.operation.operation_id
+                        || !matches!(
+                            result.disposition,
+                            crate::curation::CurationTerminalDisposition::Applied
+                                | crate::curation::CurationTerminalDisposition::Unchanged
+                        )
+                    {
+                        continue;
+                    }
+                    for subscription in requests.iter().filter(|request| {
+                        request.source_contract_revision == requirement.belief_family
+                            && request.belief_key.dimension_id == route.dimension_id
+                    }) {
+                        let Some(returned) = subscriptions.returned_evidence(
+                            &crate::belief::BeliefEvidenceReturnRequest {
+                                subscription: subscription.clone(),
+                                revision_ids: vec![revision_id.clone()],
+                                publication_record_id: result.event_record_id(),
+                                evidence_schema_id: route.evidence_schema_id.clone(),
+                                mapping_revisions: requirement.outcome_mappings.clone(),
+                            },
+                        )?
+                        else {
+                            continue;
+                        };
+                        if returned.belief_key().index_key() != belief_key.as_str()
+                            || returned.revision_id() != revision_id.as_str()
+                        {
+                            continue;
+                        }
+                        return Ok(Some(StrategyPendingDerivedEvidenceProof {
+                            requirement: requirement.clone(),
+                            source_plan_revision_id: entry.source_plan_revision_id.clone(),
+                            product_id: entry.product_id.clone(),
+                            belief_key: belief_key.clone(),
+                            belief_revision_id: revision_id.clone(),
+                        }));
+                    }
+                }
+            }
+        }
+        Ok(None)
     }
 
     fn accept_satisfied_plan(
@@ -4132,30 +4264,77 @@ mod tests {
 
     #[test]
     fn returned_current_derived_evidence_authorizes_a_fresh_fenced_task() {
+        use crate::agent::{
+            AgentGenesisIntentV1, AgentSubscriptionRequestV1, SeedAgentRegistration,
+        };
+        use crate::belief::{
+            configured_belief_key, BeliefFamilyConfig, BeliefFamilyRegistry,
+            BeliefFamilyRegistryStore, BeliefProvenanceSummary, BeliefRuntime, BeliefStore,
+            BeliefSubscriptionAuthority, BeliefSubscriptionSource, EvidenceAssignment,
+            EvidenceItem, EvidenceRole, EvidenceValue,
+        };
+
         let mut fixture = Fixture::new();
         fixture.authority.activation_generation = "recovery-generation".into();
         fixture.authority.admission_epoch = Some("recovery-epoch".into());
         fixture.cut.context.activation_generation = fixture.authority.activation_generation.clone();
         fixture.cut.context.admission_epoch = fixture.authority.admission_epoch.clone();
         let rule_revision = fixture.rule.revision_ref();
+        let belief_store = Arc::new(BeliefStore::new(fixture.db.clone()).unwrap());
+        let mut family_registry = BeliefFamilyRegistryStore::new(fixture.db.clone()).unwrap();
+        let family_config: BeliefFamilyConfig = serde_json::from_str(include_str!(
+            "../../../../theory/docs_freshness/belief_family.docs_freshness.json"
+        ))
+        .unwrap();
+        let family = family_registry.install(family_config, 1).unwrap().1;
+        let belief_key = configured_belief_key(
+            &family,
+            &subject(),
+            &fixture.authority.perspective,
+            &fixture.authority.branch_scope,
+        );
+        let subscription = AgentSubscriptionRequestV1::new(
+            fixture.goal.agent_id.clone(),
+            "belief".into(),
+            family.revision_ref(),
+            belief_key.clone(),
+            "from_genesis".into(),
+        )
+        .unwrap();
+        BeliefSubscriptionAuthority::new(&belief_store)
+            .accept(&subscription, &family)
+            .unwrap();
+        let mapping = TheoryRevisionRef {
+            registry: "outcome_mapping".into(),
+            id: "curation-realization".into(),
+            content_hash: "curation-realization-v1".into(),
+        };
         fixture.cut.world_model_view.pending_derived_evidence =
             Some(crate::planner::PlannerDerivedEvidenceRequirement {
                 curation_rule: rule_revision.clone(),
-                belief_family: TheoryRevisionRef {
-                    registry: "belief_family".into(),
-                    id: "docs".into(),
-                    content_hash: "family".into(),
-                },
-                outcome_mappings: Vec::new(),
+                belief_family: family.revision_ref(),
+                outcome_mappings: vec![mapping.clone()],
             });
         let executable = &mut fixture.strategy.package.snapshot.settlement_rules[0];
         executable.epistemic_selections = vec![crate::strategy::StrategyEpistemicSelection {
             rule_revision: Some(rule_revision),
             evidence_return: true,
         }];
-        executable.product_ordering.clear();
+        executable.product_ordering = vec![crate::strategy::StrategyProductOrdering {
+            condition: crate::strategy::StrategyOrderingCondition::ConsumerSelected,
+            before: crate::strategy::StrategyProductSelector::AllTasks,
+            after: crate::strategy::StrategyProductSelector::AllEpistemic,
+            milestone: crate::strategy::StrategyDependencyMilestone::ExecutionTerminal,
+        }];
         let mut observation = executable.clone();
         observation.construction = crate::strategy::StrategyConstruction::ObserveUnknown;
+        observation.product_ordering.clear();
+        observation.evidence_route = crate::strategy::ProspectiveEvidenceRoute {
+            route_id: "observe-docs".into(),
+            dimension_id: belief_key.dimension_id.clone(),
+            outcome_contract_id: "curation-result".into(),
+            evidence_schema_id: "docs_required_coverage_v1".into(),
+        };
         fixture
             .strategy
             .package
@@ -4181,6 +4360,50 @@ mod tests {
             crate::strategy::StrategyPlanOrigin::Epistemic
         );
         let epistemic = &predecessor.epistemic_operations[0];
+        let result = curation
+            .result(&epistemic.operation.operation_id)
+            .unwrap()
+            .unwrap();
+        let evidence = EvidenceItem {
+            publication_record_id: Some(result.event_record_id()),
+            evidence_id: "current-derived-evidence".into(),
+            candidate_key: belief_key.clone(),
+            source_fact_ids: Vec::new(),
+            graph_anchor_ids: Vec::new(),
+            source_cursor_start: 1,
+            source_cursor_end: 1,
+            role: EvidenceRole::Support,
+            evidence_schema_id: "docs_required_coverage_v1".into(),
+            typed_value: EvidenceValue::Scalar(1.0),
+            reliability: 1.0,
+            precision: 1.0,
+            reference_time: None,
+            transaction_seq: 1,
+            content_hash: None,
+            outcome_mapping_revision: Some(mapping.clone()),
+            provenance: BeliefProvenanceSummary::empty(),
+        };
+        belief_store.put_evidence(&evidence).unwrap();
+        belief_store
+            .put_assignment(&EvidenceAssignment {
+                assignment_id: "current-derived-assignment".into(),
+                evidence_id: evidence.evidence_id,
+                belief_key: belief_key.clone(),
+                role: evidence.role,
+                source_cursor_start: 1,
+                source_cursor_end: 1,
+            })
+            .unwrap();
+        let revision_id = BeliefRuntime::from_family_revision(
+            belief_store.clone(),
+            &family,
+            belief_key.perspective.clone(),
+            belief_key.branch_scope.clone(),
+        )
+        .assess_dirty_key(&belief_key, "belief-test")
+        .unwrap()
+        .unwrap()
+        .revision_id;
         fixture
             .store
             .put_milestone(&AgentMilestoneAcceptance {
@@ -4190,29 +4413,202 @@ mod tests {
                 plan_revision_id: predecessor.plan_revision_id.clone(),
                 product_id: epistemic.product_id.clone(),
                 requirement: PlanMilestoneRequirement::BeliefRevision {
-                    belief_key: "docs-current".into(),
-                    revision_id: "negative-current".into(),
+                    belief_key: belief_key.index_key(),
+                    revision_id: revision_id.clone(),
                 },
-                owner_position_id: "belief-return-current".into(),
+                owner_position_id: revision_id.clone(),
                 context_id: fixture.cut.context.context_id.clone(),
                 activation_generation: fixture.cut.context.activation_generation.clone(),
             })
             .unwrap();
-        *curation.operation.lock().unwrap() = None;
-
+        let genesis = AgentGenesisIntentV1::new(
+            "assignment".into(),
+            "compilation".into(),
+            "steward".into(),
+            vec![family.revision_ref(), mapping],
+            SeedAgentRegistration {
+                agent_id: fixture.goal.agent_id.clone(),
+                perspective_key: fixture.authority.perspective.clone(),
+                subject: subject(),
+                branch_scope: fixture.authority.branch_scope.clone(),
+                observation_scope: "meld".into(),
+                directive: "maintain docs".into(),
+                seed_provenance: "test".into(),
+                curation_rule: None,
+                curation_rule_revision: None,
+                maintained_condition: None,
+                maintained_condition_revision: None,
+                created_at_seq: 1,
+            },
+            vec![subscription],
+        )
+        .unwrap();
+        fixture
+            .store
+            .claim_genesis_lineage(&fixture.goal.agent_id, &genesis.intent_id)
+            .unwrap();
+        fixture.store.put_genesis_intent(&genesis).unwrap();
+        actor.preparation = crate::agent::AgentPreparation::InstalledRule {
+            rule: Box::new(fixture.rule.clone()),
+            subscriptions: Some(Arc::new(BeliefSubscriptionSource::new(
+                belief_store.clone(),
+                Arc::new(family_registry),
+            ))),
+        };
         let mut post_curation = fixture.cut.clone();
         post_curation.cut_id = "post-curation-planner-cut".into();
+        let proof_problem = actor.strategy.problem(
+            fixture.goal.clone(),
+            post_curation.clone(),
+            vec![epistemic.operation.clone()],
+        );
+        let proof_history = fixture
+            .store
+            .completed_history_for_goal(&fixture.goal.goal_id)
+            .unwrap();
+        assert!(crate::strategy::confirmation_is_current(
+            &proof_problem,
+            &proof_problem.theory.settlement_rules[1],
+            &proof_history,
+        ));
+        let crate::agent::AgentPreparation::InstalledRule {
+            subscriptions: Some(subscriptions),
+            ..
+        } = &actor.preparation
+        else {
+            unreachable!()
+        };
+        let pending = proof_problem
+            .planner_cut
+            .world_model_view
+            .pending_derived_evidence
+            .as_ref()
+            .unwrap();
+        let route = proof_problem.theory.settlement_rules[1]
+            .evidence_route
+            .clone();
+        let direct_return = subscriptions
+            .returned_evidence(&crate::belief::BeliefEvidenceReturnRequest {
+                subscription: genesis.required_subscriptions[0].clone(),
+                revision_ids: vec![revision_id.clone()],
+                publication_record_id: result.event_record_id(),
+                evidence_schema_id: route.evidence_schema_id.clone(),
+                mapping_revisions: pending.outcome_mappings.clone(),
+            })
+            .unwrap();
+        let retained_revision = belief_store.get_revision(&revision_id).unwrap().unwrap();
+        assert_eq!(
+            retained_revision.theory_revision.as_ref(),
+            Some(&pending.belief_family)
+        );
+        let retained_evidence = belief_store.evidence_by_revision(&revision_id).unwrap();
+        assert_eq!(retained_evidence.len(), 1, "{retained_evidence:?}");
+        assert!(
+            direct_return.is_some(),
+            "subscription={:?} pending={pending:?} route={route:?} result={} revision={retained_revision:?} evidence={retained_evidence:?}",
+            genesis.required_subscriptions[0],
+            result.event_record_id(),
+        );
+        let proof_epoch = ReconciliationEpoch {
+            owner: &actor,
+            planner: EpochPlanner {
+                port: actor.planner.as_ref(),
+                goal_id: fixture.goal.goal_id.clone(),
+                fence: actor.frozen_authority.clone(),
+                products: None,
+            },
+            frozen_authority: actor.frozen_authority.clone(),
+            curation_authority: actor.curation_authority.clone(),
+            products: None,
+        };
+        let reconciliation = GoalReconciliation {
+            historical_return: false,
+            epoch: &proof_epoch,
+            goal: fixture.goal.clone(),
+        };
+        assert!(reconciliation
+            .pending_derived_evidence_proof(&proof_problem, &proof_history)
+            .unwrap()
+            .is_some());
+        let mut foreign_family = proof_problem.clone();
+        foreign_family
+            .planner_cut
+            .world_model_view
+            .pending_derived_evidence
+            .as_mut()
+            .unwrap()
+            .belief_family
+            .content_hash = "foreign-family".into();
+        assert!(reconciliation
+            .pending_derived_evidence_proof(&foreign_family, &proof_history)
+            .unwrap()
+            .is_none());
+        let mut foreign_mapping = proof_problem.clone();
+        foreign_mapping
+            .planner_cut
+            .world_model_view
+            .pending_derived_evidence
+            .as_mut()
+            .unwrap()
+            .outcome_mappings[0]
+            .content_hash = "foreign-mapping".into();
+        assert!(reconciliation
+            .pending_derived_evidence_proof(&foreign_mapping, &proof_history)
+            .unwrap()
+            .is_none());
+        let mut foreign_owner_position = proof_history.clone();
+        foreign_owner_position[0].owner_position_id = "foreign-owner-position".into();
+        assert!(reconciliation
+            .pending_derived_evidence_proof(&proof_problem, &foreign_owner_position)
+            .unwrap()
+            .is_none());
+
+        let mut partially_returned_first = proof_problem.clone();
+        let prior_operation = partially_returned_first.curation_operations[0].clone();
+        let extra_rule = TheoryRevisionRef {
+            registry: crate::curation::CURATION_RULE_REGISTRY_ID.into(),
+            id: "unreturned-observer-rule".into(),
+            content_hash: "unreturned-observer-rule-v1".into(),
+        };
+        partially_returned_first.curation_operations.push(
+            CurationOperation::reconstruct(
+                prior_operation.authority,
+                extra_rule.clone(),
+                prior_operation.source_cut,
+                prior_operation.traversal_request,
+            )
+            .unwrap()
+            .for_request("unreturned-observer".into())
+            .unwrap(),
+        );
+        let mut incomplete = partially_returned_first.theory.settlement_rules[1].clone();
+        incomplete
+            .epistemic_selections
+            .push(crate::strategy::StrategyEpistemicSelection {
+                rule_revision: Some(extra_rule),
+                evidence_return: true,
+            });
+        partially_returned_first
+            .theory
+            .settlement_rules
+            .insert(1, incomplete);
+        assert!(reconciliation
+            .pending_derived_evidence_proof(&partially_returned_first, &proof_history)
+            .unwrap()
+            .is_some());
         actor.planner = Arc::new(PlannerSequence {
             outcomes: Mutex::new(VecDeque::new()),
             fallback: PlannerAssemblyOutcome::Complete(Box::new(post_curation.clone())),
         });
         let mut authorization = None;
+        let mut reports = Vec::new();
         for _ in 0..8 {
             let report = actor.bounded_step(16);
             assert!(
                 report.fatal_errors.is_empty() && report.retryable_errors.is_empty(),
                 "{report:?}"
             );
+            reports.push(report);
             authorization = fixture
                 .store
                 .product_authorizations_for_goal(&fixture.goal.goal_id)
@@ -4226,8 +4622,19 @@ mod tests {
                 break;
             }
         }
-        let authorization = authorization
-            .expect("returned current evidence must authorize a fresh executable successor");
+        let authorization = authorization.unwrap_or_else(|| {
+            panic!(
+                "returned current evidence must authorize a fresh executable successor: reports={reports:?} plan={:?} history={:?}",
+                fixture
+                    .store
+                    .current_reconciliation_plan(&fixture.goal.goal_id)
+                    .unwrap(),
+                fixture
+                    .store
+                    .completed_history_for_goal(&fixture.goal.goal_id)
+                    .unwrap()
+            )
+        });
         assert_eq!(
             authorization.activation_generation,
             post_curation.context.activation_generation

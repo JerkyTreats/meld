@@ -15,13 +15,14 @@ use super::contracts::*;
 /// construct within the supplied bounds. `Bounded` means traversal stopped
 /// early and must not be interpreted as proof that no candidate exists.
 pub fn search(request: &StrategySearchRequest) -> StrategySearchResult {
-    search_with_completed(request, &[], &[])
+    search_with_completed(request, &[], &[], None)
 }
 
 fn search_with_completed(
     request: &StrategySearchRequest,
     completed: &[&StrategyTask],
     history: &[StrategyCompletedHistoryEntry],
+    pending_proof: Option<&StrategyPendingDerivedEvidenceProof>,
 ) -> StrategySearchResult {
     let mut state = SearchState::new(request);
     state.history = history;
@@ -86,7 +87,8 @@ fn search_with_completed(
     let mut candidates = Vec::new();
     for (rule, bindings) in rules {
         let view = &request.problem.planner_cut.world_model_view;
-        let pending = pending_derived_evidence_status(&request.problem, rule, history);
+        let pending =
+            pending_derived_evidence_status(&request.problem, rule, history, pending_proof);
         if view.unassessed_belief.is_some()
             && rule.construction != StrategyConstruction::ObserveUnknown
         {
@@ -241,7 +243,12 @@ pub fn search_successor(request: &StrategySuccessorRequest) -> StrategySuccessor
         Vec::new()
     };
     let mut result = confirmation.unwrap_or_else(|| {
-        search_with_completed(&request.search, &completed, &request.completed_history)
+        search_with_completed(
+            &request.search,
+            &completed,
+            &request.completed_history,
+            request.pending_derived_evidence_proof.as_ref(),
+        )
     });
     let recommendation = result.recommendation.and_then(|mut plan| {
         if let Some(rule) = selected_rule(&request.search.problem, &plan) {
@@ -278,7 +285,7 @@ pub fn search_successor(request: &StrategySuccessorRequest) -> StrategySuccessor
     }
 }
 
-pub(super) fn confirmation_is_current(
+pub(crate) fn confirmation_is_current(
     problem: &StrategyProblem,
     rule: &StrategySettlementRule,
     history: &[StrategyCompletedHistoryEntry],
@@ -312,6 +319,7 @@ pub(super) fn pending_derived_evidence_status(
     problem: &StrategyProblem,
     rule: &StrategySettlementRule,
     history: &[StrategyCompletedHistoryEntry],
+    proof: Option<&StrategyPendingDerivedEvidenceProof>,
 ) -> PendingDerivedEvidenceStatus {
     let Some(required) = &problem
         .planner_cut
@@ -329,11 +337,60 @@ pub(super) fn pending_derived_evidence_status(
     }) {
         return PendingDerivedEvidenceStatus::Unrelated;
     }
-    if confirmation_is_current(problem, rule, history) {
+    if pending_observation_return_is_current(problem, required, history, proof) {
         PendingDerivedEvidenceStatus::Returned
     } else {
         PendingDerivedEvidenceStatus::Awaiting
     }
+}
+
+fn pending_observation_return_is_current(
+    problem: &StrategyProblem,
+    required: &crate::planner::PlannerDerivedEvidenceRequirement,
+    history: &[StrategyCompletedHistoryEntry],
+    proof: Option<&StrategyPendingDerivedEvidenceProof>,
+) -> bool {
+    let Some(proof) = proof.filter(|proof| &proof.requirement == required) else {
+        return false;
+    };
+    if proof.source_plan_revision_id.trim().is_empty()
+        || proof.product_id.trim().is_empty()
+        || proof.belief_key.trim().is_empty()
+        || proof.belief_revision_id.trim().is_empty()
+    {
+        return false;
+    }
+    let accepted = PlanMilestoneRequirement::BeliefRevision {
+        belief_key: proof.belief_key.clone(),
+        revision_id: proof.belief_revision_id.clone(),
+    };
+    let Some(entry) = history.iter().find(|entry| {
+        entry.source_plan_revision_id == proof.source_plan_revision_id
+            && entry.product_id == proof.product_id
+            && entry.accepted_milestone == accepted
+            && entry.owner_position_id == proof.belief_revision_id
+    }) else {
+        return false;
+    };
+    let Some(StrategyProduct::Epistemic(prior)) = &entry.product else {
+        return false;
+    };
+    if prior.product_id != entry.product_id {
+        return false;
+    }
+    problem.theory.settlement_rules.iter().any(|observer| {
+        observer.construction == StrategyConstruction::ObserveUnknown
+            && unify(&observer.goal_pattern, &problem.goal.target).is_some()
+            && epistemic_products(problem, observer)
+                .iter()
+                .any(|operation| {
+                    operation.return_evidence.is_some()
+                        && operation.operation.rule_revision == required.curation_rule
+                        && prior.same_request_as(operation)
+                        && prior.accepts_return(&entry.accepted_milestone)
+                })
+            && confirmation_is_current(problem, observer, history)
+    })
 }
 
 /// Only comparable owner-authored inputs can justify repeating a completed effect.

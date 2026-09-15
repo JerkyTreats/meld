@@ -545,6 +545,20 @@ pub struct StrategySuccessorRequest {
     pub predecessor_plan: Box<StrategyPlan>,
     /// Completed causal history that the successor must retain unchanged.
     pub completed_history: Vec<StrategyCompletedHistoryEntry>,
+    /// Agent-revalidated return of the exact current pending derived evidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_derived_evidence_proof: Option<StrategyPendingDerivedEvidenceProof>,
+}
+
+/// Frozen Agent proof that one retained Belief return satisfies the current
+/// pending derived-evidence requirement for successor selection only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StrategyPendingDerivedEvidenceProof {
+    pub requirement: crate::planner::PlannerDerivedEvidenceRequirement,
+    pub source_plan_revision_id: String,
+    pub product_id: String,
+    pub belief_key: String,
+    pub belief_revision_id: String,
 }
 
 /// One successor Plan paired with the unchanged completed causal history.

@@ -28,6 +28,15 @@ pub(super) fn verify_with_history(
     candidate: &StrategyPlan,
     history: &[super::StrategyCompletedHistoryEntry],
 ) -> PlanVerification {
+    verify_with_history_inner(problem, candidate, history, None)
+}
+
+fn verify_with_history_inner(
+    problem: &StrategyProblem,
+    candidate: &StrategyPlan,
+    history: &[super::StrategyCompletedHistoryEntry],
+    pending_proof: Option<&super::StrategyPendingDerivedEvidenceProof>,
+) -> PlanVerification {
     let mut grounds = Vec::new();
     if candidate.problem_id != problem.problem_id
         || candidate.goal_id != problem.goal.goal_id
@@ -87,7 +96,8 @@ pub(super) fn verify_with_history(
         .pending_derived_evidence
         .is_some()
     {
-        let pending = super::search::pending_derived_evidence_status(problem, rule, history);
+        let pending =
+            super::search::pending_derived_evidence_status(problem, rule, history, pending_proof);
         match (rule.construction, pending) {
             (
                 super::StrategyConstruction::ObserveUnknown,
@@ -457,10 +467,11 @@ pub fn verify_successor_plan(
             };
         }
     }
-    let standard = verify_with_history(
+    let standard = verify_with_history_and_pending_proof(
         &request.search.problem,
         &successor.plan,
         &request.completed_history,
+        request.pending_derived_evidence_proof.as_ref(),
     );
     if !matches!(standard, PlanVerification::Valid { .. }) {
         return standard;
@@ -490,6 +501,15 @@ pub fn verify_successor_plan(
         };
     }
     standard
+}
+
+fn verify_with_history_and_pending_proof(
+    problem: &StrategyProblem,
+    candidate: &StrategyPlan,
+    history: &[super::StrategyCompletedHistoryEntry],
+    proof: Option<&super::StrategyPendingDerivedEvidenceProof>,
+) -> PlanVerification {
+    verify_with_history_inner(problem, candidate, history, proof)
 }
 
 pub(crate) fn dependencies_valid(
