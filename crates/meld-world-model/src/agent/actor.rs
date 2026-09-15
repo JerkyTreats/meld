@@ -3729,7 +3729,7 @@ mod tests {
                 terminal,
                 AgentAuthorizationFence {
                     activation_generation: self.authority.activation_generation.clone(),
-                    admission_epoch: None,
+                    admission_epoch: self.authority.admission_epoch.clone(),
                     authority_policy_content_hash: "authority-docs-v1".to_string(),
                 },
             )
@@ -3759,7 +3759,7 @@ mod tests {
                 Arc::new(FixedAuthority(observed)),
                 AgentAuthorizationFence {
                     activation_generation: self.authority.activation_generation.clone(),
-                    admission_epoch: None,
+                    admission_epoch: self.authority.admission_epoch.clone(),
                     authority_policy_content_hash: "authority-docs-v1".to_string(),
                 },
                 Arc::clone(&curation) as Arc<dyn AgentCurationPort>,
@@ -4128,6 +4128,123 @@ mod tests {
             .open_tree("execution_goal_records")
             .unwrap()
             .is_empty());
+    }
+
+    #[test]
+    fn returned_current_derived_evidence_authorizes_a_fresh_fenced_task() {
+        let mut fixture = Fixture::new();
+        fixture.authority.activation_generation = "recovery-generation".into();
+        fixture.authority.admission_epoch = Some("recovery-epoch".into());
+        fixture.cut.context.activation_generation = fixture.authority.activation_generation.clone();
+        fixture.cut.context.admission_epoch = fixture.authority.admission_epoch.clone();
+        let rule_revision = fixture.rule.revision_ref();
+        fixture.cut.world_model_view.pending_derived_evidence =
+            Some(crate::planner::PlannerDerivedEvidenceRequirement {
+                curation_rule: rule_revision.clone(),
+                belief_family: TheoryRevisionRef {
+                    registry: "belief_family".into(),
+                    id: "docs".into(),
+                    content_hash: "family".into(),
+                },
+                outcome_mappings: Vec::new(),
+            });
+        let executable = &mut fixture.strategy.package.snapshot.settlement_rules[0];
+        executable.epistemic_selections = vec![crate::strategy::StrategyEpistemicSelection {
+            rule_revision: Some(rule_revision),
+            evidence_return: true,
+        }];
+        executable.product_ordering.clear();
+        let mut observation = executable.clone();
+        observation.construction = crate::strategy::StrategyConstruction::ObserveUnknown;
+        fixture
+            .strategy
+            .package
+            .snapshot
+            .settlement_rules
+            .push(observation);
+
+        let (mut actor, curation) = fixture.actor(
+            vec![PlannerAssemblyOutcome::Complete(Box::new(
+                fixture.cut.clone(),
+            ))],
+            true,
+        );
+        let initial = actor.bounded_step(16);
+        assert!(initial.fatal_errors.is_empty(), "{initial:?}");
+        let predecessor = fixture
+            .store
+            .current_reconciliation_plan(&fixture.goal.goal_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            predecessor.origin,
+            crate::strategy::StrategyPlanOrigin::Epistemic
+        );
+        let epistemic = &predecessor.epistemic_operations[0];
+        fixture
+            .store
+            .put_milestone(&AgentMilestoneAcceptance {
+                milestone_id: "current-derived-evidence-return".into(),
+                agent_id: fixture.goal.agent_id.clone(),
+                goal_id: fixture.goal.goal_id.clone(),
+                plan_revision_id: predecessor.plan_revision_id.clone(),
+                product_id: epistemic.product_id.clone(),
+                requirement: PlanMilestoneRequirement::BeliefRevision {
+                    belief_key: "docs-current".into(),
+                    revision_id: "negative-current".into(),
+                },
+                owner_position_id: "belief-return-current".into(),
+                context_id: fixture.cut.context.context_id.clone(),
+                activation_generation: fixture.cut.context.activation_generation.clone(),
+            })
+            .unwrap();
+        *curation.operation.lock().unwrap() = None;
+
+        let mut post_curation = fixture.cut.clone();
+        post_curation.cut_id = "post-curation-planner-cut".into();
+        actor.planner = Arc::new(PlannerSequence {
+            outcomes: Mutex::new(VecDeque::new()),
+            fallback: PlannerAssemblyOutcome::Complete(Box::new(post_curation.clone())),
+        });
+        let mut authorization = None;
+        for _ in 0..8 {
+            let report = actor.bounded_step(16);
+            assert!(
+                report.fatal_errors.is_empty() && report.retryable_errors.is_empty(),
+                "{report:?}"
+            );
+            authorization = fixture
+                .store
+                .product_authorizations_for_goal(&fixture.goal.goal_id)
+                .unwrap()
+                .into_iter()
+                .find(|authorization| {
+                    authorization.plan_revision_id != predecessor.plan_revision_id
+                        && matches!(authorization.product, AgentAuthorizedProduct::Task(_))
+                });
+            if authorization.is_some() {
+                break;
+            }
+        }
+        let authorization = authorization
+            .expect("returned current evidence must authorize a fresh executable successor");
+        assert_eq!(
+            authorization.activation_generation,
+            post_curation.context.activation_generation
+        );
+        assert_eq!(
+            authorization.admission_epoch,
+            post_curation.context.admission_epoch
+        );
+        assert_eq!(
+            actor
+                .execution
+                .observe(&authorization)
+                .unwrap()
+                .unwrap()
+                .admission_decision,
+            AgentExecutionAdmissionDecision::Admitted
+        );
     }
 
     #[test]

@@ -86,11 +86,22 @@ fn search_with_completed(
     let mut candidates = Vec::new();
     for (rule, bindings) in rules {
         let view = &request.problem.planner_cut.world_model_view;
-        if (view.unassessed_belief.is_some() || view.pending_derived_evidence.is_some())
+        let pending_returned = pending_derived_evidence_returned(&request.problem, rule, history);
+        if view.unassessed_belief.is_some()
             && rule.construction != StrategyConstruction::ObserveUnknown
         {
             state.reject(StrategyRejectionGround::InvalidComposition);
             continue;
+        }
+        if view.pending_derived_evidence.is_some() {
+            if rule.construction == StrategyConstruction::ObserveUnknown && pending_returned {
+                state.reject(StrategyRejectionGround::UnchangedCompletedWork);
+                continue;
+            }
+            if rule.construction != StrategyConstruction::ObserveUnknown && !pending_returned {
+                state.reject(StrategyRejectionGround::InvalidComposition);
+                continue;
+            }
         }
         let settlement = match ground_proposition(&rule.settlement_obligation, &bindings) {
             Ok(value) => value,
@@ -281,6 +292,28 @@ pub(super) fn confirmation_is_current(
                 && prior.same_request_as(operation))
             })
         })
+}
+
+/// Only the exact returned Curation requirement may discharge derived-evidence gating.
+pub(super) fn pending_derived_evidence_returned(
+    problem: &StrategyProblem,
+    rule: &StrategySettlementRule,
+    history: &[StrategyCompletedHistoryEntry],
+) -> bool {
+    let Some(required) = &problem
+        .planner_cut
+        .world_model_view
+        .pending_derived_evidence
+    else {
+        return false;
+    };
+    let Ok((operations, _)) = planned_epistemic_products(problem, rule, &[], history) else {
+        return false;
+    };
+    operations.iter().any(|operation| {
+        operation.return_evidence.is_some()
+            && operation.operation.rule_revision == required.curation_rule
+    }) && confirmation_is_current(problem, rule, history)
 }
 
 /// Only comparable owner-authored inputs can justify repeating a completed effect.

@@ -23,7 +23,7 @@ pub fn verify_plan(problem: &StrategyProblem, candidate: &StrategyPlan) -> PlanV
     verify_with_history(problem, candidate, &[])
 }
 
-fn verify_with_history(
+pub(super) fn verify_with_history(
     problem: &StrategyProblem,
     candidate: &StrategyPlan,
     history: &[super::StrategyCompletedHistoryEntry],
@@ -86,9 +86,15 @@ fn verify_with_history(
         .world_model_view
         .pending_derived_evidence
         .is_some()
-        && !candidate.tasks.is_empty()
     {
-        grounds.push(StrategyRejectionGround::InvalidComposition);
+        let pending_returned =
+            super::search::pending_derived_evidence_returned(problem, rule, history);
+        if !candidate.tasks.is_empty() && !pending_returned {
+            grounds.push(StrategyRejectionGround::InvalidComposition);
+        }
+        if rule.construction == super::StrategyConstruction::ObserveUnknown && pending_returned {
+            grounds.push(StrategyRejectionGround::UnchangedCompletedWork);
+        }
     }
     if super::search::ground_proposition(&rule.settlement_obligation, &bindings).as_ref()
         != Ok(&candidate.settlement_obligation)

@@ -2194,6 +2194,200 @@ fn missing_current_derived_evidence_allows_observation_but_not_executable_work()
     ));
 }
 
+#[test]
+fn exact_returned_derived_evidence_unlocks_only_its_executable_successor() {
+    let mut request = StrategySearchRequest {
+        problem: problem(),
+        bounds: StrategySearchBounds {
+            max_expansions: 64,
+            max_depth: 8,
+        },
+    };
+    let retained = request
+        .problem
+        .planner_cut
+        .world_model_view
+        .world_state
+        .propositions()
+        .iter()
+        .filter(|proposition| !matches!(proposition, Proposition::Holds { .. }))
+        .cloned()
+        .collect();
+    request.problem.planner_cut.world_model_view.world_state =
+        meld_lang::WorldState::new(retained).unwrap();
+    let rule_revision = request.problem.curation_operations[0].rule_revision.clone();
+    request
+        .problem
+        .planner_cut
+        .world_model_view
+        .pending_derived_evidence = Some(crate::planner::PlannerDerivedEvidenceRequirement {
+        curation_rule: rule_revision.clone(),
+        belief_family: crate::belief::TheoryRevisionRef {
+            registry: "belief_family".into(),
+            id: "docs".into(),
+            content_hash: "family".into(),
+        },
+        outcome_mappings: vec![],
+    });
+    let executable = &mut request.problem.theory.settlement_rules[0];
+    executable.epistemic_selections = vec![StrategyEpistemicSelection {
+        rule_revision: Some(rule_revision),
+        evidence_return: true,
+    }];
+    executable.product_ordering.clear();
+    let mut observation = executable.clone();
+    observation.construction = StrategyConstruction::ObserveUnknown;
+    request.problem.theory.settlement_rules.push(observation);
+
+    let predecessor = search(&request).recommendation.unwrap();
+    assert_eq!(predecessor.origin, StrategyPlanOrigin::Epistemic);
+    assert!(predecessor.tasks.is_empty());
+    let returned = predecessor.epistemic_operations[0].clone();
+    let completed_history = vec![StrategyCompletedHistoryEntry {
+        source_plan_revision_id: predecessor.plan_revision_id.clone(),
+        product_id: returned.product_id.clone(),
+        accepted_milestone: PlanMilestoneRequirement::BeliefRevision {
+            belief_key: "docs-current".into(),
+            revision_id: "negative-current".into(),
+        },
+        owner_position_id: "belief-return-current".into(),
+        product: Some(StrategyProduct::Epistemic(Box::new(returned))),
+    }];
+    let successor_request = StrategySuccessorRequest {
+        search: request.clone(),
+        predecessor_plan: Box::new(predecessor.clone()),
+        completed_history: completed_history.clone(),
+    };
+    let successor = search_successor(&successor_request)
+        .recommendation
+        .expect("exact current evidence return must unlock its executable sibling");
+    assert!(!successor.plan.tasks.is_empty());
+    assert_ne!(successor.plan.origin, StrategyPlanOrigin::Epistemic);
+    assert!(matches!(
+        verify_successor_plan(&successor_request, &successor),
+        PlanVerification::Valid { .. }
+    ));
+    let mut repeated_observation = predecessor;
+    repeated_observation.predecessor_plan_revision_id =
+        Some(successor_request.predecessor_plan.plan_revision_id.clone());
+    repeated_observation.plan_revision_id =
+        super::search::plan_revision_identity(&repeated_observation);
+    assert!(matches!(
+        super::verification::verify_with_history(
+            &request.problem,
+            &repeated_observation,
+            &completed_history,
+        ),
+        PlanVerification::Invalid { grounds }
+            if grounds.contains(&StrategyRejectionGround::UnchangedCompletedWork)
+    ));
+
+    let assert_does_not_unlock = |blocked: StrategySuccessorRequest| {
+        let candidate = search_successor(&blocked)
+            .recommendation
+            .expect("unreturned pending evidence must retain its observation route");
+        assert!(candidate.plan.tasks.is_empty());
+        assert_eq!(candidate.plan.origin, StrategyPlanOrigin::Epistemic);
+        assert!(matches!(
+            verify_successor_plan(&blocked, &successor),
+            PlanVerification::Invalid { grounds }
+                if grounds.contains(&StrategyRejectionGround::InvalidComposition)
+        ));
+    };
+
+    let mut wrong_pending_rule = successor_request.clone();
+    wrong_pending_rule
+        .search
+        .problem
+        .planner_cut
+        .world_model_view
+        .pending_derived_evidence
+        .as_mut()
+        .unwrap()
+        .curation_rule = crate::belief::TheoryRevisionRef {
+        registry: crate::curation::CURATION_RULE_REGISTRY_ID.into(),
+        id: "other-rule".into(),
+        content_hash: "other-rule-hash".into(),
+    };
+    assert_does_not_unlock(wrong_pending_rule);
+
+    let completed_return = |search_request: &StrategySearchRequest| {
+        let plan = search(search_request).recommendation.unwrap();
+        let operation = plan.epistemic_operations[0].clone();
+        StrategyCompletedHistoryEntry {
+            source_plan_revision_id: plan.plan_revision_id,
+            product_id: operation.product_id.clone(),
+            accepted_milestone: PlanMilestoneRequirement::BeliefRevision {
+                belief_key: "docs-current".into(),
+                revision_id: "negative-current".into(),
+            },
+            owner_position_id: "belief-return-foreign".into(),
+            product: Some(StrategyProduct::Epistemic(Box::new(operation))),
+        }
+    };
+
+    let mut foreign_authority_source = request.clone();
+    let operation = foreign_authority_source.problem.curation_operations[0].clone();
+    let mut authority = operation.authority.clone();
+    authority.activation_generation = "foreign-generation".into();
+    foreign_authority_source.problem.curation_operations[0] = CurationOperation::reconstruct(
+        authority,
+        operation.rule_revision,
+        operation.source_cut,
+        operation.traversal_request,
+    )
+    .unwrap();
+    let mut foreign_authority = successor_request.clone();
+    foreign_authority.completed_history = vec![completed_return(&foreign_authority_source)];
+    assert_does_not_unlock(foreign_authority);
+
+    let mut changed_source_request = request.clone();
+    let operation = changed_source_request.problem.curation_operations[0].clone();
+    let mut source_cut = operation.source_cut.clone();
+    source_cut.receipts[0].revision_id = "foreign-source-revision".into();
+    source_cut.receipts[0].work_input_basis_id = Some("foreign-source-basis".into());
+    source_cut.cut_id = traversal_cut_identity(&source_cut).unwrap();
+    changed_source_request.problem.curation_operations[0] = CurationOperation::reconstruct(
+        operation.authority,
+        operation.rule_revision,
+        source_cut,
+        operation.traversal_request,
+    )
+    .unwrap();
+    let mut changed_source = successor_request.clone();
+    changed_source.completed_history = vec![completed_return(&changed_source_request)];
+    assert_does_not_unlock(changed_source);
+
+    let mut unrelated_rule_request = request.clone();
+    let operation = unrelated_rule_request.problem.curation_operations[0].clone();
+    let unrelated_rule = crate::belief::TheoryRevisionRef {
+        registry: crate::curation::CURATION_RULE_REGISTRY_ID.into(),
+        id: "unrelated-rule".into(),
+        content_hash: "unrelated-rule-hash".into(),
+    };
+    unrelated_rule_request.problem.curation_operations[0] = CurationOperation::reconstruct(
+        operation.authority,
+        unrelated_rule.clone(),
+        operation.source_cut,
+        operation.traversal_request,
+    )
+    .unwrap();
+    for rule in &mut unrelated_rule_request.problem.theory.settlement_rules {
+        rule.epistemic_selections[0].rule_revision = Some(unrelated_rule.clone());
+    }
+    unrelated_rule_request
+        .problem
+        .planner_cut
+        .world_model_view
+        .pending_derived_evidence
+        .as_mut()
+        .unwrap()
+        .curation_rule = unrelated_rule;
+    let mut unrelated_rule_history = successor_request.clone();
+    unrelated_rule_history.completed_history = vec![completed_return(&unrelated_rule_request)];
+    assert_does_not_unlock(unrelated_rule_history);
+}
+
 fn hierarchical_problem() -> StrategyProblem {
     use meld_lang::{Composition, Method, Step, StepKind};
     let mut problem = problem();
