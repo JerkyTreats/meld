@@ -5,10 +5,12 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, Weak};
 
 use agdb::{
-    CountComparison, Db, DbElement, DbErrorType, DbId, DbTransactionMut, QueryBuilder as Q,
-    SyncMode,
+    CountComparison, DbElement, DbErrorType, DbId, QueryBuilder as Q, StorageData, SyncMode,
 };
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
+
+use super::database::{Database, RecoveryStorage};
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -16,8 +18,14 @@ use super::super::contracts::*;
 use crate::error::StorageError;
 use crate::events::DomainObjectRef;
 
-type SharedDatabase = Arc<RwLock<Db>>;
-static DATABASES: OnceLock<Mutex<BTreeMap<PathBuf, Weak<RwLock<Db>>>>> = OnceLock::new();
+type Db = agdb::DbImpl<RecoveryStorage<agdb::FileStorageMemoryMapped>>;
+type DbTransactionMut<'a> =
+    agdb::TransactionMut<'a, RecoveryStorage<agdb::FileStorageMemoryMapped>>;
+
+type SharedDatabase = Arc<Database<agdb::FileStorageMemoryMapped>>;
+static DATABASES: OnceLock<
+    Mutex<BTreeMap<PathBuf, Weak<Database<agdb::FileStorageMemoryMapped>>>>,
+> = OnceLock::new();
 
 #[derive(Clone)]
 pub(in crate::world_state::graph) struct PublicationStore {
@@ -132,43 +140,54 @@ impl PublicationStore {
         let db = if let Some(db) = databases.get(&path).and_then(Weak::upgrade) {
             db
         } else {
-            let mut db = Db::new(
-                path.to_str()
-                    .ok_or_else(|| data("Graph path must be UTF-8"))?,
-            )
-            .map_err(data)?;
-            db.set_sync_mode(SyncMode::Commit);
-            if let Some(bound) = alias(&db, "resource")? {
-                if property(&bound, "identity")? != resource {
-                    return Err(data("Graph file belongs to another world-model resource"));
-                }
-            } else {
-                transact(&mut db, |tx| {
-                    tx.exec_mut(
-                        Q::insert()
-                            .nodes()
-                            .aliases("resource")
-                            .values_uniform([("identity", resource).into()])
-                            .query(),
-                    )
-                    .map_err(data)?;
-                    for name in [
-                        "selection",
-                        "route-selection",
-                        "revision-members",
-                        "all-headers",
-                    ] {
-                        tx.exec_mut(Q::insert().index(name).query()).map_err(data)?;
+            let database = Database::with_storage(
+                agdb::FileStorageMemoryMapped::new(
+                    path.to_str()
+                        .ok_or_else(|| data("Graph path must be UTF-8"))?,
+                )
+                .map_err(data)?,
+            )?;
+            database.mutate(|db| {
+                db.set_sync_mode(SyncMode::Commit);
+                Ok(())
+            })?;
+            {
+                let mut access = database.write()?;
+                let db = access.read()?;
+                if let Some(bound) = alias(db, "resource")? {
+                    if property(&bound, "identity")? != resource {
+                        return Err(data("Graph file belongs to another world-model resource"));
                     }
-                    Ok(())
-                })?;
+                } else {
+                    access.mutate(|db| {
+                        transact(db, |tx| {
+                            tx.exec_mut(
+                                Q::insert()
+                                    .nodes()
+                                    .aliases("resource")
+                                    .values_uniform([("identity", resource).into()])
+                                    .query(),
+                            )
+                            .map_err(data)?;
+                            for name in [
+                                "selection",
+                                "route-selection",
+                                "revision-members",
+                                "all-headers",
+                            ] {
+                                tx.exec_mut(Q::insert().index(name).query()).map_err(data)?;
+                            }
+                            Ok(())
+                        })
+                    })?;
+                }
             }
-            let db = Arc::new(RwLock::new(db));
+            let db = Arc::new(database);
             databases.insert(path.clone(), Arc::downgrade(&db));
             db
         };
         if property(
-            &alias(&db.read(), "resource")?.ok_or_else(|| data("missing resource"))?,
+            &alias(&*db.read()?, "resource")?.ok_or_else(|| data("missing resource"))?,
             "identity",
         )? != resource
         {
@@ -178,27 +197,28 @@ impl PublicationStore {
     }
 
     pub(in crate::world_state::graph) fn flush(&self) -> Result<(), StorageError> {
-        self.db.write().sync().map_err(data)
+        self.db.mutate(|db| db.sync().map_err(data))
     }
 
     pub(in crate::world_state::graph) fn migration_complete(&self) -> Result<bool, StorageError> {
-        Ok(alias(&self.db.read(), "sled-import-complete")?.is_some())
+        Ok(alias(&*self.db.read()?, "sled-import-complete")?.is_some())
     }
 
     pub(in crate::world_state::graph) fn complete_migration(&self) -> Result<(), StorageError> {
-        self.db
-            .write()
-            .exec_mut(Q::insert().nodes().aliases("sled-import-complete").query())
-            .map_err(data)?;
+        self.db.mutate(|db| {
+            db.exec_mut(Q::insert().nodes().aliases("sled-import-complete").query())
+                .map_err(data)
+        })?;
         self.flush()
     }
 
     pub(in crate::world_state::graph) fn clear(&self) -> Result<(), StorageError> {
-        let mut db = self.db.write();
-        let keep = alias(&db, "resource")?
+        let mut access = self.db.write()?;
+        let db = access.read()?;
+        let keep = alias(db, "resource")?
             .ok_or_else(|| data("missing resource"))?
             .id;
-        let migration = alias(&db, "sled-import-complete")?.map(|e| e.id);
+        let migration = alias(db, "sled-import-complete")?.map(|e| e.id);
         let ids = db
             .exec(Q::search().elements().query())
             .map_err(data)?
@@ -208,7 +228,7 @@ impl PublicationStore {
             .map(|e| e.id)
             .collect::<Vec<_>>();
         if !ids.is_empty() {
-            db.exec_mut(Q::remove().ids(ids).query()).map_err(data)?;
+            access.mutate(|db| db.exec_mut(Q::remove().ids(ids).query()).map_err(data))?;
         }
         Ok(())
     }
@@ -219,10 +239,11 @@ impl PublicationStore {
         publication: &ProjectedOwnerPublication,
     ) -> Result<(), StorageError> {
         publication.operation.validate()?;
-        let mut db = self.db.write();
+        let mut access = self.db.write()?;
+        let db = access.read()?;
         let seq = publication.source_event.seq;
-        if let Some(existing) = alias(&db, &event_alias(seq))? {
-            if reconstruct(&db, &existing)? != *publication {
+        if let Some(existing) = alias(db, &event_alias(seq))? {
+            if reconstruct(db, &existing)? != *publication {
                 return Err(data("Event position has divergent publication content"));
             }
             return Ok(());
@@ -232,7 +253,7 @@ impl PublicationStore {
             "guard",
             &(&batch.owner_id, &batch.scope, &batch.revision_id),
         )?;
-        if let Some(existing) = alias(&db, &guard)? {
+        if let Some(existing) = alias(db, &guard)? {
             if property(&existing, "operation")? != publication.operation.operation_id {
                 return Err(data("owner revision has divergent publication operations"));
             }
@@ -245,7 +266,7 @@ impl PublicationStore {
         let mut heads = Vec::new();
         for selection in [&selection, &route_selection] {
             let name = format!("head:{selection}");
-            let prior = alias(&db, &name)?;
+            let prior = alias(db, &name)?;
             let replace = prior
                 .as_ref()
                 .map(|e| property(e, "seq")?.parse::<u64>().map_err(data))
@@ -256,108 +277,111 @@ impl PublicationStore {
             }
         }
         let metadata = RevisionHeader::from(publication);
-        transact(&mut db, |tx| {
-            let mut interned = BTreeMap::new();
-            let mut addresses: BTreeMap<String, (&DomainObjectRef, Vec<Member>)> = BTreeMap::new();
-            for (ordinal, object) in batch.objects.iter().enumerate() {
-                let member = member(
-                    tx,
-                    &mut interned,
-                    serde_json::to_value(object).map_err(data)?,
-                    "publication_id",
-                    ordinal,
-                )?;
-                addresses
-                    .entry(encode(&object.object_ref)?)
-                    .or_insert((&object.object_ref, Vec::new()))
-                    .1
-                    .push(member);
-            }
-            for edge in &batch.relations {
-                addresses
-                    .entry(encode(&edge.src)?)
-                    .or_insert((&edge.src, Vec::new()));
-                addresses
-                    .entry(encode(&edge.dst)?)
-                    .or_insert((&edge.dst, Vec::new()));
-            }
-            let mut ids = BTreeMap::new();
-            for (address, (object_ref, members)) in addresses {
-                let result = tx
-                    .exec_mut(
+        access.mutate(|db| {
+            transact(db, |tx| {
+                let mut interned = BTreeMap::new();
+                let mut addresses: BTreeMap<String, (&DomainObjectRef, Vec<Member>)> =
+                    BTreeMap::new();
+                for (ordinal, object) in batch.objects.iter().enumerate() {
+                    let member = member(
+                        tx,
+                        &mut interned,
+                        serde_json::to_value(object).map_err(data)?,
+                        "publication_id",
+                        ordinal,
+                    )?;
+                    addresses
+                        .entry(encode(&object.object_ref)?)
+                        .or_insert((&object.object_ref, Vec::new()))
+                        .1
+                        .push(member);
+                }
+                for edge in &batch.relations {
+                    addresses
+                        .entry(encode(&edge.src)?)
+                        .or_insert((&edge.src, Vec::new()));
+                    addresses
+                        .entry(encode(&edge.dst)?)
+                        .or_insert((&edge.dst, Vec::new()));
+                }
+                let mut ids = BTreeMap::new();
+                for (address, (object_ref, members)) in addresses {
+                    let result = tx
+                        .exec_mut(
+                            Q::insert()
+                                .nodes()
+                                .aliases(address_alias(seq, object_ref)?.as_str())
+                                .values_uniform(vec![
+                                    ("objects", encode(&members)?).into(),
+                                    ("revision-members", seq.to_string()).into(),
+                                ])
+                                .query(),
+                        )
+                        .map_err(data)?;
+                    ids.insert(address, result.elements[0].id);
+                }
+                for (ordinal, edge) in batch.relations.iter().enumerate() {
+                    let member = member(
+                        tx,
+                        &mut interned,
+                        serde_json::to_value(edge).map_err(data)?,
+                        "occurrence_id",
+                        ordinal,
+                    )?;
+                    tx.exec_mut(
                         Q::insert()
-                            .nodes()
-                            .aliases(address_alias(seq, object_ref)?.as_str())
+                            .edges()
+                            .from(ids[&encode(&edge.src)?])
+                            .to(ids[&encode(&edge.dst)?])
                             .values_uniform(vec![
-                                ("objects", encode(&members)?).into(),
+                                ("relation", encode(&member)?).into(),
                                 ("revision-members", seq.to_string()).into(),
                             ])
                             .query(),
                     )
                     .map_err(data)?;
-                ids.insert(address, result.elements[0].id);
-            }
-            for (ordinal, edge) in batch.relations.iter().enumerate() {
-                let member = member(
-                    tx,
-                    &mut interned,
-                    serde_json::to_value(edge).map_err(data)?,
-                    "occurrence_id",
-                    ordinal,
-                )?;
+                }
                 tx.exec_mut(
                     Q::insert()
-                        .edges()
-                        .from(ids[&encode(&edge.src)?])
-                        .to(ids[&encode(&edge.dst)?])
+                        .nodes()
+                        .aliases(event_alias(seq).as_str())
                         .values_uniform(vec![
-                            ("relation", encode(&member)?).into(),
-                            ("revision-members", seq.to_string()).into(),
+                            ("header", encode(&metadata)?).into(),
+                            ("selection", selection.clone()).into(),
+                            ("route-selection", route_selection.clone()).into(),
+                            ("all-headers", "yes").into(),
                         ])
                         .query(),
                 )
                 .map_err(data)?;
-            }
-            tx.exec_mut(
-                Q::insert()
-                    .nodes()
-                    .aliases(event_alias(seq).as_str())
-                    .values_uniform(vec![
-                        ("header", encode(&metadata)?).into(),
-                        ("selection", selection.clone()).into(),
-                        ("route-selection", route_selection.clone()).into(),
-                        ("all-headers", "yes").into(),
-                    ])
-                    .query(),
-            )
-            .map_err(data)?;
-            tx.exec_mut(
-                Q::insert()
-                    .nodes()
-                    .aliases(guard.as_str())
-                    .values_uniform([
-                        ("operation", publication.operation.operation_id.clone()).into()
-                    ])
-                    .query(),
-            )
-            .map_err(data)?;
-            for (name, id) in &heads {
-                let values = [("seq", seq.to_string()).into()];
-                if let Some(id) = id {
-                    tx.exec_mut(Q::insert().values_uniform(values).ids(*id).query())
+                tx.exec_mut(
+                    Q::insert()
+                        .nodes()
+                        .aliases(guard.as_str())
+                        .values_uniform([
+                            ("operation", publication.operation.operation_id.clone()).into()
+                        ])
+                        .query(),
+                )
+                .map_err(data)?;
+                for (name, id) in &heads {
+                    let values = [("seq", seq.to_string()).into()];
+                    if let Some(id) = id {
+                        tx.exec_mut(Q::insert().values_uniform(values).ids(*id).query())
+                            .map_err(data)?;
+                    } else {
+                        tx.exec_mut(
+                            Q::insert()
+                                .nodes()
+                                .aliases(name.as_str())
+                                .values_uniform(values)
+                                .query(),
+                        )
                         .map_err(data)?;
-                } else {
-                    tx.exec_mut(
-                        Q::insert()
-                            .nodes()
-                            .aliases(name.as_str())
-                            .values_uniform(values)
-                            .query(),
-                    )
-                    .map_err(data)?;
+                    }
                 }
-            }
-            Ok(())
+                Ok(())
+            })
         })
     }
 
@@ -365,7 +389,7 @@ impl PublicationStore {
         &self,
         seq: u64,
     ) -> Result<Option<RevisionHeader>, StorageError> {
-        alias(&self.db.read(), &event_alias(seq))?
+        alias(&*self.db.read()?, &event_alias(seq))?
             .as_ref()
             .map(header)
             .transpose()
@@ -382,7 +406,7 @@ impl PublicationStore {
         requirement: &TraversalOwnerRequirement,
         through: u64,
     ) -> Result<Option<RevisionHeader>, StorageError> {
-        let db = self.db.read();
+        let db = self.db.read()?;
         let (index, selection) = if let Some(source) = &requirement.event_source {
             (
                 "route-selection",
@@ -427,7 +451,7 @@ impl PublicationStore {
         &self,
         seq: u64,
     ) -> Result<Option<ProjectedOwnerPublication>, StorageError> {
-        let db = self.db.read();
+        let db = self.db.read()?;
         alias(&db, &event_alias(seq))?
             .as_ref()
             .map(|e| reconstruct(&db, e))
@@ -438,7 +462,7 @@ impl PublicationStore {
         &self,
         through: u64,
     ) -> Result<Vec<ProjectedOwnerPublication>, StorageError> {
-        let db = self.db.read();
+        let db = self.db.read()?;
         let mut publications = Vec::new();
         for element in db
             .exec(
@@ -464,7 +488,7 @@ impl PublicationStore {
         seq: u64,
         address: &DomainObjectRef,
     ) -> Result<Vec<OwnerObjectPublication>, StorageError> {
-        let db = self.db.read();
+        let db = self.db.read()?;
         let Some(element) = alias(&db, &address_alias(seq, address)?)? else {
             return Ok(Vec::new());
         };
@@ -482,7 +506,7 @@ impl PublicationStore {
         address: &DomainObjectRef,
         incoming: bool,
     ) -> Result<Vec<OwnerRelationOccurrence>, StorageError> {
-        let db = self.db.read();
+        let db = self.db.read()?;
         let Some(node) = alias(&db, &address_alias(seq, address)?)? else {
             return Ok(Vec::new());
         };
@@ -675,3 +699,6 @@ fn transact<T>(
     db.transaction_mut(|tx| f(tx).map_err(TransactionError))
         .map_err(|e| e.0)
 }
+
+#[cfg(test)]
+mod tests;

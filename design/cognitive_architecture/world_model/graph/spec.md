@@ -41,3 +41,11 @@ Each admitted revision has independent membership over immutable object and rela
 Owner and full-scope selection locate revision headers. Exact Event positions locate admitted publications. Structured addresses locate nodes in selected revisions, and native directed adjacency supplies candidate occurrences. Graph assembles deterministic paths, independent result bounds and explicit frontier under its public contract. Storage keys do not define semantic equivalence.
 
 A frozen cut reads its retained revisions without catching up to unrelated new Events. New currentness selection requires the requested Event frontier. Publication contents become durable before Graph advances its canonical projection cursor. External knowledge still enters through Events, and semantic ownership remains with the publishing domain.
+
+## Uncertain Storage Handles
+
+A failed publication mutation or durability operation quarantines its physical database handle. Every shared caller observes the same quarantine under the database lock. Reads, subsequent mutations and synchronization reject while the handle is quarantined. A panic during mutation also closes access; unwinding does not imply rollback succeeded. Preflight domain validation can reject without changing handle health.
+
+Quarantine does not attempt a compensating commit or synchronize uncertain state. During teardown a storage guard prevents engine optimization from finalizing the uncertain handle; the physical backend retains responsibility for replaying its recovery log. All holders must release the handle before a fresh physical open delegates recovery to the storage engine. Recovery failure remains an error. Graph resumes from its durable Event position only after reopening succeeds. Publication replay is idempotent, so an operation whose durability acknowledgment failed can be encountered again without inventing a second semantic publication.
+
+A storage error is an uncertain outcome, not proof that the attempted write was absent. Consumers must not acknowledge a new projection position or obtain new graph evidence through the failed handle. Already returned immutable cuts retain their original evidence boundary.

@@ -3,6 +3,7 @@
 use std::io;
 use std::path::Path;
 
+mod database;
 mod publications;
 use publications::PublicationStore;
 use std::sync::Arc;
